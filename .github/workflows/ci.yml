@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate catalog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Frontmatter against the Agent Skills spec, no leaked source-codebase
+      # terms, reference links that resolve, README catalog in step with the
+      # tree. Same script a contributor runs locally.
+      - name: Validate skills
+        run: python3 scripts/validate-skills.py
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      # The checks above prove the files are well formed. This one proves the
+      # CLI that consumers actually run can still find every skill, which is
+      # what breaks if the directory layout drifts.
+      - name: Check the skills CLI discovers every skill
+        run: |
+          set -euo pipefail
+          npx -y skills@latest add ./ --list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > /tmp/discovered.txt
+          failed=0
+          for dir in skills/*/; do
+            name="$(basename "$dir")"
+            if ! grep -qx "[^a-z0-9-]*${name}[^a-z0-9-]*" /tmp/discovered.txt; then
+              echo "::error file=${dir}SKILL.md::the skills CLI did not discover '${name}'"
+              failed=1
+            fi
+          done
+          if [ "$failed" -eq 0 ]; then
+            echo "the skills CLI discovered all $(ls -1d skills/*/ | wc -l) skills"
+          fi
+          exit "$failed"

@@ -78,36 +78,43 @@ The body starts at an `# Title` heading directly after the frontmatter.
 
 ## How to verify a change locally
 
-Run all three checks from the repository root before you open a pull request.
+Run the validator from the repository root before you open a pull request. It is the same
+script that CI runs, so a green run locally means a green run in CI:
 
-1. Local install check — confirms that the CLI can read and install the catalog:
+```bash
+python3 scripts/validate-skills.py
+```
 
-   ```bash
-   npx skills add ./ --agent claude-code
-   ```
+It checks, for every skill:
 
-2. Leaked-token grep — the private source codebases must leave no trace:
+- frontmatter keys stay inside the Agent Skills spec, and the three required keys are present;
+- `name` equals the directory name and uses the allowed character set;
+- `description` is one plain line, long enough to state what and when, and under 1024
+  characters;
+- every `references/*.md` a skill points at exists, whether the pointer is a Markdown link or
+  a bare code span;
+- no term from the private source codebases survives anywhere in `skills/` or `README.md`;
+- the README catalog lists exactly the skills that exist on disk.
 
-   ```bash
-   grep -rniE 'ripdpi|cartory|native/rust|engine/rust' skills/ && echo 'LEAK: fix the hits above' || echo 'clean'
-   ```
+Add a term to `FORBIDDEN` in the script the moment one leaks. That is cheaper than finding it
+after publication.
 
-3. Frontmatter check — name matches the directory, keys are exactly the three allowed ones,
-   and the description fits in 1024 characters:
+Then confirm the CLI still discovers the catalog. This lists the skills and installs nothing:
 
-   ```bash
-   for f in skills/*/SKILL.md; do
-     dir=$(basename "$(dirname "$f")")
-     name=$(awk -F': ' '/^name: /{print $2; exit}' "$f")
-     keys=$(awk '/^---$/{n++; next} n==1 && /^[a-z_]+:/{sub(/:.*/, ""); print} n==2{exit}' "$f" | sort | tr '\n' ' ')
-     len=$(awk '/^description: /{print length($0) - 13; exit}' "$f")
-     [ "$name" = "$dir" ] || echo "$f: name '$name' does not match directory '$dir'"
-     [ "$keys" = "description license name " ] || echo "$f: unexpected keys: $keys"
-     [ "$len" -le 1024 ] || echo "$f: description is $len characters, limit is 1024"
-   done
-   ```
+```bash
+npx skills add ./ --list
+```
 
-   The loop prints nothing when the catalog is correct.
+### Do not run `skills remove` inside this repository
+
+`npx skills remove --skill <name>` treats this repository's own `skills/` directory as an
+install location and **deletes the source directory**. It does this even when you never ran
+`skills add`. The deletion is silent and it is not staged in git, so an uncommitted skill is
+lost outright.
+
+Use `npx skills add ./ --list` to inspect the catalog, and `npx skills use ./ --skill <name>`
+to read one skill. Neither writes to `skills/`. If you need to test an install and a removal,
+do it in a scratch directory, never in a checkout of this repository.
 
 ## Pull request conventions
 
