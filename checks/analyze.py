@@ -91,8 +91,17 @@ def token(diagnostic: dict) -> str:
     return "P:" + " ".join(words[:5])
 
 
-def parse(path: str) -> dict[str, list[dict]]:
+def parse(path: str) -> tuple[dict[str, list[dict]], bool, int]:
+    """Return the errors per example, whether cargo ran, and the artifact count.
+
+    "Whether cargo ran" is not a detail. When cargo cannot start at all - an
+    unresolvable dependency, a malformed manifest, a missing toolchain - it
+    writes nothing to stdout, so this file is empty. Every downstream count is
+    then zero and the gate would report success on a build that never happened.
+    """
     errors: dict[str, list[dict]] = collections.defaultdict(list)
+    finished = False
+    artifacts = 0
     with open(path, encoding="utf-8") as handle:
         for raw in handle:
             raw = raw.strip()
@@ -102,7 +111,14 @@ def parse(path: str) -> dict[str, list[dict]]:
                 record = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if record.get("reason") != "compiler-message":
+            reason = record.get("reason")
+            if reason == "build-finished":
+                finished = True
+                continue
+            if reason == "compiler-artifact":
+                artifacts += 1
+                continue
+            if reason != "compiler-message":
                 continue
             message = record.get("message", {})
             if message.get("level") != "error":
@@ -110,7 +126,31 @@ def parse(path: str) -> dict[str, list[dict]]:
             target = (record.get("target") or {}).get("name")
             if target:
                 errors[target].append(message)
-    return errors
+    return errors, finished, artifacts
+
+
+def require_cargo_ran(path: str, finished: bool, artifacts: int) -> None:
+    """Exit non-zero when the output does not prove cargo compiled something."""
+    if finished and artifacts:
+        return
+    print("FAIL: the compile check did not run.\n")
+    if not finished:
+        print(f"  {path} carries no build-finished record.")
+    if not artifacts:
+        print(f"  {path} carries no compiler-artifact record.")
+    stderr_path = pathlib.Path(path).with_suffix(".err")
+    if stderr_path.is_file():
+        tail = stderr_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+        if tail:
+            print(f"\ncargo wrote to {stderr_path.name}:\n")
+            for line in tail[:20]:
+                print(f"  {line}")
+    print(
+        "\nThis is a broken harness, not a clean catalog. Common causes: a"
+        " dependency in\nchecks/Cargo.toml does not resolve, the manifest is"
+        " malformed, or the pinned\ntoolchain is unavailable."
+    )
+    sys.exit(1)
 
 
 def classify(errors: dict[str, list[dict]]):
@@ -141,7 +181,8 @@ def main() -> int:
 
     args = sys.argv[1:]
     path = next((a for a in args if not a.startswith("--")), "check.json")
-    errors = parse(path)
+    errors, finished, artifacts = parse(path)
+    require_cargo_ran(path, finished, artifacts)
     fragment, artifact, low, suspects = classify(errors)
 
     def signature(example: str, diagnostics: list[dict]) -> str:

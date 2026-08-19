@@ -55,6 +55,19 @@ block — both look like they need a tag and do not.
 - **low** — only "type annotations needed", which the real context supplies.
 - **SUSPECT** — anything else. Treat as a real defect until shown otherwise.
 
+## The harness must prove it ran
+
+`analyze.py` refuses to report success unless `check.json` carries a
+`build-finished` record and at least one `compiler-artifact`. When cargo cannot
+start — an unresolvable dependency, a malformed manifest, an unavailable
+toolchain — it writes nothing to stdout, every count downstream is zero, and a
+naive gate reports a clean catalog for a build that never happened. The guard
+turns that into a failure and prints what cargo wrote to `check.err`.
+
+`check.sh` prints the resolved `rustc` and `cargo` version for the same reason:
+cargo's own output is redirected into `check.json`, so without that line a CI
+log cannot show which toolchain compiled the examples.
+
 ## The baseline
 
 `baseline.txt` lists accepted suspects by signature

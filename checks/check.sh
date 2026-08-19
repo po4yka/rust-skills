@@ -19,6 +19,12 @@ echo "==> extracting rust examples from skills/"
 cd "$ROOT/checks"
 python3 gen.py
 
+# Print what rustup resolved. cargo's own output goes to check.json and
+# check.err below, so without this line nothing in a CI log shows which
+# toolchain compiled the examples, and a pin that silently failed looks
+# identical to one that worked.
+echo "==> toolchain: $(rustc --version), $(cargo --version)"
+
 echo "==> compile-checking examples (target: $TARGET)"
 # cargo exits non-zero on the illustrative fragments. The baseline gate below is
 # what decides pass or fail, so do not let the exit status stop the script.
