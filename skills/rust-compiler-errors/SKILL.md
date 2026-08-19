@@ -1,0 +1,266 @@
+---
+name: rust-compiler-errors
+description: Use when rustc or cargo reports a numbered error and you need the cause rather than the first fix that compiles. Covers ownership and move errors (E0382, E0505, E0507), borrow conflicts (E0499, E0502, E0596), lifetime errors (E0597, E0716, E0515, E0521, E0106), trait and type errors (E0277, E0271, E0308, E0599), the unnumbered "future cannot be sent between threads safely", resolution errors (E0433, E0425, E0603), and layout errors (E0072, E0793). States which reflexive fix hides the bug, which fix resolves it, and when a repeated error means the ownership design is wrong. Triggers on any "E0" code, "borrow checker", "value moved", "does not live long enough", "cannot borrow", "missing lifetime specifier", "trait bound not satisfied", "cannot be sent between threads", or a paste of a cargo build failure.
+license: BSD-3-Clause
+---
+
+# Rust compiler errors
+
+## Purpose
+
+Map a compiler error to its cause, then to the fix that resolves it instead of the fix that
+moves it. Most numbered errors have an obvious escape (`.clone()`, `'static`, `Rc<RefCell<T>>`)
+that compiles and leaves the real problem in place. This skill names both.
+
+## First moves
+
+```bash
+# The full explanation, with a worked example. Works offline.
+rustc --explain E0499
+
+# One line per diagnostic. Use it when the build produces a wall of output.
+cargo build --message-format=short
+
+# Stop at the first failing crate instead of reporting every downstream break.
+cargo build --keep-going=false
+
+# Machine-readable, for counting error codes across a large failure.
+cargo build --message-format=json 2>/dev/null | grep -o '"code":{"code":"E[0-9]*"' | sort | uniq -c | sort -rn
+```
+
+Fix the first error, then rebuild. A single move error produces a cascade of type errors
+downstream, and most of them disappear on their own.
+
+## Triage table
+
+| Code | Message | What it means | First move |
+| --- | --- | --- | --- |
+| E0382 | borrow of moved value | The value was consumed, then used again | Decide the owner; borrow instead of moving |
+| E0505 | cannot move out of `x` because it is borrowed | A live borrow outlives the move | Shorten the borrow, or move before borrowing |
+| E0507 | cannot move out of `x` which is behind a shared reference | You need ownership but only hold `&` | `mem::take`, `Option::take`, `clone`, or take `self` |
+| E0499 | cannot borrow `*x` as mutable more than once | Two live `&mut` to the same place | `split_at_mut`, index disjointly, or scope one borrow |
+| E0502 | cannot borrow as mutable because it is also borrowed as immutable | A read borrow is live across a write | Copy the value out, then mutate |
+| E0596 | cannot borrow as mutable, as it is behind a `&` reference | The parameter is `&T`, not `&mut T` | Change the signature; do not reach for interior mutability first |
+| E0597 | `x` does not live long enough | A named local is dropped while borrowed | Move the binding to the outer scope |
+| E0716 | temporary value dropped while borrowed | An unnamed temporary died at the end of the statement | Bind the temporary to a `let` |
+| E0515 | cannot return reference to local variable | The callee owns the data the caller wants | Return owned, or accept a buffer parameter |
+| E0521 | borrowed data escapes outside of function | A borrow crossed a `'static` boundary such as `thread::spawn` | Clone, or pass an `Arc` |
+| E0106 | missing lifetime specifier | A struct or return type holds a reference with no stated source | Name the lifetime, or store owned data |
+| E0277 | the trait bound `T: X` is not satisfied | A required trait is missing or not in scope | Read which trait; import it or add the bound |
+| E0271 | expected `A` to be an iterator that yields `B` | An associated type does not match | Fix the item type, usually with `map` |
+| E0308 | mismatched types | The two sides differ, often by one reference layer | Compare the two types the note prints, not the expressions |
+| E0599 | no method named `m` found | Typo, or the trait that defines `m` is not imported | `use` the trait |
+| E0433 | cannot find module or crate | The dependency is missing or the path is wrong | `cargo add`, or fix the path |
+| E0425 | cannot find value in this scope | Typo, or the item is not imported | Check the `use` list |
+| E0603 | module is private | The path exists but is not exported | `pub use` it, or use the public path |
+| E0072 | recursive type has infinite size | A type contains itself by value | `Box`, `Rc`, or `Arc` the recursive field |
+| E0793 | reference to field of packed struct is unaligned | A reference into `#[repr(packed)]` | See the `rust-unsafe` skill |
+
+## The clone reflex
+
+`E0382` has one fix that always compiles:
+
+```rust
+let s = String::from("x");
+let t = s.clone();   // compiles
+```
+
+Treat that as a diagnostic, not a fix. The error stated that two places want the same value. A
+clone answers "both get one", which is right when the value is a small owned copy and wrong when
+the value is an identity, a handle, a large buffer, or shared state.
+
+Decide which case you are in before you type `.clone()`:
+
+| The value is | The answer |
+| --- | --- |
+| Small and `Copy`-like, and the copy is the point | Clone, or derive `Copy` |
+| Read by several places, never written | `&T`, or `Arc<T>` when it must cross a thread |
+| Written by several places | `Arc<Mutex<T>>`, and check the lock order |
+| An identity: a connection, a file, a job | One owner. Pass `&mut` down, or pass a handle |
+| Large and consumed once | Move it, and restructure the caller so it can be moved |
+
+A clone inside a loop is the version of this mistake that reaches production. It compiles, it is
+correct, and it allocates once per iteration. See the `rust-performance` skill.
+
+## Borrow conflicts are usually a split problem
+
+`E0499` and `E0502` almost never require interior mutability. They require the compiler to see
+that two borrows touch different data.
+
+```rust
+// E0499: two &mut into the same slice.
+let a = &mut v[0];
+let b = &mut v[1];
+
+// Fix: split, so the two halves are provably disjoint.
+let (left, right) = v.split_at_mut(1);
+left[0] += right[0];
+```
+
+```rust
+// E0502: a read borrow is still live when the write starts.
+let first = &v[0];
+v.push(1);
+println!("{first}");
+
+// Fix: end the read by copying the value out.
+let first = v[0];
+v.push(first);
+```
+
+Reach for `RefCell` only after both of these fail. `RefCell` moves the check from compile time
+to run time; it converts a build error into a `already borrowed: BorrowMutError` panic in
+production. Reach for it when the graph shape genuinely requires it, not to silence a message.
+
+The full catalogue of splits is in
+[references/borrow-checker-fixes.md](references/borrow-checker-fixes.md).
+
+## E0597 and E0716 are the same shape with different data
+
+Both say a borrow outlived its target. They differ in what the target was.
+
+```rust
+// E0597: `s` is a named local. It is dropped at the end of the inner block.
+let r;
+{
+    let s = String::from("x");
+    r = &s;
+}
+println!("{r}");
+```
+
+Fix by moving the binding out, so the owner lives at least as long as the borrow.
+
+```rust
+// E0716: `foo()` produced a temporary with no name. It dies at the `;`.
+let p = bar(&foo());
+let q = *p;
+```
+
+Fix by giving the temporary a name, which extends it to the end of the enclosing block:
+
+```rust
+let tmp = foo();
+let p = bar(&tmp);
+let q = *p;
+```
+
+The rule to remember: a temporary lives to the end of the *statement*, a `let` binding lives to
+the end of the *block*. Almost every E0716 is fixed by one extra `let`.
+
+## E0507: you hold a reference and you need the value
+
+```rust
+struct S { name: String }
+fn f(s: &S) -> String { s.name }   // E0507
+```
+
+Pick by what should happen to the original:
+
+| Intent | Call |
+| --- | --- |
+| The original keeps its value | `s.name.clone()` |
+| The original is left empty and is still valid | `std::mem::take(&mut s.name)` |
+| The original is left holding something else | `std::mem::replace(&mut s.name, other)` |
+| The field is optional and becomes `None` | `s.name.take()` on an `Option` |
+| The caller is finished with the whole value | Change the signature to take `self` |
+
+`mem::take` needs `&mut` and needs `Default`. It is the cheapest of these: no allocation, no
+clone.
+
+## Send and Sync
+
+`thread::spawn` reports a numbered error:
+
+```text
+error[E0277]: `Rc<i32>` cannot be sent between threads safely
+```
+
+An async block reports the same class of problem with **no error code**, so searching for E0277
+finds nothing:
+
+```text
+error: future cannot be sent between threads safely
+  = help: within `{async block}`, the trait `Send` is not implemented for `Rc<i32>`
+note: future is not `Send` as this value is used across an await
+```
+
+Read the `note:`. It names the exact value and the exact `.await` that traps it. The usual causes
+are an `Rc` where an `Arc` belongs, and a `MutexGuard` or `RefCell` borrow held across an
+`.await`.
+
+The fix is almost never to add an `unsafe impl Send`. Drop the guard before the await:
+
+```rust
+let value = {
+    let guard = state.lock().unwrap();
+    guard.value.clone()
+};              // guard is dropped here
+do_async(value).await;
+```
+
+`clippy::await_holding_lock` catches the lock case at build time. See the `rust-async-internals`
+skill for cancel safety, and the `rust-lints` skill for the lint configuration.
+
+## E0106: missing lifetime specifier
+
+```rust
+struct S { name: &str }   // E0106
+```
+
+Two answers, and the right one is usually the second:
+
+```rust
+struct Borrowed<'a> { name: &'a str }   // the struct cannot outlive the source
+struct Owned { name: String }           // the struct owns its data
+```
+
+Store owned data unless the type is a short-lived view built inside one function and consumed
+inside it. A lifetime parameter on a struct spreads: every type that holds it needs one too, and
+the annotation reaches the whole call graph. Pay that cost for a parser view or a zero-copy
+frame, not for a config or a message.
+
+Never answer E0106 with `'static` on a struct field. It does not extend the data; it demands the
+data already live forever, and it moves the error to the caller.
+
+## E0072: recursive type has infinite size
+
+```rust
+struct Node { next: Option<Node> }        // E0072: the size is unbounded
+struct Node { next: Option<Box<Node>> }   // one pointer, size known
+```
+
+The two definitions above cannot coexist; the second replaces the first.
+
+`Box` for a single owner, `Rc` for shared and single-threaded, `Arc` for shared across threads.
+If the structure has cycles, `Rc` alone leaks: the cycle keeps the count above zero. Use `Weak`
+for the back edge.
+
+## Escalation rule
+
+Three failed attempts at the same error is a signal, not bad luck. Stop editing and answer these:
+
+1. Which single component should own this data for its whole lifetime?
+2. Is the borrow crossing a boundary it should not cross: a thread, an `.await`, a callback, an
+   FFI call?
+3. Would the error disappear if the data were owned rather than borrowed, and what does that
+   cost?
+
+Errors that mean the design is wrong, not the syntax: E0382 fixed by cloning in a hot loop,
+E0499 fixed by `RefCell`, E0597 fixed by `'static`, E0521 fixed by leaking. Each compiles. Each
+converts a build error into a run-time cost or a run-time panic.
+
+See the `rust-crate-architecture` skill for ownership across module boundaries, and the
+`rust-discipline` skill for the API shapes that avoid these errors.
+
+## Related skills
+
+- `rust-unsafe` — E0793 and the layout rules behind it
+- `rust-async-internals` — `Send` across `.await`, cancel safety, and shutdown
+- `rust-lints` — where `clippy::await_holding_lock` and the rest are configured
+- `rust-crate-architecture` — ownership and dependency direction across crates
+- `rust-performance` — the cost of the clone that silenced the error
+- `cargo-workflows` — build and check commands in full
+
+For the split-borrow catalogue, see
+[references/borrow-checker-fixes.md](references/borrow-checker-fixes.md).

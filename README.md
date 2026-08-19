@@ -62,12 +62,13 @@ You can also read any skill directly. Every `SKILL.md` is plain Markdown.
 
 ## Catalog
 
-Twenty-one skills. Deep material sits in `references/*.md` next to the skill that owns it.
+Twenty-two skills. Deep material sits in `references/*.md` next to the skill that owns it.
 
 ### Language and code discipline
 
 | Skill | What it covers |
 | --- | --- |
+| [rust-compiler-errors](skills/rust-compiler-errors/SKILL.md) | A triage table from error code to cause, the reflexive fixes that hide the bug, split-borrow patterns, `Send` across `.await`, and when a repeated error means the ownership design is wrong. |
 | [rust-discipline](skills/rust-discipline/SKILL.md) | API design, panic policy, allocation in hot paths, concurrency primitive choice, unsafe encapsulation, and FFI review gates with a checklist. |
 | [rust-code-style](skills/rust-code-style/SKILL.md) | Module file layout, `lib.rs` re-export policy, visibility levels, item order, import groups, and the `thiserror` versus `anyhow` choice. |
 | [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) | Workspace layering, dependency direction rules, the crate-versus-module decision, and module layout for a crate that grew too large. |
@@ -121,6 +122,8 @@ Twenty-one skills. Deep material sits in `references/*.md` next to the skill tha
 skills/<skill-name>/
 ├── SKILL.md              # frontmatter plus instructions
 └── references/*.md       # optional deep material, linked from SKILL.md
+scripts/validate-skills.py  # the checks CI runs; run it before a pull request
+tests/routing-cases.md      # phrase -> skill, checked against every description
 ```
 
 `SKILL.md` frontmatter holds only the three keys that the
@@ -137,8 +140,11 @@ invocations, and failure triage that a codebase learns the hard way.
 ## Caveats
 
 - The commands and flags come from the source codebases and from tool documentation. This
-  repository holds no Rust workspace, so nothing here is executed in CI. Check a command against
-  your own toolchain before you rely on it in a script.
+  repository holds no Rust workspace, so CI checks the catalog, not the code inside it. Check a
+  command against your own toolchain before you rely on it in a script. The two exceptions are
+  `rust-compiler-errors/references/borrow-checker-fixes.md` and
+  `rust-unsafe/references/ffi-layout-rules.md`: every example in them was compiled against
+  rustc 1.97 before it was committed, and each says so at the top.
 - Pinned versions age. Where a skill names a crate or tool version, treat it as the version the
   rule was written against, and confirm it against your `Cargo.lock`.
 - A few thresholds are conventions rather than measured limits, for example the mutation-score
@@ -148,6 +154,24 @@ invocations, and failure triage that a codebase learns the hard way.
 
 Read [AGENTS.md](AGENTS.md). It states the `SKILL.md` contract, the authoring conventions, how to
 add a skill, and how to verify a change locally before you open a pull request.
+
+## Sources
+
+The skills are generalized from production Rust codebases. Two additions have an outside source,
+recorded here because the topic inventory is theirs even though the text and the examples are
+not:
+
+- The FFI layout and pointer-shape rules in `rust-unsafe/references/ffi-layout-rules.md` follow
+  the topic set of the `unsafe-checker` rules in
+  [actionbook/rust-skills](https://github.com/actionbook/rust-skills) (MIT), which in turn maps
+  the `P.UNS` and `G.UNS` rules of the
+  [Rust Coding Guidelines](https://rust-coding-guidelines.github.io/rust-coding-guidelines-zh/).
+  The prose, the examples, and the rustc 1.97 verification here are original; several upstream
+  rules were dropped as out of date, including one that cites the removed clippy lint
+  `unaligned_references` for what is now the hard error `E0793`.
+- The idea of a compiler-error index that routes a diagnostic to a skill comes from the same
+  repository. The triage table, the fix catalogue, and the escalation rule in
+  `rust-compiler-errors` are written here from the compiler's own output.
 
 ## License
 

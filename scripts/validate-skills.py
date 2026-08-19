@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SKILLS_DIR = ROOT / "skills"
 README = ROOT / "README.md"
+ROUTING = ROOT / "tests" / "routing-cases.md"
 
 # The Agent Skills spec allows six keys. This repository uses three; the other
 # three stay allowed so a skill can declare them when it genuinely needs them.
@@ -45,6 +46,7 @@ FORBIDDEN = [
 ]
 
 failures: list[str] = []
+descriptions: dict[str, str] = {}
 
 
 def fail(where: str, message: str) -> None:
@@ -126,6 +128,8 @@ def check_skill(skill_dir: Path) -> None:
             f"and when to use it, in at least {MIN_DESCRIPTION}",
         )
 
+    descriptions[name] = description
+
     license_value = fields.get("license")
     if license_value and license_value != "BSD-3-Clause":
         fail(where, f"license is {license_value!r}, this repository publishes BSD-3-Clause")
@@ -154,6 +158,39 @@ def check_forbidden_terms() -> None:
                     fail(f"{rel}:{lineno}", f"leaked source-codebase term {term!r}")
 
 
+def check_routing_cases(descriptions: dict[str, str]) -> None:
+    """Every phrase in the routing corpus must survive in its skill's description.
+
+    An agent reads only the description when it decides whether to open a skill,
+    so a description edit that drops a term silently breaks routing for it. This
+    is a static check: it cannot prove a model routes correctly, only that the
+    catalog still claims the terms it promised.
+    """
+    if not ROUTING.is_file():
+        fail("tests/routing-cases.md", "routing corpus is missing")
+        return
+
+    rows = re.findall(r"^\|\s*(.+?)\s*\|\s*([a-z0-9-]+)\s*\|\s*$", ROUTING.read_text(encoding="utf-8"), re.M)
+    rows = [(phrase, skill) for phrase, skill in rows if not set(phrase) <= {"-", " "}]
+    if not rows:
+        fail("tests/routing-cases.md", "routing corpus has no rows")
+        return
+
+    for phrase, skill in rows:
+        if skill not in descriptions:
+            fail("tests/routing-cases.md", f"routes {phrase!r} to {skill!r}, which is not in skills/")
+        elif phrase.lower() not in descriptions[skill].lower():
+            fail(
+                f"skills/{skill}/SKILL.md",
+                f"description no longer contains the routing phrase {phrase!r}; "
+                f"restore it or update tests/routing-cases.md",
+            )
+
+    routed = {skill for _, skill in rows}
+    for name in sorted(set(descriptions) - routed):
+        fail("tests/routing-cases.md", f"skill {name!r} has no routing case")
+
+
 def check_readme_catalog(skill_names: set[str]) -> None:
     linked = set(re.findall(r"skills/([a-z0-9-]+)/SKILL\.md", README.read_text(encoding="utf-8")))
     for name in sorted(skill_names - linked):
@@ -171,6 +208,7 @@ def main() -> int:
     for skill_dir in skill_dirs:
         check_skill(skill_dir)
     check_forbidden_terms()
+    check_routing_cases(descriptions)
     check_readme_catalog({d.name for d in skill_dirs})
 
     if failures:

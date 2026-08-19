@@ -1,6 +1,6 @@
 ---
 name: rust-unsafe
-description: Use when you add or review any unsafe Rust block, FFI boundary (JNI, UniFFI, or hand-rolled extern "C"), raw-pointer arithmetic, transmute, ManuallyDrop, mem::zeroed, ioctl or syscall wrapper, union access, manual unsafe impl Send/Sync, Box::leak, zero-copy buffer or mmap handoff, or any change that removes #![forbid(unsafe_code)] from a previously safe crate. Covers the lint floor for unsafe crates, SAFETY comment discipline, panic safety at FFI boundaries, unaligned reads from untrusted bytes, Drop and double-panic hazards, symbol collision in cdylib crates, Miri and Tree Borrows verification, and a review checklist. Triggers on "unsafe", "FFI", "extern", "raw pointer", "transmute", "*mut/*const", "SAFETY comment", "undefined behavior", "no_mangle", "zero-copy", "mmap", or any soundness question.
+description: Use when you add or review any unsafe Rust block, FFI boundary (JNI, UniFFI, or hand-rolled extern "C"), raw-pointer arithmetic, transmute, ManuallyDrop, mem::zeroed, ioctl or syscall wrapper, union access, manual unsafe impl Send/Sync, Box::leak, zero-copy buffer or mmap handoff, or any change that removes #![forbid(unsafe_code)] from a previously safe crate. Covers the lint floor for unsafe crates, SAFETY comment discipline, panic safety at FFI boundaries, unaligned reads from untrusted bytes, Drop and double-panic hazards, symbol collision in cdylib crates, Miri and Tree Borrows verification, and a review checklist. Triggers on "unsafe", "FFI", "extern", "raw pointer", "transmute", "*mut/*const", "SAFETY comment", "undefined behavior", "no_mangle", "zero-copy", "mmap", "repr(packed)", "alignment", "E0793", "improper_ctypes", "opaque handle", "OwnedFd", or any soundness question.
 license: BSD-3-Clause
 ---
 
@@ -392,6 +392,38 @@ let borrowed = unsafe { nn.as_ref() };
 let owned_again = unsafe { Box::from_raw(nn.as_ptr()) };
 ```
 
+## Layout and pointer shape
+
+These faults pass every safety review and still produce undefined behavior, because the unsafe
+block is correct and the *shape* of the data is wrong. Each row is a rule that the compiler
+cannot infer from a `// SAFETY:` comment.
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `E0793: reference to field of packed struct is unaligned` | A method call, `match`, or `&mut` on a `#[repr(packed)]` field | Copy the field out, or `(&raw const f).read_unaligned()` |
+| Correct on x86-64, traps on ARM | `bytes.as_ptr() as *const u32` then dereference | `u32::from_le_bytes`, `read_unaligned`, or `align_to` |
+| `error: casting &T to &mut T is undefined behavior` | Mutation through a shared reference | `UnsafeCell`; there is no other sound way |
+| A `*const` silently became a `*mut` | `as` on a pointer changes mutability too | `ptr.cast::<T>()`, and `cast_mut` when you mean it |
+| `warning: uses type dyn Trait, which is not FFI-safe` | A fat pointer in a C signature | Pointer plus length, or an opaque handle |
+| Two unrelated handles accepted at the same call | Every handle is `*mut c_void` | One zero-sized `#[repr(C)]` opaque type per handle |
+| Memory grows once per callback registration | The boxed closure context is never reclaimed | Provide the unregister path that calls `Box::from_raw` |
+| Double close, or a read from a reused descriptor | `RawFd` states no owner | `OwnedFd` to own, `BorrowedFd<'_>` to lend |
+| A field is corrupt on one target only | Hand-rolled bitfield masks | A bitfield crate, plus a round-trip test against real bytes |
+| Sound in debug, unsound in release | `debug_assert!` guards an unsafe block | `assert!`, which survives the shipping profile |
+| A handle outlives the data it points at | A raw-pointer struct has no variance or drop check | `PhantomData<&'a T>`, `PhantomData<T>`, or `PhantomData<*mut T>` |
+
+Promote both FFI-safety lints, because they cover opposite directions and one alone leaves half
+the boundary unchecked:
+
+```toml
+[workspace.lints.rust]
+improper_ctypes = "deny"              # types you import from C
+improper_ctypes_definitions = "deny"  # types you export to C
+```
+
+For the worked pattern behind each row, see
+[references/ffi-layout-rules.md](references/ffi-layout-rules.md).
+
 ## Soundness must not assume `Drop` runs
 
 Severity: CRITICAL for a public unsafe API.
@@ -557,6 +589,10 @@ Use this when you review an unsafe block:
 - [ ] For `mem::zeroed()`: is the type a plain C struct with no Rust-level invariant?
 - [ ] For a union field: was the field written before it was read?
 - [ ] For `unsafe impl Send` or `Sync`: is thread safety actually guaranteed by every field?
+- [ ] Does any reference point into a `#[repr(packed)]` struct, or into unaligned bytes?
+- [ ] Does any C signature carry a fat pointer: `dyn Trait`, a slice, or `&[T]`?
+- [ ] Does every boxed callback context have an unregister path that reclaims it?
+- [ ] Does a check that guards an unsafe block use `assert!` rather than `debug_assert!`?
 - [ ] Is the unsafe block as small as it can be?
 - [ ] Does any `Drop::drop` contain `.unwrap()`, `.expect()`, or another panicking call?
 - [ ] Does any unmangled symbol collide with one in another library loaded at the same time?

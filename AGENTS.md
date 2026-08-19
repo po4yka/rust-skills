@@ -15,6 +15,8 @@ Layout is flat. One directory per skill:
 skills/<name>/SKILL.md          the skill itself, always present
 skills/<name>/references/*.md   optional deep material, loaded on demand
 README.md                       the catalog table
+scripts/validate-skills.py      every check CI runs
+tests/routing-cases.md          phrase -> skill, checked against every description
 LICENSE                         BSD-3-Clause
 ```
 
@@ -60,6 +62,9 @@ The body starts at an `# Title` heading directly after the frontmatter.
 - Keep `SKILL.md` near 400 lines. Move tables, long examples, and background to
   `references/<topic>.md`, and link to them from `SKILL.md`.
 - Prefer a triage table (symptom, cause, fix) over prose for failure handling.
+- Compile any Rust example that is meant to be complete before you commit it, and say so at the
+  top of the file. A snippet that does not compile teaches the wrong thing with full confidence.
+  Fragments that show a single line are fine; whole functions and types are not.
 
 ## How to add a skill
 
@@ -75,6 +80,10 @@ The body starts at an `# Title` heading directly after the frontmatter.
 
 3. Add one row to the catalog table in `README.md`, in the section that matches the subject.
    Link the name to `skills/<name>/SKILL.md`. Every skill appears exactly once.
+
+4. Add at least one row to `tests/routing-cases.md`: a phrase a user is likely to type, and the
+   new skill. The phrase must appear in the new `description`. A skill with no routing case
+   fails validation.
 
 ## How to verify a change locally
 
@@ -94,6 +103,8 @@ It checks, for every skill:
 - every `references/*.md` a skill points at exists, whether the pointer is a Markdown link or
   a bare code span;
 - no term from the private source codebases survives anywhere in `skills/` or `README.md`;
+- every phrase in `tests/routing-cases.md` still appears in the description it routes to, and
+  every skill has at least one routing case;
 - the README catalog lists exactly the skills that exist on disk.
 
 Add a term to `FORBIDDEN` in the script the moment one leaks. That is cheaper than finding it
