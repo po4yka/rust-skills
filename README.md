@@ -6,7 +6,6 @@
 unsafe review · atomics · FFI boundaries · sanitizers · profiling · lint policy · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
-[![skills.sh](https://skills.sh/b/po4yka/rust-skills)](https://skills.sh/po4yka/rust-skills)
 [![Rust 1.97 · edition 2024](https://img.shields.io/badge/rust-1.97%20%C2%B7%20edition%202024-000000?style=flat-square&logo=rust)](checks/rust-toolchain.toml)
 [![License BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-0969da?style=flat-square)](LICENSE)
 
