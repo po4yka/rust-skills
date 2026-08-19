@@ -2,7 +2,7 @@
 
 # rust-skills
 
-**Twenty-four agent skills for production Rust:**
+**Thirty-three agent skills for production Rust:**
 unsafe review · atomics · FFI boundaries · sanitizers · profiling · lint policy · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
@@ -76,6 +76,12 @@ Enter by the symptom, not by the skill name.
 | UniFFI checksum mismatch, XCFramework or jniLibs packaging | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
 | A `RUSTSEC` advisory, or a new dependency nobody vetted | [rust-security](skills/rust-security/SKILL.md) |
 | `deny_unknown_fields` or `rename_all` broke the wire format | [rust-serde](skills/rust-serde/SKILL.md) |
+| A lifetime coercion is refused: `is invariant over the parameter`, `borrowed for 'static` | [rust-variance](skills/rust-variance/SKILL.md) |
+| A callback bound rejects `|o| &o.field`, or a struct field holds a closure | [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) |
+| `self: Pin<&mut Self>`, `PhantomPinned`, or a `#[pin]` projection | [rust-pin-projection](skills/rust-pin-projection/SKILL.md) |
+| `cannot be sent between threads safely`, `MutexGuard` is not `Send` | [rust-send-sync](skills/rust-send-sync/SKILL.md) |
+| A `HashMap<TypeId, _>` whose values borrow, `dyn Any`, `downcast_ref` | [rust-type-erasure](skills/rust-type-erasure/SKILL.md) |
+| Every handler in an event loop needs `&mut` to one shared state | [rust-event-loop-state](skills/rust-event-loop-state/SKILL.md) |
 | 16 KiB page alignment, NDK linkers, per-ABI rustflags, `.so` size gates | [rust-android-build](skills/rust-android-build/SKILL.md) |
 
 The full phrase-to-skill list lives in [tests/routing-cases.md](tests/routing-cases.md), and CI
@@ -99,6 +105,10 @@ flowchart LR
     A --> A5[rust-lints]
     A --> A6[rust-macros]
     A --> A7[rust-iterator-impl]
+    A --> A8[rust-variance]
+    A --> A9[rust-callback-bounds]
+    A --> A10[rust-type-erasure]
+    A --> A11[rust-event-loop-state]
 
     B --> B1[memory-model]
     B --> B2[rust-unsafe]
@@ -106,6 +116,8 @@ flowchart LR
     B --> B4[rust-tdd]
     B --> B5[rust-test-tools]
     B --> B6[rust-panic-safety]
+    B --> B7[rust-pin-projection]
+    B --> B8[rust-send-sync]
 
     C --> C1[rust-performance]
     C --> C2[rust-hot-path]
@@ -128,11 +140,11 @@ flowchart LR
 
 ## Catalog
 
-Twenty-seven skills in six groups. Deep material sits in `references/*.md` next to the skill that
+Thirty-three skills in six groups. Deep material sits in `references/*.md` next to the skill that
 owns it.
 
 <details open>
-<summary><b>Language and code discipline</b> — seven skills</summary>
+<summary><b>Language and code discipline</b> — ten skills</summary>
 
 <br>
 
@@ -145,6 +157,9 @@ owns it.
 | [rust-lints](skills/rust-lints/SKILL.md) | `workspace.lints`, `clippy.toml`, `rustfmt.toml`, and `deny.toml` policy, safe lint tightening, suppression justification, and red-gate triage. |
 | [rust-macros](skills/rust-macros/SKILL.md) | `macro_rules!` textual scope and hygiene, fragment follow sets, the recursion limit, proc-macro crate rules, and the facade-and-derive crate split. |
 | [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) | The producing side of iteration: a hand-written `Iterator`, the three `IntoIterator` impls, `FromIterator` and `Extend`, `size_hint`, and the `unconditional_recursion` stack overflow. |
+| [rust-variance](skills/rust-variance/SKILL.md) | Variance, subtyping, and lifetime coercion: the two probe functions that settle any case in one `rustc` run, the table for every constructor and `PhantomData` form, why a trait bound matches by equality, and why adding interior mutability is a breaking change. |
+| [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) | Shaping a callable in a public signature: which bound accepts which closure, `for<'a> Fn(&'a T) -> &'a K` for reference projections, HRTB as a no-escape promise, positional closure inference, and the cost of a generic `F` field against `Box<dyn Fn>`. |
+| [rust-type-erasure](skills/rust-type-erasure/SKILL.md) | Type-keyed storage when the values are not `'static`: why `Any` is bound to `'static`, the ladder from a lifetime-parameterized enum to a `Box<dyn Any>` map to the GAT owner/element bijection, and where the pattern turns unsound. |
 
 </details>
 
@@ -177,7 +192,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Concurrency and unsafe code</b> — three skills</summary>
+<summary><b>Concurrency and unsafe code</b> — six skills</summary>
 
 <br>
 
@@ -186,6 +201,9 @@ owns it.
 | [memory-model](skills/memory-model/SKILL.md) | Atomic ordering selection, happens-before reasoning, fence placement, compare-exchange rules, and verification with Miri and loom. |
 | [rust-async-internals](skills/rust-async-internals/SKILL.md) | `tokio::select!` and cancel safety, `CancellationToken` shutdown trees, blocking-work routing, and async stall and shutdown-hang triage. |
 | [rust-unsafe](skills/rust-unsafe/SKILL.md) | The unsafe lint floor, SAFETY comment discipline, FFI panic guards, unaligned reads from untrusted bytes, and Miri Tree Borrows review. |
+| [rust-pin-projection](skills/rust-pin-projection/SKILL.md) | `Pin`, `Unpin` and `PhantomPinned`: why a `Pin` on an `Unpin` type enforces nothing, `std::pin::pin!` against `Box::pin` and `Pin::new_unchecked`, the four structural pinning obligations, and `pin-project` against `pin-project-lite`. |
+| [rust-send-sync](skills/rust-send-sync/SKILL.md) | The auto traits as a subject: `&T: Send` exactly when `T: Sync`, the reference and smart-pointer table, `Mutex` against `RwLock` payload bounds, `MutexGuard` as `!Send` but `Sync`, and `PhantomData` markers that remove exactly one trait. |
+| [rust-event-loop-state](skills/rust-event-loop-state/SKILL.md) | Who owns the handler set and who owns the state in a tick loop, state as a trait parameter with capability bounds, when an ECS-shaped world earns its runtime conflict panic, and why `async fn(&mut State)` cannot suspend over shared state. |
 
 </details>
 

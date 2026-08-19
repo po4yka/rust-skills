@@ -144,3 +144,47 @@ wrong skill, and put the phrase in the right description in the same change.
 | LazyLock | memory-model |
 | thread_local | memory-model |
 | lazy_static | memory-model |
+| pin projection | rust-pin-projection |
+| structural pinning | rust-pin-projection |
+| pin-project-lite | rust-pin-projection |
+| PhantomPinned | rust-pin-projection |
+| Pin::new_unchecked | rust-pin-projection |
+| self-referential struct | rust-pin-projection |
+| std::pin::pin! | rust-pin-projection |
+| PinnedDrop | rust-pin-projection |
+| address-sensitive | rust-pin-projection |
+| covariant | rust-variance |
+| contravariant | rust-variance |
+| subtyping | rust-variance |
+| is invariant over the parameter | rust-variance |
+| unbounded lifetime | rust-variance |
+| phantomdata variance | rust-variance |
+| &mut is invariant | rust-variance |
+| sender is invariant | rust-variance |
+| one type is more general than the other | rust-callback-bounds |
+| borrowed data escapes outside of closure | rust-callback-bounds |
+| callback returns a reference | rust-callback-bounds |
+| store a closure in a struct | rust-callback-bounds |
+| fn pointer field | rust-callback-bounds |
+| function item types cannot be named directly | rust-callback-bounds |
+| TypeId | rust-type-erasure |
+| dyn Any | rust-type-erasure |
+| downcast_ref | rust-type-erasure |
+| type erasure | rust-type-erasure |
+| anymap | rust-type-erasure |
+| extensions map | rust-type-erasure |
+| resource registry | rust-type-erasure |
+| cannot be sent between threads safely | rust-send-sync |
+| cannot be shared between threads safely | rust-send-sync |
+| MutexGuard is not Send | rust-send-sync |
+| auto trait | rust-send-sync |
+| Arc vs Rc | rust-send-sync |
+| thread::scope | rust-send-sync |
+| event loop | rust-event-loop-state |
+| tick loop | rust-event-loop-state |
+| handler registry | rust-event-loop-state |
+| shared mutable state | rust-event-loop-state |
+| god object | rust-event-loop-state |
+| system and world | rust-event-loop-state |
+| E0499 in my dispatch loop | rust-event-loop-state |
+| coroutine resume | rust-event-loop-state |
