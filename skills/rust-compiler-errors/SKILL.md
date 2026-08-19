@@ -119,7 +119,7 @@ The full catalogue of splits is in
 
 Both say a borrow outlived its target. They differ in what the target was.
 
-```rust
+```rust,compile_fail
 // E0597: `s` is a named local. It is dropped at the end of the inner block.
 let r;
 {
@@ -131,7 +131,7 @@ println!("{r}");
 
 Fix by moving the binding out, so the owner lives at least as long as the borrow.
 
-```rust
+```rust,compile_fail
 // E0716: `foo()` produced a temporary with no name. It dies at the `;`.
 let p = bar(&foo());
 let q = *p;
@@ -150,7 +150,7 @@ the end of the *block*. Almost every E0716 is fixed by one extra `let`.
 
 ## E0507: you hold a reference and you need the value
 
-```rust
+```rust,compile_fail
 struct S { name: String }
 fn f(s: &S) -> String { s.name }   // E0507
 ```
@@ -204,7 +204,7 @@ skill for cancel safety, and the `rust-lints` skill for the lint configuration.
 
 ## E0106: missing lifetime specifier
 
-```rust
+```rust,compile_fail
 struct S { name: &str }   // E0106
 ```
 
@@ -225,12 +225,13 @@ data already live forever, and it moves the error to the caller.
 
 ## E0072: recursive type has infinite size
 
-```rust
-struct Node { next: Option<Node> }        // E0072: the size is unbounded
-struct Node { next: Option<Box<Node>> }   // one pointer, size known
+```rust,compile_fail
+struct Node { next: Option<Node> }   // E0072: the size is unbounded
 ```
 
-The two definitions above cannot coexist; the second replaces the first.
+```rust
+struct Node { next: Option<Box<Node>> }   // one pointer, so the size is known
+```
 
 `Box` for a single owner, `Rc` for shared and single-threaded, `Arc` for shared across threads.
 If the structure has cycles, `Rc` alone leaks: the cycle keeps the count above zero. Use `Weak`

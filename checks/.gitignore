@@ -1,0 +1,5 @@
+examples/
+target/
+manifest.json
+check.json
+check.err

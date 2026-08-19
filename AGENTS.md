@@ -15,8 +15,10 @@ Layout is flat. One directory per skill:
 skills/<name>/SKILL.md          the skill itself, always present
 skills/<name>/references/*.md   optional deep material, loaded on demand
 README.md                       the catalog table
-scripts/validate-skills.py      every check CI runs
+scripts/validate-skills.py      catalog structure checks
 tests/routing-cases.md          phrase -> skill, checked against every description
+checks/                         compile-check harness for the rust examples
+checks/check.sh                 one command that reproduces CI
 LICENSE                         BSD-3-Clause
 ```
 
@@ -62,9 +64,17 @@ The body starts at an `# Title` heading directly after the frontmatter.
 - Keep `SKILL.md` near 400 lines. Move tables, long examples, and background to
   `references/<topic>.md`, and link to them from `SKILL.md`.
 - Prefer a triage table (symptom, cause, fix) over prose for failure handling.
-- Compile any Rust example that is meant to be complete before you commit it, and say so at the
-  top of the file. A snippet that does not compile teaches the wrong thing with full confidence.
-  Fragments that show a single line are fine; whole functions and types are not.
+- Compile any Rust example that is meant to be complete before you commit it. `bash
+  checks/check.sh` does this for the whole catalog. A snippet that does not compile teaches the
+  wrong thing with full confidence.
+- Never write a function with an empty body under a non-unit return type. `fn f() -> Result<T> {
+  // implementation }` does not compile; write `todo!()`. This is the single most common defect
+  the compile check finds.
+- Never define one name twice in a single code block to show a before and an after. Use two
+  blocks. One block cannot hold both, and a reader cannot tell which definition is live.
+- Tag a fence that must not be compiled: ```` ```rust,compile_fail ```` for a deliberate error
+  demonstration, ```` ```rust,ignore ```` for code that cannot compile standalone by design.
+  Prefer fixing the example over tagging it.
 
 ## How to add a skill
 
@@ -87,8 +97,15 @@ The body starts at an `# Title` heading directly after the frontmatter.
 
 ## How to verify a change locally
 
-Run the validator from the repository root before you open a pull request. It is the same
-script that CI runs, so a green run locally means a green run in CI:
+One command runs every gate CI runs, on the toolchain `checks/rust-toolchain.toml` pins:
+
+```bash
+bash checks/check.sh
+```
+
+A green run locally means a green run in CI. It does two things.
+
+### 1. Catalog structure
 
 ```bash
 python3 scripts/validate-skills.py
@@ -109,6 +126,24 @@ It checks, for every skill:
 
 Add a term to `FORBIDDEN` in the script the moment one leaks. That is cheaper than finding it
 after publication.
+
+### 2. Compile-check the examples
+
+```bash
+python3 checks/gen.py
+cd checks && cargo check --examples --keep-going --message-format=json > check.json
+python3 analyze.py check.json                                 # summary and detail
+python3 analyze.py check.json --check-baseline baseline.txt   # the gate
+```
+
+Every ` ```rust ` block in `skills/` is extracted and type-checked. Most are fragments that name
+types the prose defines; the analyzer buckets those and ignores them. It fails on a compile
+error it cannot attribute to an undefined symbol or to the extraction wrapper.
+
+`checks/baseline.txt` is empty and should stay empty. When the gate reports a new suspect, fix
+the example. Add a baseline line only for a failure no fence tag can express, with a comment
+saying why. Add a crate to `checks/Cargo.toml` when a skill starts using it, or every block that
+imports it silently degrades to a fragment. `checks/README.md` has the full description.
 
 Then confirm the CLI still discovers the catalog. This lists the skills and installs nothing:
 

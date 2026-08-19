@@ -257,6 +257,10 @@ Rules:
 - `anyhow::Context` on the way up, to add the operation name and the parameters:
 
   ```rust
+  // `with_context` is a trait method. Without this import it is not in scope,
+  // and the error reads "no method named `with_context`".
+  use anyhow::Context as _;
+
   let raw = std::fs::read_to_string(&path)
       .with_context(|| format!("read config at {}", path.display()))?;
   ```

@@ -281,7 +281,9 @@ A high `Copies` count means the generic was instantiated many times. Fix it with
 fn send<T: AsRef<[u8]>>(data: T) {
     // ... large body ...
 }
+```
 
+```rust
 // After: a thin generic wrapper plus one concrete inner copy.
 fn send<T: AsRef<[u8]>>(data: T) {
     fn inner(data: &[u8]) {

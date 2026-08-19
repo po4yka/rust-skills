@@ -49,3 +49,28 @@ jobs:
             echo "the skills CLI discovered all $(ls -1d skills/*/ | wc -l) skills"
           fi
           exit "$failed"
+
+  examples:
+    name: Compile-check examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No toolchain action. checks/rust-toolchain.toml pins the channel and the
+      # target, and the runner's rustup installs from it on the first cargo call.
+      # That keeps one source of truth for the version a contributor runs.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            checks/target
+          key: checks-${{ runner.os }}-${{ hashFiles('checks/Cargo.lock', 'checks/rust-toolchain.toml') }}
+          restore-keys: checks-${{ runner.os }}-
+
+      # Extracts every ```rust block from skills/, type-checks it, and fails on
+      # a compile failure the analyzer cannot attribute to an undefined symbol
+      # or to the extraction wrapper. The same command a contributor runs.
+      - name: Run checks
+        run: bash checks/check.sh

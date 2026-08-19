@@ -199,12 +199,14 @@ Reference counting cannot break a cycle. Two `Arc`s that point at each other are
 deallocated. Nothing panics and nothing errors. The process simply grows.
 
 ```rust
-// CYCLE: pool -> connection -> pool
+// CYCLE: pool -> connection -> pool. Neither value is ever dropped.
 struct Pool { connections: Vec<Arc<Connection>> }
 struct Connection { pool: Arc<Pool> }
-// Neither value is ever dropped.
+```
 
-// FIX: use Weak for the back-reference
+```rust
+// FIX: Weak for the child-to-parent direction. The count never holds the cycle.
+struct Pool { connections: Vec<Arc<Connection>> }
 struct Connection { pool: Weak<Pool> }
 ```
 
@@ -272,12 +274,16 @@ pub trait Bar { fn bar(&self) -> String; }
 impl<T: Display> Bar for T {
     fn bar(&self) -> String { format!("{}", self) }
 }
+```
 
+```rust
 // SAFE: the trait is sealed, so no downstream impl can ever exist,
 // and the blanket impl is therefore free of conflict risk.
 mod private { pub trait Sealed {} }
 pub trait Bar: private::Sealed { fn bar(&self) -> String; }
-impl<T: Display + private::Sealed> Bar for T { /* ... */ }
+impl<T: Display + private::Sealed> Bar for T {
+    fn bar(&self) -> String { format!("{}", self) }
+}
 ```
 
 Rule: allow a blanket `impl<T: ...> PubTrait for T` only when `PubTrait` is sealed, that is,

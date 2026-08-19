@@ -67,6 +67,12 @@ wrong skill, and put the phrase in the right description in the same change.
 | HWASan | rust-sanitizers-miri |
 | MTE | rust-sanitizers-miri |
 | RUSTSEC | rust-security |
+| deny_unknown_fields | rust-serde |
+| rename_all | rust-serde |
+| untagged | rust-serde |
+| serde(flatten) | rust-serde |
+| skip_serializing_if | rust-serde |
+| serde(try_from) | rust-serde |
 | typosquat | rust-security |
 | cargo-audit | rust-security |
 | red-green-refactor | rust-tdd |

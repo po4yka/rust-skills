@@ -186,11 +186,11 @@ Every `async fn` that may transitively be polled inside `select!` / `timeout` /
 
 ```rust
 /// cancel-safe: only `.await`s on `read` and `mpsc::recv`, both individually cancel-safe.
-async fn read_request(&mut self) -> Result<Request> { /* ... */ }
+async fn read_request(&mut self) -> Result<Request> { todo!() }
 
 /// NOT cancel-safe: `db.insert().await` followed by `send_ack().await` —
 /// cancellation between them leaves the DB written but the client unacked.
-async fn process(&self, stream: TcpStream) -> Result<()> { /* ... */ }
+async fn process(&self, stream: TcpStream) -> Result<()> { todo!() }
 ```
 
 Rule: prefix the comment with `cancel-safe:` or `NOT cancel-safe:` and give a
@@ -331,7 +331,7 @@ long-standing pain points listed under "HRTB pitfalls" below:
 2. Returning futures that borrow from captured state required
    `Box<dyn Future + '_>` workarounds. `async ||` infers the right bound.
 
-```rust
+```rust,ignore
 // PREFERRED (1.85+):
 fn register<F>(callback: F) where F: AsyncFn(&str) -> Result<u32> { ... }
 let cb = async |s: &str| { do_work(s).await };
@@ -475,15 +475,34 @@ Concrete symptom: a function that returned `impl Future + 'static` and takes
 `&self` now infers `impl Future + '_`. Every `tokio::spawn(obj.method())` call
 site breaks.
 
-Fix: use precise `use<..>` syntax (stabilized in Rust 1.82) to opt out of
-capturing specific lifetimes:
+Fix: use precise `use<..>` syntax (stabilized in Rust 1.82) to state exactly
+which lifetimes and type parameters the opaque type captures.
+
+`use<>` with an empty list captures nothing, so it only compiles when the body
+genuinely holds no borrow. A future that keeps a reference must name the
+lifetime, and it is then not `'static`:
 
 ```rust
-// Edition 2024: state explicitly which lifetimes/types are captured
-fn process<'a>(data: &'a str) -> impl Future<Output = u32> + use<> {
-    async move { data.len() as u32 }
+// The future holds `data`, so it captures 'a. It cannot be spawned.
+fn borrows<'a>(data: &'a str) -> impl Future<Output = usize> + use<'a> {
+    async move { data.len() }
 }
 ```
+
+To get a `'static` future back, remove the borrow rather than the capture. Take
+ownership, and `use<>` then holds:
+
+```rust
+// Captures nothing, so the future is 'static and `tokio::spawn` accepts it.
+fn owns(data: String) -> impl Future<Output = usize> + use<> {
+    async move { data.len() }
+}
+```
+
+Writing `use<>` on the borrowing form does not make it `'static`; it fails with
+`E0700: hidden type ... captures lifetime that does not appear in bounds`. The
+lifetime is a property of what the body holds, and the capture list only
+declares it.
 
 The `impl_trait_overcaptures` lint (part of the `rust-2024-compatibility`
 group) flags affected sites before migration. Run `cargo fix --edition` and

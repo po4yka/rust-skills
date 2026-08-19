@@ -1,0 +1,10 @@
+# Pins the toolchain and the compile target for the harness so a local run
+# matches CI exactly. Any cargo invocation inside checks/ uses this. CI installs
+# nothing else; rustup reads this file.
+#
+# When you change the channel, regenerate baseline.txt on the same version in
+# the same commit. Error codes and wording move between releases, and a stale
+# baseline either hides a regression or fails a clean tree.
+[toolchain]
+channel = "1.97.0"
+targets = ["x86_64-unknown-linux-gnu"]

@@ -62,7 +62,7 @@ You can also read any skill directly. Every `SKILL.md` is plain Markdown.
 
 ## Catalog
 
-Twenty-two skills. Deep material sits in `references/*.md` next to the skill that owns it.
+Twenty-three skills. Deep material sits in `references/*.md` next to the skill that owns it.
 
 ### Language and code discipline
 
@@ -79,6 +79,7 @@ Twenty-two skills. Deep material sits in `references/*.md` next to the skill tha
 | Skill | What it covers |
 | --- | --- |
 | [cargo-workflows](skills/cargo-workflows/SKILL.md) | Workspace layout, `--locked` discipline, Cargo profiles and rustflags, cross-compilation, nextest, cargo-deny, and edition migration. |
+| [rust-serde](skills/rust-serde/SKILL.md) | `deny_unknown_fields` and the `rename_all` migration trap, the four enum representations and their wire forms, `flatten` constraints, boundary validation with `try_from`, and the `default` plus `alias` pair for version compatibility. |
 | [rust-security](skills/rust-security/SKILL.md) | cargo-audit, cargo-deny policy, RUSTSEC advisory triage, new-crate vetting against typosquat risk, and untrusted-input parser hardening. |
 | [rust-android-build](skills/rust-android-build/SKILL.md) | Android cdylib builds: NDK linkers, per-ABI rustflags, 16 KiB page alignment, the exported ELF symbol allowlist, and `.so` size gates. |
 
@@ -122,9 +123,13 @@ Twenty-two skills. Deep material sits in `references/*.md` next to the skill tha
 skills/<skill-name>/
 ├── SKILL.md              # frontmatter plus instructions
 └── references/*.md       # optional deep material, linked from SKILL.md
-scripts/validate-skills.py  # the checks CI runs; run it before a pull request
+scripts/validate-skills.py  # catalog structure checks
 tests/routing-cases.md      # phrase -> skill, checked against every description
+checks/                     # compile-check harness for the rust examples
+checks/check.sh             # one command that reproduces CI
 ```
+
+Only `skills/` is published. The rest is tooling; `npx skills add` never sees it.
 
 `SKILL.md` frontmatter holds only the three keys that the
 [Agent Skills specification](https://agentskills.io/specification) allows here: `name`,
@@ -139,12 +144,12 @@ invocations, and failure triage that a codebase learns the hard way.
 
 ## Caveats
 
-- The commands and flags come from the source codebases and from tool documentation. This
-  repository holds no Rust workspace, so CI checks the catalog, not the code inside it. Check a
-  command against your own toolchain before you rely on it in a script. The two exceptions are
-  `rust-compiler-errors/references/borrow-checker-fixes.md` and
-  `rust-unsafe/references/ffi-layout-rules.md`: every example in them was compiled against
-  rustc 1.97 before it was committed, and each says so at the top.
+- Every ` ```rust ` block in the catalog is extracted and type-checked in CI against the
+  toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.97 on edition 2024. Blocks that
+  cannot compile standalone carry a fence tag saying so. What CI does **not** check is whether a
+  command line, a flag, or a version number is still correct — those come from the source
+  codebases and from tool documentation. Check a command against your own toolchain before you
+  rely on it in a script.
 - Pinned versions age. Where a skill names a crate or tool version, treat it as the version the
   rule was written against, and confirm it against your `Cargo.lock`.
 - A few thresholds are conventions rather than measured limits, for example the mutation-score
@@ -172,6 +177,13 @@ not:
 - The idea of a compiler-error index that routes a diagnostic to a skill comes from the same
   repository. The triage table, the fix catalogue, and the escalation rule in
   `rust-compiler-errors` are written here from the compiler's own output.
+- The compile-check harness in `checks/` is adapted from
+  [leonardomso/rust-skills](https://github.com/leonardomso/rust-skills) (MIT). The design that
+  makes it work is theirs: extract each block into a cargo example, bucket the failures so
+  illustrative fragments do not drown a real defect, and gate on a signature that carries no
+  line number. The extractor and the analyzer here are rewritten for this layout, with a
+  `Result<T>` alias for the crate-local alias skills assume, rustdoc fence tags as the opt-out,
+  and an empty baseline instead of an accepted-suspect list.
 
 ## License
 

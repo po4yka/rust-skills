@@ -1,0 +1,16 @@
+# Compile suspects accepted as known.
+#
+# A suspect is an example that fails to compile for a reason the analyzer cannot
+# attribute to an undefined symbol or to the extraction wrapper: a type
+# mismatch, a missing method, a wrong arity, a syntax error. CI fails on any
+# signature that is not listed here.
+#
+# This file is deliberately empty. Every example in the catalog either compiles,
+# resolves to a fragment, or carries a fence tag that says it is not meant to
+# compile. Keep it that way: when the gate reports a new suspect, the first
+# question is whether the example is wrong, not whether the baseline needs a
+# line. Add a line only when the failure is genuinely outside what a fence tag
+# can express, and say why in a comment above it.
+#
+# Regenerate:
+#   python3 checks/analyze.py check.json --emit-baseline > checks/baseline.txt

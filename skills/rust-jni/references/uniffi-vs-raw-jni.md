@@ -39,7 +39,8 @@ pub enum SessionError {
 
 #[uniffi::export]
 pub fn create_session(address: String, port: i32) -> Result<i32, SessionError> {
-    // implementation
+    let _ = (address, port);
+    todo!("bind the socket and return the session handle")
 }
 ```
 

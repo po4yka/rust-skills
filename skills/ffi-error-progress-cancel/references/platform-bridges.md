@@ -24,7 +24,7 @@ Cancellation needs somewhere to put the flag before the job starts, because the
 
 ```rust
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -42,7 +42,10 @@ impl JobRegistry {
     /// Idempotent, non-blocking. Unknown or finished id is a no-op success.
     pub fn cancel(&self, job_id: &str) {
         let mut flags = self.flags.lock().expect("job registry poisoned");
-        flags.entry(job_id.to_owned()).or_default().store(true, /* see memory-model */);
+        // Release pairs with the Acquire load in the worker's poll, so every
+        // write made before cancel is visible once the worker observes the flag.
+        // See the memory-model skill.
+        flags.entry(job_id.to_owned()).or_default().store(true, Ordering::Release);
     }
 
     /// Called by the worker on every exit path, including the cancel path.

@@ -398,6 +398,12 @@ If the answer to any item is yes, revise the change before you merge it.
 | `rust-panic-safety` | Unwind safety, `catch_unwind`, and abort profiles |
 | `rust-performance` | Profiling, benchmarking, and allocation measurement |
 | `memory-model` | Atomics, orderings, and `loom` |
+| `rust-serde` | Types whose encoded form is a contract |
+| `rust-code-style` | Module layout, naming, and the rustdoc contract |
+
+For techniques that move a check from run time to compile time — newtype, `#[non_exhaustive]`,
+sealed traits, typestate, `const fn` and const generics, compile-time layout assertions — see
+[references/type-level-api.md](references/type-level-api.md).
 | `rust-async-internals` | Executors, task scheduling, and blocking escapes |
 | `rust-crate-architecture` | Crate splits, visibility, and dependency direction |
 | `rust-code-style` | Formatting, naming, and rustdoc conventions |
