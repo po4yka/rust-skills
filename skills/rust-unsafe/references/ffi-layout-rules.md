@@ -112,6 +112,38 @@ Never use `align_to` for a type that has an invalid bit pattern. `bool`, `char`,
 type, and every enum have invalid bit patterns. Reinterpreting arbitrary bytes as one of them is
 undefined behavior even when the alignment is correct.
 
+## A slice over a caller-owned buffer or a mapping
+
+State all three guarantees in the SAFETY comment, and state them again at the foreign call site:
+
+```rust
+// SAFETY: `ptr` points at the start of a caller-allocated RGBA8 buffer of
+// `width * height * 4` bytes. The caller guarantees:
+//   1. Non-null, and aligned for `u32`.
+//   2. Exclusively writable: no concurrent read or write from the caller.
+//   3. Valid for the entire duration of this call.
+let pixels = unsafe { std::slice::from_raw_parts_mut(ptr.cast::<u32>(), (width * height) as usize) };
+```
+
+The same rule covers a slice built over a memory-mapped region. The mapping must outlive the
+slice, and the region must not be mutated while the slice is live:
+
+```rust
+/// # Safety
+/// `base` must be the start of a valid mapping of at least `len` bytes. The
+/// mapping must stay alive for `'map`, and must not be written while the
+/// returned slice is live.
+unsafe fn mmap_as_slice<'map>(base: *const u8, len: usize) -> &'map [u8] {
+    // SAFETY: the caller guarantees the mapping is valid, read-only, and lives
+    // for at least `'map`.
+    unsafe { std::slice::from_raw_parts(base, len) }
+}
+```
+
+A fabricated lifetime like `'map` above is a promise the compiler cannot check. Keep the
+function private, and make the owning type hold the mapping so the borrow checker enforces the
+relationship for every caller.
+
 ## Never cast `&T` to `&mut T`
 
 This is a hard error, not a lint you can allow:

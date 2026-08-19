@@ -71,6 +71,7 @@ unused_lifetimes             = "warn"
 unreachable_pub              = "warn"
 elided_lifetimes_in_paths    = "warn"
 let_underscore_drop          = "deny"   # catches `let _ = guard;` swallowing Drop
+unconditional_recursion      = "deny"   # warn by default; catches a body that calls only itself
 non_ascii_idents             = "deny"
 trivial_numeric_casts        = "warn"
 unused_must_use              = "deny"
@@ -151,6 +152,15 @@ Notes on this set:
   pointer work. See `references/lint-catalog.md`.
 - `unsafe_code = "forbid"` belongs in each crate's `lib.rs`, not in the
   workspace table. Otherwise the one crate that owns `unsafe` cannot opt out.
+- `unconditional_recursion` is warn-by-default, so the strict template must
+  promote it. An inherent method that carries a trait method's name resolves
+  first, so `fn into_iter(self) -> Owned { self.into_iter() }` inside
+  `impl IntoIterator` calls the inherent method and passes review. Delete that
+  inherent method in a later cleanup and the same body calls itself. rustc
+  still only warns and the binary links. A debug build then dies with `fatal
+  runtime error: stack overflow, aborting` and exit code 134. A release build
+  is worse: LLVM turns the tail call into an infinite loop, so the process
+  hangs with no diagnostic at all.
 - Most of the performance lints above are not in the `perf` group.
   `assigning_clones` is `pedantic`; `redundant_clone`, `or_fun_call` and
   `needless_collect` are `nursery`; `ptr_arg` and `unnecessary_lazy_evaluations`
@@ -323,16 +333,27 @@ possible. That count is the size of your audit surface. See `rust-unsafe`.
 
 ### Binding and FFI crates
 
-A binding generator that runs on the proc-macro path expands **in the crate**.
-The expansion is not a separate file that clippy skips, so it must satisfy the
-workspace lints. Two consequences:
+A binding generator expands in the crate, but rustc and clippy suppress almost
+every lint on tokens that another crate's macro produced. On rustc 1.97.0 a
+proc macro can emit an unused variable, an unused `mut` and a non-snake-case
+function name. A crate that carries `#![warn(unused_variables, unused_mut,
+non_snake_case)]` gets zero warnings from that expansion. The identical source
+hand-written in the same file gets four. `#![deny(unsafe_op_in_unsafe_fn)]` is
+silent the same way on a macro-emitted `pub unsafe fn f(p: *const u8) -> u8
+{ *p }`, which hard-errors E0133 when you write it yourself. A `macro_rules!`
+defined in the same crate is not exempt. Two consequences:
 
-1. Apply `#![deny(unsafe_op_in_unsafe_fn)]` and document every hand-written
-   `unsafe` block with a `// SAFETY:` comment.
-2. When the expanded code itself trips a workspace lint - for example a
-   generated `pub` tag struct against `clippy::exhaustive_structs` - use a
-   narrow crate-level `#![expect(..., reason = "...")]`. Do not turn the lint
+1. Only a lint that reads an item signature crosses the crate boundary.
+   `clippy::ptr_arg` and `clippy::exhaustive_structs` do fire on generated
+   items, and report `this warning originates in the macro`. Handle those with
+   a narrow crate-level `#![expect(..., reason = "...")]`. Do not turn the lint
    off for the workspace.
+2. `#![forbid(unsafe_code)]` is a soundness gate, not a tidiness lint, so the
+   silence removes a guarantee rather than some noise. A crate that carries it
+   builds, links and runs the `unsafe` a dependency's proc macro injected, and
+   `cargo clippy -- -D unsafe_code -D clippy::undocumented_unsafe_blocks`
+   reports nothing on it. Audit the proc-macro dependencies of a binding crate.
+   `rust-unsafe` owns that procedure.
 
 A JNI layer needs two documented relaxations, because the JNI function
 signatures force them: `missing_safety_doc` and `not_unsafe_ptr_arg_deref`.

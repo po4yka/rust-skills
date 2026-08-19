@@ -12,11 +12,14 @@ Use this skill to write, review, and audit `unsafe` Rust. The rules below apply 
 workspace. Derive the current unsafe inventory from the source tree before you change it.
 Do not trust a memory of where unsafe lives.
 
-Start every unsafe task with these three commands:
+Start every unsafe task with these four commands:
 
 ```bash
-# Which crates promise to contain no unsafe at all.
+# Which crates promise to contain no unsafe in their own source.
 rg -l '#!\[forbid\(unsafe_code\)\]' --type rust
+
+# Which unsafe a dependency macro injects, which the attribute never sees.
+cargo +nightly rustc -p <crate> --profile=check -- -Zunpretty=expanded | rg 'unsafe'
 
 # Where unsafe actually lives.
 rg -n 'unsafe\s*\{|unsafe fn|unsafe impl|unsafe extern' --type rust
@@ -28,9 +31,48 @@ rg -n '#\[unsafe\(no_mangle\)\]|#\[no_mangle\]|#\[unsafe\(export_name|#\[export_
 ## Governance: `#![forbid(unsafe_code)]`
 
 Every crate that holds pure logic carries `#![forbid(unsafe_code)]` at the crate root. Add the
-attribute when you create a crate that has no FFI and no OS-level calls. The attribute is the
-cheapest soundness guarantee available: it is checked by the compiler, and it cannot be
-suppressed by an `#[allow]` further down.
+attribute when you create a crate that has no FFI and no OS-level calls. It is cheap, it is
+checked by the compiler, and an `#[allow]` further down cannot suppress it. A local
+`#[allow(unsafe_code)]` under the attribute is
+`error[E0453]: allow(unsafe_code) incompatible with previous forbid`.
+
+### What the attribute covers, and what it does not
+
+The lint is checked per lexical span. It governs the crate's own source text. It does not govern
+the code the crate compiles to.
+
+| Where the `unsafe` comes from | Result under `#![forbid(unsafe_code)]` |
+| --- | --- |
+| A hand-written `unsafe { ... }` block in the crate | `error: usage of an unsafe block`. The build fails. |
+| A `macro_rules!` defined in the same crate | The same hard error, reported at the macro body and at the call site |
+| A `macro_rules!` exported by any dependency crate | No diagnostic. The crate builds and the unsafe operation runs. |
+| A proc macro from a dependency crate | No diagnostic. The crate builds and the unsafe operation runs. |
+
+The boundary is the crate the macro was written in, not whether the macro is procedural. rustc
+suppresses lints on tokens that an external macro expanded. The rule is general; `unsafe_code`
+is the instance that matters, because it gates soundness and the other lints gate tidiness.
+
+Measured on rustc 1.97.0, edition 2024. A binary whose first line is `#![forbid(unsafe_code)]`
+calls `dep::deref_first!(v)` from an ordinary dependency, and that `macro_rules!` expands to
+`unsafe { *v.as_ptr() }`. `cargo run` prints `9` and exits 0. The same dependency exports a
+second macro that expands a function named `Not_Snake_Case` holding an unused `mut` and an
+unused variable: under `#![warn(unused_variables, unused_mut, non_snake_case)]` rustc prints
+zero warnings, and the identical text written by hand in that file prints three.
+`cargo clippy -p <crate> -- -D unsafe_code -D clippy::undocumented_unsafe_blocks` also reports
+nothing.
+
+So a hit from `rg -l '#!\[forbid\(unsafe_code\)\]'` is not proof that the crate compiles to no
+unsafe, and no dependency filter closes the gap: `cargo tree --prefix none -p <crate> | rg
+'\(proc-macro\)'` lists nothing for a crate that exports a plain `macro_rules!`. Read the
+expansion instead. It is the only check that sees every case, and it prints the injected
+`let x: u8 = unsafe { *v.as_ptr() };` in plain text:
+
+```bash
+cargo +nightly rustc -p <crate> --profile=check -- -Zunpretty=expanded | rg 'unsafe'
+```
+
+`-Zunpretty=expanded` needs nightly, so run this as a periodic audit for every crate that
+applies a macro from a dependency. Do not make it a CI gate.
 
 Removing `#![forbid(unsafe_code)]` from a crate is a reviewable event, not a detail. When you
 remove it, state in the same commit which unsafe operation forced the change and where that
@@ -93,6 +135,17 @@ borrow checker keeps running.
 
 If your `unsafe` block does none of these, delete the block.
 
+### `unsafe trait` and `unsafe fn` are separate axes
+
+Item 4 covers the impl only. `unsafe trait T` binds the implementor: a plain `impl T for X` is
+`error[E0200]: the trait T requires an unsafe impl declaration`. `unsafe fn` binds the caller.
+Neither implies the other, so a safe method of an `unsafe trait` is called with no block. The
+mirror trap costs as much: `unsafe impl` on a safe trait is
+`error[E0199]: implementing the trait T is not unsafe`, so you cannot use the keyword to mark an
+impl as delicate. Put each `# Safety` section where its obligation sits.
+[references/unsafe-patterns.md](references/unsafe-patterns.md) has the axes table and a worked
+`unsafe trait` with one safe method and one unsafe method.
+
 ## Panic safety at the FFI boundary
 
 Severity: CRITICAL.
@@ -100,64 +153,19 @@ Severity: CRITICAL.
 An unwind across an FFI boundary is undefined behavior. Every entry point that a foreign caller
 can reach must contain the panic.
 
-### Hand-rolled `extern "C"`
+- Hand-rolled `extern "C"`: wrap the whole body in `std::panic::catch_unwind` and map the
+  outcome to an integer status. Never write a bare `extern "C"` body. A bare body propagates the
+  panic.
+- JNI on `jni` 0.22: use `EnvUnowned::with_env` plus `into_outcome`. The tri-state result keeps a
+  caught panic separate from a normal error. On `jni` 0.21 and earlier, and inside `JNI_OnLoad`
+  and `JNI_OnUnload`, use `catch_unwind(AssertUnwindSafe(|| { ... }))` and throw a Java
+  exception in the `Err` arm.
+- UniFFI: `uniffi::setup_scaffolding!` plus `#[uniffi::export]` generates the guard. Do not
+  hand-write one. Add a hand-rolled `extern "C"` beside UniFFI only for a measured reason, such
+  as a zero-copy buffer handoff, and apply the `catch_unwind` rule to it.
 
-```rust
-/// # Safety
-/// `ptr` must be valid for writes of `len` bytes and must not be aliased for the
-/// duration of the call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn render_into_buffer(ptr: *mut u8, len: usize) -> i32 {
-    let result = std::panic::catch_unwind(|| {
-        // SAFETY: the caller guarantees `ptr` is valid for `len` bytes, writable,
-        // and not aliased while this call runs.
-        let buf = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
-        render_into_slice(buf)
-    });
-    match result {
-        Ok(Ok(())) => 0,
-        Ok(Err(_)) => -1,
-        Err(_) => -2, // panic caught; never unwind into the caller
-    }
-}
-```
-
-Rule: never write a bare `extern "C"` body. A bare body propagates the panic.
-
-### JNI
-
-`jni` 0.22 gives a tri-state guard. `jni::EnvUnowned::with_env` plus `into_outcome` separates a
-caught panic from a normal error, so you do not lose that distinction at the exit:
-
-```rust
-use jni::{EnvUnowned, Outcome};
-
-pub(crate) fn create_entry(mut env: EnvUnowned<'_>, config: JString<'_>) -> jlong {
-    match env
-        .with_env(move |env| -> jni::errors::Result<jlong> {
-            Ok(create_session(env, config)?)
-        })
-        .into_outcome()
-    {
-        Outcome::Ok(handle) => handle,
-        Outcome::Err(_err) => 0,       // throw a Java exception, return the default
-        Outcome::Panic(_payload) => 0, // already caught: log it, throw, return the default
-    }
-}
-```
-
-On `jni` 0.21 and earlier, which has no `EnvUnowned`, wrap the body in
-`catch_unwind(AssertUnwindSafe(|| { ... }))` and throw a Java exception in the `Err` arm. Raw
-`catch_unwind` is also the only option in `JNI_OnLoad` and `JNI_OnUnload`, where `EnvUnowned` is
-not available.
-
-### UniFFI
-
-The proc-macro path (`uniffi::setup_scaffolding!` plus `#[uniffi::export]`) generates the
-boundary glue and its panic handling. You do not hand-write the guard. This is the reason to
-prefer generated bindings: the boundary you never write is the boundary you never get wrong.
-Add a hand-rolled `extern "C"` beside UniFFI only for a measured reason, such as a zero-copy
-buffer handoff, and apply the `catch_unwind` rule above to it.
+[references/unsafe-patterns.md](references/unsafe-patterns.md) has the worked `extern "C"` and
+JNI entry points.
 
 ### `catch_unwind` catches nothing under `panic = "abort"`
 
@@ -175,11 +183,7 @@ invariants apply to every such call:
 - You call `from_raw` exactly once for that pointer. A second call is a double free.
 - The resulting value does not outlive the frame that owns the handle.
 
-```rust
-// SAFETY: `raw` is a valid local reference returned by the JVM, null-checked
-// above, and consumed exactly once.
-let string = unsafe { JString::from_raw(raw) };
-```
+State all three in the `// SAFETY:` comment above the call.
 
 Centralize the duplication of a process-wide handle, such as a `JavaVM`, in one module. Wrap it
 in a type that the rest of the workspace clones, and write the liveness rationale once in that
@@ -192,33 +196,15 @@ When a foreign caller hands you a buffer and you build a slice over it without a
 caller must guarantee three things for the whole call. State all three in the SAFETY comment,
 and state them again at the foreign call site:
 
-```rust
-// SAFETY: `ptr` points at the start of a caller-allocated RGBA8 buffer of
-// `width * height * 4` bytes. The caller guarantees:
-//   1. Non-null, and aligned for `u32`.
-//   2. Exclusively writable: no concurrent read or write from the caller.
-//   3. Valid for the entire duration of this call.
-let pixels = unsafe { std::slice::from_raw_parts_mut(ptr.cast::<u32>(), (width * height) as usize) };
-```
+1. The pointer is non-null and aligned for the element type.
+2. Access is exclusive: no concurrent read or write from the caller.
+3. The buffer stays valid for the entire duration of the call.
 
 The same rule covers a slice built over a memory-mapped region. The mapping must outlive the
-slice, and the region must not be mutated while the slice is live:
-
-```rust
-/// # Safety
-/// `base` must be the start of a valid mapping of at least `len` bytes. The
-/// mapping must stay alive for `'map`, and must not be written while the
-/// returned slice is live.
-unsafe fn mmap_as_slice<'map>(base: *const u8, len: usize) -> &'map [u8] {
-    // SAFETY: the caller guarantees the mapping is valid, read-only, and lives
-    // for at least `'map`.
-    unsafe { std::slice::from_raw_parts(base, len) }
-}
-```
-
-A fabricated lifetime like `'map` above is a promise the compiler cannot check. Keep the
-function private, and make the owning type hold the mapping so the borrow checker enforces the
-relationship for every caller.
+slice, and the region must not be mutated while the slice is live. A fabricated lifetime on such
+a function is a promise the compiler cannot check. Keep the function private, and make the
+owning type hold the mapping so the borrow checker enforces the relationship for every caller.
+[references/ffi-layout-rules.md](references/ffi-layout-rules.md) has both worked slices.
 
 ## Pointer reads from untrusted byte buffers
 
@@ -231,23 +217,6 @@ alignment.
 On x86-64 a misaligned read is slower, and nothing else. On ARM64 the same read is either a
 `SIGBUS` trap or garbage data, depending on kernel configuration. A test suite on an x86-64
 development host passes; the device run corrupts data or crashes on the same input.
-
-```rust
-// BAD: assumes an alignment the input slice does not promise.
-let header: Header = unsafe { std::ptr::read(buf.as_ptr() as *const Header) };
-
-// CORRECT: an explicit unaligned read.
-let header: Header = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const Header) };
-
-// BETTER: no unsafe at all.
-use zerocopy::FromBytes;
-let header = Header::read_from_prefix(buf).ok_or(Error::Truncated)?;
-
-// Or, for a streaming parser, endianness-explicit and safe:
-use bytes::Buf;
-let mut cur = std::io::Cursor::new(buf);
-let magic = cur.get_u32_le();
-```
 
 Rules:
 
@@ -267,34 +236,22 @@ rg 'ptr::read\(\s*[a-z_][a-z_0-9]*\.as_ptr\(\)\s*as\s*\*const' --type rust -n
 rg 'transmute::<\s*&\[u8\]' --type rust -n
 ```
 
-## Transmute safety table
+[references/unsafe-patterns.md](references/unsafe-patterns.md) has the bad, the correct, and the
+two safe forms side by side.
 
-Reach for the named conversion, not `transmute`. Each safe row below has a std function that
-does the same work and cannot be misapplied to the wrong type.
+## Transmute
 
-| From | To | Sound? | Use instead |
-| --- | --- | --- | --- |
-| `u32` | `f32` | Yes | `f32::from_bits(u)` |
-| `[u8; 4]` | `u32` | Yes | `u32::from_ne_bytes(arr)` |
-| `&T` | `*const T` | Yes | `ptr as *const T` |
-| `Box<T>` | `*mut T` | Yes | `Box::into_raw(b)` |
-| `&'a T` | `&'b T`, longer lifetime | **No** | Restructure the lifetimes |
-| `u8` | `bool` | **No**, unless 0 or 1 | Match on the value |
-| `u8` | `MyEnum` | **No**, unless a valid tag | `MyEnum::try_from(u)` |
-| `Vec<T>` | `Vec<U>` | **No** | Convert element by element |
-| `&[u8]` | `&[Header]` | **No** | `zerocopy::FromBytes` |
+Reach for the named conversion, not `transmute`. Every sound conversion has a std function that
+does the same work and cannot be misapplied to the wrong pair of types: `f32::from_bits`,
+`u32::from_ne_bytes`, `Box::into_raw`, `zerocopy::FromBytes`. The full sound-and-unsound table is
+in [references/unsafe-patterns.md](references/unsafe-patterns.md).
 
 ## `mem::zeroed` for plain C structs
 
 `mem::zeroed()` is sound only when all-zero bytes is a valid value of the type. A plain
-`repr(C)` struct that the kernel or a C library fills in qualifies:
-
-```rust
-// SAFETY: `ifreq` is a plain C struct with no Rust-level invariants, and
-// all-zero bytes is a valid uninitialized value that is overwritten below.
-let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
-ifr.ifr_name = make_ifr_name();
-```
+`repr(C)` struct that the kernel or a C library fills in qualifies, such as `libc::ifreq`. The
+SAFETY comment must say that the type has no Rust-level invariant and that the zero value is
+overwritten before it is read.
 
 Never use `mem::zeroed()` for a type with a Rust-level invariant: `bool`, an `enum`, `NonNull`,
 a reference, `Box`, or any type with a non-trivial `Drop`. Use `MaybeUninit<T>` instead, and do
@@ -311,86 +268,28 @@ Every syscall wrapper must:
    matters to Miri's Tree Borrows model.
 4. Check the return value and convert `io::Error::last_os_error()`. Never discard `errno`.
 
-```rust
-/// # Safety
-/// `fd` must be a live socket descriptor. `T` must match the layout the kernel
-/// writes for the given `level` and `name` pair.
-unsafe fn getsockopt_raw<T>(
-    fd: libc::c_int,
-    level: libc::c_int,
-    name: libc::c_int,
-) -> io::Result<(T, libc::socklen_t)> {
-    // SAFETY: `T` is a plain C struct chosen by the caller to match the option.
-    let mut val: T = unsafe { std::mem::zeroed() };
-    let mut len = std::mem::size_of::<T>() as libc::socklen_t;
-    // SAFETY: `fd` is live per the caller contract; `val` and `len` are valid
-    // for writes of the sizes passed.
-    let rc = unsafe { libc::getsockopt(fd, level, name, (&mut val as *mut T).cast(), &mut len) };
-    if rc == 0 { Ok((val, len)) } else { Err(io::Error::last_os_error()) }
-}
-```
-
 An `ioctl` call needs a SAFETY comment that states three facts: the descriptor is valid, the
 struct fields the kernel reads are populated, and which request number is being issued and what
 it does.
 
-```rust
-// SAFETY: `sock` is a valid AF_INET/SOCK_DGRAM descriptor; `ifr` has `ifr_name`
-// and the MTU field set; SIOCSIFMTU sets the interface MTU.
-let rc = unsafe { libc::ioctl(sock.as_raw_fd(), libc::SIOCSIFMTU, &ifr as *const _) };
-if rc < 0 {
-    return Err(Error::Ioctl("SIOCSIFMTU", io::Error::last_os_error()));
-}
-```
-
-### Union field access
-
 A C union field read is unsafe because the compiler cannot know which variant was written last.
-Zero the struct first, then write before you read:
+Zero the struct first, then write the field before you read it. A descriptor that a foreign
+caller passes in is borrowed, not owned: duplicate it through `BorrowedFd::borrow_raw` before
+you take ownership, or the foreign runtime closes it under you.
 
-```rust
-// SAFETY: `ifr` was zeroed above, and `ifru_flags` is written before any read.
-unsafe {
-    ifr.ifr_ifru.ifru_flags = IFF_TUN | IFF_NO_PI;
-}
-```
+[references/unsafe-patterns.md](references/unsafe-patterns.md) has the worked `getsockopt`,
+`ioctl`, union, and descriptor-duplication calls.
 
-### Duplicating a descriptor received over FFI
+## Pointer arithmetic
 
-A descriptor that a foreign caller passes in is borrowed, not owned. Duplicate it before you
-take ownership, or the foreign runtime will close it under you:
+`wrapping_add` is always sound to compute; do not dereference an out-of-bounds result. `add` is
+UB on the computation, not on the dereference, once the result leaves the allocation.
+`offset_from` needs both pointers in one allocation. The worked calls are in
+[references/unsafe-patterns.md](references/unsafe-patterns.md).
 
-```rust
-// SAFETY: `raw` is a live descriptor for the duration of this call.
-// `BorrowedFd` does not take ownership; `dup` returns an independent descriptor.
-let owned = unsafe { nix::unistd::dup(BorrowedFd::borrow_raw(raw))? };
-```
-
-## Pointer arithmetic reference
-
-```rust
-// wrapping_add: always sound to compute. Do not dereference an out-of-bounds result.
-let p = ptr.wrapping_add(2);
-
-// add: UB when the result leaves the allocation, even without a dereference.
-let third = unsafe { *ptr.add(2) };
-
-// offset_from: both pointers must be in the same allocation.
-let count = unsafe { end.offset_from(start) };
-```
-
-`NonNull` documents the non-null invariant in the type instead of in a comment:
-
-```rust
-use std::ptr::NonNull;
-
-let boxed = Box::new(Buffer::new());
-let nn: NonNull<Buffer> = NonNull::new(Box::into_raw(boxed)).expect("Box::into_raw is non-null");
-// SAFETY: `nn` came from a live Box and has not been freed.
-let borrowed = unsafe { nn.as_ref() };
-// SAFETY: `nn` still points at the allocation from Box::into_raw, consumed once.
-let owned_again = unsafe { Box::from_raw(nn.as_ptr()) };
-```
+`NonNull` documents the non-null invariant in the type instead of in a comment. Build it with
+`NonNull::new(Box::into_raw(b))`, and consume it back through `Box::from_raw` exactly once. The
+worked round trip is in the same reference.
 
 ## Layout and pointer shape
 
@@ -424,13 +323,13 @@ improper_ctypes_definitions = "deny"  # types you export to C
 For the worked pattern behind each row, see
 [references/ffi-layout-rules.md](references/ffi-layout-rules.md).
 
-## Soundness must not assume `Drop` runs
+## Drop hazards
 
 Severity: CRITICAL for a public unsafe API.
 
-`mem::forget` is safe. `ManuallyDrop::new` is safe. A public unsafe API whose soundness depends
-on a guard's destructor running is unsound, because a caller can forget the guard without
-writing a single `unsafe` block.
+Soundness must not assume `Drop` runs. `mem::forget` is safe, and `ManuallyDrop::new` is safe. A
+public unsafe API whose soundness depends on a guard's destructor running is unsound, because a
+caller can forget the guard without writing a single `unsafe` block.
 
 State the invariant in the `# Safety` section, and design the API so that forgetting the guard
 is either impossible or harmless. The standard library shows both correct designs:
@@ -442,42 +341,17 @@ is either impossible or harmless. The standard library shows both correct design
 A future polled inside `select!` can be dropped at any `.await`. Do not make a future's
 correctness depend on its `Drop` running.
 
-## `Drop::drop` must not panic
-
-Severity: CRITICAL.
-
-When a panic is already unwinding and a `Drop` implementation panics, the process aborts
-immediately. A double panic cannot be caught by `catch_unwind`. There is no recovery path.
+`Drop::drop` must not panic. When a panic is already unwinding and a `Drop` implementation
+panics, the process aborts immediately. A double panic cannot be caught by `catch_unwind`. There
+is no recovery path.
 
 Any `.unwrap()`, `.expect()`, or panicking call inside `drop()` is a bomb that fires only while
-an error is already in flight, which is the worst possible moment.
-
-```rust
-// DANGEROUS: aborts the process when dropped during an unwind.
-impl Drop for BufferedWriter {
-    fn drop(&mut self) {
-        self.flush().unwrap();
-    }
-}
-
-// CORRECT: log and discard in drop; expose an explicit fallible close.
-impl Drop for BufferedWriter {
-    fn drop(&mut self) {
-        if let Err(err) = self.flush() {
-            tracing::error!(error = %err, "flush on drop failed");
-        }
-    }
-}
-
-impl BufferedWriter {
-    pub fn close(mut self) -> Result<(), Error> {
-        self.flush()
-    }
-}
-```
+an error is already in flight, which is the worst possible moment. `self.flush().unwrap()` in a
+`Drop` impl is the common shape.
 
 Rule: move every fallible cleanup into an explicit `close()`, `commit()`, or `flush()` that
-returns `Result`. Leave `drop()` as a best-effort fallback that only logs.
+returns `Result`. Leave `drop()` as a best-effort fallback that only logs. The worked pair is in
+[references/unsafe-patterns.md](references/unsafe-patterns.md).
 
 ## One unsafe block breaks local reasoning
 
@@ -519,46 +393,39 @@ Before you write the impl:
 2. Check the trait impls on the type. None may hand out shared access to non-`Sync` state.
 3. Assert the auto trait on each field type at compile time, so a later change to an inner type
    fails the build instead of failing in production. The manual impl on the wrapper is
-   unconditional, so assert the fields, not the wrapper. The assertion needs no dependency:
-
-   ```rust
-   pub struct Inner {
-       pub id: u32,
-   }
-
-   pub struct MyWrapper {
-       pub inner: Inner,
-   }
-   unsafe impl Send for MyWrapper {}
-
-   const _: () = {
-       fn assert_send<T: Send>() {}
-       let _ = assert_send::<Inner>;
-   };
-   ```
-
-   An `Inner` that gains an `Rc<_>` field fails this with E0277. Only a negative assertion, such
-   as `assert_not_impl_all!`, still needs the `static_assertions` crate, because stable Rust has
-   no clean form for a negative bound. That crate is stuck at 1.1.0, released 2019-11-03.
+   unconditional, so assert the fields, not the wrapper. A
+   `const _: () = { fn assert_send<T: Send>() {} let _ = assert_send::<Inner>; };` at module
+   scope needs no dependency, and a field type that gains an `Rc<_>` fails it with E0277. Only a
+   negative assertion, such as `assert_not_impl_all!`, still needs the `static_assertions`
+   crate, because stable Rust has no clean form for a negative bound. That crate is stuck at
+   1.1.0, released 2019-11-03. The worked assertion is in
+   [references/unsafe-patterns.md](references/unsafe-patterns.md).
 4. Tag the impl with a `// SAFETY:` comment that names the fields audited and the argument.
 
 Objects from a C or C++ library are usually not thread-safe. Do not assume otherwise because
 the Rust binding compiles.
 
-## Reference fabrication with `ManuallyDrop`
+## Reference fabrication
 
-Severity: HIGH. Use as a last resort only.
+Severity: CRITICAL. Never hand a caller a `&T` or a `&mut T` built from `RefCell::as_ptr`.
+`as_ptr` does not touch the dynamic borrow counter, so a later `borrow_mut()` succeeds instead
+of panicking, and safe code mutates behind a live shared reference. Yield `Ref<'a, T>` instead,
+so the caller holds the borrow. Treat the pattern as UB on inspection: Miri reports it only when
+a test interleaves the fabricated reference with a mutation, so a clean Miri run proves nothing
+here. Do not generalize the rule to `Cell::as_ptr` or `UnsafeCell::get`, which are the intended
+raw-access APIs. The defect is specific: handing out a reference that outlives the call, from a
+cell the code only shares.
 
-You can fabricate a `&String` from a `&str` with `ManuallyDrop<String>` plus
-`String::from_raw_parts`, because the layouts happen to line up. The technique is:
+The `ManuallyDrop<String>` plus `String::from_raw_parts` form is severity HIGH. It fabricates a
+`&String` from a `&str`, because the layouts happen to line up. It is formally unsound, because
+the `String` was never owned here and the pointer has the wrong provenance. It is also fragile:
+a change to the internal layout or the allocator breaks it silently. Accept `&str` or
+`impl AsRef<str>` instead. The only defensible context is legacy interop that cannot be changed.
+There, document the full invariant, test under `MIRIFLAGS="-Zmiri-tree-borrows"`, and gate the
+call with `cfg(not(miri))` when Miri rejects it.
 
-- Formally unsound. The `String` was never owned here, so the pointer has the wrong provenance.
-- Practically fragile. A change to the internal layout or the allocator breaks it silently.
-- Never necessary in new code. Accept `&str` or `impl AsRef<str>` instead of `&String`.
-
-The only defensible context is legacy interop that cannot be changed. There, document the full
-invariant, test under `MIRIFLAGS="-Zmiri-tree-borrows"`, and gate the call with `cfg(not(miri))`
-when Miri rejects it.
+[references/unsafe-patterns.md](references/unsafe-patterns.md) has the `RefCell::as_ptr`
+demonstration and the three API fixes.
 
 ## Symbol collision in `cdylib` crates
 
@@ -572,26 +439,19 @@ silently, and the wrong function runs. There is no compile-time diagnostic.
 The JNI naming convention, `Java_<package>_<class>_<method>`, gives natural uniqueness. Any
 other unmangled symbol does not. Audit every non-JNI export for uniqueness across all native
 libraries that the host process may load at the same time, including libraries you do not own.
-
-```bash
-rg '#\[unsafe\(no_mangle\)\]|#\[no_mangle\]|#\[unsafe\(export_name|#\[export_name' --type rust -n
-```
+The fourth command in "Purpose" lists every unmangled export in the tree.
 
 ## When unsafe is legitimate
 
-```
-Legitimate:
-  - An FFI export or import: extern "C" / extern "system", and handle construction
-  - An OS-level call with no safe wrapper: ioctl, setsockopt, signal handling
-  - A zero-copy handoff of a large buffer across a boundary, when a copy was measured
-    and found too expensive
-  - SIMD intrinsics on a hot path, after a benchmark justified them
-
-Should not need unsafe:
-  - Protocol and format parsing        -> zerocopy, bytes, and #![forbid(unsafe_code)]
-  - Domain logic, configuration, state -> #![forbid(unsafe_code)]
-  - Anything a safe crate already wraps -> use the crate
-```
+| Case | Verdict |
+| --- | --- |
+| An FFI export or import: `extern "C"`, `extern "system"`, handle construction | Legitimate |
+| An OS-level call with no safe wrapper: `ioctl`, `setsockopt`, signal handling | Legitimate |
+| A zero-copy handoff of a large buffer, after a copy was measured and rejected | Legitimate |
+| SIMD intrinsics on a hot path, after a benchmark justified them | Legitimate |
+| Protocol and format parsing | Use `zerocopy` or `bytes` under `#![forbid(unsafe_code)]` |
+| Domain logic, configuration, state | Use `#![forbid(unsafe_code)]` |
+| Anything a safe crate already wraps | Use the crate |
 
 Performance is a reason only after a measurement. See the `rust-performance` skill for how to
 produce one.

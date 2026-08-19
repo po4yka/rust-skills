@@ -1,8 +1,8 @@
 # Hashing and I/O
 
 Reference for `skills/rust-hot-path/SKILL.md`. It holds the full hasher measurements, the
-HashDoS mechanism, the byte-wise hash derives, and the buffered I/O numbers behind that
-skill's Lookups and I/O sections.
+HashDoS mechanism, the byte-wise hash derives, the buffered I/O numbers, and the line-reading
+loop behind that skill's Lookups, Allocation rate, and I/O sections.
 
 ## 1. What each hasher costs
 
@@ -330,7 +330,61 @@ fn total_len<R: Read>(input: R) -> std::io::Result<usize> {
 Take the swap when the payload is not text, or when a later stage validates it. Use the
 `bstr` crate for byte-string ergonomics afterwards.
 
-## 13. Triage
+## 13. `lines()` allocates one `String` per line
+
+`BufRead::lines` yields `io::Result<String>`, so it allocates once per line. `read_line`
+appends into a `String` you own. Clear it each iteration and the whole file costs two
+allocations. Counted with a counting global allocator on 1.97.0, a 200-line file: 201
+allocations through `lines()`, 2 through the loop below.
+
+```rust
+use std::io::{BufRead, BufReader};
+
+// `lines()` removes one trailing "\n", and one "\r" only when that "\r"
+// precedes the "\n". It keeps every other trailing byte.
+fn strip_eol(line: &str) -> &str {
+    match line.strip_suffix('\n') {
+        Some(s) => s.strip_suffix('\r').unwrap_or(s),
+        None => line,
+    }
+}
+
+fn count_lines(file: std::fs::File) -> std::io::Result<usize> {
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut n = 0;
+    loop {
+        line.clear();                        // keeps the buffer
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        n += strip_eol(&line).len();         // read_line keeps the terminator
+    }
+    Ok(n)
+}
+```
+
+The swap also changes behaviour: `lines()` removes the terminator and `read_line` keeps it.
+Remove it with `strip_suffix`, never with `trim_end()`. `trim_end()` removes all trailing
+whitespace, so it also eats the spaces and tabs that `lines()` preserves. Measured on
+`printf 'foo  \r\nbar\ttab \n'`:
+
+| Line | `lines()` | `read_line` + `trim_end()` | `read_line` + `strip_eol` |
+| --- | --- | --- | --- |
+| 1 | `"foo  "` | `"foo"` | `"foo  "` |
+| 2 | `"bar\ttab "` | `"bar\ttab"` | `"bar\ttab "` |
+
+`trim_end()` is correct only when the caller does not care about trailing whitespace. On a
+fixed-width record, a TSV with an empty last field, or a diff hunk, it deletes content, and
+the failure reads as a parser fault far from the I/O rewrite that caused it.
+
+Keep the `\r` strip inside the `Some` arm. An unconditional `s.strip_suffix('\r')` also
+removes a trailing `\r` that no `\n` follows, which `lines()` keeps: on the bytes
+`"a\nfoo\r"`, `lines()` yields `["a", "foo\r"]` and the unconditional form yields
+`["a", "foo"]`. The `match` above is byte-identical to `lines()` on all 19531 strings of
+length 0 to 6 over `{a, \r, \n, space, tab}`, measured on 1.97.0.
+
+## 14. Triage
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -347,3 +401,5 @@ Take the swap when the payload is not text, or when a later stage validates it. 
 | Output truncated at the tail, no error anywhere | The `BufWriter` was dropped | Explicit `flush()?`, section 10 |
 | One record costs several syscalls | The record exceeds the 8 KiB default | `with_capacity`, section 11 |
 | `Err(InvalidData, "stream did not contain valid UTF-8")` | `read_line` on non-UTF-8 input | `read_until`, section 12 |
+| One allocation per line in a reader | `lines()` yields an owned `String` | `read_line` into one cleared buffer, section 13 |
+| A parser fails on trailing spaces after an I/O rewrite | `trim_end()` replaced what `lines()` did | `strip_suffix`, section 13 |

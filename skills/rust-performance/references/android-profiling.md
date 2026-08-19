@@ -1,6 +1,6 @@
 # Android Native Profiling, Symbolication and HWASan
 
-Deep reference for Rust `cdylib` and `staticlib` targets running on Android devices and emulators. The core `simpleperf` and Perfetto workflow is in SKILL.md.
+Deep reference for Rust `cdylib` and `staticlib` targets running on Android devices and emulators. SKILL.md section 2 holds the routing rule and the two prerequisites you must set before you record.
 
 ## Prerequisites checklist
 
@@ -27,6 +27,79 @@ rustflags = ["-C", "force-frame-pointers=yes"]
 
 [target.x86_64-linux-android]
 rustflags = ["-C", "force-frame-pointers=yes"]
+```
+
+---
+
+## Record a CPU profile with simpleperf
+
+The Android NDK ships `simpleperf` at `$ANDROID_NDK_HOME/simpleperf/`.
+
+`mobile-dev` and `mobile-release` in the examples are profile names of your own choosing. SKILL.md section 8 defines them.
+
+```bash
+# Push the unstripped .so built with the on-device debug profile
+adb push target/aarch64-linux-android/mobile-dev/libmycrate.so /data/local/tmp/
+
+# Record with a call graph while the app runs.
+# The app must be debuggable, or the device must be rooted.
+adb shell simpleperf record \
+  -p $(adb shell pidof com.example.app) \
+  --call-graph dwarf \
+  --duration 30 \
+  -o /data/local/tmp/perf.data
+
+adb pull /data/local/tmp/perf.data .
+```
+
+`-g` is the short form of `--call-graph dwarf`.
+
+Generate a flamegraph with Inferno, which the NDK bundles:
+
+```bash
+python3 $ANDROID_NDK_HOME/simpleperf/inferno.py -sc --record_file perf.data
+# Opens flamegraph.html
+```
+
+Or with the standalone Rust `inferno` tool:
+
+```bash
+cargo install inferno
+simpleperf report-sample --show-callchain perf.data | inferno-flamegraph > flame.svg
+```
+
+To convert the recording for other viewers:
+
+```bash
+simpleperf report-sample --protobuf perf.data -o perf.trace
+```
+
+---
+
+## Record a system trace with Perfetto
+
+Use Perfetto when you need the native profile next to scheduler, binder and app frame data.
+
+```bash
+adb shell perfetto -c - --txt -o /data/local/tmp/trace <<'EOF'
+buffers { size_kb: 65536 }
+data_sources { config {
+    name: "linux.process_stats"
+    target_buffer: 0
+}}
+data_sources { config {
+    name: "linux.perf"
+    target_buffer: 0
+    perf_event_config {
+        timebase { frequency: 999 }
+        callstack_sampling { kernel_frames: true }
+    }
+}}
+duration_ms: 10000
+EOF
+
+adb pull /data/local/tmp/trace .
+# Open at https://ui.perfetto.dev
 ```
 
 ---

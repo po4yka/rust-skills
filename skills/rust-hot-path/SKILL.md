@@ -50,14 +50,6 @@ Measured on rustc 1.97.0:
 Twenty `push` calls on a `Vec<u32>` therefore cost four allocations and end at capacity 32,
 with twelve slots of waste. One `Vec::with_capacity(20)` costs one allocation and no waste.
 
-```rust
-// Known final length. One allocation, no excess.
-let mut ids: Vec<u32> = Vec::with_capacity(20);
-for i in 0..20 {
-    ids.push(i);
-}
-```
-
 ### `reserve` and `reserve_exact` differ only on a non-empty vector
 
 `reserve` applies the amortized policy on top of your request. `reserve_exact` does not.
@@ -121,51 +113,20 @@ is the allocator's choice. `shrink_to_fit` is a footprint tool, never a speed to
 
 ### `format!` in a loop allocates per call
 
-`format!` returns a `String`, so each call allocates. Format into a reused buffer instead.
-The `write!` macro needs `std::fmt::Write` in scope; without the import it fails with
-E0599 and people give up and restore `format!`.
-
-```rust
-use std::fmt::Write as _;
-
-fn labels(ids: &[u32]) -> Result<usize, std::fmt::Error> {
-    let mut buf = String::with_capacity(32);
-    let mut written = 0;
-    for id in ids {
-        buf.clear();
-        write!(buf, "item-{id}")?;
-        written += buf.len();
-    }
-    Ok(written)
-}
-```
-
-To pass a formatted value along without materializing it, use `format_args!`, which
-allocates nothing.
+`format!` returns a `String`, so each call allocates. `write!` into one reused buffer
+instead, and `clear` it each iteration. The macro needs `std::fmt::Write` in scope; without
+the import it fails with E0599. To pass a formatted value along without materializing it,
+use `format_args!`, which allocates nothing. The loop is in
+[references/allocation-reduction.md](references/allocation-reduction.md).
 
 ### `BufRead::lines` allocates one `String` per line
 
-```rust
-use std::io::{BufRead, BufReader};
-
-fn count_lines(file: std::fs::File) -> std::io::Result<usize> {
-    let mut reader = BufReader::new(file);
-    let mut line = String::new();
-    let mut n = 0;
-    loop {
-        line.clear();                        // keeps the buffer
-        if reader.read_line(&mut line)? == 0 {
-            break;
-        }
-        n += line.trim_end().len();          // read_line keeps the newline
-    }
-    Ok(n)
-}
-```
-
-This replaces roughly one allocation per line with two for the whole file. It also changes
-behaviour: `lines()` strips the trailing newline and `read_line` keeps it. Call
-`trim_end()` at the use site, or the parser downstream sees one extra byte per line.
+Read with `read_line` into one `String` that you `clear` each iteration. A 200-line file
+cost 201 allocations through `lines()` and 2 through the loop. `read_line` keeps the line
+terminator, so remove it with `strip_suffix`, never with `trim_end()`: `trim_end()` also
+deletes the trailing spaces and tabs that `lines()` keeps, and the loss surfaces later as a
+parser fault. The loop and the byte-exact `strip_eol` helper are in
+[references/hashing-and-io.md](references/hashing-and-io.md).
 
 More allocation patterns, including `HashMap` capacity, `collect` exactness, and the
 inline-capacity crates, are in
@@ -197,14 +158,12 @@ variant sorted largest first, each field in layout order, and every padding run.
 ```bash
 # Nightly only. Scope it to the current crate; the RUSTFLAGS form dumps every
 # dependency and invalidates the whole build cache.
-cargo +nightly rustc --release -q -- -Zprint-type-sizes
-
-# The output is a compile-time side effect, not an artifact. A second run of an
-# unchanged crate prints nothing, which reads exactly like a clean result.
 touch src/lib.rs && cargo +nightly rustc --release -q -- -Zprint-type-sizes
 ```
 
-Pipe it through `top-type-sizes` on a real crate to compact the output.
+The `touch` matters. The dump is a compile-time side effect, not an artifact, so a second run
+of an unchanged crate prints nothing, and that reads exactly like a clean result. Pipe the
+output through `top-type-sizes` on a real crate to compact it.
 
 ### Box the outsized variant
 
@@ -320,29 +279,16 @@ The hasher decision, the byte-wise `ByteHash` derives, and the I/O measurements 
 
 ## Iterators
 
-**Give a hand-written iterator a `size_hint`.** The default is `(0, None)`, so every
+**Give a hand-written iterator an exact `size_hint`.** The default is `(0, None)`, so every
 downstream `collect` and `extend` falls back to the growth ladder. Collecting 10,000 items
-cost 13 allocations without a hint and 1 with an exact one.
-
-```rust
-struct Counter { remaining: usize }
-
-impl Iterator for Counter {
-    type Item = usize;
-    fn next(&mut self) -> Option<usize> {
-        self.remaining = self.remaining.checked_sub(1)?;
-        Some(self.remaining)
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining, Some(self.remaining))
-    }
-}
-```
+cost 13 allocations without a hint and 1 with an exact one. `rust-iterator-impl` holds the
+impl and the `ExactSizeIterator` contract.
 
 **`collect` is exact only when the source length is exact.** `(0..1000).collect::<Vec<_>>()`
 lands on capacity 1000. Insert a `filter` and the same chain yields 500 elements at
 capacity 512, through the whole ladder. When you know the output length, use
-`with_capacity` plus `extend`.
+`with_capacity` plus `extend`. The per-adaptor table is in
+[references/allocation-reduction.md](references/allocation-reduction.md).
 
 **Do not `collect` to iterate again.** Return `impl Iterator<Item = T>` from the function
 instead of `Vec<T>`. On edition 2024 this needs no lifetime bound; RPIT captures in-scope
@@ -358,60 +304,31 @@ the shared iterators, `into_remainder()` on the `_mut` ones.
 An index expression is checked unless the compiler can prove the index is in range. The
 check is cheap, and the branch it adds is what blocks vectorization.
 
-Verify rather than guess. Compile to assembly and look for the call:
+Three safe shapes remove it, in order of preference:
+
+1. Iterate. `v.iter().copied().sum()` has no index to check.
+2. Reslice first: `let s = &v[..n];`, then index `s` with `0..n`. The length and the loop
+   bound are now the same value.
+3. `assert!(n <= v.len())` once, ahead of the loop.
+
+Measured on 1.97.0 aarch64 at `-O`, all three removed the check. The naive
+`for i in 0..n { t += v[i]; }` kept it. Verify rather than guess:
 
 ```bash
 rustc -O --emit asm --crate-type=lib probe.rs -o out.s
 grep -c 'panic_bounds_check' out.s
 ```
 
-Mark every probe function `#[inline(never)]`. At `opt-level` 2 and above a small
-non-generic `pub fn` with no caller is never emitted: the assembly file comes out 54 bytes
-long, `grep` finds nothing, and that reads exactly like a removed bounds check. With the
-attribute the same file is 2283 bytes and the call is visible.
+Mark every probe function `#[inline(never)]`. Without it a small `pub fn` with no caller is
+not emitted at all: the file comes out 54 bytes long, `grep -c` prints 0, and that reads
+exactly like a removed check.
 
-Three safe shapes remove the check. Measured on 1.97.0 aarch64 at `-O`, the naive loop was
-the only one of the four that kept it:
+Reach for `get_unchecked` only when all three shapes fail and a benchmark justifies it. It
+is `unsafe` and it needs a SAFETY comment that proves the bound; see `rust-unsafe`. Clippy's
+`missing_asserts_for_indexing` finds the sites mechanically, from the `restriction` group.
 
-```rust
-// Keeps the check: the loop bound and the length are unrelated values.
-#[inline(never)]
-pub fn naive(v: &[u32], n: usize) -> u32 {
-    let mut t = 0;
-    for i in 0..n { t += v[i]; }
-    t
-}
-
-// 1. Reslice first, so the length and the loop bound are the same value.
-#[inline(never)]
-pub fn resliced(v: &[u32], n: usize) -> u32 {
-    let s = &v[..n];
-    let mut t = 0;
-    for i in 0..n { t += s[i]; }
-    t
-}
-
-// 2. Assert the range once, ahead of the loop.
-#[inline(never)]
-pub fn asserted(v: &[u32], n: usize) -> u32 {
-    assert!(n <= v.len());
-    let mut t = 0;
-    for i in 0..n { t += v[i]; }
-    t
-}
-
-// 3. Iterate. Preferred: no index exists to check.
-#[inline(never)]
-pub fn iterated(v: &[u32]) -> u32 {
-    v.iter().copied().sum()
-}
-```
-
-Reach for `get_unchecked` only when all three fail and a benchmark justifies it. It is
-`unsafe` and it needs a SAFETY comment that proves the bound; see `rust-unsafe`.
-
-Clippy's `missing_asserts_for_indexing` finds the sites mechanically. It is in the
-`restriction` group, so it is off under every default.
+The four probe functions are in
+[references/inlining-and-codegen.md](references/inlining-and-codegen.md).
 
 ## Inlining
 
@@ -439,24 +356,10 @@ only the bodies that are cross-crate-inlinable, so a call to `g` survives inside
 `f` unless `g` carries its own attribute or the build uses LTO. That is the usual reason an
 `#[inline(always)]` on a dependency function measures as no change.
 
-**Split when one call site of a large function is hot.**
-
-```rust
-fn step_one() {}
-fn step_two() {}
-
-#[inline(always)]
-fn build_inlined() {
-    step_one();
-    step_two();
-}
-
-// Cold call sites use this one, and pay no code bloat.
-#[inline(never)]
-fn build_uninlined() {
-    build_inlined();
-}
-```
+**Split when one call site of a large function is hot.** Keep the body in an
+`#[inline(always)]` function, and give the cold call sites an `#[inline(never)]` wrapper
+around it. They then pay no code bloat. `references/inlining-and-codegen.md` has the
+outlining form, which pushes the rare half out instead.
 
 **Mark the rare path `#[cold]`, and pair it with `#[inline(never)]`.** `#[cold]` lowers to
 the LLVM `cold` function attribute, which biases branch layout and register allocation away
@@ -543,19 +446,9 @@ fn parse_allocates_once() {
 ```
 
 **A comment that names the measurement.** Optimized code has a non-obvious shape. Write
-down why, or the next reader simplifies it away.
-
-```rust
-// 99% of calls carry 0 or 1 elements (measured 2026-08, ingest benchmark),
-// so those two cases skip the general path entirely.
-fn total(values: &[u32]) -> u32 {
-    match values {
-        [] => 0,
-        [only] => *only,
-        rest => rest.iter().sum(),
-    }
-}
-```
+down why, or the next reader simplifies it away. Name the share and the workload, as in
+`// 99% of calls carry 0 or 1 elements (measured 2026-08, ingest benchmark), so those two
+// cases skip the general path entirely.`
 
 ## Review checklist
 
@@ -573,6 +466,7 @@ fn total(values: &[u32]) -> u32 {
 | Skill | For |
 | --- | --- |
 | `rust-performance` | Producing the profile: flamegraphs, DHAT, Criterion, on-device tooling |
+| `rust-iterator-impl` | Writing the `Iterator` impl: `size_hint`, `ExactSizeIterator`, `IntoIterator` |
 | `rust-lints` | Turning these rules into lints, and the `clippy.toml` thresholds |
 | `rust-discipline` | Allocation and concurrency rules at API-design time |
 | `rust-security` | Why a hasher swap is a security decision |

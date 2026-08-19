@@ -2,8 +2,9 @@
 
 Allocation patterns that `skills/rust-hot-path/SKILL.md` names but does not develop: `HashMap`
 capacity, `collect` exactness, zero-filled buffers, inline-capacity types, reference counting,
-and eager arguments. SKILL.md holds the `Vec` growth ladder, `reserve_exact`, `clone_from`, and
-the workhorse-buffer rule. Read those first; this file does not repeat them.
+`format!` in a loop, and eager arguments. SKILL.md holds the `Vec` growth ladder,
+`reserve_exact`, `clone_from`, and the workhorse-buffer rule. Read those first; this file does
+not repeat them.
 
 All figures were measured on rustc 1.97.0, aarch64-apple-darwin, release profile.
 
@@ -16,6 +17,7 @@ All figures were measured on rustc 1.97.0, aarch64-apple-darwin, release profile
 | A zero-filled buffer pays a separate zeroing pass | `resize(n, 0)` instead of `vec![0; n]` | [Zero-filled buffers](#zero-filled-buffers-keep-the-calloc) |
 | One allocation per call for a collection that is almost always tiny | The field is `Vec` or `String` | [Inline capacity](#inline-capacity-smallvec-and-arrayvec) |
 | The allocation count rose after an `Rc` or `Arc` refactor | The wrapper heap-allocates a value that was inline | [Reference counting](#rc-and-arc-are-not-an-allocation-fix) |
+| One allocation per iteration of a formatting loop | `format!` returns an owned `String` | [format! in a loop](#format-in-a-loop-allocates-once-per-call) |
 | An allocation happens on the path that discards the value | `ok_or`, `unwrap_or`, `map_or` | [Eager arguments](#eager-arguments-allocate-on-the-path-that-discards-them) |
 | A raw pointer taken before a `Vec` call dangles after it | `shrink_to_fit` reallocated the buffer | [shrink_to_fit](#shrink_to_fit-reallocates) |
 
@@ -274,6 +276,35 @@ assert!(observer.upgrade().is_none());    // every Weak is dead now
 ```
 
 Do not combine `make_mut` with a `Weak`-based cache or observer list.
+
+## `format!` in a loop allocates once per call
+
+`format!` builds a fresh `String` every call. `write!` appends into a buffer you own. Counted
+with a counting global allocator on 1.97.0, 1000 iterations: 1000 allocations through
+`format!`, 1 through the loop below.
+
+```rust
+use std::fmt::Write as _;
+
+fn labels(ids: &[u32]) -> Result<usize, std::fmt::Error> {
+    let mut buf = String::with_capacity(32);
+    let mut written = 0;
+    for id in ids {
+        buf.clear();
+        write!(buf, "item-{id}")?;
+        written += buf.len();
+    }
+    Ok(written)
+}
+```
+
+Two traps sit on this path. `write!` on a `String` needs `std::fmt::Write` in scope, and
+without the import it fails with E0599, which is where people give up and restore `format!`.
+And `write!` on a `String` returns `std::fmt::Result`, not `std::io::Result`, so the function
+signature changes with the fix.
+
+To hand a formatted value to a callee that takes `fmt::Arguments`, use `format_args!`. It
+borrows its arguments and allocates nothing.
 
 ## Eager arguments allocate on the path that discards them
 

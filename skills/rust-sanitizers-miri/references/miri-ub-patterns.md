@@ -93,6 +93,31 @@ cargo +nightly miri test --locked
 MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked
 ```
 
+The same defect wears a std API as a disguise. An `unsafe` deref of
+`RefCell::as_ptr` produces a reference the `RefCell` does not track, because
+`as_ptr` never touches the dynamic borrow counter. The `rust-unsafe` skill states
+the rule and the API fixes. These are the two messages it produces, for an
+`Rc<RefCell<String>>` whose fabricated `&String` is read after a `borrow_mut()`:
+
+| Model | Message |
+|---|---|
+| Stacked Borrows, the default | `trying to retag from <TAG> for SharedReadOnly permission at allocN[OFFSET], but that tag does not exist in the borrow stack for this location` |
+| `-Zmiri-tree-borrows` | `reborrow through <TAG> at allocN[OFFSET] is forbidden` |
+
+Miri is deterministic, so a rerun of the same binary reproduces the same tag and
+the same allocation id. Both change with the toolchain and with the program.
+`OFFSET` is target dependent: on a 64-bit target it is `0x18`, because the
+`RefCell` borrow flag takes 8 bytes and the `Rc` header takes 16. On
+`i686-unknown-linux-gnu` the same program reports `0xc`.
+
+Miri reports this only when the program interleaves the fabricated reference with
+the mutation. Read the reference before the `borrow_mut()` instead of after, and
+the same `cargo +nightly miri run` exits 0 with no diagnostic. An iterator built on
+`RefCell::as_ptr` therefore passes a Miri suite whose tests never hold a yielded
+reference across a `borrow_mut()`. A clean Miri run proves nothing about this
+pattern. Treat it as UB on inspection and change the API shape. Miri is a
+confirmation here, never the gate.
+
 ### Uninitialized memory
 
 ```rust

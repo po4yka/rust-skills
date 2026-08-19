@@ -1,8 +1,9 @@
 # Inlining and codegen inspection
 
-Measured inlining thresholds, the compile-time price of `#[inline]`, and the commands that show
-what the compiler did. It serves the Inlining section of `skills/rust-hot-path/SKILL.md`, which
-gives the four attribute forms and the rule that every attribute needs a number.
+Measured inlining thresholds, the compile-time price of `#[inline]`, the bounds-check probes,
+and the commands that show what the compiler did. It serves the Inlining and Bounds checks
+sections of `skills/rust-hot-path/SKILL.md`, which give the four attribute forms and the rule
+that every attribute needs a number.
 
 All figures come from rustc 1.97.0. The host is `aarch64-apple-darwin` unless the text names
 another target.
@@ -349,10 +350,70 @@ use std::simd::u8x16;
 Write the intrinsics per architecture behind `#[cfg(target_arch = ...)]`, and keep a plain scalar
 fallback for every other target.
 
+## Bounds checks: probe the assembly, do not guess
+
+An index expression is checked unless the compiler can prove the index is in range. The check
+is cheap; the branch it adds is what blocks vectorization. Compile one file to assembly and
+count the panic call:
+
+```bash
+rustc -O --emit asm --crate-type=lib probe.rs -o out.s
+grep -c 'panic_bounds_check' out.s
+```
+
+Mark every probe function `#[inline(never)]`. A small non-generic `pub fn` with no caller is
+never emitted at `-O`, because it fits the cross-crate-inline budget above and is instantiated
+per caller instead. The naive probe below then produces a 54-byte file that holds two
+directives, and `grep -c` prints 0. That reads exactly like a removed bounds check. With
+`#[inline(never)]` the same source emits the body and `grep -c` prints 1.
+
+Measured on 1.97.0, aarch64-apple-darwin, each function compiled alone with
+`#[inline(never)]`: `naive` printed 1, and the three shapes below printed 0.
+
+```rust
+// Keeps the check: the loop bound and the length are unrelated values.
+#[inline(never)]
+pub fn naive(v: &[u32], n: usize) -> u32 {
+    let mut t = 0;
+    for i in 0..n { t += v[i]; }
+    t
+}
+
+// 1. Reslice first, so the length and the loop bound are the same value.
+#[inline(never)]
+pub fn resliced(v: &[u32], n: usize) -> u32 {
+    let s = &v[..n];
+    let mut t = 0;
+    for i in 0..n { t += s[i]; }
+    t
+}
+
+// 2. Assert the range once, ahead of the loop.
+#[inline(never)]
+pub fn asserted(v: &[u32], n: usize) -> u32 {
+    assert!(n <= v.len());
+    let mut t = 0;
+    for i in 0..n { t += v[i]; }
+    t
+}
+
+// 3. Iterate. Preferred: no index exists to check.
+#[inline(never)]
+pub fn iterated(v: &[u32]) -> u32 {
+    v.iter().copied().sum()
+}
+```
+
+Reach for `get_unchecked` only when all three shapes fail and a benchmark justifies it. It is
+`unsafe` and it needs a SAFETY comment that proves the bound; see `rust-unsafe`. Clippy's
+`missing_asserts_for_indexing` finds the sites mechanically. It is in the `restriction` group,
+so it is off under every default.
+
 ## Triage
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| A bounds-check probe finds nothing, and the function is small | The `pub fn` was never emitted | Add `#[inline(never)]` to the probe |
 | `#[inline(always)]` measured as no change | The attribute is not transitive; the callee still stands | Mark the callee too, and confirm with `nm` |
 | A dependency function shows in a profile after a refactor | The code moved into its own crate, and the body is over the threshold | Add `#[inline]`, or turn on LTO |
 | Adding `#[inline]` made no difference at all | The build already uses `lto = true` | Remove the attribute and keep the compile time |

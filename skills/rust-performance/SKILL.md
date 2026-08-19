@@ -52,22 +52,13 @@ cargo flamegraph --locked --bin myapp -- --workers 4 --input data.bin
 # Profile a benchmark (pass --bench through to the harness)
 cargo flamegraph --locked --bench my_bench -p my-bench-crate -- --bench
 
-# Profile a specific integration test
-cargo flamegraph --locked --test integration_tests -- test_name
-
-# Point cargo at a nested workspace from the repository root
-cargo flamegraph --locked --manifest-path path/to/Cargo.toml --bin myapp
-
 # Custom sample frequency; 997 Hz avoids aliasing with periodic work
 cargo flamegraph --locked --freq 997 --bin myapp
-
-# Write to a chosen file
-cargo flamegraph --locked -o /tmp/fg.svg --bin myapp
 ```
 
 On macOS `cargo flamegraph` uses DTrace and needs `sudo`. On Linux it uses `perf`.
 
-See [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) for the Linux and macOS prerequisites.
+See [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) for the Linux and macOS prerequisites, and for the test, example, `--manifest-path` and output-file invocations.
 
 ### Reading flamegraphs
 
@@ -117,91 +108,14 @@ dhat::assert_eq!(dhat::HeapStats::get().total_blocks, 1);
 
 ## 2. Android on-device profiling
 
-Host tools such as `perf`, `heaptrack` and DHAT do not work for Android targets. Use `simpleperf` or Perfetto.
+Host tools such as `perf`, `heaptrack` and DHAT do not work for Android targets. Use `simpleperf` for a CPU profile of one process. Use Perfetto when you need the native profile next to scheduler, binder and app frame data.
 
-### Prerequisites
+Set two things before you record:
 
-| Requirement | Why | How |
-|-------------|-----|-----|
-| `-C force-frame-pointers=yes` for every Android target | `simpleperf` cannot walk ARM64 stacks reliably without it | Set `rustflags` per target in `.cargo/config.toml` |
-| Debug symbols kept in the debug APK | Otherwise the profiler shows raw addresses | Enable the Android Gradle `keepDebugSymbols` packaging option for your `.so` |
-| An unstripped `.so` kept on the host | Needed for offline symbolication | Keep the copy under `target/<triple>/<profile>/` before Gradle strips it |
-| A global panic hook that captures a backtrace | Native panics otherwise reach logcat with no stack | Install it in `JNI_OnLoad` or at library init |
+- `-C force-frame-pointers=yes` for every Android target, as per-target `rustflags` in `.cargo/config.toml`. Without it `simpleperf` cannot walk ARM64 stacks and the flamegraph comes out empty. The cost is one reserved register (`x29` on ARM64).
+- An unstripped `.so` kept on the host, under `target/<triple>/<profile>/`. Gradle packages a stripped copy, and every symbolication step needs the unstripped one.
 
-The frame pointer cost is negligible. One general-purpose register (`x29` on ARM64) is reserved.
-
-### simpleperf (CPU profiling)
-
-The Android NDK ships `simpleperf` at `$ANDROID_NDK_HOME/simpleperf/`.
-
-`mobile-dev` and `mobile-release` in the examples are profile names of your own choosing. Section 8 defines them.
-
-```bash
-# Push the unstripped .so built with the on-device debug profile
-adb push target/aarch64-linux-android/mobile-dev/libmycrate.so /data/local/tmp/
-
-# Record with a call graph while the app runs.
-# The app must be debuggable, or the device must be rooted.
-adb shell simpleperf record \
-  -p $(adb shell pidof com.example.app) \
-  --call-graph dwarf \
-  --duration 30 \
-  -o /data/local/tmp/perf.data
-
-adb pull /data/local/tmp/perf.data .
-```
-
-`-g` is the short form of `--call-graph dwarf`.
-
-Generate a flamegraph with Inferno, which the NDK bundles:
-
-```bash
-python3 $ANDROID_NDK_HOME/simpleperf/inferno.py -sc --record_file perf.data
-# Opens flamegraph.html
-```
-
-Or with the standalone Rust `inferno` tool:
-
-```bash
-cargo install inferno
-simpleperf report-sample --show-callchain perf.data | inferno-flamegraph > flame.svg
-```
-
-To convert the recording for other viewers:
-
-```bash
-simpleperf report-sample --protobuf perf.data -o perf.trace
-```
-
-### Perfetto (system-wide tracing)
-
-Use Perfetto when you need the native profile next to scheduler, binder and app frame data.
-
-```bash
-adb shell perfetto -c - --txt -o /data/local/tmp/trace <<'EOF'
-buffers { size_kb: 65536 }
-data_sources { config {
-    name: "linux.process_stats"
-    target_buffer: 0
-}}
-data_sources { config {
-    name: "linux.perf"
-    target_buffer: 0
-    perf_event_config {
-        timebase { frequency: 999 }
-        callstack_sampling { kernel_frames: true }
-    }
-}}
-duration_ms: 10000
-EOF
-
-adb pull /data/local/tmp/trace .
-# Open at https://ui.perfetto.dev
-```
-
-### Symbolication and memory debugging
-
-Offline symbolication with `ndk-stack` and `llvm-addr2line`, HWASan builds, Android Studio LLDB and the native memory profiler are covered in [references/android-profiling.md](references/android-profiling.md).
+The `simpleperf` and Perfetto commands, the full prerequisites table, offline symbolication with `ndk-stack` and `llvm-addr2line`, HWASan builds, Android Studio LLDB and the native memory profiler are in [references/android-profiling.md](references/android-profiling.md).
 
 ---
 
@@ -368,6 +282,43 @@ A low p-value is not proof either. Wall-clock variance caused by memory layout �
 
 Benchmark structure, `Throughput` reporting, statistical configuration and async benchmarks are in [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md).
 
+### Prove the benchmark measured something
+
+`black_box` on the input and on the output does not prove the work ran. LLVM rewrites an arithmetic reduction such as `(0..n).sum()` into the closed form `n * (n - 1) / 2`, so the routine really becomes O(1), and a `black_box` on each end does not bring the loop back. Measured under `cargo +nightly bench`, `black_box` on both sides: `closed_form_2m` 0.58 ns/iter and `closed_form_20m` 0.57 ns/iter. A 10x input moved the time by 1.02x. The same 10x change on a pre-built `Vec<u64>` moved it 11.5x to 13.2x over four runs. A `black_box` inside the reduction, as in `(0..black_box(n)).map(black_box).sum::<u64>()`, does emit the loop again, but then the barrier is what you measure.
+
+Run the identical routine at two problem sizes 10x apart, as two benchmark functions in the same binary. Real work moves the time. Folded work does not.
+
+```rust
+use std::hint::black_box;
+use std::time::Instant;
+
+/// Seconds per call of `f`, averaged over `reps` calls.
+fn per_call<T>(reps: u32, mut f: impl FnMut() -> T) -> f64 {
+    let start = Instant::now();
+    for _ in 0..reps { black_box(f()); }
+    start.elapsed().as_secs_f64() / f64::from(reps)
+}
+
+fn main() {
+    // Folded: LLVM rewrites `(0..n).sum()` into n * (n - 1) / 2.
+    let folded = per_call(1_000_000, || black_box((0..black_box(20_000_000u64)).sum::<u64>()))
+        / per_call(1_000_000, || black_box((0..black_box(2_000_000u64)).sum::<u64>()));
+
+    // Real: the sum reads memory that the compiler cannot fold away.
+    let small: Vec<u64> = (0..2_000_000).collect();
+    let large: Vec<u64> = (0..20_000_000).collect();
+    let real = per_call(50, || black_box(&large).iter().sum::<u64>())
+        / per_call(50, || black_box(&small).iter().sum::<u64>());
+
+    // Eighteen release runs: folded ratio 0.93 to 1.27, real ratio 11.8 to 14.7.
+    println!("folded ratio = {folded:.2}, real ratio = {real:.2}");
+}
+```
+
+Read the ratio in one direction only. A ratio near 1.0 for a 10x input change means the benchmark measured nothing. Do not require a ratio near 10: cache effects make it superlinear, and fixed per-iteration overhead makes it sublinear for a cheap routine.
+
+The Criterion examples in [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) pass every fixture through `black_box`. That guards against a discarded result. It does not guard against a folded loop. Apply this scaling check to each of them before you trust the number.
+
 ### Long correctness tests as a regression signal
 
 Full-pipeline correctness tests, such as golden-output tests, are not benchmarks, but they do measure wall-clock time. If such a test starts taking more than twice its usual time, treat it as a performance regression and profile it. See `rust-test-tools`.
@@ -407,13 +358,7 @@ rayon::ThreadPoolBuilder::new()
 
 Profile names are your own convention. Define them once in the workspace `Cargo.toml`.
 
-Cargo reads `[profile.*]` only from the workspace-root manifest. A profile table in a workspace member, or in a dependency, is discarded. The build gives one warning and continues:
-
-```text
-warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
-```
-
-A library crate therefore cannot ship optimization settings to its consumers. Document the settings for downstream users instead.
+Cargo reads `[profile.*]` only from the workspace-root manifest. A table in a member crate or in a dependency is discarded, so a library crate cannot ship optimization settings to its consumers.
 
 ```toml
 [profile.release]
@@ -462,11 +407,9 @@ LTO comparison:
 | `lto = "fat"` | Slow | +15-30% | Maximum performance or minimum size |
 | `codegen-units = 1` | Slowest | Best | Always pair with LTO for release |
 
-`lto = false` does not turn LTO off. Thin-local LTO is the implicit default for every build with `opt-level > 0`, release included, and `false` stops only the cross-crate part. Verified with `cargo build --release -v`: `lto = false` passes rustc `-C embed-bitcode=no` alone, `lto = "off"` passes `-C embed-bitcode=no -C lto=off`. Benchmarking "LTO on against LTO off" by flipping `false` and `"thin"` therefore compares thin-local LTO against thin LTO and under-reports the delta.
-
 `opt-level = "z"` trades throughput for size. Measure it. On a compute-bound hot path `opt-level = 3` can be the better ship setting even on mobile.
 
-Where Cargo reads each setting from, `target-cpu`, profile-guided optimization and the global allocator are in [references/build-configuration.md](references/build-configuration.md).
+Where Cargo reads each setting from, why `lto = false` does not turn LTO off, `target-cpu`, profile-guided optimization and the global allocator are in [references/build-configuration.md](references/build-configuration.md).
 
 ---
 
@@ -492,14 +435,11 @@ The full build-time playbook — sccache, the cross-compilation target matrix, w
 | Flamegraph shows empty or truncated stacks | No frame pointers | Add `-C force-frame-pointers=yes` for the target in `.cargo/config.toml` |
 | Symbolication shows `<unknown>` | Stripped library | Use the unstripped `.so` from `target/<triple>/<profile>/`, not the packaged copy |
 | Profiling a release build shows no symbols | The ship profile strips symbols | Profile the on-device debug profile, or symbolicate offline |
-| `simpleperf record` gives permission denied | App is not debuggable | Set `android:debuggable="true"`, or run `adb shell` as root |
-| ASan build fails on Android | ASan is unsupported since NDK r26 | Use HWASan |
-| HWASan does nothing on an emulator | HWASan is ARM64-only | Use a physical ARM64 device or an ARM64 emulator image |
-| Panic reaches logcat with no backtrace | Panic hook not installed, or installed before logging init | Install the hook after logging init |
 | `cargo flamegraph` fails on Linux | `perf_event_paranoid` too high | Set it to 1 or lower |
 | `cargo flamegraph` fails on macOS | DTrace blocked | Run with `sudo`; check SIP |
 | Benchmark results swing by more than 10% between runs | Thermal or scheduler noise | Fix the power state, close background load, raise `sample_size` |
 | Binary grew after a dependency bump | New monomorphizations or new codegen | `cargo bloat --crates` then `cargo llvm-lines` on the top crate |
+| An Android profiling or symbolication step fails | Device, NDK or packaging setup | The common-mistakes table in [references/android-profiling.md](references/android-profiling.md) |
 
 ---
 
@@ -538,7 +478,7 @@ Before you claim a performance change:
 ## References
 
 - [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) — flamegraph prerequisites, install, and the Criterion authoring reference.
-- [references/android-profiling.md](references/android-profiling.md) — HWASan, offline symbolication, panic backtraces, Android Studio LLDB and native memory profiler.
+- [references/android-profiling.md](references/android-profiling.md) — the `simpleperf` and Perfetto commands, offline symbolication, panic backtraces, HWASan, Android Studio LLDB and native memory profiler.
 - [references/build-configuration.md](references/build-configuration.md) — where Cargo reads settings from, `opt-level`, `target-cpu`, PGO, global allocator.
 - [references/build-time-optimization.md](references/build-time-optimization.md) — sccache, cross-compilation matrix, workspace splitting, linkers.
 - Android NDK simpleperf documentation: `$ANDROID_NDK_HOME/simpleperf/doc/`
