@@ -1,0 +1,508 @@
+---
+name: rust-panic-safety
+description: Panic policy for Rust — pick unwind or abort, stop panics at any FFI boundary that must not unwind with catch_unwind, convert them into typed errors and foreign status codes or exceptions, audit unwrap and expect, and keep data valid when a panic passes through. Use when you add or review an extern "C", extern "system", JNI, or UniFFI entry point, set the panic strategy in a Cargo profile, install a panic hook, replace unwrap or expect with typed errors, choose between thiserror and anyhow, debug an abort with no Rust backtrace, or handle a panic in an async task, a spawned thread, or a Drop implementation.
+license: BSD-3-Clause
+---
+
+# Rust panic safety
+
+## Purpose
+
+Use this skill when a panic can leave Rust and reach code that cannot handle it. That
+includes every `extern` entry point, every callback that a foreign runtime calls, every
+spawned task, and every `Drop` implementation.
+
+The skill gives you four things:
+
+1. A panic strategy decision for the crate and the profile.
+2. A guard pattern for each boundary shape.
+3. A policy for `.unwrap()`, `.expect()`, and typed errors.
+4. An audit checklist and a failure triage table.
+
+Derive the current state of the workspace from the source tree. Do not trust a memory of
+where the boundaries are, and do not carry a panic count from one review to the next.
+
+## Start here: find the boundaries
+
+```bash
+# Every function that foreign code can call.
+rg -n 'extern "(C|system|C-unwind|system-unwind)"' --type rust
+
+# Every symbol that leaves the crate unmangled.
+rg -n '#\[unsafe\(no_mangle\)\]|#\[no_mangle\]|#\[export_name|#\[unsafe\(export_name' --type rust
+
+# Every guard that already exists.
+rg -n 'catch_unwind|AssertUnwindSafe|into_outcome' --type rust
+
+# Every panic strategy declared in the workspace.
+rg -n 'panic\s*=\s*"(abort|unwind)"' -g '**/Cargo.toml'
+```
+
+Compare list 1 with list 3. Any entry point in list 1 with no guard is a finding.
+
+## Rule 1: a panic must never unwind out of a function the foreign side calls
+
+Rust 1.81 and later insert an abort shim on an `extern "C"` boundary. The process dies with
+`SIGABRT`. Compilers before 1.81 treat the same unwind as undefined behaviour. Both results
+are fatal, and both destroy the diagnostic value of the crash: the host runtime reports a
+corrupt stack, not a Rust panic message.
+
+Never write a bare `extern` body. Wrap it, always.
+
+The only exception is `extern "C-unwind"`, which permits an unwind to pass through when both
+sides support it. Use it only when the foreign side truly expects a forced unwind. It does
+not make a Rust panic safe for a C, Java, or Swift caller.
+
+## Choose the panic strategy before you write the guard
+
+| Strategy | `catch_unwind` | Binary size and speed | Use when |
+|---|---|---|---|
+| `panic = "unwind"` (default) | Works. Panics are catchable. | Landing pads add code. | You must survive a panic: a shared library inside a host process, a server that isolates a request, any FFI boundary that returns an error to the caller. |
+| `panic = "abort"` | Dead. The process aborts at the panic site. | Smaller, marginally faster. | A standalone binary where a panic is a crash anyway, and no guard depends on catching. |
+
+```toml
+[profile.release]
+panic = "unwind"     # required if any entry point relies on catch_unwind
+overflow-checks = true
+debug = 1            # keep line tables so the panic location resolves
+```
+
+Rules:
+
+- A `cdylib` that a host runtime loads must build with `panic = "unwind"` if any entry point
+  uses `catch_unwind`. `panic = "abort"` silently turns every guard into dead code.
+- Cargo ignores the `panic` key for the `test` and `bench` profiles. A `#[should_panic]`
+  test therefore still runs under unwind even when release aborts. Do not read that as proof
+  that the shipped library unwinds.
+- Set the strategy once, in the workspace root manifest, and state the reason in a comment.
+  A per-crate override that disagrees with the boundary crate is a defect.
+
+## What `catch_unwind` catches
+
+`std::panic::catch_unwind` catches an unwinding panic that starts inside the closure, on the
+same thread. It does not catch:
+
+- A panic on another thread. Join that thread and inspect its result.
+- A process abort, including a double panic and an allocation failure.
+- A stack overflow. That is a signal, not a panic.
+- A foreign exception. Rust aborts with `fatal runtime error: Rust cannot catch foreign
+  exceptions`. Catch a C++ exception on the C++ side.
+- Anything at all when the crate builds with `panic = "abort"`.
+
+`catch_unwind` costs nothing measurable on the success path. Never skip a guard for
+performance.
+
+## `UnwindSafe` and `AssertUnwindSafe`
+
+`catch_unwind` requires the closure to be `UnwindSafe`. The bound is a warning, not a proof:
+it marks values that a panic could leave in a broken but observable state. `&mut T` and
+interior-mutable types are not `UnwindSafe`.
+
+```rust
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
+// The compiler cannot prove `state` is consistent after a panic. You must.
+let result = catch_unwind(AssertUnwindSafe(|| run(&mut state)));
+```
+
+When you write `AssertUnwindSafe`, add a comment that names the invariant you checked, in the
+same style as a `SAFETY` comment. If you cannot name one, restore the invariant instead: drop
+the object, rebuild it, or mark it poisoned so later calls fail fast.
+
+## The guard pattern: hand-rolled C ABI
+
+Return a status code, never a `Result` and never a panic. Reserve one code for a caught
+panic so the caller can tell a domain error from a bug.
+
+```rust
+pub const OK: i32 = 0;
+pub const ERR_INVALID_INPUT: i32 = -1;
+pub const ERR_IO: i32 = -2;
+pub const ERR_PANIC: i32 = -99;
+
+/// # Safety
+/// `ptr` must be non-null, aligned, writable for `len` bytes, and unaliased for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lib_render(ptr: *mut u8, len: usize) -> i32 {
+    let result = std::panic::catch_unwind(|| {
+        // SAFETY: the caller guarantees the contract above.
+        let buf = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
+        render_into(buf)
+    });
+    match result {
+        Ok(Ok(())) => OK,
+        Ok(Err(Error::InvalidInput)) => ERR_INVALID_INPUT,
+        Ok(Err(Error::Io(_))) => ERR_IO,
+        Err(payload) => {
+            log::error!("panic at FFI boundary: {}", panic_message(&payload));
+            ERR_PANIC
+        }
+    }
+}
+```
+
+Keep the `extern` body to a guard plus a delegation call. Put the logic in a plain Rust
+function that the tests can call directly. See `references/boundary-patterns.md` for opaque
+handles, out-parameters, string transfer, and Rust callbacks that a foreign runtime invokes.
+
+## Worked example: a JNI boundary
+
+JNI is the same rule with a platform-specific exit path: convert the panic into a Java
+exception instead of a status code.
+
+### Loader entry point
+
+```rust
+#[unsafe(no_mangle)]
+#[allow(improper_ctypes_definitions)]
+pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) -> jint {
+    // Store the VM handle BEFORE catch_unwind so it survives a panic during init.
+    let _ = JVM.set(vm);
+    match std::panic::catch_unwind(|| {
+        init_logging("app-native");   // your crate-local helper
+        install_panic_hook();         // your crate-local helper, idempotent
+        JNI_VERSION
+    }) {
+        Ok(version) => version,
+        Err(_) => jni::sys::JNI_ERR,
+    }
+}
+```
+
+The whole loader initialization stays inside `catch_unwind`, so a failed init returns
+`JNI_ERR` instead of unwinding into the JVM. A panic that fires before `install_panic_hook()`
+runs is still contained by `catch_unwind`, but the custom hook cannot report it. Do not claim
+otherwise in a review.
+
+### Per-method entry point
+
+`jni` 0.22 gives a tri-state guard. `jni::EnvUnowned::with_env` plus `into_outcome` separates
+a caught panic from a normal error, so you never lose that distinction at the exit.
+
+```rust
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_example_app_NativeBridge_nativeCreate(
+    mut env: EnvUnowned<'_>,
+    _thiz: JObject,
+    config_json: JString,
+) -> jlong {
+    match env
+        .with_env(move |env| -> jni::errors::Result<jlong> {
+            Ok(create_session(env, config_json))
+        })
+        .into_outcome()
+    {
+        Outcome::Ok(handle) => handle,
+        Outcome::Err(err) => {
+            let _ = env.throw_new("java/lang/RuntimeException", err.to_string());
+            0
+        }
+        Outcome::Panic(payload) => {
+            let msg = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .unwrap_or("panic at the FFI boundary");
+            let _ = env.throw_new("java/lang/RuntimeException", msg);
+            0
+        }
+    }
+}
+```
+
+Rules for this boundary:
+
+- Never write a bare `extern "system" fn` body. A bare body propagates the panic.
+- Read the `with_env` documentation for the `jni` version in your lock file. The helper
+  names, and the point at which the exception is thrown, changed between versions.
+- On `jni` 0.21 and earlier, which has no `with_env`/`into_outcome`, wrap the body in `catch_unwind` and
+  throw in the `Err` arm. The exit path is what matters, not the helper.
+- Throw one exception type unless the caller needs to branch. A single `RuntimeException`
+  keeps one catch site on the managed side. A new exception class per panic class fragments
+  that handling for no gain.
+- Return a neutral sentinel (`0`, `-1`, null) after `throw_new`. The JVM raises the pending
+  exception when control returns; the value is never read.
+- Generate the `extern` layer with a macro when the crate exports many methods, so no
+  hand-written body can drift from the pattern.
+
+UniFFI generates the `extern "C"` glue and its own panic guard. Trust it for generated
+scaffolding, and apply the full guard yourself to any hand-rolled `extern "C"` inside the
+same crate. See the `uniffi-boundary` and `rust-jni` skills for the binding rules, and
+`ffi-error-progress-cancel` for the error-object shape.
+
+## Report the panic instead of swallowing it
+
+A guard that returns `-99` and logs nothing turns a bug into a mystery. Extract the payload
+and install a hook.
+
+```rust
+use std::any::Any;
+
+pub fn panic_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_owned()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "panic with a non-string payload".to_owned()
+    }
+}
+```
+
+`panic!("literal")` produces a `&'static str`. `panic!("{x}")` and every formatted assertion
+produce a `String`. Handle both, or you lose half the messages.
+
+```rust
+use std::sync::Once;
+
+static HOOK: Once = Once::new();
+
+pub fn install_panic_hook() {
+    HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        // `set_hook` passes `&PanicHookInfo` since Rust 1.81.
+        // An older toolchain passes `&PanicInfo` instead.
+        std::panic::set_hook(Box::new(move |info| {
+            let location = info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "<unknown>".to_owned());
+            let backtrace = std::backtrace::Backtrace::force_capture();
+            log::error!(
+                "rust panic at {location}: {}\n{backtrace}",
+                panic_message(info.payload())
+            );
+            previous(info);
+        }));
+    });
+}
+```
+
+Rules:
+
+- Install the hook once, at the first entry point the host calls. `set_hook` replaces the
+  previous hook globally.
+- Call the previous hook at the end unless you have a reason not to. You keep the default
+  stderr report for local runs.
+- The hook runs before unwinding starts, so it sees the location and a full backtrace that
+  `catch_unwind` no longer has.
+- Set `RUST_BACKTRACE=1` in the test and debug environment. `Backtrace::force_capture()`
+  ignores that variable and always captures, at a cost — keep it on the panic path only.
+- Route the log line through the platform sink the rest of the crate uses. See the
+  `rust-observability` skill.
+
+## `.unwrap()` and `.expect()` policy
+
+Every `.unwrap()` on a path a foreign caller can reach is a latent process kill. Treat the
+existing count as debt, and stop the growth first.
+
+### Allowed
+
+- `.expect()` on a `Mutex` or `RwLock` `lock()` result. A poisoned lock is a fatal invariant
+  violation, and recovery is usually wrong.
+- `.unwrap()` on a conversion the compiler cannot prove but you can, with the proof written
+  as a comment.
+- `.unwrap()` inside a closure that a `catch_unwind` guard already wraps at the entry point.
+- Anything in `#[cfg(test)]` blocks, integration tests, benchmarks, and fuzz harnesses.
+
+### Not allowed
+
+- `.unwrap()` or `.expect()` on a `Result<_, E>` where `E: std::error::Error`. Propagate with
+  `?` and let the boundary decide.
+- `.unwrap()` on an `Option<T>` where `None` comes from input: parsed data, a network reply,
+  user configuration, an environment variable, a map lookup keyed by external data.
+- `.expect("should never happen")`. Either prove it and write the proof, or model the
+  invariant in the type system so the case disappears. `unreachable!()` keeps the panic and
+  states the intent. Use `core::hint::unreachable_unchecked()` only with a `SAFETY` comment
+  that proves the branch is impossible; a wrong proof there is undefined behaviour, not a
+  panic. See the `rust-unsafe` skill.
+
+### Protocol for a new `.unwrap()`
+
+Write the infallibility proof directly above the call.
+
+```rust
+// Infallible: `buf.len() <= MAX_U32` is checked above.
+let len: u32 = buf.len().try_into().unwrap();
+```
+
+A bare `.unwrap()` with no proof fails review. Enforce it with lints rather than with
+vigilance:
+
+```toml
+# Cargo.toml of a crate on an FFI path
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "warn"
+panic_in_result_fn = "deny"
+missing_panics_doc = "warn"
+```
+
+```toml
+# clippy.toml at the workspace root
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+```
+
+Count the debt with a command, never from memory:
+
+```bash
+rg -n --type rust '\.unwrap\(\)|\.expect\(' \
+  -g '!target/**' -g '!**/tests/**' -g '!**/benches/**' | wc -l
+```
+
+`references/unwrap-audit.md` holds the triage workflow, the replacement recipes, and the
+rules for `#[allow]` with a justification comment.
+
+## Typed errors: `thiserror` and `anyhow`
+
+| Context | Use | Why |
+|---|---|---|
+| Library crate that anything on an FFI path depends on | `thiserror` | Callers match on variants. The compiler forces exhaustive handling when a variant is added. |
+| Application crate, CLI, integration test, top-level orchestration | `anyhow` | One propagation type, one human-readable report at the top. |
+| FFI adapter crate | `thiserror` inside, flatten at the throw or return site | The boundary flattens to a code or a string anyway. Variants matter during propagation, not at the exit. |
+
+Derive the current split from the manifests, never from memory:
+
+```bash
+rg -n '^\s*(thiserror|anyhow)\s*=' -g '**/Cargo.toml'
+```
+
+A crate that depends on neither still needs the same review for `Result<_, String>` and for
+bare unwraps on a public path.
+
+Rules:
+
+- A library `src/lib.rs` that exposes `anyhow::Result` in its public API is a smell. The
+  caller loses every variant and must match on strings.
+- `Result<_, String>` in a public signature is the same defect with fewer dependencies.
+- Map the typed error to the foreign representation in exactly one place per boundary crate.
+  A second mapping site drifts.
+- Keep the panic exit distinct from every error exit. A panic means a bug in Rust; an error
+  means an expected failure. If they share a code, you cannot triage the crash report.
+
+## Keep data valid when a panic passes through
+
+`catch_unwind` returns control, so whatever the closure touched is still alive. Panic safety
+of data is a separate problem from panic safety of the boundary.
+
+- **Lock poisoning.** `std::sync::Mutex` marks itself poisoned when a holder panics. Later
+  `lock()` calls return `Err`. Decide once per lock: propagate the poison as a fatal error,
+  or recover with `PoisonError::into_inner()` and a comment that says why the data is still
+  valid. `parking_lot` locks do not poison — you get no warning, so state the invariant in
+  the type.
+- **Restore the invariant with a guard.** Move the "put it back" step into a `Drop`
+  implementation so unwinding runs it. Set the flag, spawn the guard, do the work.
+- **Never panic in `Drop`.** A panic inside a `Drop` that runs during unwinding is a double
+  panic, and the runtime aborts. A `Drop` implementation must be infallible: log the failure
+  and continue.
+- **Force an abort where an unwind is unacceptable.** In a critical section that must not
+  half-complete, arm a bomb and disarm it on success.
+
+  ```rust
+  struct AbortOnUnwind;
+  impl Drop for AbortOnUnwind {
+      fn drop(&mut self) {
+          std::process::abort();
+      }
+  }
+
+  let bomb = AbortOnUnwind;
+  // ... section that must complete or kill the process ...
+  std::mem::forget(bomb);
+  ```
+
+- **Do not leave a `&mut` in a torn state.** If you split a value into parts and panic in the
+  middle, the caller observes the parts. Build the new value first, then commit with a single
+  assignment.
+
+## Panics in async tasks and threads
+
+- A panic in a spawned Tokio task does not unwind through `block_on`. It surfaces at the
+  join point.
+
+  ```rust
+  match handle.await {
+      Ok(value) => Ok(value),
+      Err(err) if err.is_panic() => {
+          let msg = panic_message(&err.into_panic());
+          Err(Error::TaskPanicked(msg))
+      }
+      Err(_) => Err(Error::TaskCancelled),
+  }
+  ```
+
+- Wrap `block_on` itself when a foreign caller drives it. A panic in the future's own body
+  does unwind through `block_on`.
+
+  ```rust
+  let result = std::panic::catch_unwind(AssertUnwindSafe(|| runtime.block_on(fut)));
+  ```
+
+- A detached task whose `JoinHandle` you drop reports nothing. Keep the handle, or wrap the
+  task body in its own guard that records the panic.
+- `std::thread::spawn` returns the payload from `join()` as `Box<dyn Any + Send>`. Feed it to
+  `panic_message` and treat it as a fatal internal error.
+- A panic that crosses a task boundary loses its location. The panic hook is the only place
+  that still has it, which is why the hook must be installed before any task starts.
+
+See the `rust-async-internals` skill for runtime-level panic handling and cancellation.
+
+## Failure triage
+
+| Symptom | Likely cause | Action |
+|---|---|---|
+| Host process dies with `SIGABRT` and no Rust backtrace | A panic reached an unguarded `extern` function | Find the entry point in the boundary inventory; add the guard |
+| `catch_unwind` never returns `Err`, process still dies | The crate builds with `panic = "abort"` | Inspect the workspace and the member manifests, and `RUSTFLAGS`; set `panic = "unwind"` |
+| `catch_unwind` returns `Ok`, work silently missing | The panic happened on another thread or in a spawned task | Join the handle and inspect `JoinError` |
+| `fatal runtime error: Rust cannot catch foreign exceptions` | A C++ or foreign unwind entered Rust frames | Catch it on the foreign side; never let it enter Rust |
+| Abort during unwinding, second panic in the log | A `Drop` implementation panicked while a panic was in flight | Make the `Drop` infallible |
+| `memory allocation of N bytes failed`, then abort | Allocation failure, which is not a catchable panic | Bound the size; use `Vec::try_reserve` for large or input-driven buffers |
+| Panic message arrives as an empty or generic string | The payload was neither `&str` nor `String`, or only one was handled | Use `panic_message` and read the hook output |
+| Every later call fails with a poison error | An earlier panic poisoned a shared lock | Decide the poison policy; report the original panic, not the poison |
+| `#[should_panic]` test kills the test runner | `-C panic=abort` reached the test build through `RUSTFLAGS` or `-Z panic-abort-tests` | Build the tests under unwind; the manifest `panic` key alone cannot cause this |
+| Panic location points into a macro or `core` | The real cause is an index, a slice range, or an overflow | Reproduce with `overflow-checks = true` and a debug build; see the `rust-debugging` skill |
+
+## Review checklist
+
+- [ ] Every `extern` function in the boundary inventory has a guard.
+- [ ] Every `extern` body is a guard plus a delegation call, with the logic in a testable
+      plain Rust function.
+- [ ] The shipped profile sets `panic = "unwind"` if any guard uses `catch_unwind`.
+- [ ] The panic exit path has a status code, an exception, or an error object distinct from
+      every domain error.
+- [ ] The panic payload is extracted and logged before the boundary discards it.
+- [ ] The panic hook is installed once, early, and chains to the previous hook.
+- [ ] Every `AssertUnwindSafe` carries a comment that names the invariant.
+- [ ] Every new `.unwrap()` or `.expect()` outside tests carries an infallibility proof.
+- [ ] The crate denies `clippy::unwrap_used` and `clippy::panic` on FFI paths.
+- [ ] A library crate declares `thiserror` variants for its public `Result` types and does
+      not return `anyhow::Result` or `Result<_, String>` publicly.
+- [ ] No `Drop` implementation can panic.
+- [ ] Every spawned task or thread reports its panic at a join point or through its own guard.
+
+## References
+
+- `references/boundary-patterns.md` — guard shapes per boundary: status codes, out-params,
+  opaque handles, string transfer, callbacks into Rust, the macro-generated `extern` layer,
+  and the JNI and UniFFI variants in full.
+- `references/unwrap-audit.md` — the audit workflow, the replacement recipes for each
+  `.unwrap()` category, lint rollout order, and the `#[allow]` justification rules.
+
+## Related skills
+
+- `rust-unsafe` — raw pointers, SAFETY comments, and the soundness rules around the same
+  `extern` functions.
+- `rust-jni` — JNI binding rules, signatures, and local reference handling.
+- `uniffi-boundary` — the generated scaffolding and its type mapping.
+- `ffi-error-progress-cancel` — the error object, progress, and cancellation contract across
+  a binding layer.
+- `rust-async-internals` — panic propagation inside a runtime and across task boundaries.
+- `rust-lints` — the workspace lint floor and how to roll a new `deny` out.
+- `rust-debugging` — turning an abort or a panic location into a root cause.
+- `rust-test-tools` — `#[should_panic]`, fuzzing, and property tests that hunt panics.
+- `rust-observability` — where the panic log line goes.

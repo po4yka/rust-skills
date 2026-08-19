@@ -1,0 +1,11 @@
+# Agent and tooling state
+.omc/
+
+# macOS
+.DS_Store
+
+# Editor scratch
+.idea/
+.vscode/
+.zed/
+*.swp

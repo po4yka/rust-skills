@@ -1,0 +1,333 @@
+# Boundary guard patterns
+
+Every pattern here answers the same question: where does the panic stop, and what does the
+foreign caller see instead. Pick the shape that matches the boundary, then keep it identical
+across all entry points of the crate.
+
+## Pattern selection
+
+| Boundary shape | Guard | Panic result the caller sees |
+|---|---|---|
+| C ABI, returns a scalar | `catch_unwind` in the `extern` body | A reserved negative status code |
+| C ABI, returns a pointer or handle | `catch_unwind` in the `extern` body | Null, plus a last-error slot |
+| C ABI, writes through out-params | `catch_unwind` in the `extern` body | A status code; out-params untouched |
+| JNI method | `with_env` + `into_outcome`, or `catch_unwind` | A thrown exception and a neutral return value |
+| UniFFI `#[uniffi::export]` | Generated scaffolding | The generated error path |
+| Rust callback that foreign code invokes | `catch_unwind` in the callback body | A status code, or a recorded flag |
+| Runtime entry that drives async work | `catch_unwind(AssertUnwindSafe(...))` around `block_on` | A status code plus a join-point check |
+
+## Status codes
+
+Reserve a code for a caught panic. Never reuse a domain error code for a bug.
+
+```rust
+#[repr(i32)]
+pub enum Status {
+    Ok = 0,
+    InvalidInput = -1,
+    NotFound = -2,
+    Io = -3,
+    Busy = -4,
+    Panic = -99,
+}
+```
+
+Rules:
+
+- Keep the numbers stable. A binding layer hard-codes them.
+- Map the typed error to the code in one function, in one module.
+- Log the panic message on the Rust side before you return `Panic`. The number alone tells
+  the caller nothing.
+
+## Returning a pointer or an opaque handle
+
+A constructor cannot return a status code and a pointer at the same time. Return null on
+failure and expose the reason through a separate call.
+
+```rust
+thread_local! {
+    static LAST_ERROR: std::cell::RefCell<Option<std::ffi::CString>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn set_last_error(msg: &str) {
+    let value = std::ffi::CString::new(msg).ok();
+    LAST_ERROR.with(|slot| *slot.borrow_mut() = value);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lib_session_new(config: *const std::os::raw::c_char) -> *mut Session {
+    let result = std::panic::catch_unwind(|| {
+        // SAFETY: the caller guarantees `config` is a valid null-terminated C string.
+        let config = unsafe { std::ffi::CStr::from_ptr(config) }
+            .to_str()
+            .map_err(|_| Error::InvalidInput)?;
+        Session::new(config)
+    });
+    match result {
+        Ok(Ok(session)) => Box::into_raw(Box::new(session)),
+        Ok(Err(err)) => {
+            set_last_error(&err.to_string());
+            std::ptr::null_mut()
+        }
+        Err(payload) => {
+            set_last_error(&format!("panic: {}", panic_message(&payload)));
+            std::ptr::null_mut()
+        }
+    }
+}
+```
+
+The matching destructor must also be guarded, because a `Drop` implementation deeper in the
+tree can panic.
+
+```rust
+/// # Safety
+/// `ptr` must come from `lib_session_new` and must not be used again after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lib_session_free(ptr: *mut Session) {
+    if ptr.is_null() {
+        return;
+    }
+    let _ = std::panic::catch_unwind(|| {
+        // SAFETY: the caller guarantees single ownership of a pointer from the constructor.
+        drop(unsafe { Box::from_raw(ptr) });
+    });
+}
+```
+
+A destructor that panics twice — once in the value, once in the guard — still aborts. Keep
+`Drop` implementations infallible; the guard is a backstop, not a licence.
+
+## Out-parameters
+
+Write the out-param only on the success path. A caller that sees a non-zero status must be
+able to trust that its buffer is unchanged.
+
+```rust
+/// # Safety
+/// `out_len` must be non-null and writable for one `usize`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lib_measure(input: *const u8, len: usize, out_len: *mut usize) -> i32 {
+    let result = std::panic::catch_unwind(|| {
+        // SAFETY: the caller guarantees `input` is valid for `len` bytes.
+        let bytes = unsafe { std::slice::from_raw_parts(input, len) };
+        measure(bytes)
+    });
+    match result {
+        Ok(Ok(value)) => {
+            // SAFETY: the caller guarantees `out_len` is writable.
+            unsafe { out_len.write(value) };
+            0
+        }
+        Ok(Err(_)) => -1,
+        Err(_) => -99,
+    }
+}
+```
+
+## Transferring the panic message as a string
+
+Foreign callers usually want the text, not just the code. Two safe options:
+
+1. **Caller-allocated buffer.** The caller passes a pointer and a capacity. You copy at most
+   `cap - 1` bytes and write a trailing null. You return the required length so the caller can
+   retry with a bigger buffer.
+2. **Rust-allocated string plus a free function.** You return `CString::into_raw`, and you
+   export a `lib_string_free` that calls `CString::from_raw`. Never let the foreign side call
+   `free()` on Rust memory.
+
+Truncate on a character boundary when you copy UTF-8 into a fixed buffer. Use
+`str::floor_char_boundary` when your minimum supported toolchain has it. Otherwise walk
+`char_indices` and copy whole characters until the budget runs out.
+
+## Callbacks that foreign code invokes
+
+A Rust function pointer handed to a C or platform runtime is an FFI entry point. It needs the
+same guard, and it usually cannot report an error, so it must record one.
+
+```rust
+extern "C" fn on_event(ctx: *mut std::ffi::c_void, code: i32) -> i32 {
+    let result = std::panic::catch_unwind(|| {
+        // SAFETY: `ctx` is the pointer passed to the registration call and outlives it.
+        let state = unsafe { &*(ctx as *const State) };
+        state.handle(code)
+    });
+    match result {
+        Ok(Ok(())) => 0,
+        Ok(Err(_)) => -1,
+        Err(payload) => {
+            log::error!("panic in callback: {}", panic_message(&payload));
+            // Latch the failure so the next owning call can report it.
+            FAILED.store(true, std::sync::atomic::Ordering::Release);
+            -99
+        }
+    }
+}
+```
+
+Rules:
+
+- A callback that a foreign event loop calls must never unwind, even when the loop claims to
+  tolerate errors.
+- Do not attach the panic to the current call only. Latch it, and surface it at the next call
+  the owner makes, so the failure is not lost.
+- Keep the callback body short. Long work inside a foreign callback multiplies the ways a
+  panic can start.
+
+## The macro-generated `extern` layer
+
+When a crate exports many entry points, generate the `extern` layer so no hand-written body
+can drift from the pattern. A reviewer then checks one macro instead of forty functions.
+
+```rust
+macro_rules! ffi_entry {
+    ($name:ident, ($($arg:ident: $arg_ty:ty),* $(,)?), $ret:ty, $entry:ident, $on_panic:expr) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name($($arg: $arg_ty),*) -> $ret {
+            match std::panic::catch_unwind(move || $entry($($arg),*)) {
+                Ok(value) => value,
+                Err(payload) => {
+                    log::error!(
+                        concat!("panic in ", stringify!($name), ": {}"),
+                        panic_message(&payload)
+                    );
+                    $on_panic
+                }
+            }
+        }
+    };
+}
+```
+
+Audit that nothing bypasses it:
+
+```bash
+# Every extern definition should come from the macro. Hand-written bodies are findings.
+rg -n 'extern "(C|system)" fn' --type rust
+```
+
+## JNI: the full pattern
+
+### Loader
+
+```rust
+static JVM: std::sync::OnceLock<JavaVM> = std::sync::OnceLock::new();
+
+#[unsafe(no_mangle)]
+#[allow(improper_ctypes_definitions)]
+pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) -> jint {
+    let _ = JVM.set(vm);
+    match std::panic::catch_unwind(|| {
+        init_logging("app-native");
+        install_panic_hook();
+        JNI_VERSION
+    }) {
+        Ok(version) => version,
+        Err(_) => jni::sys::JNI_ERR,
+    }
+}
+```
+
+Store the VM handle before the guard. A later call needs it to attach a thread or to report a
+failure, and a panic during init must not lose it.
+
+### Method entry point without `into_outcome`
+
+Use this when the workspace pins `jni` 0.21 or earlier, which has no `with_env`/`into_outcome`.
+
+```rust
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_example_app_NativeBridge_nativeStart(
+    mut env: JNIEnv<'_>,
+    _thiz: JObject,
+    handle: jlong,
+) -> jint {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: `handle` came from the constructor and is still owned by the caller.
+        let session = unsafe { &*(handle as *const Session) };
+        session.start()
+    }));
+    match outcome {
+        Ok(Ok(())) => 0,
+        Ok(Err(err)) => {
+            let _ = env.throw_new("java/lang/RuntimeException", err.to_string());
+            -1
+        }
+        Err(payload) => {
+            let _ = env.throw_new(
+                "java/lang/RuntimeException",
+                format!("native panic: {}", panic_message(&payload)),
+            );
+            -1
+        }
+    }
+}
+```
+
+### Rules that hold for both variants
+
+- Throw before you return. The JVM raises the pending exception when control returns to Java.
+- Return a neutral value after a throw. Java never reads it.
+- Never call another JNI function after `throw_new` except to return. Most JNI calls are
+  invalid while an exception is pending.
+- Do not invent a new Java exception class per panic class. One type keeps one catch site on
+  the managed side.
+- Keep the panic text as the payload string. The hook already wrote the location and the
+  backtrace to the platform log, so the exception message can stay short.
+- A panic on a thread that Rust attached to the JVM must be caught on that thread. The
+  attaching code is an entry point too.
+
+## UniFFI
+
+`uniffi::setup_scaffolding!()` with `#[uniffi::export]` generates the `extern "C"` glue and
+its panic guard. Consequences:
+
+- Generated scaffolding needs no hand-written guard. Confirm with
+  `rg -n 'extern "C"' <crate>/src` that every hit is macro-generated.
+- Any hand-rolled `extern "C"` in the same crate bypasses the generated guard and needs the
+  full treatment.
+- Model the failure as a typed error in the UDL or the proc-macro signature. A panic becomes
+  an opaque internal error on the foreign side; a typed error keeps its variant.
+
+See the `uniffi-boundary` skill for the type mapping and the `ffi-error-progress-cancel`
+skill for the error, progress, and cancellation contract.
+
+## Async work behind a synchronous boundary
+
+```rust
+#[unsafe(no_mangle)]
+pub extern "C" fn lib_run_blocking(handle: *mut Session) -> i32 {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: the caller owns `handle` for the duration of this call.
+        let session = unsafe { &mut *handle };
+        session.runtime.block_on(session.run())
+    }));
+    match result {
+        Ok(Ok(())) => 0,
+        Ok(Err(_)) => -1,
+        Err(_) => -99,
+    }
+}
+```
+
+Two distinct failure paths exist here:
+
+1. A panic in the future's own body unwinds through `block_on`, and `catch_unwind` sees it.
+2. A panic in a spawned task does not. It surfaces as a `JoinError` at the join point, so the
+   `run()` body must check every handle it keeps.
+
+Both must reach the caller. A guard alone is not enough when the crate spawns.
+
+## Testing the guard
+
+- Add a hidden test-only entry point, or call the plain Rust `_entry` function from a test and
+  assert on the status code.
+- Force a panic through a test hook, then assert the status is the reserved panic code and the
+  process is still alive.
+- Run the guard tests under `panic = "unwind"`. Cargo ignores the `panic` key for the test
+  profile by default, so this is the normal case.
+- Add a debug-build assertion that the panic hook is installed before the first entry point
+  does work.
+- Fuzz the input decoder behind the boundary. A fuzz harness finds the panics that a guard
+  would otherwise hide behind a status code. See the `rust-test-tools` skill.
