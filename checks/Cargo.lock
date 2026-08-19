@@ -865,6 +865,7 @@ dependencies = [
  "nix",
  "once_cell",
  "parking_lot",
+ "pin-project-lite",
  "proptest",
  "rpds",
  "rustc-hash",
