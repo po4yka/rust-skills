@@ -21,6 +21,14 @@ sits below the individual lints, so a single lint can override its own group.
 | `cargo` | Manifest and dependency-graph hygiene | `warn` at `priority = -1` |
 | `restriction` | Deliberately restrictive; **never enable the group** | pick individual lints only |
 
+The `perf` group is smaller than its name suggests. Verified on rustc 1.97.0:
+`ptr_arg` and `unnecessary_lazy_evaluations` are in `style`, `assigning_clones`
+is in `pedantic`, `redundant_clone`, `or_fun_call` and `needless_collect` are in
+`nursery`, and `missing_asserts_for_indexing` is in `restriction`. Of the
+performance lints in this catalog only `large_enum_variant` and
+`result_large_err` are in `perf`, so a config that enables `clippy::perf` alone
+gets those two and nothing else.
+
 `restriction` as a group contradicts itself - it contains mutually exclusive
 lints. Cherry-pick from it. The picks in the canonical set are
 `indexing_slicing`, `integer_division`, `arithmetic_side_effects`,
@@ -45,7 +53,14 @@ defect reached production.
 | `unsafe_op_in_unsafe_fn` (rustc) | The whole body of an `unsafe fn` treated as one implicit unsafe block. This hides which line actually needs the audit. |
 | `large_stack_arrays`, `large_stack_frames` | A big array or a fat state struct placed on the stack. It overflows on a small thread stack - worker threads and mobile main threads are far smaller than the default. |
 | `large_futures` | An oversized future moved between tasks; each `spawn` copies it. |
-| `large_enum_variant` | One huge variant inflating every value of the enum, including the small ones. |
+| `large_enum_variant` | One huge variant inflating every value of the enum, including the small ones. It measures the size difference between the largest and the second-largest variant, strictly greater than `enum-variant-size-threshold` (default 200 bytes). It never looks at the total size. Measured on rustc 1.97.0 with `enum D { A(u8), B([u8; N]) }`: `N = 201` is silent, `N = 202` warns. So a 300-byte enum whose two largest variants are both near 300 bytes never fires. The fix is to box the outsized variant. It only wins when that variant is rare: boxing a hot variant buys size with an allocation on the common path. See `rust-hot-path`. |
+| `result_large_err` (warn by default) | A fat `Err` type carried by every `Result` in the call chain, on the success path as well. Measured on rustc 1.97.0: an `Err` variant of 128 bytes warns, 127 bytes is silent. Thresholds live in `clippy.toml`: `large-error-threshold` sets the byte count, `large-error-ignored` takes a type allow-list. The fix is to box the payload or to split the error type. |
+| `assigning_clones` (pedantic) | `a = b.clone()` frees the buffer `a` already owns and allocates a new one. `a.clone_from(&b)` reuses it. The lint message is "assigning the result of `Clone::clone()` may be inefficient". Pedantic, so a plain `cargo clippy` never reports it. See `rust-hot-path`. |
+| `redundant_clone` (nursery) | A clone whose original is dead after the call, so the clone buys nothing. Nursery, so a plain `cargo clippy` never reports it. |
+| `or_fun_call` (nursery) | `ok_or(build())`, `unwrap_or(build())`, `or_insert(build())`: the argument runs on every call, including the path that discards it. The fix is the `_else` form. Its counterpart `unnecessary_lazy_evaluations` (style, warn by default) catches the over-correction, a closure around a value that is cheaper to pass eagerly. Enable both, or a cleanup pass converts every eager call into a closure and trades one waste for another. |
+| `needless_collect` (nursery) | A `Vec` built only to be iterated once. The structural fix is a function that returns `impl Iterator<Item = T>` instead of `Vec<T>`. On edition 2024 that return type needs no lifetime bound, because a return-position `impl Trait` captures every in-scope lifetime by default; the same signature fails on edition 2021 with E0700. |
+| `missing_asserts_for_indexing` (restriction) | Index sites where one `assert!` would let the compiler drop the bounds checks. It fires on `s[0] + s[1] + s[2]` with no preceding `assert!(s.len() > 2)`. It is the only automated way to find these sites. Restriction, so no default level and no config in this skill turns it on; run it as a one-off audit. See `rust-hot-path`. |
+| `ptr_arg` (style, not perf) | A `&Vec<T>` or `&mut Vec<T>` parameter where `&[T]` or `&mut [T]` works. It forces every caller to own a `Vec`. It is warn by default, so most projects see it, but a config that enables only `clippy::perf` misses it. The win is small and it is per call, not per iteration: measured on rustc 1.97.0 aarch64 at `-C opt-level=3`, for a body of `v.iter().sum()`, the `&Vec<u32>` version starts with two extra loads (the pointer and the length out of the `Vec` header) that the `&[u32]` version does not need, because a slice arrives in two registers. Both bodies came to 60 instructions. |
 | `exhaustive_enums`, `exhaustive_structs` | A public enum or struct without `#[non_exhaustive]`. Adding a field or a variant later is then a breaking change for every downstream match or literal. |
 | `disallowed_methods` on `std::ptr::read` | A misaligned read from a byte buffer that came from I/O or FFI. `ptr::read` requires an aligned pointer, so a misaligned read is undefined behavior on every target, and it faults in practice on aarch64. Use `read_unaligned`. |
 | `disallowed_methods` on `std::env::set_var` | A mutation of the process environment after threads have started. It is not thread-safe. |
@@ -120,6 +135,25 @@ disallowed-types = [
 When you introduce an async runtime into a previously synchronous workspace,
 add these lints in the same commit. Adding them later means auditing every
 `.await` that already shipped. See `rust-async-internals`.
+
+`disallowed-types` has a second, unrelated use: it enforces one hasher across
+the project.
+
+```toml
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "use rustc_hash::FxHashMap" },
+]
+```
+
+Clippy matches the written path, not the resolved type. Measured on rustc
+1.97.0 with rustc-hash 2.1.3, that one entry gives three warnings for a single
+std `HashMap` use - the `use` import, the return-type annotation, and the
+`HashMap::new()` call - and zero warnings for an `FxHashMap` in the same file,
+although `FxHashMap<K, V>` is an alias for `std::collections::HashMap<K, V,
+FxBuildHasher>`. The alias passes because its path differs. That is what makes
+the rule usable: it names the hasher you want without banning the map. Choose
+the hasher first; `FxHashMap` is not HashDoS-resistant, so it needs keys that
+no attacker controls. See `rust-hot-path` and `rust-security`.
 
 ## Optional block: binding-layer relaxations
 

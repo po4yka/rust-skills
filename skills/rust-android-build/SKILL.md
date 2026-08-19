@@ -225,6 +225,9 @@ Rules:
   profile that strips too early destroys the sidecar.
 - Set `lto = "fat"` and `codegen-units = 1` together. Fat LTO with many codegen
   units gives back most of the size it saves.
+- Measure `opt-level = "z"` against `"s"` and `3` on the real `.so` before you
+  ship it. `"z"` is not automatically the smallest, and a compute-bound JNI path
+  can prefer `3`. See `skills/rust-performance/references/build-configuration.md`.
 
 Two link-time flags reduce size further. Add them to the `rustflags` block only
 if you also verify their effect; do not document a flag that is absent from

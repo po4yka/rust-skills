@@ -293,6 +293,28 @@ For the full checklist, including archive extraction, streamed container
 formats, geometry and coordinate validation, and the FFI boundary rules, see
 [references/untrusted-input.md](references/untrusted-input.md).
 
+### Untrusted keys in a hash map
+
+std `HashMap` and `HashSet` use SipHash 1-3 with a per-process random seed. std documents
+that seed as the HashDoS defence. `FxHasher`, `FnvHasher`, and `nohash` remove it.
+Verified across two separate processes: `FxHasher` and `FnvHasher` give byte-identical
+output for the same key. The `FxHasher` hash of `42` is 12569757018929961129 in both runs.
+SipHash and `ahash` differ. An attacker who controls keys can precompute a collision set
+offline.
+
+Get the mechanism right. std `HashMap` is hashbrown. It is open-addressed with SIMD group
+probing, not chained, so degradation shows up as long probe sequences and not as O(n)
+bucket chains. Measured on rustc 1.97.0 with trivially crafted keys, multiples of 2^20 and
+no knowledge of the internals: `FxHashMap` insert took 3.47 ms against 0.35 ms for benign
+keys, a factor of 10. A full blowup needs a deliberately built collision set.
+
+The gate is key provenance, not a profile. Keep std `RandomState` for keys an outside
+caller controls: HTTP headers, query parameters, JSON object keys, archive entry names,
+and protocol field names. Use `ahash::RandomState` when that path is measured hot. It is
+randomly seeded per process, because `runtime-rng` and `getrandom` are default features of
+`ahash` 0.8.12. The swap is one import and leaves no trace in review, so it needs a rule.
+See `rust-hot-path` for the performance side of the same choice.
+
 ## 8. CI integration
 
 Run the policy check as its own job so a failure names the cause without a log
@@ -347,6 +369,7 @@ Block a change that does any of these:
 - `rust-sanitizers-miri`: Miri and sanitizers for memory-safety validation.
 - `rust-unsafe`: unsafe code audit patterns and safe abstraction design.
 - `rust-panic-safety`: panic containment, including panics at an FFI boundary.
+- `rust-hot-path`: the performance side of the hasher choice.
 - `rust-lints`: Clippy configuration and lint policy.
 - `rust-discipline`: engineering discipline and coding conventions.
 - `uniffi-boundary`: input validation and typed errors across a UniFFI boundary.

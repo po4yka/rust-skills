@@ -102,7 +102,8 @@ exit                         = "deny"
 large_stack_arrays           = "warn"
 large_stack_frames           = "warn"
 large_futures                = "warn"
-large_enum_variant           = "warn"
+large_enum_variant           = "warn"   # fires on the size DIFFERENCE between the two largest variants
+result_large_err             = "warn"   # warn by default; fires when the Err variant reaches 128 bytes
 exhaustive_enums             = "warn"   # require #[non_exhaustive] on a pub enum
 exhaustive_structs           = "warn"
 inefficient_to_string        = "warn"
@@ -110,7 +111,13 @@ disallowed_methods           = "deny"
 disallowed_types             = "deny"
 str_to_string                = "warn"
 implicit_clone               = "warn"
+assigning_clones             = "warn"   # pedantic: `a = b.clone()` becomes `a.clone_from(&b)`
+redundant_clone              = "warn"   # nursery
+or_fun_call                  = "warn"   # nursery: `ok_or(build())` becomes `ok_or_else(build)`
+unnecessary_lazy_evaluations = "warn"   # style: the reverse error, a closure that should stay eager
+needless_collect             = "warn"   # nursery: return `impl Iterator<Item = T>`, not `Vec<T>`
 needless_pass_by_value       = "warn"
+ptr_arg                      = "warn"   # style, NOT perf: `&Vec<T>` becomes `&[T]`
 ref_option                   = "warn"
 trivially_copy_pass_by_ref   = "warn"
 redundant_closure_for_method_calls = "warn"
@@ -144,6 +151,12 @@ Notes on this set:
   pointer work. See `references/lint-catalog.md`.
 - `unsafe_code = "forbid"` belongs in each crate's `lib.rs`, not in the
   workspace table. Otherwise the one crate that owns `unsafe` cannot opt out.
+- Most of the performance lints above are not in the `perf` group.
+  `assigning_clones` is `pedantic`; `redundant_clone`, `or_fun_call` and
+  `needless_collect` are `nursery`; `ptr_arg` and `unnecessary_lazy_evaluations`
+  are `style`. Only `large_enum_variant` and `result_large_err` come from
+  `perf`. A config that enables `clippy::perf` alone gets those two and nothing
+  else. See `references/lint-catalog.md`.
 
 ### Pragmatic baseline for an existing workspace
 
@@ -223,6 +236,9 @@ doc-valid-idents = ["..", "SQLite", "UniFFI", "WebAssembly"]
 # Size thresholds. Pair with large_stack_frames / large_futures above.
 stack-size-threshold         = 4096   # large_stack_frames fires above 4 KiB
 future-size-threshold        = 16384  # large_futures fires above 16 KiB
+enum-variant-size-threshold  = 200    # clippy's default; large_enum_variant fires on a DIFFERENCE above it
+large-error-threshold        = 128    # clippy's default; result_large_err fires when Err reaches it
+# large-error-ignored        = ["your_crate::RareBigError"]  # type allow-list for result_large_err
 type-complexity-threshold    = 250    # clippy's own default; treat a higher value as debt
 too-many-arguments-threshold = 6      # raise to 8 only for an FFI or JNI bridge layer
 
@@ -459,6 +475,11 @@ rg 'cfg_attr\([^)]*(allow|expect)\(' --type rust -n
 
 # Find duplicate dependency versions before you tighten the bans section.
 cargo tree --locked --duplicates
+
+# One-off audit: the index sites where an assert! would let the compiler drop a
+# bounds check. missing_asserts_for_indexing is in the restriction group, so no
+# default and no config in this skill turns it on.
+cargo clippy --locked --workspace -- -W clippy::missing_asserts_for_indexing
 ```
 
 Chain the three gates when you want one exit code:
@@ -483,6 +504,8 @@ cargo clippy --locked --workspace --all-targets -- -D warnings \
 - `rust-panic-safety` - the policy behind `unwrap_used`, `expect_used`, `panic`.
 - `cargo-workflows` - workspace membership, lint inheritance, edition migration.
 - `rust-sanitizers-miri` - lints are static; Miri catches the runtime tail.
+- `rust-hot-path` - the fixes the performance lints ask for: `clone_from`,
+  boxing a large variant, `impl Iterator` returns, bounds-check removal.
 - `rust-async-internals` - how to read the `await_holding_*` lints.
 - `rust-security` - the advisory and license policy behind `deny.toml`.
 - `rust-code-style` - rustfmt settings and their effect on review diffs.

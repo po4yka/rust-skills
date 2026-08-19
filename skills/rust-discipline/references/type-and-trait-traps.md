@@ -49,9 +49,16 @@ itself, must consume a field. If yes, use a dedicated guard type with `ManuallyD
 
 **Severity: WARNING on hot paths**
 
-`fn(T) -> T` for a large struct — more than 4 pointer-sized fields — forces a `memcpy` per
-call. rustc cannot rewrite it into `&mut T` mutation, because panic semantics require the
-original value to stay valid until the function returns.
+`fn(T) -> T` copies the value in and out. Once `T` crosses the target's inline-copy boundary,
+each call emits a `memcpy` call. rustc cannot rewrite it into `&mut T` mutation, because panic
+semantics require the original value to stay valid until the function returns.
+
+The boundary is target-dependent. Measured on rustc 1.97.0 at `-O`, with a
+`#[derive(Clone, Copy)] struct T([u8; N])` copied through a function: `x86_64-unknown-linux-gnu`
+emits no `memcpy` call up to and including 128 bytes, and one call from 129 bytes up.
+`aarch64-apple-darwin` emits none up to and including 256 bytes, and one from 257 bytes up. At
+`-C opt-level=0` the boundary is 32 and 33 bytes on both targets, so a debug build cannot probe
+the release boundary.
 
 ```rust
 // BAD on a hot path: forces a memcpy in and a memcpy out
@@ -70,10 +77,12 @@ Use `fn(T) -> T` only in two cases:
 
 - A state-machine transition where the ownership transfer is the semantic. A builder method
   `fn set_foo(mut self) -> Self` is the standard example.
-- A small struct, at most 4 pointer-sized fields.
+- A type that stays under the boundary of every target you ship. 128 bytes clears both targets
+  measured above.
 
 Profile with `cargo-flamegraph` or Criterion before you choose value-passing on any path that
-runs per item.
+runs per item. `skills/rust-hot-path/references/type-size-reduction.md` holds the probe recipe
+that measures the boundary on your own target, and the ways to shrink a type below it.
 
 ---
 
@@ -333,6 +342,17 @@ Rule: build any array larger than 16 KiB for heap residence with `Vec::into_boxe
 `Box::new_uninit_slice`. Never write `Box::new([T; N])` for a large `N`, and never return
 `[T; N]` by value for a large `N`. Hot-path code additionally falls under the no-allocation
 rule in the main skill.
+
+`Vec::into_boxed_slice` is not free. It calls `shrink_to_fit` whenever capacity exceeds length,
+which issues a `realloc` that may move the buffer. Measured with a `Vec<u32>` at length 3:
+capacity 3 and capacity 4 keep the data pointer; capacity 8 and capacity 1000 move it. State the
+cost as "may cost a full copy when capacity is meaningfully above length", not as "always
+copies". The reverse direction has no such cost: `<[T]>::into_vec` never reallocates. When the
+length is exact, build the boxed slice straight from the iterator, which allocates once:
+
+```rust
+let squares: Box<[u32]> = (0..1024u32).map(|n| n * n).collect();
+```
 
 Find candidates:
 

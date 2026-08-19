@@ -135,6 +135,10 @@ opt-level = 1
 panic = "unwind"
 ```
 
+Measure `opt-level = "z"` against `"s"` and `3` on the real artifact before you ship it: `"z"` is
+not automatically the smallest, and a compute-bound path can prefer `3`. See
+`skills/rust-performance/references/build-configuration.md`.
+
 Select the profile from the host build system with a property, and give local
 development a separate default so a debug loop does not pay for a release build.
 

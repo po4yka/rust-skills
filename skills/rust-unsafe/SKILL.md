@@ -517,8 +517,29 @@ Before you write the impl:
 1. List every field type. For each, confirm it is `Send` or `Sync`, or state why the wrapper
    upholds the invariant despite the field.
 2. Check the trait impls on the type. None may hand out shared access to non-`Sync` state.
-3. Add a `static_assertions::assert_impl_all!` or `assert_not_impl_all!` test, so a later change
-   to an inner type fails the build instead of failing in production.
+3. Assert the auto trait on each field type at compile time, so a later change to an inner type
+   fails the build instead of failing in production. The manual impl on the wrapper is
+   unconditional, so assert the fields, not the wrapper. The assertion needs no dependency:
+
+   ```rust
+   pub struct Inner {
+       pub id: u32,
+   }
+
+   pub struct MyWrapper {
+       pub inner: Inner,
+   }
+   unsafe impl Send for MyWrapper {}
+
+   const _: () = {
+       fn assert_send<T: Send>() {}
+       let _ = assert_send::<Inner>;
+   };
+   ```
+
+   An `Inner` that gains an `Rc<_>` field fails this with E0277. Only a negative assertion, such
+   as `assert_not_impl_all!`, still needs the `static_assertions` crate, because stable Rust has
+   no clean form for a negative bound. That crate is stuck at 1.1.0, released 2019-11-03.
 4. Tag the impl with a `// SAFETY:` comment that names the fields audited and the argument.
 
 Objects from a C or C++ library are usually not thread-safe. Do not assume otherwise because

@@ -181,13 +181,22 @@ pub struct Header {
 }
 
 // Fails to compile if the layout ever changes.
-const _: () = assert!(std::mem::size_of::<Header>() == 8);
-const _: () = assert!(std::mem::align_of::<Header>() == 4);
+// 8 bytes, align 4, measured on rustc 1.97.0.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<Header>() == 8);
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(align_of::<Header>() == 4);
 ```
 
-This costs nothing at run time and needs no dependency. Put one next to every type whose size or
-alignment another language depends on. See the `rust-unsafe` skill for the layout rules these
-assertions protect.
+Gate the assertion on the target whose layout you measured. A size that depends on a pointer, a
+`usize`, or a platform-dependent alignment differs per target, so an ungated assertion that
+passes on a 64-bit host fails the build with E0080 when the same file is cross-compiled to
+`i686-unknown-linux-gnu`.
+
+This costs nothing at run time and needs no dependency: `size_of` and `align_of` are in the
+edition-2024 prelude, so neither the `std::mem::` path nor a crate is required. Put one assert
+next to every type whose size or alignment another language depends on. See the `rust-unsafe`
+skill for the layout rules these assertions protect.
 
 ## Let the compiler narrow control flow
 

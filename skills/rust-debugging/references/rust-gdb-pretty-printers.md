@@ -242,16 +242,28 @@ Tombstones, `perf` output, and linker errors show mangled Rust symbols. Demangle
 them before you read them.
 
 ```bash
-# Demangle a single symbol
-echo '_ZN4core4fmt9Formatter9write_fmt17hb4f5d866d07ffa27E' | rustfilt
-# core::fmt::Formatter::write_fmt
-
 # Install rustfilt
 cargo install rustfilt
 
-# c++filt also handles the legacy mangling scheme
-echo '_ZN4core4fmt9Formatter9write_fmt17hb4f5d866d07ffa27E' | c++filt
+# Demangle a single symbol. v0 is the default shape on rustc 1.97.0.
+echo '_RNvCsbhslDugC6KQ_2m211foo_bar_baz' | rustfilt
+# m2::foo_bar_baz
+
+# Legacy shape. Older artifacts and pre-v0 toolchains still carry it.
+echo '_ZN4core4fmt9Formatter9write_fmt17hb4f5d866d07ffa27E' | rustfilt
+# core::fmt::Formatter::write_fmt
+
+# The LLVM c++filt demangles v0 too
+echo '_RNvCsbhslDugC6KQ_2m211foo_bar_baz' | c++filt
+# m2::foo_bar_baz
 ```
+
+Grep for `_R`, not `_ZN`. On rustc 1.97.0 v0 is already the default, so a `_ZN` pattern
+matches no symbol in a current build and silently returns nothing. Measured on rustc
+1.97.0: `-C symbol-mangling-version=v0` changes no symbol, and
+`-C symbol-mangling-version=legacy` is rejected with "requires `-Z unstable-options`",
+which stable does not accept. Mach-O adds one leading underscore, so `nm` prints
+`__RNv...` on macOS.
 
 `rustfilt` also filters a whole file or a stream, so you can pipe a log through
 it. `llvm-addr2line -C` and `llvm-symbolizer` demangle on their own; you do not

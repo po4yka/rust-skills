@@ -187,8 +187,18 @@ A hot path is any code that runs per packet, per frame, per row, per record, or 
 
 - **Do not call `Vec::new()`, `String::from`, `format!`, `to_owned()`, or `.to_string()`** in
   an event-loop tick, a per-item classifier, a per-byte parser, or any inner decode loop.
-- Prefer `SmallVec` or `ArrayVec` with a capacity that matches the 95th-percentile case. Fall
-  back to the heap only on overflow.
+- When the path must format, format into a reused `String`: add `use std::fmt::Write as _;`,
+  then call `buf.clear()` and `write!(buf, "...")` per iteration. Measured on rustc 1.97.0,
+  1000 iterations cost 1000 allocations with `format!` and 1 with the reused buffer. Without the
+  `Write` import, `write!` fails with `E0599: cannot write into String`.
+- Prefer `SmallVec` or `ArrayVec` with an inline capacity at the mode of the length
+  distribution, not at the 95th percentile: a larger `N` grows every value, empty ones included.
+  On 64-bit with smallvec 1.15.2 the size is `max(24, 16 + size_of::<[T; N]>())`, so
+  `SmallVec<[u32; 4]>` is 32 bytes and `SmallVec<[u32; 32]>` is 144 bytes against 24 for
+  `Vec<u32>` — six times the `memcpy` on every move. `ArrayVec<u32, 4>` is 20 bytes with
+  arrayvec 0.7.8 and never spills, and a spilled `SmallVec<[u32; 4]>` jumps to capacity 8 and
+  rejoins the normal `Vec` ladder instead of growing from `N`. See
+  `skills/rust-hot-path/references/allocation-reduction.md` for the full table.
 - Reuse buffers. Pass `&mut Vec<u8>` as an out-parameter instead of returning `Vec<u8>` by
   value.
 - Do not call `.to_string()` in an error constructor on a hot path. Pass a `&'static str` or
@@ -204,8 +214,10 @@ See also: `rust-performance` for measurement with `cargo-bloat` and `cargo-llvm-
   otherwise. Under write contention an `RwLock` is slower than a `Mutex`.
 - Document the lock order at the struct level with a `// Lock order: a -> b -> c` comment.
   Every nested acquisition follows that order.
-- `parking_lot` locks are faster and smaller than `std::sync` locks, and they do not poison.
-  Add `parking_lot` only after you measure contention.
+- `parking_lot` 0.12.5 locks are not automatically faster or smaller than `std::sync` locks.
+  Std improved its own lock implementations on several platforms, and the Rust Performance Book
+  now tells you to measure both before you switch. `parking_lot` locks still do not poison. Add
+  `parking_lot` only after you measure contention.
 - **`parking_lot` and `tokio::sync` mutexes do not poison on panic.** `std::sync::Mutex` does.
   See [`references/type-and-trait-traps.md`](references/type-and-trait-traps.md) before you
   migrate.
@@ -367,8 +379,8 @@ request.
 
 15. Any `impl Drop` on a struct where a field must be consumed? Use a dedicated guard type
     with `ManuallyDrop`.
-16. Any `fn(T) -> T` that takes a large struct (more than 4 pointer-sized fields) on a hot
-    path?
+16. Any `fn(T) -> T` that takes a struct past the target's inline-copy boundary (128 bytes on
+    x86_64, 256 on aarch64) on a hot path?
 17. Any custom `PartialEq` with no matching custom `Hash`, or the reverse, on a `HashMap` or
     `HashSet` key?
 18. Any `#[derive(Clone)]` on a struct that contains `Arc<T>` where the caller might expect an
@@ -383,7 +395,9 @@ request.
 24. Any `impl<T: ...> PubTrait for T` on a public trait that is not sealed? Seal the trait, or
     write explicit per-type impls.
 25. Any `Box::new([T; N])`, or any return of `[T; N]` by value, for `N` over 16 KiB? Use
-    `Vec::into_boxed_slice` or `Box::new_uninit_slice`.
+    `Vec::into_boxed_slice` or `Box::new_uninit_slice`. `into_boxed_slice` may cost a full copy
+    when capacity is meaningfully above length; collect into `Box<[T]>` directly when the length
+    is exact.
 
 If the answer to any item is yes, revise the change before you merge it.
 
@@ -397,6 +411,7 @@ If the answer to any item is yes, revise the change before you merge it.
 | `rust-unsafe` | `unsafe` review, aliasing rules, and raw pointer handling |
 | `rust-panic-safety` | Unwind safety, `catch_unwind`, and abort profiles |
 | `rust-performance` | Profiling, benchmarking, and allocation measurement |
+| `rust-hot-path` | What to change once a profile names the hot spot: allocation rate, type size, hasher choice, bounds checks |
 | `memory-model` | Atomics, orderings, and `loom` |
 | `rust-serde` | Types whose encoded form is a contract |
 | `rust-code-style` | Module layout, naming, and the rustdoc contract |
