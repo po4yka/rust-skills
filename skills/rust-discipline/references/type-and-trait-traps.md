@@ -1,10 +1,12 @@
 # Type-system and trait traps
 
-Read this file when a diff adds a trait impl, a `Drop` impl, a newtype, a lifetime parameter,
-or a large fixed-size array. Each trap is silent: the code compiles, and the defect appears
-later at run time, at a downstream consumer, or on a different target.
+Read this file when a diff adds a trait impl, a `Drop` impl, a newtype, or a lifetime parameter.
+Each trap is silent: the code compiles, and the defect appears later at run time, at a downstream
+consumer, or on a different target.
 
-Each item states a severity, a wrong example, a correct example, and a rule.
+Each item states a severity, a wrong example, a correct example, and a rule. Traps that come from
+the shape of the data — hash keys, text reversal, and large arrays — live in
+[data-shape-traps.md](data-shape-traps.md).
 
 ---
 
@@ -84,31 +86,72 @@ Profile with `cargo-flamegraph` or Criterion before you choose value-passing on 
 runs per item. `skills/rust-hot-path/references/type-size-reduction.md` holds the probe recipe
 that measures the boundary on your own target, and the ways to shrink a type below it.
 
----
+The builder receiver shape is the case where the choice is not about copy cost. The three shapes
+are not interchangeable, and the receiver decides where the builder can live:
 
-## `Hash` and `PartialEq` contract violation
+| Setter receiver | Chains | Survives a loop | Terminal builder method |
+| --- | --- | --- | --- |
+| `fn set(&mut self)` returning `()` | no | yes | `fn build(self) -> T` |
+| `fn set(mut self) -> Self` | yes | no | `fn build(self) -> T` |
+| `fn set(&mut self) -> &mut Self` | yes | yes | `fn build(self) -> T` from a bound builder |
 
-**Severity: CRITICAL**
-
-The standard library requires that `k1 == k2` implies `hash(k1) == hash(k2)`. If you write
-`PartialEq` by hand and derive `Hash`, or the reverse, `HashMap` and `HashSet` return silently
-incorrect results.
+An owned `self -> Self` setter moves the builder on every call. The second iteration of a loop
+then fails with `error[E0382]: use of moved value` and the note `'b' moved due to this method
+call, in previous iteration of loop`. A `&mut self -> &mut Self` setter chains and loops, and it
+keeps `fn build(self) -> T`. Only the start of the chain constrains the terminal method. Bind the
+builder to a variable and the owned build compiles. Start the chain from a temporary, as in
+`CfgBuilder::default().name("a").build()`, and it fails with `error[E0507]: cannot move out of a
+mutable reference`, with the note `'CfgBuilder::build' takes ownership of the receiver 'self',
+which moves value`.
 
 ```rust
-// BUG: the derived Hash uses the original case; the manual PartialEq ignores case.
-#[derive(Hash)]
-struct Tag(String);
-impl PartialEq for Tag {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.to_lowercase() == other.0.to_lowercase()
+#[derive(Default, Debug)]
+struct Cfg {
+    name: String,
+    retries: u32,
+}
+
+#[derive(Default)]
+struct CfgBuilder {
+    inner: Cfg,
+}
+
+impl CfgBuilder {
+    fn name(&mut self, value: &str) -> &mut Self {
+        self.inner.name = value.into();
+        self
+    }
+
+    fn retries(&mut self, value: u32) -> &mut Self {
+        self.inner.retries = value;
+        self
+    }
+
+    // Owned terminal. It needs a bound builder, never a temporary.
+    fn build(self) -> Cfg {
+        self.inner
     }
 }
-impl Eq for Tag {}
-// HashSet<Tag> stores "Foo" and "foo" as two different entries.
+
+fn main() {
+    let mut builder = CfgBuilder::default();
+    builder.name("a").retries(3);
+    for attempt in 0..3u32 {
+        builder.retries(attempt);
+    }
+    let cfg = builder.build();
+    println!("{cfg:?}");
+}
 ```
 
-Rule: when you write a custom `PartialEq`, write a matching custom `Hash` that hashes the same
-normalized form. Add a test that inserts through one form and looks up through the other.
+Rule: choose the receiver from the call sites, not from the doc example. Conditional or
+loop-driven configuration needs `&mut self -> &mut Self`, and keeps `fn build(self) -> T`. Reach
+for `fn build(&mut self) -> T` with `std::mem::take` only when the chain must stay one expression
+that starts from a temporary. That form costs two things. A second `build()` succeeds and returns
+the default: measured on rustc 1.97.0, one `name("real")` setter then two builds prints
+`first : Cfg { name: "real", retries: 0 }` and `second: Cfg { name: "", retries: 0 }`. It also
+forces `Default` on the built type. Keep the owned `self -> Self` setter when a double build must
+be impossible, and accept that it cannot be looped over.
 
 ---
 
@@ -153,8 +196,16 @@ impl std::ops::Deref for UserId {
 // UserId now exposes every u64 method through auto-deref, and leaks the representation.
 ```
 
+`Deref` gives method reuse, never substitutability: method lookup and `&Target` coercion follow
+the chain, trait-bound solving and unsizing to `dyn Trait` do not.
+
 Rule: implement `Deref` only on a smart pointer. For a domain newtype, write explicit accessor
-methods, or implement `AsRef` and `From`.
+methods, or implement `AsRef` and `From`. For polymorphism, declare a trait and implement it on
+each type: `Vec<Box<dyn T>>`, a `&dyn T` parameter, and a generic bound each need the impl, and
+none of them accepts a `Deref` in its place. The compiler reports nothing at the point the mistake
+is made, only at the first polymorphic use site, by which time the rewrite is a full API change.
+[trait-resolution.md](trait-resolution.md) holds the resolution order, the three sites that keep
+failing after you add `Deref`, and the exact E0277 each one gives.
 
 ---
 
@@ -224,6 +275,58 @@ use `Weak<T>` for the child-to-parent direction.
 
 ---
 
+## A `Weak` registry never reaps dead slots
+
+**Severity: WARNING**
+
+`Weak` breaks the cycle, and it also moves the registration lifetime out of the registry. A
+registry that stores `Vec<Weak<dyn Observer>>` accepts a registration whose only `Arc` the caller
+drops on the next line. `attach` returns successfully, `notify` then delivers nothing, and no error
+appears anywhere. The dead slot also stays in the `Vec` for the life of the subject, so the
+registry grows without bound.
+
+Measured on rustc 1.97.0 with two `attach` calls, one observer dropped at once: `slots=2 live=1`,
+one delivery, and the `Vec` still two entries long until a reap runs.
+
+```rust
+use std::sync::{Arc, Weak};
+
+trait Observer {
+    fn observe(&self, state: u32);
+}
+
+struct Subject {
+    observers: Vec<Weak<dyn Observer>>,
+    state: u32,
+}
+
+impl Subject {
+    fn attach(&mut self, observer: &Arc<dyn Observer>) {
+        self.observers.push(Arc::downgrade(observer));
+    }
+
+    fn notify(&mut self) {
+        // Reap first, or the Vec grows for the life of the subject.
+        self.observers.retain(|slot| slot.strong_count() > 0);
+        let state = self.state;
+        self.observers
+            .iter()
+            .filter_map(Weak::upgrade)
+            .for_each(|observer| observer.observe(state));
+    }
+}
+```
+
+Rule: reap on every notify with `retain(|slot| slot.strong_count() > 0)`. Reaping forces
+`notify(&mut self)`; when notify must take `&self`, move the reap into `attach` or give the
+registry interior mutability. Either the registry owns the `Arc` and hands the caller a
+subscription guard, or `attach` documents that the caller owns the registration lifetime. Do not
+put an associated type on the observer trait: a bare `dyn Observer` is then `error[E0191]: the
+value of the associated type 'Subject' in 'Observer' must be specified`, which locks the registry
+to one subject type. Take the subject as a plain method argument.
+
+---
+
 ## Lifetime laundering across input and storage
 
 **Severity: CRITICAL**
@@ -263,6 +366,18 @@ Find candidates:
 ```bash
 rg "fn .+<'[a-z]+>.*HashMap.*&'[a-z]+" --type rust -n
 ```
+
+---
+
+## A `Cow` field infects the struct with a lifetime
+
+**Severity: WARNING**
+
+The same failure family as the section above, from one field. A `Cow<'a, str>` field puts `'a` on
+the struct and on every signature that touches it, exactly like a `&'a mut T` field.
+
+`skills/rust-copy-on-write/SKILL.md` holds the whole decision: the E0515 and E0521 shapes, the
+`into_static` exit, and the hit rate that decides whether the field is worth a lifetime at all.
 
 ---
 
@@ -308,55 +423,125 @@ rg "^impl<T(:\s*\w[\w:+ ]*)?>\s+\w+\s+for\s+T\b" --type rust -n
 
 ---
 
-## Large stack arrays and the `Box::new([0u8; N])` pitfall
+## A blanket impl on an empty trait is not a bound alias
 
 **Severity: WARNING**
 
-`Box::new([0u8; N])` does not allocate `N` bytes directly on the heap. The expression first
-builds `[0u8; N]` on the caller's stack, then `Box::new` copies it into a heap allocation. A
-debug build performs no placement optimization, so the stack copy is always materialized. It
-overflows a constrained thread stack — mobile and embedded targets commonly give a thread
-about 1 MiB to 2 MiB — at roughly `N >= 256 KiB`. A release build sometimes removes the copy
-through NRVO, but that optimization is fragile. Any intermediate
-`let buf = Box::new([0u8; N]);` can materialize the stack copy again.
+`trait Featured {}` plus `impl<T: Clone + Debug> Featured for T {}` names a bound set and
+propagates nothing. Generic code over `T: Featured` cannot call any method of `Clone` or `Debug`.
+The first call fails with `error[E0599]: no method named 'clone' found for type parameter 'T' in
+the current scope`, and the help suggests restricting the parameter again, which is the whole cost
+the alias was meant to remove. A supertrait declaration propagates every bound to each use site,
+and the same blanket impl still applies the trait to every qualifying type automatically.
 
 ```rust
-// BAD: overflows the stack in debug; relies on brittle NRVO in release.
-let buf: Box<[u8; 1024 * 1024]> = Box::new([0u8; 1024 * 1024]);
+use std::fmt::Debug;
 
-// BAD: returning a large array by value forces a memcpy through the stack.
-fn make_buf() -> [u8; 1024 * 1024] { [0u8; 1024 * 1024] }
+// An empty trait plus a blanket impl names a bound set and propagates nothing.
+// `T: Featured` alone cannot call `clone`.
+trait Featured {}
+impl<T: Clone + Debug> Featured for T {}
 
-// GOOD: allocate on the heap from the start.
-let buf: Box<[u8]> = vec![0u8; 1024 * 1024].into_boxed_slice();
+// A supertrait propagates every bound to each use site. The same blanket impl
+// still applies the trait to every qualifying type.
+trait Alias: Clone + Debug {}
+impl<T: Clone + Debug> Alias for T {}
 
-// GOOD (Rust 1.82 or later): allocate directly, with no zeroed stack temporary.
-let buf: Box<[u8]> = unsafe {
-    let mut b = Box::<[u8]>::new_uninit_slice(1024 * 1024);
-    std::ptr::write_bytes(b.as_mut_ptr().cast::<u8>(), 0, 1024 * 1024);
-    b.assume_init()
-};
+fn duplicate<T: Alias>(value: T) -> (T, T) {
+    let copy = value.clone();
+    (value, copy)
+}
 ```
 
-Rule: build any array larger than 16 KiB for heap residence with `Vec::into_boxed_slice` or
-`Box::new_uninit_slice`. Never write `Box::new([T; N])` for a large `N`, and never return
-`[T; N]` by value for a large `N`. Hot-path code additionally falls under the no-allocation
-rule in the main skill.
+Rule: write the bound set as a supertrait list, never as an empty trait with a blanket impl. The
+supertrait form is not free in the other direction: adding a supertrait to a published trait breaks
+every existing impl, so declare the full list in the first release. The blanket impl itself still
+carries the conflict hazard of the section above, so seal the trait.
 
-`Vec::into_boxed_slice` is not free. It calls `shrink_to_fit` whenever capacity exceeds length,
-which issues a `realloc` that may move the buffer. Measured with a `Vec<u32>` at length 3:
-capacity 3 and capacity 4 keep the data pointer; capacity 8 and capacity 1000 move it. State the
-cost as "may cost a full copy when capacity is meaningfully above length", not as "always
-copies". The reverse direction has no such cost: `<[T]>::into_vec` never reallocates. When the
-length is exact, build the boxed slice straight from the iterator, which allocates once:
+---
+
+## A `Clone` supertrait or a `-> Self` method destroys dyn compatibility
+
+**Severity: WARNING**
+
+Each half removes `dyn Trait` on its own, and each gives `error[E0038]`. `Clone` requires
+`Self: Sized`, so no vtable can be built. A method that names `Self` in return position gets no
+vtable slot. `Debug` alone stays dyn compatible.
+
+The error lands at every `dyn Render` and `Box<dyn Render>` use site, never at the trait
+definition, so a one-word edit to the supertrait list breaks code that never mentions `Clone`.
 
 ```rust
-let squares: Box<[u32]> = (0..1024u32).map(|n| n * n).collect();
+use std::fmt::Debug;
+
+// `trait Render: Clone + Debug` has no `dyn Render`. `where Self: Sized` on the
+// method that names `Self` keeps the rest of the trait usable behind `dyn`.
+trait Render: Debug {
+    fn draw(&self);
+
+    fn duplicate(&self) -> Self
+    where
+        Self: Sized;
+}
+
+#[derive(Clone, Debug)]
+struct Dot;
+
+impl Render for Dot {
+    fn draw(&self) {}
+
+    fn duplicate(&self) -> Self {
+        self.clone()
+    }
+}
+
+fn draw_all(items: &[Box<dyn Render>]) {
+    items.iter().for_each(|item| item.draw());
+}
 ```
 
-Find candidates:
+Rule: never put `Clone` in the supertrait list of a trait you intend to use behind `dyn`, and add
+`where Self: Sized` to every method that names `Self` in return position. That clause has a cost:
+the method cannot be called through `dyn Trait` at all. `skills/rust-compiler-errors/SKILL.md`
+holds the E0038 triage — the five shapes that remove the vtable, the `...because` note that names
+which one you hit, and the `clone_box` replacement for a `Clone` supertrait.
 
-```bash
-rg "Box::new\(\s*\[0?[a-z0-9_]+\s*;\s*[0-9]{4,}" --type rust -n
-rg "fn .* -> \[[a-z0-9_]+\s*;\s*[0-9]{4,}\]" --type rust -n
+---
+
+## A trait bound on a struct definition is viral and guarantees nothing
+
+**Severity: WARNING**
+
+`struct Container<T: Featured>` does not reach the caller as a guarantee. It only forces every impl
+block, every function signature, and every derive on that type to repeat the bound. An impl block
+that omits it fails with `error[E0277]: the trait bound 'T: Featured' is not satisfied` pointing at
+the impl header, with `note: required by a bound in 'Container'`. The reflexive fix, copying the
+bound onto that impl too, spreads the constraint through the file until an unrelated caller cannot
+satisfy it.
+
+```rust
+trait Featured: Clone {}
+
+// No bound on the definition. Every impl block is then free to omit it.
+struct Container<T> {
+    item: T,
+}
+
+impl<T> Container<T> {
+    fn get(&self) -> &T {
+        &self.item
+    }
+}
+
+// The bound sits on the one impl that needs it.
+impl<T: Featured> Container<T> {
+    fn duplicate(&self) -> T {
+        self.item.clone()
+    }
+}
 ```
+
+Rule: declare the type parameter bare, and put each bound on the impl block that needs it. One case
+does need the bound on the definition: a `where` clause that an associated type or a const generic
+expression depends on. Do not remove such a bound blindly. Removing a bound from a published struct
+is not a breaking change; adding one is.

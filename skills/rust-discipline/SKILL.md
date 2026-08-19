@@ -29,7 +29,11 @@ Each rule carries a severity:
 Deep trait-level and type-level traps live in
 [`references/type-and-trait-traps.md`](references/type-and-trait-traps.md). Read that file
 when you review a diff that adds a trait impl, a `Drop` impl, a newtype, or a lifetime
-parameter.
+parameter. Method resolution and coherence traps live in
+[`references/trait-resolution.md`](references/trait-resolution.md). Read that file when a diff
+adds a `Deref` impl, an extension trait, a `downcast_ref` chain, or a second conversion impl on
+one type pair. Traps that come from the shape of the data — hash keys, text reversal, and large
+arrays — live in [`references/data-shape-traps.md`](references/data-shape-traps.md).
 
 ---
 
@@ -62,6 +66,61 @@ Find violations:
 ```bash
 rg ':\s*&(String|Vec<|PathBuf)\b' --type rust -n
 ```
+
+Keep an iterator's extra reference out of a public bound. `items.iter().find(pred)` under
+`F: Fn(&T) -> bool` fails with `E0277: expected a 'FnMut(&&T)' closure`, because
+`Iterator::find` passes `&Self::Item` and `Item` is already `&T`. Widening the bound to
+`Fn(&&T) -> bool` compiles and pins `&&T` into the API for ever. Re-borrow in the body instead:
+`items.iter().find(|item| pred(item))`.
+
+### Return a slice, not the container type
+
+**Severity: WARNING**
+
+`fn items_mut(&mut self) -> &mut Vec<String>` puts `Vec` in the public signature. A later switch
+to `Box<[String]>` breaks every caller with `E0599: no method named 'push' found for mutable
+reference '&mut [String]'`, which reads like a caller mistake and ships as a patch release. The
+read accessor `-> &[String]` survives the same switch untouched. Inside one crate a
+`&mut Vec<T>` accessor costs nothing; apply the rule to a published API.
+
+```rust
+pub struct Order {
+    items: Vec<String>,
+}
+impl Order {
+    pub fn items(&self) -> &[String] { &self.items }
+    // `&mut Vec<String>` here would pin `Vec` into the public signature.
+    pub fn items_mut(&mut self) -> &mut [String] { &mut self.items }
+    // Name every operation that changes the length.
+    pub fn add_item(&mut self, item: String) { self.items.push(item); }
+}
+```
+
+### Store a callback as `Box<dyn Fn>`, not `Box<dyn FnMut>`
+
+**Severity: WARNING**
+
+No two closures share a type, so a `Vec<F>` never holds two of them, and `impl Fn` in a field
+fails with `E0562`. The stored form is `Box<dyn Fn(..)>`. `Box<dyn FnMut(..)>` needs a unique
+borrow at the call, so `publish(&self)` fails with `E0596` and must become `&mut self`, which
+propagates to every caller and blocks sharing the owner behind an `Arc`. Require `Fn`, and put
+the mutation inside the callback's own `Cell` or `Mutex`.
+
+```rust
+pub struct Bus {
+    // `dyn Fn` keeps `publish(&self)`. `dyn FnMut` forces `publish(&mut self)`.
+    subs: Vec<Box<dyn Fn(u32)>>,
+}
+impl Bus {
+    pub fn subscribe(&mut self, f: impl Fn(u32) + 'static) { self.subs.push(Box::new(f)); }
+    pub fn publish(&self, ev: u32) { for s in &self.subs { s(ev); } }
+}
+```
+
+The field carries an implicit `+ 'static` bound. Clone the captured data; do not add a lifetime
+parameter to the owner, and do not store `Weak` callbacks to dodge it. A `Weak` registration
+dies when the caller releases its `Arc`, and the drop is silent: measured at 1 entry held, 0
+callbacks fired, no warning and no error.
 
 ### Do not store `&'a mut H` in a struct field
 
@@ -122,6 +181,16 @@ Rules:
 - When the callback must not keep the argument reference, write `for<'a>` explicitly.
 - When the return type depends on the argument lifetime — for example, the callback returns a
   slice of the input buffer — use a GAT or a named lifetime instead.
+- Pick the bound from three separate axes. `move` decides the capture mode. The body decides
+  the trait: a read-only body gives `Fn` even under `move`, and a body that moves a non-`Copy`
+  capture out gives `FnOnce`, whose second call fails with `E0382`. The captured types decide
+  the lifetime. A closure coerces to `fn` only with an empty capture set; one captured `i32`
+  blocks it with `E0308`.
+- Declare a method lifetime on the method, or elide it. `impl<'a> Doc { fn view(&'a self) ->
+  View<'a> }` is early bound, so `Doc::view` fails a `for<'x>` bound with `implementation of
+  'Fn' is not general enough` — no error code, no suggested fix. `impl Doc { fn view(&self) ->
+  View<'_> }` is late bound and passes. A direct call compiles under both forms, so test the
+  bound by passing the method path itself.
 
 ---
 
@@ -180,6 +249,11 @@ See also: `ffi-error-progress-cancel`.
   handling is identical. This forces a review when someone adds a variant.
 - `if let`, `let else`, and `while let` are acceptable for single-variant extraction. They do
   not defeat exhaustiveness.
+- **A `downcast_ref` chain is a match with the exhaustiveness check removed.** Measured with
+  three implementors and two `if let Some(x) = any.downcast_ref::<T>()` arms: the build is
+  clean, no lint fires, and the program handles 2 of 3 values. When the set of types is closed
+  and the code needs the concrete data, use an enum; the same gap then fails with `E0004` and
+  names the variant. See [`references/trait-resolution.md`](references/trait-resolution.md).
 
 ## Allocation in hot paths
 
@@ -223,6 +297,12 @@ See also: `rust-performance` for measurement with `cargo-bloat` and `cargo-llvm-
   migrate.
 - **Never hold a lock across `.await`.** Acquire the guard, extract what you need, then drop
   the guard explicitly before any `.await`.
+- **Wait on a `Condvar` only through a predicate.** A `Condvar` keeps no count, so a bare `wait`
+  blocks for ever when the notify arrives first. Call
+  `cv.wait_while(lock.lock().unwrap(), |v| *v == 0)`, stable since 1.42.0, which checks the
+  predicate under the lock before it sleeps and after every wake. Measured with a worker that
+  notifies 200 ms before the waiter starts: the bare form hangs and `timeout 3` kills it with
+  exit 124; `wait_while` exits 0. The predicate reads only state that the same mutex protects.
 - Do not mix `rayon` parallel iterators with async code. Keep a `rayon` region inside a
   dedicated blocking closure.
 
@@ -347,57 +427,73 @@ request.
    `impl AsRef<...>`.
 2. Any `&'a mut Trait` stored in a struct field? Use a generic `H: Trait` instead.
 3. Any callback without `for<'a>` where the caller must not keep the reference? Add the HRTB.
+4. Any `pub` accessor that returns `&mut Vec<T>` or `&mut String`? Return `&mut [T]` or
+   `&mut str`, and name each length-changing operation. Any public bound that names `&&T`?
+5. Any callback stored as `Box<dyn FnMut>` where `Box<dyn Fn>` works? Any `Weak` callback
+   registry that drops registrations silently?
+6. Any `Fn` bound picked from the `move` keyword instead of the body? Any callback method whose
+   lifetime sits on the `impl` block instead of the method?
 
 **Panics, errors, and resources**
 
-4. Any new `.unwrap()`, or any bare `.expect()` with no invariant in the message, outside
+7. Any new `.unwrap()`, or any bare `.expect()` with no invariant in the message, outside
    tests?
-5. Any `Box<dyn std::error::Error>` returned from a library crate?
-6. Any raw `i32` file descriptor held across an error path? Any `Drop` impl with no documented
+8. Any `Box<dyn std::error::Error>` returned from a library crate?
+9. Any raw `i32` file descriptor held across an error path? Any `Drop` impl with no documented
    ordering?
-7. Any `_ =>` arm in a match over an internal enum?
+10. Any `_ =>` arm in a match over an internal enum? Any `downcast_ref` chain over a closed set
+    of types?
 
 **Performance and concurrency**
 
-8. Any allocation inside an event-loop tick, a per-item decode loop, or a parser hot path?
-9. Any lock held across `.await`? Any `RwLock` that protects a write-heavy field? Any `rayon`
-   parallel iterator mixed with async code?
-10. Any new atomic with no `// Ordering:` comment? Any `Relaxed` on a publish/subscribe flag?
-11. Any blocking syscall inside async with no `spawn_blocking` and no dedicated thread? Any
+11. Any allocation inside an event-loop tick, a per-item decode loop, or a parser hot path?
+12. Any lock held across `.await`? Any `RwLock` that protects a write-heavy field? Any `rayon`
+    parallel iterator mixed with async code? Any `Condvar::wait` outside a predicate loop or a
+    `wait_while` call?
+13. Any new atomic with no `// Ordering:` comment? Any `Relaxed` on a publish/subscribe flag?
+14. Any blocking syscall inside async with no `spawn_blocking` and no dedicated thread? Any
     blocking I/O inside a `rayon` task?
 
 **Unsafe, FFI, and lints**
 
-12. Any internal `unsafe fn` with no `# Safety` rustdoc section? Any `unsafe` block with no
+15. Any internal `unsafe fn` with no `# Safety` rustdoc section? Any `unsafe` block with no
     `// SAFETY:` comment?
-13. Any FFI entry point that can panic instead of returning a `Result`?
-14. Any new `#[allow(clippy::correctness | suspicious)]`? Any new `deny.toml` ignore with no
+16. Any FFI entry point that can panic instead of returning a `Result`?
+17. Any new `#[allow(clippy::correctness | suspicious)]`? Any new `deny.toml` ignore with no
     tracking issue and no expiry?
 
 **Trait and type-system traps** (details in
-[`references/type-and-trait-traps.md`](references/type-and-trait-traps.md))
+[`references/type-and-trait-traps.md`](references/type-and-trait-traps.md),
+[`references/trait-resolution.md`](references/trait-resolution.md), and
+[`references/data-shape-traps.md`](references/data-shape-traps.md))
 
-15. Any `impl Drop` on a struct where a field must be consumed? Use a dedicated guard type
+18. Any `impl Drop` on a struct where a field must be consumed? Use a dedicated guard type
     with `ManuallyDrop`.
-16. Any `fn(T) -> T` that takes a struct past the target's inline-copy boundary (128 bytes on
+19. Any `fn(T) -> T` that takes a struct past the target's inline-copy boundary (128 bytes on
     x86_64, 256 on aarch64) on a hot path?
-17. Any custom `PartialEq` with no matching custom `Hash`, or the reverse, on a `HashMap` or
+20. Any custom `PartialEq` with no matching custom `Hash`, or the reverse, on a `HashMap` or
     `HashSet` key?
-18. Any `#[derive(Clone)]` on a struct that contains `Arc<T>` where the caller might expect an
+21. Any `#[derive(Clone)]` on a struct that contains `Arc<T>` where the caller might expect an
     isolated copy?
-19. Any `Deref` impl on a newtype that is not a smart pointer?
-20. Any migration from `std::sync::Mutex` to `parking_lot` or `tokio::sync::Mutex` that relied
+22. Any `Deref` impl on a newtype that is not a smart pointer? Any `Deref` relied on to satisfy
+    a trait bound or a `dyn Trait` coercion? Neither one walks the deref chain.
+23. Any migration from `std::sync::Mutex` to `parking_lot` or `tokio::sync::Mutex` that relied
     on poison detection?
-21. Any unchecked arithmetic on a value derived from untrusted input?
-22. Any `Arc<T>` that points back to its parent container?
-23. Any function that takes `&'a T` and also writes references into a storage parameter that
+24. Any unchecked arithmetic on a value derived from untrusted input?
+25. Any `Arc<T>` that points back to its parent container?
+26. Any function that takes `&'a T` and also writes references into a storage parameter that
     shares the same `'a`? Split the lifetimes, or store owned data.
-24. Any `impl<T: ...> PubTrait for T` on a public trait that is not sealed? Seal the trait, or
+27. Any `impl<T: ...> PubTrait for T` on a public trait that is not sealed? Seal the trait, or
     write explicit per-type impls.
-25. Any `Box::new([T; N])`, or any return of `[T; N]` by value, for `N` over 16 KiB? Use
+28. Any `Box::new([T; N])`, or any return of `[T; N]` by value, for `N` over 16 KiB? Use
     `Vec::into_boxed_slice` or `Box::new_uninit_slice`. `into_boxed_slice` may cost a full copy
     when capacity is meaningfully above length; collect into `Box<[T]>` directly when the length
     is exact.
+29. Any extension-trait method whose name already exists on the type, or on a type in its deref
+    chain? The shadowing is silent, and adding the method to a published trait breaks downstream
+    builds with `E0034`.
+30. Any `impl From<X> for Y` beside an `impl TryFrom<X> for Y`? The `core` blanket impl makes
+    the pair `E0119`, and the choice between them is permanent.
 
 If the answer to any item is yes, revise the change before you merge it.
 

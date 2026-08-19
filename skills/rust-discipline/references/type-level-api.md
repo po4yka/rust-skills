@@ -97,8 +97,19 @@ use std::marker::PhantomData;
 pub struct Closed;
 pub struct Open;
 
+// `fn() -> S` keeps the door `Send`, `Sync`, and covariant in `S`, whatever the
+// tag is. `PhantomData<S>` would inherit the tag's auto traits instead.
 pub struct Door<S> {
-    _state: PhantomData<S>,
+    _state: PhantomData<fn() -> S>,
+}
+
+// Hand-written, and only on the closed state. `#[derive(Default)]` would add
+// `S: Default` to the impl; `impl<S> Default for Door<S>` would hand out a
+// `Door<Open>` and defeat the state machine.
+impl Default for Door<Closed> {
+    fn default() -> Self {
+        Door { _state: PhantomData }
+    }
 }
 
 impl Door<Closed> {
@@ -128,6 +139,83 @@ The cost is real, so weigh it:
 - The state cannot be chosen at run time. A value whose state depends on input needs an enum
   wrapper, which puts the run-time check back.
 - The type name appears in every signature that touches it, including the caller's.
+
+Two rules keep the tag from leaking into the machine, and the block above follows both. First,
+`PhantomData<S>` makes the struct behave as if it owns an `S` for auto traits, variance, and drop
+check, so a tag that is never constructed still decides whether the machine is `Send`. Measured
+with `struct Tag(*const u8)`: a door whose field is `PhantomData<S>` fails a `Send` bound at
+`Door<Tag>` with `error[E0277]: '*const u8' cannot be sent between threads safely` and
+`note: required because it appears within the type 'PhantomData<Tag>'`. `PhantomData<fn() -> S>`
+keeps the same covariance in `S`, and a function pointer is always `Send + Sync`, so the tag stops
+deciding. Second, a derive on the struct adds `S: Trait` to the generated impl even when the only
+field is the marker. `#[derive(Default)]` on the door then makes `Door::<Closed>::default()` fail
+with `error[E0599]: the associated function or constant 'default' exists for struct 'Door<Closed>',
+but its trait bounds were not satisfied` and `note: trait bound 'Closed: Default' was not
+satisfied`. Write the impls by hand.
+
+Use `PhantomData<fn() -> S>` only for a tag that is never constructed. For a parameter that stands
+for owned data use `PhantomData<S>`, and for one that stands for a borrow use `PhantomData<&'a S>`.
+
+A fallible transition must hand the old state back. The transition takes `self` by value, so a
+plain error type destroys the value: the caller cannot retry, cannot log the old state, and cannot
+fall back, because the receiver moved into the call. A retry after
+`fn authenticate(self, ..) -> Result<Session<Authenticated>, AuthError>` fails with
+`error[E0382]: use of moved value: 's'`. Type the error arm as `Self` and write `Err(self)`. The
+cost is that the `Result` is at least as large as the state type; box the error arm only when a
+size assertion proves it matters.
+
+Give the struct a default state parameter, and keep one inherent impl for the methods that exist in
+every state. Without the default, `fn audit(s: Session)` fails with `error[E0107]: missing generics
+for struct 'Session'`, so every downstream signature carries a generic argument for a parameter the
+caller does not choose. The default does not change constructor resolution: `Session::new()`
+resolves because exactly one inherent impl defines `new`. Keep it that way. A second inherent `new`
+on another state's impl makes every unqualified call fail with `error[E0034]: multiple applicable
+items in scope`, and that break reaches crates that never mention the new state, so give each
+state's constructor a distinct name.
+
+```rust
+use std::marker::PhantomData;
+
+pub struct Anonymous;
+pub struct Authenticated;
+
+// `= Anonymous` lets a signature name the bare type `Session`.
+pub struct Session<S = Anonymous> {
+    id: u64,
+    _state: PhantomData<fn() -> S>,
+}
+
+// One inherent impl for the methods that exist in every state.
+impl<S> Session<S> {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
+
+impl Session<Anonymous> {
+    // The only inherent `new` on the whole type. A second one on another
+    // state's impl makes every `Session::new()` call fail with E0034.
+    pub fn new(id: u64) -> Self {
+        Session { id, _state: PhantomData }
+    }
+
+    // The Err arm hands the receiver back, so the caller can retry.
+    pub fn authenticate(self, secret: &str) -> Result<Session<Authenticated>, Self> {
+        if secret.is_empty() {
+            return Err(self);
+        }
+        Ok(Session { id: self.id, _state: PhantomData })
+    }
+}
+
+// No generic argument here, because of the default.
+pub fn audit(session: &Session) -> u64 {
+    session.id()
+}
+```
+
+A default type parameter is not a bound relaxation. `Session` still applies every bound the
+declaration states, and a turbofish is still needed wherever inference has no other anchor.
 
 Use typestate for a builder that must not be finished twice, or a protocol handshake inside one
 function. Do not use it for a long-lived object stored in a collection.
