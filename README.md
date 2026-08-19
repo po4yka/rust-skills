@@ -63,10 +63,14 @@ Enter by the symptom, not by the skill name.
 | `cannot be sent between threads safely` across an `.await` | [rust-async-internals](skills/rust-async-internals/SKILL.md) |
 | A `tokio::select!` branch dropped work, or shutdown hangs | [rust-async-internals](skills/rust-async-internals/SKILL.md) |
 | `Ordering::Relaxed` versus `SeqCst`, a fence you cannot justify | [memory-model](skills/memory-model/SKILL.md) |
+| A global: `static mut`, `OnceLock`, `LazyLock`, `thread_local!` | [memory-model](skills/memory-model/SKILL.md) |
+| A macro to write or debug: `macro_rules!`, a derive, `cargo expand` | [rust-macros](skills/rust-macros/SKILL.md) |
+| You implement `Iterator` or `IntoIterator` for your own type | [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) |
 | A `SAFETY` comment to review, `repr(packed)`, `mem::zeroed`, `improper_ctypes` | [rust-unsafe](skills/rust-unsafe/SKILL.md) |
 | Miri, ThreadSanitizer, HWASan, or MTE reports something | [rust-sanitizers-miri](skills/rust-sanitizers-miri/SKILL.md) |
 | You need the profile first: flamegraph, simpleperf, `cargo-bloat` | [rust-performance](skills/rust-performance/SKILL.md) |
 | The profile already named the hot spot: allocations, type size, hasher | [rust-hot-path](skills/rust-hot-path/SKILL.md) |
+| Borrow or clone at an API boundary: `Cow<str>`, `to_mut`, clone cost | [rust-copy-on-write](skills/rust-copy-on-write/SKILL.md) |
 | A tombstone, a stripped backtrace, `addr2line` symbolication | [rust-debugging](skills/rust-debugging/SKILL.md) |
 | `UnsatisfiedLinkError`, `AttachCurrentThread`, a native crash from Kotlin | [rust-jni](skills/rust-jni/SKILL.md) |
 | UniFFI checksum mismatch, XCFramework or jniLibs packaging | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
@@ -93,6 +97,8 @@ flowchart LR
     A --> A3[rust-code-style]
     A --> A4[rust-crate-architecture]
     A --> A5[rust-lints]
+    A --> A6[rust-macros]
+    A --> A7[rust-iterator-impl]
 
     B --> B1[memory-model]
     B --> B2[rust-unsafe]
@@ -104,6 +110,7 @@ flowchart LR
     C --> C1[rust-performance]
     C --> C2[rust-hot-path]
     C --> C3[rust-async-internals]
+    C --> C4[rust-copy-on-write]
 
     D --> D1[rust-debugging]
     D --> D2[rust-observability]
@@ -121,11 +128,11 @@ flowchart LR
 
 ## Catalog
 
-Twenty-four skills in six groups. Deep material sits in `references/*.md` next to the skill that
+Twenty-seven skills in six groups. Deep material sits in `references/*.md` next to the skill that
 owns it.
 
 <details open>
-<summary><b>Language and code discipline</b> — five skills</summary>
+<summary><b>Language and code discipline</b> — seven skills</summary>
 
 <br>
 
@@ -136,6 +143,8 @@ owns it.
 | [rust-code-style](skills/rust-code-style/SKILL.md) | Module file layout, `lib.rs` re-export policy, visibility levels, item order, import groups, and the `thiserror` versus `anyhow` choice. |
 | [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) | Workspace layering, dependency direction rules, the crate-versus-module decision, and module layout for a crate that grew too large. |
 | [rust-lints](skills/rust-lints/SKILL.md) | `workspace.lints`, `clippy.toml`, `rustfmt.toml`, and `deny.toml` policy, safe lint tightening, suppression justification, and red-gate triage. |
+| [rust-macros](skills/rust-macros/SKILL.md) | `macro_rules!` textual scope and hygiene, fragment follow sets, the recursion limit, proc-macro crate rules, and the facade-and-derive crate split. |
+| [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) | The producing side of iteration: a hand-written `Iterator`, the three `IntoIterator` impls, `FromIterator` and `Extend`, `size_hint`, and the `unconditional_recursion` stack overflow. |
 
 </details>
 
@@ -181,7 +190,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Performance, debugging, and observability</b> — four skills</summary>
+<summary><b>Performance, debugging, and observability</b> — five skills</summary>
 
 <br>
 
@@ -189,6 +198,7 @@ owns it.
 | --- | --- |
 | [rust-performance](skills/rust-performance/SKILL.md) | Flamegraphs, simpleperf and Instruments, cargo-bloat and cargo-llvm-lines, Criterion baselines, LTO profiles, and build-time tuning. |
 | [rust-hot-path](skills/rust-hot-path/SKILL.md) | What to change once a profile names the hot spot: allocation rate, type size, hasher choice, bounds checks, inline attributes, and buffered I/O. |
+| [rust-copy-on-write](skills/rust-copy-on-write/SKILL.md) | The decision before the profile: `Cow` in return and argument position, the `to_mut` allocation trap, the lifetime a `Cow` field forces on callers, and measured persistent-collection costs. |
 | [rust-debugging](skills/rust-debugging/SKILL.md) | Host-first reproduction, logcat and tombstones, symbolication with addr2line and atos, FFI panic hooks, and a panic-to-cause triage table. |
 | [rust-observability](skills/rust-observability/SKILL.md) | `tracing` instrumentation, a redacting visitor over a closed field vocabulary, host log sinks, bounded event rings, and telemetry snapshots. |
 
@@ -266,7 +276,7 @@ add a skill, and how to verify a change locally before you open a pull request.
 
 ## Sources
 
-The skills are generalized from production Rust codebases. Four additions have an outside source,
+The skills are generalized from production Rust codebases. Five additions have an outside source,
 recorded here because the topic inventory is theirs even though the text and the examples are not.
 
 <details>
@@ -296,6 +306,23 @@ recorded here because the topic inventory is theirs even though the text and the
   option between `rustc-hash` and SipHash on string keys. Locking stdout in a loop no longer
   helps on its own. `-C symbol-mangling-version=v0` and `-fuse-ld=lld` on Linux are both no-ops
   on a current toolchain, and `static_assertions` has not shipped since 2019.
+- The topic inventory of `rust-macros`, `rust-iterator-impl`, `rust-copy-on-write`, and
+  `rust-discipline/references/trait-resolution.md` follows the source code of
+  [Idiomatic Rust: Code like a Rustacean](https://github.com/brndnmtthws/idiomatic-rust-book) by
+  Brenden Matthews (MIT): trait design, extension traits, typestate, macro authoring, `Cow` and
+  persistent collections, and `Deref` misuse are its chapter set. That repository ships listings
+  and no prose, so every rule, example, and number here is original and was measured on rustc
+  1.97.0. Several upstream listings are the counter-example rather than the model. The book's
+  `Cow` demo calls `to_mut()` before a read-only `replace`, which forces the allocation the
+  `Cow` exists to avoid. Its linked-list iterator fabricates a `&'a T` out of an
+  `Rc<RefCell<T>>` with `unsafe { &*cell.as_ptr() }`; both Miri borrow models report undefined
+  behaviour as soon as a mutation interleaves, and the book's own `main` never interleaves, so
+  the test passes. Its optional-argument pattern puts one method name on two traits, which is
+  `E0034` the moment both are in scope. Its `WrappedVec` implements `Deref` to `Vec<T>` and an
+  inherent `into_iter`, the two shapes chapter 10 of the same book argues against. Its derive
+  example points the dependency from the derive crate at the trait crate, so a user must depend
+  on both; the facade re-export runs the other way.
+
 - The compile-check harness in `checks/` is adapted from
   [leonardomso/rust-skills](https://github.com/leonardomso/rust-skills) (MIT). The design that
   makes it work is theirs: extract each block into a cargo example, bucket the failures so

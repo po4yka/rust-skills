@@ -1,6 +1,6 @@
 ---
 name: rust-crate-architecture
-description: Use when you add, split, merge, rename, or remove a crate in a Rust workspace, when you define or enforce dependency layers and direction rules, when you decide whether new code belongs in a new crate or an existing module, when you restructure a workspace after a layering violation or a dependency cycle, or when you lay out modules inside a crate that grew too large.
+description: Use when you add, split, merge, rename, or remove a crate in a Rust workspace, when you define or enforce dependency layers and direction rules, when you decide whether new code belongs in a new crate or an existing module, when you restructure a workspace after a layering violation or a dependency cycle between normal crates, or when you lay out modules inside a crate that grew too large. A cyclic package dependency that involves a proc-macro crate belongs to rust-macros.
 license: BSD-3-Clause
 ---
 

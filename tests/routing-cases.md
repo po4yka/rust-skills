@@ -109,8 +109,32 @@ wrong skill, and put the phrase in the right description in the same change.
 | swap_remove | rust-hot-path |
 | with_capacity | rust-hot-path |
 | reserve_exact | rust-hot-path |
-| size_hint | rust-hot-path |
 | print-type-sizes | rust-hot-path |
 | ThinVec | rust-hot-path |
 | memcpy | rust-hot-path |
 | workhorse | rust-hot-path |
+| macro_rules | rust-macros |
+| write a derive macro | rust-macros |
+| proc macro | rust-macros |
+| macro hygiene | rust-macros |
+| fragment specifier | rust-macros |
+| cannot find macro in this scope | rust-macros |
+| cyclic package dependency | rust-macros |
+| cargo expand | rust-macros |
+| Cow<str> | rust-copy-on-write |
+| copy-on-write | rust-copy-on-write |
+| to_mut | rust-copy-on-write |
+| borrowed or owned | rust-copy-on-write |
+| clone cost | rust-copy-on-write |
+| persistent collection | rust-copy-on-write |
+| structural sharing | rust-copy-on-write |
+| rpds | rust-copy-on-write |
+| implement Iterator | rust-iterator-impl |
+| custom iterator | rust-iterator-impl |
+| IntoIterator | rust-iterator-impl |
+| FromIterator | rust-iterator-impl |
+| size_hint | rust-iterator-impl |
+| ExactSizeIterator | rust-iterator-impl |
+| lending iterator | rust-iterator-impl |
+| unconditional_recursion | rust-iterator-impl |
+| E0207 | rust-iterator-impl |
