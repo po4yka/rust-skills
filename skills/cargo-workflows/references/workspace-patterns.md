@@ -221,6 +221,11 @@ dedicated change.
 ```bash
 # Pick a leaf crate with no internal dependents.
 cd crates/<leaf-crate>
+
+# Report the silent behaviour changes FIRST. These lints go quiet once the
+# crate is on edition 2024, because the behaviour has already changed.
+cargo clippy --all-targets -- -W rust_2024_compatibility
+
 cargo fix --edition
 
 # cargo fix edits .rs files in place. Read the diff before you continue.
@@ -258,6 +263,17 @@ everything and stricter `extern` rules hit it hardest.
 - **Unsafe attributes.** `#[no_mangle]`, `#[export_name]`, and
   `#[link_section]` must be wrapped: `#[unsafe(no_mangle)]`. Every raw FFI
   export is affected. `cargo fix --edition` rewrites them.
+- **`static mut` references stop the build.** The `static_mut_refs` lint is
+  deny-by-default on edition 2024. `&mut COUNTER` fails with
+  `error: creating a mutable reference to mutable static`. A plain read fails
+  too, because the format machinery takes a reference: `println!("{}", COUNTER)`
+  fails with `error: creating a shared reference to mutable static`. Only a
+  direct read or write of the value inside `unsafe` still compiles.
+  `#[allow(static_mut_refs)]` silences both messages. Do not use it as the
+  migration answer. `&raw mut COUNTER` and `&raw const COUNTER` build a raw
+  pointer and create no reference. A raw pointer keeps every data race the
+  `static mut` had. `cargo fix --edition` prints the `&raw mut` suggestion but
+  does not apply it. The `memory-model` skill selects the real replacement.
 - **`gen` is a reserved keyword.** Rename any identifier called `gen` before you
   migrate. Find them with `grep -rn '\bgen\b' crates/`.
 - **Precise-capturing `impl Trait`.** A function that returns `impl Trait` and
@@ -267,6 +283,25 @@ everything and stricter `extern` rules hit it hardest.
 - **`if let` and `while let` chains stabilize.** You can collapse existing nested
   patterns, but do not do it in the migration commit. Keep the migration diff
   surgical so a reviewer can read it.
+- **Tail-expression temporaries drop earlier.** A temporary in the tail
+  expression of a block is now dropped before the block's local variables.
+  Edition 2021 dropped it after them. A body of `let _local = Noisy("local");
+  temp().0.len() > 0` prints `drop local / drop temporary` on 2021 and
+  `drop temporary / drop local` on 2024. Nothing fails to compile, so
+  `cargo fix --edition` cannot repair it. The `tail_expr_drop_order` lint is the
+  only mechanical way to find the sites.
+- **`if let` releases its scrutinee before the `else` block.** A temporary in the
+  `if let` scrutinee is now dropped before the `else` block runs. Edition 2021
+  held it to the end of the whole `if let`. A `MutexGuard` left as a temporary
+  therefore stops guarding the `else` branch: with a static `M: Mutex<Option<u32>>`,
+  `if let Some(v) = *M.lock().unwrap() { .. } else { M.try_lock().is_ok() }`
+  yields `false` on 2021 and `true` on 2024. The `if_let_rescope` lint finds the
+  sites. Bind the guard to a named local, so the drop point is explicit and
+  identical on both editions.
+
+The last two entries change run-time behaviour with a clean build and green
+tests. They are the reason the migration workflow above runs
+`-W rust_2024_compatibility` before `cargo fix --edition`, not after.
 
 ### Do not bump the rustfmt edition early
 

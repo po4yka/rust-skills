@@ -22,7 +22,7 @@ rating. Read the section that matches the code you author or review.
 - [block_in_place panics on current_thread runtime](#block_in_place-panics-on-current_thread-runtime)
 - [broadcast receiver silently drops messages on Lagged](#broadcast-receiver-silently-drops-messages-on-lagged)
 - [std::sync::Mutex guard across .await deadlocks silently](#stdsyncmutex-guard-across-await-deadlocks-silently)
-- [async fn in traits is not object-safe and has no Send bound](#async-fn-in-traits-is-not-object-safe-and-has-no-send-bound)
+- [async fn in traits is not dyn compatible and has no Send bound](#async-fn-in-traits-is-not-dyn-compatible-and-has-no-send-bound)
 
 ## Blocking in async — common mistakes
 
@@ -670,17 +670,19 @@ Rule: if a `Mutex` guard must genuinely live across an `.await`, use
 `tokio::sync::Mutex`. If it does not need to, drop the guard explicitly before
 any `.await`.
 
-## `async fn` in traits is not object-safe and has no `Send` bound
+## `async fn` in traits is not dyn compatible and has no `Send` bound
 
 **Severity: WARNING**
 
 `async fn` in traits was stabilized in Rust 1.75 (RPITIT). Three non-obvious
 hazards appear when you replace `#[async_trait]`.
 
-1. **Not `dyn`-safe.** A trait that contains `async fn` cannot be used as
+1. **Not dyn compatible.** A trait that contains `async fn` cannot be used as
    `dyn Trait`. Code that used `Box<dyn MyTrait>` — which worked under
    `#[async_trait]`, because that macro boxes the futures internally — breaks
-   at compile time.
+   at compile time with `E0038`. Older releases called this check "object
+   safety"; current rustc prints "is not dyn compatible", so a search for
+   "object safe" in the build log finds nothing.
 2. **No automatic `Send` bound.** A native `async fn` in a trait does not add
    `Send` to the returned future. `tokio::spawn(obj.method())` fails, because
    the future is not `Send`.

@@ -1,6 +1,6 @@
 ---
 name: memory-model
-description: Use when you write or review Rust atomic operations, lock-free data structures, or publish/subscribe flags, when you choose between Ordering::Relaxed, Acquire, Release, AcqRel and SeqCst, when you place atomic fences, or when you diagnose a data race that appears only on weakly ordered targets such as ARM64. Covers happens-before reasoning, valid orderings per operation, counter and stop-flag and publish patterns, compare-exchange rules, common ordering mistakes, and verification with Miri and loom.
+description: Use when you write or review Rust atomic operations, lock-free data structures, or publish/subscribe flags, when you choose between Ordering::Relaxed, Acquire, Release, AcqRel and SeqCst, when you place atomic fences, when you declare or review global state, or when you diagnose a data race that appears only on weakly ordered targets such as ARM64. Covers happens-before reasoning, valid orderings per operation, counter and stop-flag and publish patterns, compare-exchange rules, the choice between const, static, OnceLock, LazyLock and thread_local!, common ordering mistakes, and verification with Miri and loom. Triggers on "global variable", "global state", "static mut", "global static", "OnceLock", "LazyLock", "thread_local", "lazy_static", "once_cell", or any memory ordering question.
 license: BSD-3-Clause
 ---
 
@@ -38,6 +38,84 @@ Apply these five rules before you write any atomic code.
    `RwLock`, or an ownership transfer. Use the atomic only as the signal.
 5. **Verify, do not assume.** Run the code under Miri and loom. Test on a
    weakly ordered device.
+
+## Global state
+
+A global is shared state, so every rule above applies to it. Choose the
+declaration form first. Each form fails in a different way.
+
+| Form | Use it for | Cost |
+|------|------------|------|
+| `const NAME: T` | A compile-time value with no identity: a limit, a table of `&str`. | Inlined at every use site. No address. No state. |
+| `static NAME: T` | Shared state with a `const` initializer: an atomic, a `Mutex`. | One address for the process. `T` must be `Sync`. |
+| `static NAME: OnceLock<T>` | A value written once at start-up by its owner. | One atomic load per read. `get` returns `Option<&T>`. |
+| `static NAME: LazyLock<T>` | A value computed on first use from a fixed initializer. | One atomic load per read. Derefs to `&T`. |
+| `thread_local! { static NAME: T }` | Per-thread scratch: a buffer, a recursion depth, an RNG. | No synchronization. One value per thread. |
+
+Five rules decide the choice. Each one is a compile error or a silent bug.
+
+1. **A `static` needs `Sync`.** `static BAD: RefCell<u32>` is rejected with
+   `error[E0277]: RefCell<u32> cannot be shared between threads safely` and the
+   note `shared static variables must have a type that implements Sync`. Put the
+   value in a `Mutex` or an `RwLock`, or use an atomic.
+2. **A `const` has no single address.** The compiler inlines the value at every
+   use site, so interior mutability in a `const` mutates a fresh temporary and
+   discards it. `const HITS: AtomicUsize` incremented three times reads back
+   `0`. The same declaration as a `static` reads back `3`. rustc warns with
+   `const_item_interior_mutations`, clippy with
+   `clippy::declare_interior_mutable_const`. Neither is an error, so this ships.
+3. **`OnceLock` and `LazyLock` differ on panic.** When the initializer panics,
+   `OnceLock::get_or_init` leaves the cell empty and the next call retries.
+   `LazyLock` poisons for the life of the process: every later deref panics with
+   `LazyLock instance has previously been poisoned`. Use `LazyLock` for an
+   initializer that cannot fail. Use `OnceLock` when the value arrives from
+   outside `main`, or when the first attempt can fail.
+4. **A `static` is never dropped.** Process exit runs no `Drop` on a `static`,
+   so a flush-on-drop writer in a global loses its last buffer. Flush it
+   explicitly before `main` returns.
+5. **`thread_local!` destructors have holes.** A destructor runs when its thread
+   exits, but std documents that on Unix with pthread-based TLS it does not run
+   for a value on the main thread. Never put required cleanup in thread-local
+   state.
+
+`LazyLock` is stable since 1.80.0 and `OnceLock` since 1.70.0. A workspace on a
+newer toolchain needs no `lazy_static` or `static_init` dependency. Keep
+`once_cell` while `rust-version` stays below 1.80.0, or while a global
+initializer returns a `Result`. `OnceLock::get_or_try_init` is still unstable on
+1.97.0. It fails with `error[E0658]` under the feature gate `once_cell_try`,
+issue 109737.
+
+```rust
+use std::cell::Cell;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex, OnceLock};
+
+// One address, computed on first deref from a fixed initializer.
+static TABLE: LazyLock<Mutex<HashMap<u32, u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+// One address, written once at start-up by the owner of the value.
+static CONFIG: OnceLock<String> = OnceLock::new();
+
+// One value per thread. The `const` block skips the lazy-init check per access.
+thread_local! {
+    static DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+fn main() {
+    CONFIG.set(String::from("prod")).expect("set exactly once");
+    TABLE.lock().unwrap().insert(1, 42);
+    DEPTH.set(DEPTH.get() + 1);
+    println!("{:?} {} {}", CONFIG.get(), TABLE.lock().unwrap().len(), DEPTH.get());
+}
+```
+
+Do not rewrite a `static mut` to an atomic without reading its type. An atomic
+replaces a `static mut` that holds an integer or a `bool`. A `static mut` that
+holds a `Vec` or a `String` needs `OnceLock` or `LazyLock` plus a `Mutex`. On
+edition 2024 the `static_mut_refs` lint is deny-by-default, so every reference
+to the static stops the build. See the `cargo-workflows` skill for the two exact
+messages and the edition-2024 migration steps.
 
 ## Ordering strength
 
@@ -273,6 +351,7 @@ review, because the pairing is not visible at the access site.
 | Writes placed after the `Release` store | Move every published write before the store. |
 | Reads placed before the `Acquire` load | Move every dependent read after the load. |
 | `unsafe` mutable statics used for shared data | Use `Mutex`, `RwLock`, `OnceLock`, or an atomic. |
+| `const` used for shared state with interior mutability | Declare it `static`. A `const` is inlined, so every use site mutates a fresh copy. |
 | Non-atomic data guarded only by an atomic flag | Guard the payload with `Mutex`/`RwLock`, and keep the atomic as the signal. |
 | `Relaxed` decrement in a reference count | Use `AcqRel` on the decrement. |
 | `compare_exchange` failure ordering stronger than success ordering | Weaken the failure ordering. The failure path is a load. |

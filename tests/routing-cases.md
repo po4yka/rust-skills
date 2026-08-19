@@ -138,3 +138,9 @@ wrong skill, and put the phrase in the right description in the same change.
 | lending iterator | rust-iterator-impl |
 | unconditional_recursion | rust-iterator-impl |
 | E0207 | rust-iterator-impl |
+| global state | memory-model |
+| static mut | memory-model |
+| OnceLock | memory-model |
+| LazyLock | memory-model |
+| thread_local | memory-model |
+| lazy_static | memory-model |
