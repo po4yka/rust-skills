@@ -54,32 +54,21 @@ is the instance that matters, because it gates soundness and the other lints gat
 
 Measured on rustc 1.97.0, edition 2024. A binary whose first line is `#![forbid(unsafe_code)]`
 calls `dep::deref_first!(v)` from an ordinary dependency, and that `macro_rules!` expands to
-`unsafe { *v.as_ptr() }`. `cargo run` prints `9` and exits 0. The same dependency exports a
-second macro that expands a function named `Not_Snake_Case` holding an unused `mut` and an
-unused variable: under `#![warn(unused_variables, unused_mut, non_snake_case)]` rustc prints
-zero warnings, and the identical text written by hand in that file prints three.
-`cargo clippy -p <crate> -- -D unsafe_code -D clippy::undocumented_unsafe_blocks` also reports
-nothing.
-
-So a hit from `rg -l '#!\[forbid\(unsafe_code\)\]'` is not proof that the crate compiles to no
-unsafe, and no dependency filter closes the gap: `cargo tree --prefix none -p <crate> | rg
+`unsafe { *v.as_ptr() }`. `cargo run` prints `9` and exits 0, and
+`cargo clippy -p <crate> -- -D unsafe_code -D clippy::undocumented_unsafe_blocks` reports nothing
+either. So a hit from `rg -l '#!\[forbid\(unsafe_code\)\]'` is not proof that the crate compiles
+to no unsafe, and no dependency filter closes the gap: `cargo tree --prefix none -p <crate> | rg
 '\(proc-macro\)'` lists nothing for a crate that exports a plain `macro_rules!`. Read the
-expansion instead. It is the only check that sees every case, and it prints the injected
-`let x: u8 = unsafe { *v.as_ptr() };` in plain text:
-
-```bash
-cargo +nightly rustc -p <crate> --profile=check -- -Zunpretty=expanded | rg 'unsafe'
-```
+expansion instead, with the second command in "Purpose". It is the only check that sees every
+case, and it prints the injected `let x: u8 = unsafe { *v.as_ptr() };` in plain text.
 
 `-Zunpretty=expanded` needs nightly, so run this as a periodic audit for every crate that
 applies a macro from a dependency. Do not make it a CI gate.
 
-Removing `#![forbid(unsafe_code)]` from a crate is a reviewable event, not a detail. When you
-remove it, state in the same commit which unsafe operation forced the change and where that
-operation lives.
-
-Keep the set of unsafe-carrying crates small. A workspace where only the FFI adapter contains
-unsafe is far easier to audit than one where every crate may.
+Removing `#![forbid(unsafe_code)]` from a crate is a reviewable event, not a detail. State in the
+same commit which unsafe operation forced the change and where it lives. Keep the set of
+unsafe-carrying crates small: a workspace where only the FFI adapter contains unsafe is far
+easier to audit than one where every crate may.
 
 ## Lint floor for unsafe crates
 
@@ -141,10 +130,9 @@ Item 4 covers the impl only. `unsafe trait T` binds the implementor: a plain `im
 `error[E0200]: the trait T requires an unsafe impl declaration`. `unsafe fn` binds the caller.
 Neither implies the other, so a safe method of an `unsafe trait` is called with no block. The
 mirror trap costs as much: `unsafe impl` on a safe trait is
-`error[E0199]: implementing the trait T is not unsafe`, so you cannot use the keyword to mark an
-impl as delicate. Put each `# Safety` section where its obligation sits.
-[references/unsafe-patterns.md](references/unsafe-patterns.md) has the axes table and a worked
-`unsafe trait` with one safe method and one unsafe method.
+`error[E0199]: implementing the trait T is not unsafe`. Put each `# Safety` section where its
+obligation sits. [references/unsafe-patterns.md](references/unsafe-patterns.md) has the axes
+table and a worked `unsafe trait`.
 
 ## Panic safety at the FFI boundary
 
@@ -185,10 +173,10 @@ invariants apply to every such call:
 
 State all three in the `// SAFETY:` comment above the call.
 
-Centralize the duplication of a process-wide handle, such as a `JavaVM`, in one module. Wrap it
-in a type that the rest of the workspace clones, and write the liveness rationale once in that
-module. A second `from_raw` call for the same handle elsewhere in the tree is a regression, and
-a grep for the constructor name is enough to catch it in review.
+Centralize the duplication of a process-wide handle, such as a `JavaVM`, in one module, wrap it in
+a type the rest of the workspace clones, and write the liveness rationale once there. A second
+`from_raw` call for the same handle elsewhere in the tree is a regression that a grep for the
+constructor name catches in review.
 
 ## Zero-copy buffer handoff
 
@@ -201,10 +189,12 @@ and state them again at the foreign call site:
 3. The buffer stays valid for the entire duration of the call.
 
 The same rule covers a slice built over a memory-mapped region. The mapping must outlive the
-slice, and the region must not be mutated while the slice is live. A fabricated lifetime on such
-a function is a promise the compiler cannot check. Keep the function private, and make the
+slice, and the region must not be mutated while the slice is live. An output lifetime that
+appears in no argument is *unbounded*: the caller picks it, up to `'static`, and no `# Safety`
+section gives the caller a way to discharge that. Keep such a function private, and make the
 owning type hold the mapping so the borrow checker enforces the relationship for every caller.
-[references/ffi-layout-rules.md](references/ffi-layout-rules.md) has both worked slices.
+[references/ffi-layout-rules.md](references/ffi-layout-rules.md) has both worked slices;
+[references/unsafe-patterns.md](references/unsafe-patterns.md) has the unbounded-lifetime fix.
 
 ## Pointer reads from untrusted byte buffers
 
@@ -251,11 +241,9 @@ in [references/unsafe-patterns.md](references/unsafe-patterns.md).
 `mem::zeroed()` is sound only when all-zero bytes is a valid value of the type. A plain
 `repr(C)` struct that the kernel or a C library fills in qualifies, such as `libc::ifreq`. The
 SAFETY comment must say that the type has no Rust-level invariant and that the zero value is
-overwritten before it is read.
-
-Never use `mem::zeroed()` for a type with a Rust-level invariant: `bool`, an `enum`, `NonNull`,
-a reference, `Box`, or any type with a non-trivial `Drop`. Use `MaybeUninit<T>` instead, and do
-not read it until it is fully initialized.
+overwritten before it is read. Never use it for a type that has such an invariant: `bool`, an
+`enum`, `NonNull`, a reference, `Box`, or any type with a non-trivial `Drop`. Use
+`MaybeUninit<T>` there, and do not read it until it is fully initialized.
 
 ## Syscall and ioctl wrappers
 
@@ -269,13 +257,11 @@ Every syscall wrapper must:
 4. Check the return value and convert `io::Error::last_os_error()`. Never discard `errno`.
 
 An `ioctl` call needs a SAFETY comment that states three facts: the descriptor is valid, the
-struct fields the kernel reads are populated, and which request number is being issued and what
-it does.
-
-A C union field read is unsafe because the compiler cannot know which variant was written last.
-Zero the struct first, then write the field before you read it. A descriptor that a foreign
-caller passes in is borrowed, not owned: duplicate it through `BorrowedFd::borrow_raw` before
-you take ownership, or the foreign runtime closes it under you.
+struct fields the kernel reads are populated, and which request number is issued and what it
+does. A C union field read is unsafe because the compiler cannot know which variant was written
+last, so zero the struct first and write the field before you read it. A descriptor that a
+foreign caller passes in is borrowed, not owned: duplicate it through `BorrowedFd::borrow_raw`
+before you take ownership, or the foreign runtime closes it under you.
 
 [references/unsafe-patterns.md](references/unsafe-patterns.md) has the worked `getsockopt`,
 `ioctl`, union, and descriptor-duplication calls.
@@ -284,12 +270,12 @@ you take ownership, or the foreign runtime closes it under you.
 
 `wrapping_add` is always sound to compute; do not dereference an out-of-bounds result. `add` is
 UB on the computation, not on the dereference, once the result leaves the allocation.
-`offset_from` needs both pointers in one allocation. The worked calls are in
-[references/unsafe-patterns.md](references/unsafe-patterns.md).
+`offset_from` needs both pointers in one allocation. All three return a new pointer and leave the
+receiver alone, so a cursor field must be assigned back: `self.ptr = unsafe { self.ptr.add(1) };`.
 
 `NonNull` documents the non-null invariant in the type instead of in a comment. Build it with
 `NonNull::new(Box::into_raw(b))`, and consume it back through `Box::from_raw` exactly once. The
-worked round trip is in the same reference.
+worked calls are in [references/unsafe-patterns.md](references/unsafe-patterns.md).
 
 ## Layout and pointer shape
 
@@ -309,7 +295,7 @@ cannot infer from a `// SAFETY:` comment.
 | Double close, or a read from a reused descriptor | `RawFd` states no owner | `OwnedFd` to own, `BorrowedFd<'_>` to lend |
 | A field is corrupt on one target only | Hand-rolled bitfield masks | A bitfield crate, plus a round-trip test against real bytes |
 | Sound in debug, unsound in release | `debug_assert!` guards an unsafe block | `assert!`, which survives the shipping profile |
-| A handle outlives the data it points at | A raw-pointer struct has no variance or drop check | `PhantomData<&'a T>`, `PhantomData<T>`, or `PhantomData<*mut T>` |
+| A handle outlives the data it points at | A raw pointer carries no lifetime and no drop check | `PhantomData<&'a T>` to borrow, `PhantomData<T>` to own |
 
 Promote both FFI-safety lints, because they cover opposite directions and one alone leaves half
 the boundary unchecked:
@@ -327,27 +313,30 @@ For the worked pattern behind each row, see
 
 Severity: CRITICAL for a public unsafe API.
 
-Soundness must not assume `Drop` runs. `mem::forget` is safe, and `ManuallyDrop::new` is safe. A
-public unsafe API whose soundness depends on a guard's destructor running is unsound, because a
-caller can forget the guard without writing a single `unsafe` block.
+Soundness must not assume `Drop` runs. Five safe paths skip a destructor: `mem::forget`,
+`Box::leak`, `ManuallyDrop::new`, an `Rc` or `Arc` cycle, and `process::exit`. A public unsafe
+API whose soundness depends on a guard's destructor is unsound, because a caller reaches every
+one of those without writing a single `unsafe` block. Leaking memory is memory-safe, which is why
+the language never made it unsafe. Any *other* invariant you attach to `Drop`, such as
+unregistering a pointer that foreign code holds, has no enforcement at all.
 
 State the invariant in the `# Safety` section, and design the API so that forgetting the guard
 is either impossible or harmless. The standard library shows both correct designs:
 
 - `thread::spawn` requires `'static`. No guard is needed; the lifetime carries the safety.
 - `thread::scope` captures the scope by reference inside the closure, so the borrow checker
-  prevents the scope from being forgotten while a thread still runs.
+  prevents the scope from being forgotten while a thread still runs. Forgetting a returned
+  `ScopedJoinHandle` still costs you: `scope()` then blocks forever, because the counter it waits
+  on is decremented by that handle's destructor. std chose a deadlock over unsoundness.
 
 A future polled inside `select!` can be dropped at any `.await`. Do not make a future's
 correctness depend on its `Drop` running.
 
 `Drop::drop` must not panic. When a panic is already unwinding and a `Drop` implementation
-panics, the process aborts immediately. A double panic cannot be caught by `catch_unwind`. There
-is no recovery path.
-
-Any `.unwrap()`, `.expect()`, or panicking call inside `drop()` is a bomb that fires only while
-an error is already in flight, which is the worst possible moment. `self.flush().unwrap()` in a
-`Drop` impl is the common shape.
+panics, the process aborts immediately, and `catch_unwind` cannot catch a double panic. Any
+`.unwrap()`, `.expect()`, or panicking call inside `drop()` is therefore a bomb that fires only
+while an error is already in flight. `self.flush().unwrap()` in a `Drop` impl is the common
+shape.
 
 Rule: move every fallible cleanup into an explicit `close()`, `commit()`, or `flush()` that
 returns `Result`. Leave `drop()` as a best-effort fallback that only logs. The worked pair is in
@@ -361,10 +350,12 @@ A single unsafe block anywhere in the call graph, including inside a dependency,
 a type invariant that safe code elsewhere relies on. You cannot judge soundness by reading one
 function.
 
-The failure shape: a dependency calls `str::from_utf8_unchecked` on a buffer whose validation
-was defeated. The resulting `&str` violates a language invariant. Your safe code calls
-`.chars()` on it and panics or triggers UB. The unsafe is in the dependency; the crash is in
-your code.
+The failure shape: a dependency calls `str::from_utf8_unchecked` on a buffer whose validation was
+defeated. The resulting `&str` violates a library invariant that all safe code trusts. The unsafe
+is in the dependency; the undefined behavior is in your code, in the first loop that decodes the
+string. Only a decode reaches it. `str::replace` and `s.chars().count()` both succeed silently on
+invalid UTF-8, and outside a byte-string literal neither the compiler nor Miri reports anything.
+[references/unsafe-patterns.md](references/unsafe-patterns.md) has the three cases.
 
 Action when you audit:
 
@@ -377,7 +368,7 @@ Action when you audit:
 
 ## Manual `unsafe impl Send` or `Sync`
 
-Severity: CRITICAL.
+Severity: CRITICAL. Read `rust-send-sync` first: a field-type change removes most of these impls.
 
 A manual `unsafe impl Send for T` or `unsafe impl Sync for T` is a promise the compiler accepts
 without checking. It stays accepted after the fields change.
@@ -390,7 +381,9 @@ Before you write the impl:
 
 1. List every field type. For each, confirm it is `Send` or `Sync`, or state why the wrapper
    upholds the invariant despite the field.
-2. Check the trait impls on the type. None may hand out shared access to non-`Sync` state.
+2. Check the trait impls on the type, `#[derive(...)]` included. A derived `Debug`, `Clone`,
+   `PartialEq`, or `Hash` is a `&self` method that hands `&T` to `T`'s own impl on whichever
+   thread calls it, so none of them may reach non-`Sync` state.
 3. Assert the auto trait on each field type at compile time, so a later change to an inner type
    fails the build instead of failing in production. The manual impl on the wrapper is
    unconditional, so assert the fields, not the wrapper. A
@@ -399,7 +392,7 @@ Before you write the impl:
    negative assertion, such as `assert_not_impl_all!`, still needs the `static_assertions`
    crate, because stable Rust has no clean form for a negative bound. That crate is stuck at
    1.1.0, released 2019-11-03. The worked assertion is in
-   [references/unsafe-patterns.md](references/unsafe-patterns.md).
+   [references/miri-and-aliasing.md](references/miri-and-aliasing.md).
 4. Tag the impl with a `// SAFETY:` comment that names the fields audited and the argument.
 
 Objects from a C or C++ library are usually not thread-safe. Do not assume otherwise because
@@ -413,19 +406,24 @@ of panicking, and safe code mutates behind a live shared reference. Yield `Ref<'
 so the caller holds the borrow. Treat the pattern as UB on inspection: Miri reports it only when
 a test interleaves the fabricated reference with a mutation, so a clean Miri run proves nothing
 here. Do not generalize the rule to `Cell::as_ptr` or `UnsafeCell::get`, which are the intended
-raw-access APIs. The defect is specific: handing out a reference that outlives the call, from a
-cell the code only shares.
+raw-access APIs. The defect is specific: a reference that outlives the call, from a shared cell.
 
 The `ManuallyDrop<String>` plus `String::from_raw_parts` form is severity HIGH. It fabricates a
-`&String` from a `&str`, because the layouts happen to line up. It is formally unsound, because
-the `String` was never owned here and the pointer has the wrong provenance. It is also fragile:
-a change to the internal layout or the allocator breaks it silently. Accept `&str` or
-`impl AsRef<str>` instead. The only defensible context is legacy interop that cannot be changed.
-There, document the full invariant, test under `MIRIFLAGS="-Zmiri-tree-borrows"`, and gate the
-call with `cfg(not(miri))` when Miri rejects it.
+`&String` from a `&str`, because the layouts happen to line up. The provenance is correct. What
+it violates is the `from_raw_parts` contract itself, which demands a buffer that came from the
+global allocator with exactly that capacity. Accept `&str` or `impl AsRef<str>` instead. The only
+defensible context is legacy interop that cannot be changed, and there the `ManuallyDrop` field
+must stay private: `ManuallyDrop::into_inner` is a safe method that re-arms `Drop` and detonates
+it.
 
-[references/unsafe-patterns.md](references/unsafe-patterns.md) has the `RefCell::as_ptr`
-demonstration and the three API fixes.
+Do not reach for Miri to settle this one. Miri accepts the fabrication under Stacked Borrows,
+Tree Borrows, and `-Zmiri-strict-provenance` alike. Generalize the rule: a clean Miri run is
+evidence about aliasing, provenance, and alignment. It is not evidence about a documented
+`# Safety` contract, because the violated precondition is a library rule that the abstract
+machine never evaluates.
+
+[references/miri-and-aliasing.md](references/miri-and-aliasing.md) has the `RefCell::as_ptr`
+demonstration, the three API fixes, and the `ManuallyDrop` detonation.
 
 ## Symbol collision in `cdylib` crates
 
@@ -493,8 +491,9 @@ may pass now. See the `rust-sanitizers-miri` skill for the full Miri and sanitiz
 - `rust-panic-safety` — the panic policy that the FFI guards in this skill implement
 - `rust-jni` — the JNI boundary in full, including threading and reference frames
 - `uniffi-boundary` — the generated boundary that removes most hand-written unsafe
+- `rust-send-sync` — arranging the auto traits in safe code, which usually removes the manual impl
+- `rust-variance` — what a `PhantomData` marker does to lifetime coercion, next to the auto traits
+- `rust-pin-projection` — the pinning obligations behind a `map_unchecked_mut` SAFETY comment
 - `memory-model` — atomics, aliasing, and ordering
 - `rust-lints` — where the lint floor above is configured
 - `rust-debugging` — triaging a crash that unsafe code caused
-
-For worked patterns, see [references/unsafe-patterns.md](references/unsafe-patterns.md).

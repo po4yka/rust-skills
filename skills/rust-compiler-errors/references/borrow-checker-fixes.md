@@ -221,8 +221,9 @@ impl Graph {
 ```
 
 Keep every `borrow_mut` short and never hold one across a call that might re-enter. A `RefCell`
-panic reports `already mutably borrowed: BorrowError` with no indication of which other borrow is
-live, so it is expensive to debug in production. See the `rust-debugging` skill.
+panic reports `RefCell already borrowed` from `borrow_mut`, or `RefCell already mutably borrowed`
+from `borrow`. Neither text names the other live borrow, so it is expensive to debug in
+production. See the `rust-debugging` skill.
 
 For the thread-safe types, see the `memory-model` skill for ordering and the
 `rust-async-internals` skill for holding a guard across an `.await`.
@@ -259,6 +260,184 @@ impl<'a> View<'a> {
 
 The third shape matters: tying the output to both inputs when only one is the source forces the
 caller to keep the other alive for no reason. Write the narrowest lifetime that is true.
+
+## Drop and the borrow checker
+
+Adding `impl Drop` to a type is a change to its borrow rules. Four errors follow, and no error
+title names `Drop`.
+
+### E0597: dropck extends the borrow to the drop point
+
+Without a `Drop` impl the compiler knows destruction cannot read `'a`. With one, `drop(&mut self)`
+could read the reference, so the borrow must last until the value is dropped. Locals drop in
+reverse declaration order, so a guard declared before its source now fails.
+
+```rust,compile_fail
+struct NoDrop<'a>(&'a i32);
+struct WithDrop<'a>(&'a i32);
+impl Drop for WithDrop<'_> {
+    fn drop(&mut self) {}
+}
+
+fn ok() {
+    let d;
+    let x = 5;
+    d = NoDrop(&x);      // compiles
+    let _ = d.0;
+}
+
+fn bad() {
+    let d;
+    let x = 5;
+    d = WithDrop(&x);    // E0597: `x` does not live long enough
+    let _ = d.0;
+}
+```
+
+The note reads "borrow might be used here, when `d` is dropped and runs the `Drop` code for type
+`WithDrop`", followed by "values in a scope are dropped in the opposite order they are defined".
+Declare the borrowed local before the guard, or keep the type `Drop`-free.
+
+### E0507: `drop` holds `&mut self`, so a field pattern moves
+
+`if let Some(h) = self.0` inside `drop` fails with "cannot move out of `self` as enum variant
+`Some` which is behind a mutable reference" for every payload that is not `Copy`. rustc suggests
+`&self.0`, which gives a `&Handle` when you usually want `&mut`. Match on `self` instead: `self`
+is already a reference, so default binding modes make every binding a reference.
+
+```rust
+pub struct Handle;
+impl Handle {
+    pub fn report(&self, _reason: &str) {}
+}
+
+pub struct Guard(Option<Handle>);
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        // `if let Some(h) = self.0` is E0507. Match on `self`; `h` binds as `&mut Handle`.
+        let Self(Some(h)) = self else { return };
+        h.report("unused");
+    }
+}
+```
+
+Take ownership with `self.0.take()` or `std::mem::replace` when the cleanup must consume the
+payload.
+
+### E0509: a `Drop` impl blocks every partial move
+
+```rust,compile_fail
+struct Inner(String);
+struct Outer {
+    inner: Inner,
+}
+impl Drop for Outer {
+    fn drop(&mut self) {}
+}
+
+// E0509: cannot move out of type `Outer`, which implements the `Drop` trait
+fn take(o: Outer) -> Inner {
+    o.inner
+}
+```
+
+Drop glue runs on the whole value, so it cannot run on a value with a hole in it. Make the field
+an `Option<Inner>` and call `.take()` in both `take` and `drop`, or wrap the field in
+`std::mem::ManuallyDrop` and read it out with `unsafe { ManuallyDrop::take(..) }`.
+
+### E0184 and E0367: the two `Drop` impl rules
+
+`#[derive(Copy)]` plus `impl Drop` reports "the trait `Copy` cannot be implemented for this type;
+the type has a destructor". A bitwise copy plus a destructor is a double free by construction, so
+a resource handle is never `Copy`. Remove the derive.
+
+`impl<T: Clone> Drop for Foo<T>` where the struct is `struct Foo<T>(T)` reports E0367, "`Drop` impl
+requires `T: Clone` but the struct it is implemented for does not", with "note: the implementor
+must specify the same requirement". Drop glue must exist for every instantiation, so the impl may
+not apply to only some of them. Move the bound onto the struct definition:
+
+```rust
+pub struct Bar<T: Clone>(pub T);
+impl<T: Clone> Drop for Bar<T> {
+    fn drop(&mut self) {}
+}
+```
+
+## E0631: a function item is not a coercion site
+
+```text
+error[E0631]: type mismatch in function arguments
+    = note: expected function signature `fn(&String) -> _`
+               found function signature `fn(&str) -> _`
+help: consider wrapping the function in a closure
+```
+
+Deref coercion runs at an expression, not at a trait bound. With `v: Vec<String>` and `fn
+count_words(s: &str)`, the call `count_words(&v[0])` compiles because `&String` coerces to `&str`
+at that call. `v.iter().map(count_words)` fails, because `Iterator::map` demands
+`F: FnMut(&String) -> B` and rustc matches the function item's signature against that bound
+exactly.
+
+```rust
+fn count_words(s: &str) -> usize {
+    s.split_whitespace().count()
+}
+
+pub fn totals(v: &[String]) -> (usize, usize) {
+    let closure: usize = v.iter().map(|s| count_words(s)).sum();
+    let adapter: usize = v.iter().map(String::as_str).map(count_words).sum();
+    (closure, adapter)
+}
+```
+
+Inside a closure body the call is an expression again, so the coercion applies. The rule holds for
+`Option::map`, `Result::map_err`, and every other higher-order call.
+
+## Adding lifetimes to a callback bound is a dead end
+
+A `Fn(&T) -> K` parameter that fails to compile produces three errors in sequence. Each `help:` is
+locally correct, and the third wall cannot be climbed.
+
+| Step | Error | The `help:` rustc prints |
+| --- | --- | --- |
+| 1 | E0309: the parameter type `T` may not live long enough | consider adding an explicit lifetime bound: `T: 'a` |
+| 2 | E0621: explicit lifetime required in the type of `arr` | add explicit lifetime `'a` to the type of `arr` |
+| 3 | E0502: cannot borrow `*arr` as mutable because it is also borrowed as immutable | none |
+
+```rust,compile_fail
+// Terminal state of the "just add lifetimes" path.
+fn sort_by_key<'a, T: 'a, K: Ord>(arr: &'a mut [T], mut key: impl FnMut(&'a T) -> K) {
+    for i in 0..arr.len() {
+        for j in (i + 1)..arr.len() {
+            if key(&arr[j]) < key(&arr[i]) {
+                arr.swap(i, j);   // E0502
+            }
+        }
+    }
+}
+```
+
+The E0502 note reads "argument requires that `arr[_]` is borrowed for `'a`". A fixed `'a` in
+`impl FnMut(&'a T) -> K` makes every call hand the callback a borrow that lives for the whole
+`'a`, which outlives the loop body, so the body can never mutate the slice. Delete every `'a`.
+The elided lifetime in `impl FnMut(&T) -> K` is higher-ranked, and that is the form that compiles:
+
+```rust
+pub fn sort_by_key<T, K: Ord>(arr: &mut [T], mut key: impl FnMut(&T) -> K) {
+    for i in 0..arr.len() {
+        for j in (i + 1)..arr.len() {
+            if key(&arr[j]) < key(&arr[i]) {
+                arr.swap(i, j);
+            }
+        }
+    }
+}
+```
+
+`impl FnMut(&T) -> impl Ord` is not an escape either: it reports E0562, "`impl Trait` is not
+allowed in the return type of `Fn` trait bounds". Name the generic parameter, as `K` above. See
+the `rust-callback-bounds` skill for the case where `K` must borrow from `T`.
 
 ## Related
 

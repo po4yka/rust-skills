@@ -213,7 +213,7 @@ Memorize this table. The documentation entries are easy to miss.
 | `tokio::sync::mpsc::Receiver::recv` | Yes | Documented cancel-safe. |
 | `tokio::sync::Notify::notified` | **Conditional** | Must be awaited via `Pin<&mut>` to be cancel-safe; a bare `.notified().await` re-arms on each call. |
 | `tokio::time::sleep` | Yes | Cancellation just drops the timer. |
-| `sqlx::Transaction::commit` | **No** | Drop on a partial commit triggers an implicit blocking rollback. |
+| `sqlx::Transaction::commit` | **No** | Drop after a partial commit queues a silent rollback; nothing reports the failure. |
 | `sqlx::QueryAs::fetch_one` | Conditional | Cancel-safe if the connection is dropped (released to the pool); not if it is reused. |
 | `reqwest::RequestBuilder::send` | **No** | The body may be partially sent. |
 
@@ -250,7 +250,9 @@ handles) have library-specific behavior that is NOT visible in their
 signatures. Code that uses the API correctly can still miss the `Drop`
 semantics. Read the `Drop` impl before you rely on it.
 
-### sqlx 0.7 transactions
+### sqlx transactions
+
+Read against sqlx 0.7.4, 0.8.6 and 0.9.0. The `Drop` body is the same in all three.
 
 ```rust
 let tx = conn.begin().await?;
@@ -258,12 +260,12 @@ let tx = conn.begin().await?;
 tx.commit().await?;  // If THIS fails, tx is dropped with no rollback decision made.
 ```
 
-`Transaction`'s `Drop` impl issues an implicit ROLLBACK through a **blocking
-syscall** on the connection. Inside a tokio multi-thread runtime this surfaces
-as a `WARN`-level "blocking call in async context" log from the runtime's
-blocking detector. Inside a `current_thread` runtime, or under heavy load, it
-blocks a worker thread until the rollback completes. The symptom is a random
-latency spike.
+`Transaction::drop` calls `TransactionManager::start_rollback`, a non-async
+function that queues a ROLLBACK on the connection. Nothing blocks in `drop`.
+The rollback runs on the next async use of that connection, which includes the
+moment the pool recycles it. The hazard is the silence: the failed commit
+leaves the transaction open, the rollback is deferred to an unrelated call
+site, and no error surfaces at either point.
 
 Rule: never let a sqlx `Transaction` drop after a failed `commit().await`.
 Convert to an explicit rollback:
@@ -273,7 +275,7 @@ match work(&mut tx).await {
     Ok(v) => match tx.commit().await {
         Ok(()) => Ok(v),
         Err(e) => {
-            // commit failed; Drop would do a blocking rollback. Pre-empt it.
+            // commit failed; Drop would defer a silent rollback. Pre-empt it.
             let _ = tx.rollback().await;
             Err(e.into())
         }
@@ -287,76 +289,180 @@ match work(&mut tx).await {
 
 ### deadpool connections
 
-`Object<Manager>::drop` returns the connection to the pool. If the pool's
-recycle hook performs an async health check, the recycle is enqueued on a
-background task, which may not run if the runtime is shutting down. The
-connection then leaks during shutdown.
+Read against deadpool 0.13.0. `Object::drop` pushes the connection back into
+the pool slot list and adds a permit. It is fully synchronous and it runs no
+health check. `Manager::recycle`, the `pre_recycle` hook and the `post_recycle`
+hook all run inside the next `Pool::get().await`, not at drop time.
 
-Rule: call `Object::take()` + `Manager::recycle()` explicitly in shutdown
-paths. Do not rely on `Drop`.
+Consequence: a connection returned by `Drop` during shutdown keeps whatever
+state the last query left on it. Nothing validates it, and if the process exits
+before another `get()`, `recycle` never runs at all.
+
+Rule: in shutdown paths take the object out of the pool with
+`Object::take(obj)`, which detaches it, and close it yourself. Do not expect
+`Drop` to run any hook.
 
 ### tokio::fs::File
 
-`Drop` closes the fd through a `spawn_blocking`, so the close syscall does not
-run on a runtime thread. If the runtime shuts down with
-`Runtime::shutdown_timeout(Duration::ZERO)`, the close may not run and the fd
-leaks to the kernel until process exit.
+Read against tokio 1.53.1. `File` has no `Drop` impl at all. It holds
+`Arc<std::fs::File>`, so the fd closes when the last handle to that `Arc`
+drops. A write started by `poll_write` runs on the blocking pool and holds a
+clone until it ends, so the close waits for it. With no operation in flight the
+close syscall runs inline, on the thread that drops the file.
 
-Rule: in shutdown paths, `drop(file)` explicitly and then
-`tokio::task::yield_now().await` before you return. Outside shutdown, use
-`file.sync_all().await?` followed by an explicit drop.
+The data is not lost, but the write error is. A failed background write lands
+in `last_write_err`, and that field is read by the next `write`, `flush` or
+`seek` call. A drop makes that call never happen.
+
+Rule: `file.flush().await?` before you drop a file you wrote to. Add
+`file.sync_all().await?` when the bytes must reach the disk.
 
 ### General audit
 
 For every `Drop` on an async resource type:
 
-1. Read the library source for `impl Drop`. Does it block, spawn, or no-op?
+1. Read the library source for `impl Drop`. Does it block, spawn, queue the
+   work for a later call, or no-op? A missing `Drop` impl is also an answer.
 2. If it blocks: run cleanup through an explicit `.commit()` / `.rollback()` /
    `.close()` before the drop.
-3. If it spawns: cleanup is fire-and-forget. Verify the behavior under runtime
-   shutdown.
+3. If it spawns or queues: cleanup is fire-and-forget, and it reports no error.
+   Verify the behavior under runtime shutdown.
 4. Document the choice in a comment on the variable binding, for example
-   `// drop here: blocking rollback acceptable in error path`.
+   `// drop here: deferred rollback acceptable in error path`.
 
 ## Async closures and the `AsyncFn` family (stable since Rust 1.85)
 
 **Severity: INFO — replaces several long-standing workarounds**
 
 Rust 1.85 (February 2025, RFC 3668) stabilized `async ||` closures and the
-`AsyncFn` / `AsyncFnMut` / `AsyncFnOnce` trait family. This resolves two
-long-standing pain points listed under "HRTB pitfalls" below:
+`AsyncFn` / `AsyncFnMut` / `AsyncFnOnce` trait family. `AsyncFn(&T)` replaces
+the boxed higher-ranked shape. It uses no box and no allocation. `async ||`
+infers the borrow of a captured value.
 
-1. Higher-ranked async signatures `for<'a> Fn(&'a T) -> impl Future + 'a`
-   could not be expressed without GATs. `AsyncFn` handles them natively.
-2. Returning futures that borrow from captured state required
-   `Box<dyn Future + '_>` workarounds. `async ||` infers the right bound.
+PREFERRED, Rust 1.85 and later: `F: AsyncFn(&str) -> R`, called with
+`async |s: &str| do_work(s).await`.
 
-```rust,ignore
-// PREFERRED (1.85+):
-fn register<F>(callback: F) where F: AsyncFn(&str) -> Result<u32> { ... }
-let cb = async |s: &str| { do_work(s).await };
-register(cb);
-
-// LEGACY (still works, but verbose and less inferable):
-fn register<F, Fut>(callback: F)
-where F: Fn(&str) -> Fut, Fut: Future<Output = Result<u32>> { ... }
-let cb = |s: &str| async move { do_work(s).await };
-```
+LEGACY, any stable release:
+`F: for<'a> Fn(&'a str) -> Pin<Box<dyn Future<Output = R> + 'a>>`, called with
+`|s| Box::pin(do_work(s))`. One `Fut` type parameter cannot express the borrow,
+so the future needs a box. The next subsection compiles both shapes and shows
+the diagnostic that forces the choice.
 
 Rules, once the crate MSRV is at 1.85 or above:
 
 1. For new higher-ranked async bounds, prefer `F: AsyncFn(Args) -> T` over
-   `F: Fn(Args) -> impl Future`.
-2. Callbacks captured into structs that span `tokio::spawn` still need
-   `+ Send + 'static`. The `AsyncFn` family does NOT auto-add `Send`. Use
-   `trait_variant::make` or write the bound explicitly:
-   `F: AsyncFn(Args) -> T + Send + Sync + 'static`.
-3. Do NOT mass-rewrite existing `|x| async move { ... }` into `async |x|` in
+   `F: Fn(Args) -> impl Future`, as long as the future stays on the caller's
+   task. It does not survive a `tokio::spawn`; see the next two subsections.
+2. Do NOT mass-rewrite existing `|x| async move { ... }` into `async |x|` in
    unrelated diffs. Migrate site by site when you touch the callback site for
    another reason. Premature churn obscures `git blame`.
-4. The legacy HRTB workarounds below (`force_hrtb`,
-   `Box<dyn for<'a> Fn(&'a str) -> ...>`) stay documented for reference. Do not
-   use them in new code.
+3. The non-async half of the HRTB rules lives in `rust-callback-bounds`. Read
+   it before you write any `for<'a>` bound on a plain `Fn` callback.
+
+### A single `Fut` parameter rejects every borrowing `async fn`
+
+`fn f<Fut: Future>(cb: impl Fn(&T) -> Fut)` accepts no `async fn` that borrows
+its argument. `async fn handle(r: &Request)` returns a different opaque type per
+region, and a single `Fut` parameter is chosen once, outside the `for<'a>`
+binder. Recognise the diagnostic:
+
+```text
+error[E0308]: mismatched types
+  |
+6 | fn main() { add_reactor(handle); }
+  |             ^^^^^^^^^^^^^^^^^^^ one type is more general than the other
+  |
+  = note: expected opaque type `impl for<'a> Future<Output = ()>`
+             found opaque type `impl Future<Output = ()>`
+  = note: distinct uses of `impl Trait` result in different opaque types
+```
+
+Two bounds accept it. Pick by whether the future must cross a task boundary:
+
+```rust
+use std::future::Future;
+use std::pin::Pin;
+
+struct Request { body: String }
+async fn handle(r: &Request) { let _ = &r.body; }
+
+// FIX A, Rust 1.85 and later: the future stays local to the caller.
+fn reactor_local(_f: impl AsyncFn(&Request)) {}
+
+// FIX B, any stable release: an `Fn` bound that also carries `Send`.
+fn reactor_spawnable(
+    _f: impl for<'a> Fn(&'a Request) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>,
+) {}
+
+fn main() {
+    reactor_local(handle);
+    reactor_local(async |r: &Request| { let _ = &r.body; });
+    reactor_spawnable(|r| Box::pin(handle(r)));
+}
+```
+
+Write `Pin<Box<dyn Future<..> + 'a>>`, never a bare `Box<dyn Future<..> + 'a>`.
+`Box<F>` implements `Future` only for `F: Unpin`, and `dyn Future` is not
+`Unpin`, so the bare form type-checks and then fails at the `.await` with
+``error[E0277]: `dyn Future<Output = ()>` cannot be unpinned``.
+
+### `AsyncFn` carries no `Send` bound to the future
+
+`F: AsyncFn(&T) + Send + Sync + 'static` does NOT make the future that `F`
+returns `Send`. Those bounds constrain the callable, not its output. The
+callback still fails to spawn. `tokio::spawn` prints an unnumbered error:
+
+```text
+error: future cannot be sent between threads safely
+   |     tokio::spawn(async move { f(&req).await; });
+   |     ^^^ future created by async block is not `Send`
+   = help: within `{async block@src/main.rs:6:18: 6:28}`, the trait `Send` is
+           not implemented for `<F as AsyncFnMut<(&Request,)>>::CallRefFuture<'_>`
+note: required by a bound in `tokio::spawn`
+```
+
+A plain `T: Send` bound applied to the returned future prints the numbered form
+of the same fact:
+
+```text
+error[E0277]: `<F as AsyncFnMut<(&Request,)>>::CallRefFuture<'_>` cannot be sent
+              between threads safely
+  = help: the trait `Send` is not implemented for
+          `<F as AsyncFnMut<(&Request,)>>::CallRefFuture<'_>`
+```
+
+The returned future is `<F as AsyncFnMut<(&'a T,)>>::CallRefFuture<'a>`, an
+associated type of the unstable `async_fn_traits`. You cannot name it on
+stable, so you cannot write `for<'a> F::CallRefFuture<'a>: Send`. There is no
+stable way to bound the future of an `AsyncFn`.
+
+Rule: when the future must cross `tokio::spawn` and the callback must stay an
+`Fn` bound, take FIX B above —
+`F: for<'a> Fn(&'a T) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>`. One
+`Box::pin` per call is the price. Use `AsyncFn` everywhere else.
+
+When you control the callee's shape, a trait method that returns
+`impl Future<Output = R> + Send` (RPITIT, stable since 1.75) carries `Send`,
+borrows its argument, crosses `tokio::spawn`, and allocates nothing:
+
+```rust
+use std::future::Future;
+
+struct Request { body: String }
+
+trait Handler: Send + Sync + 'static {
+    fn call(&self, r: &Request) -> impl Future<Output = usize> + Send;
+}
+
+struct Len;
+impl Handler for Len {
+    async fn call(&self, r: &Request) -> usize { r.body.len() }
+}
+```
+
+`#[trait_variant::make(TraitSend: Send)]` generates the same shape from an
+`async fn` in a trait. Reach for FIX B only when the bound must accept an
+arbitrary closure.
 
 Reference:
 [RFC 3668](https://github.com/rust-lang/rfcs/blob/master/text/3668-async-closures.md),
@@ -368,46 +474,36 @@ Rust 1.85 release notes.
 
 Higher-Ranked Trait Bounds (HRTBs) — `for<'a> FnMut(&'a T) -> K` — are the
 correct shape for callbacks that take a reference and return something that
-must not outlive the reference. Several sharp edges exist.
+must not outlive the reference.
 
-**Not expressible with a dependent output.** If `K` depends on `'a` (for
-example `K = &'a str`), you cannot express it without GATs today:
+**A dependent output is expressible. Do not box it.** An output type that names
+the higher-ranked lifetime, such as `&'a K`, is legal in `Fn` sugar. Only a
+*separate* generic parameter cannot depend on `'a`. Never reach for
+`Box<dyn for<'a> Fn(&'a T) -> &'a K>`, a GAT, or a macro crate to work around
+this shape.
 
-```rust
-// Does NOT compile: K cannot depend on 'a without GATs
-fn register<F: for<'a> FnMut(&'a str) -> &'a str>(f: F) {}
-```
+`rust-callback-bounds` owns this rule. It holds the worked example, the
+`K: ?Sized` bound that every `-> &'a K` row needs, the full decision table for
+non-async callback bounds, and the cases where a closure does need an
+annotation. Read it first. The rest of this section covers only the async part.
 
-Workaround: use `Box<dyn for<'a> Fn(&'a str) -> &'a str + 'static>`, or
-restructure to pass owned values.
-
-**Closure inference quirk.** Closures in stable Rust default to fixed-lifetime
-inference, not HRTB inference. A closure `|s: &str| s` fails to implement
-`for<'a> Fn(&'a str) -> &'a str` in some compiler versions. Workaround: name
-the function explicitly, or force HRTB with a helper:
-
-```rust
-fn force_hrtb<F: for<'a> Fn(&'a str) -> &'a str>(f: F) -> F { f }
-let cb = force_hrtb(|s| s);
-```
-
-**Async `Fn` with `+ Send + 'static`.** Before RPITIT (Rust 1.75), async
-functions in traits cannot be expressed as `F: for<'a> AsyncFn(&'a T)`. The
-canonical pre-1.75 workaround is
-`F: Fn(&T) -> Pin<Box<dyn Future<Output = R> + Send + '_>>`. From 1.75 on,
-prefer `trait MyTrait { async fn call(&self, t: &T) -> R; }`.
+**Async `Fn` bounds.** Use `F: AsyncFn(&T) -> R` when the future stays on the
+caller's task. Use `F: for<'a> Fn(&'a T) -> Pin<Box<dyn Future<Output = R> +
+Send + 'a>>` when it crosses `tokio::spawn`. See "Async closures and the
+`AsyncFn` family" above for the two diagnostics that tell the cases apart.
 
 When callbacks cross a thread boundary into `tokio::spawn`, every captured
 closure must be `'static + Send`. Do not capture `&T`. Convert to an owned
-value or an `Arc<T>` before the spawn.
+value or an `Arc<T>` before the spawn. `Send` on the closure does not reach the
+future the closure returns.
 
 ## Async + shared state in event loops
 
 **Severity: WARNING**
 
 A captured `&mut State` inside an async block lives for the whole lifetime of
-the `Future`, from the first poll to completion. Two concurrent futures cannot
-share `&mut State`:
+the `Future`, from the first poll to completion. Two concurrent futures
+therefore cannot both hold `&mut State`:
 
 ```rust
 // DOES NOT COMPILE: two mutable borrows of `state` active at once
@@ -418,28 +514,58 @@ tokio::join!(f1, f2); // error[E0499]
 
 Correct approaches, in order of preference:
 
-1. **Single-task ownership.** One task owns `State`. Every other task
+1. **Split the state by field at the call site.** Two concurrently polled
+   futures CAN share one state struct. The borrow a future captures is the
+   borrow made at the call site, and disjoint field borrows stay disjoint
+   inside futures. Try this before any channel, lock, or `RefCell`.
+
+   ```rust
+   struct State { seen: u32, out: Vec<u32> }
+
+   async fn bump(n: &mut u32) { *n += 1; }
+   async fn record(v: &mut Vec<u32>) { v.push(1); }
+
+   let mut state = State { seen: 0, out: Vec::new() };
+   // Two disjoint field borrows, both futures polled concurrently.
+   tokio::join!(bump(&mut state.seen), record(&mut state.out));
+   assert_eq!(state.seen, 1);
+   ```
+
+   It fails only when both futures need the same field, or when either takes
+   `&mut State` whole. `tokio::join!(f(&mut st), f(&mut st))` is E0499 whatever
+   the fields are.
+2. **Single-task ownership.** One task owns `State`. Every other task
    communicates with it through `mpsc` channels. No sharing is needed. Prefer
    this on any hot path.
-2. **`Arc<Mutex<State>>`.** Correct, but it serializes access. Acceptable for
+3. **`Arc<Mutex<State>>`.** Correct, but it serializes access. Acceptable for
    low-contention configuration state. Unacceptable on a per-packet or
    per-frame path.
-3. **`RefCell<State>` inside a `!Send` single-threaded runtime.** Valid only on
+4. **`RefCell<State>` inside a `!Send` single-threaded runtime.** Valid only on
    a `current_thread` runtime.
 
-Nightly or future options — document only, do not ship them today:
+Four routes look like they hand `&mut State` to a future. None of them works.
+Do not plan a design around them. Two are runtime plumbing:
 
-- `Context::ext` (unstable): pass state through the `Waker` context without
-  `unsafe`.
-- Generators with `resume(arg)`: coroutine-style state handoff. Available on
-  stable through the `generator-light` crate.
+| Route | What actually happens |
+|---|---|
+| `Context::ext` (nightly, `feature(context_ext)`) | It carries a value only when the *executor* builds the `Context` with `ContextBuilder::ext()`. tokio uses `Context::from_waker`, which sets the slot to `&mut ()`. Inside a tokio task every `cx.ext().downcast_mut::<State>()` returns `None`, with no error and no warning. Usable only inside an executor you wrote yourself. |
+| `Waker::data()` smuggling (stable) | `tokio::join!`, `select!` and `timeout` forward the task waker unchanged, so a round-trip through `cx.waker().data()` appears to work. `FuturesUnordered` — and `buffer_unordered` and `for_each_concurrent`, which are built on it — installs its own waker, so you read a pointer that belongs to the combinator. The cast compiles either way. |
+
+The other two are language features. `#[coroutine]` closures with
+`resume(&mut State)` and the stable generator crates cannot carry a
+`&mut State` resume argument either. `rust-event-loop-state`, section "The
+three escapes, and why none works", holds both diagnostics and the design
+patterns that follow from this rule.
 
 ## `Pin` necessity in FFI
 
 **Severity: WARNING for self-referential or FFI types**
 
-`Pin<&mut T>` guarantees that `T` will not move after it is pinned. You need
-it for:
+`Pin<&mut T>` restricts `T` only when `T` is `!Unpin`. On an `Unpin` target
+`Pin::new`, `Pin::get_mut` and `DerefMut` are all safe, so the pin enforces
+nothing. `rust-pin-projection` owns `Pin`, `Unpin`, `PhantomPinned` and
+structural projection into a field. This section covers only why an FFI or
+self-referential type needs a pin at all. You need it for:
 
 - Self-referential structs, where a field holds a pointer to another field of
   the same struct. This is the default use of `Pin` in async state machines.
@@ -454,6 +580,12 @@ returns by pointer. If the C API says "do not move this after init", wrap it in
 
 Rules:
 
+- Every `async fn` and every `async {}` future is `!Unpin`, whatever the body
+  holds. There is no per-body analysis: even `async fn trivial() -> u32 { 1 }`
+  fails `assert_unpin` with ``error[E0277]: `{async fn body of trivial()}`
+  cannot be unpinned``. A generic helper that polls a caller-supplied future
+  must therefore take `Pin<&mut F>`. An `F: Unpin` bound forces every caller
+  through `Box::pin` or `std::pin::pin!` instead.
 - Never write a self-referential struct without `Pin` + `PhantomPinned`.
 - Never store a raw pointer to a stack variable and then move the variable.
 - `Box::pin(val)` is the easiest way to heap-pin a value.

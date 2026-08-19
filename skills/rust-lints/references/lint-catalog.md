@@ -47,6 +47,7 @@ defect reached production.
 |------|-------------------------|
 | `mem_forget` = deny, plus `std::mem::forget` in `disallowed-methods` | Leaking `Drop` on a resource-bearing type: an open file, a native handle, a GPU surface, a lock guard. The resource is never released and nothing reports it. |
 | `let_underscore_drop` = deny | `let _ = guard;` drops an RAII guard immediately instead of holding it. The critical section then has no lock. This is one of the most common machine-generated concurrency bugs, and it compiles cleanly. |
+| `dropping_references` (rustc, warn by default) = deny | `drop(&guard)` instead of `drop(guard)`. `drop<T>(_: T)` is generic and `&G` is a valid `T`, so the call type-checks and does nothing; the guard lives to the end of its scope. Message: `calls to std::mem::drop with a reference instead of an owned value does nothing`. Verified on rustc 1.97.0: the compiler's own `help` suggests `let _ = &g;`, which is the same no-op with the warning gone. Neither form releases the guard. Only `drop(g)` does. Deny this lint together with `let_underscore_drop`; between them they close both ways an RAII guard silently stops guarding. |
 | `undocumented_unsafe_blocks` | An `unsafe` block with no `// SAFETY:` comment. The invariant was never stated, so no reviewer can check it and no later author can preserve it. |
 | `multiple_unsafe_ops_per_block` | One `// SAFETY:` comment covering several unsafe operations. The comment then justifies at most one of them. |
 | `missing_safety_doc` | A `pub unsafe fn` with no `# Safety` rustdoc section. The caller has no stated contract to satisfy. |
@@ -60,7 +61,7 @@ defect reached production.
 | `or_fun_call` (nursery) | `ok_or(build())`, `unwrap_or(build())`, `or_insert(build())`: the argument runs on every call, including the path that discards it. The fix is the `_else` form. Its counterpart `unnecessary_lazy_evaluations` (style, warn by default) catches the over-correction, a closure around a value that is cheaper to pass eagerly. Enable both, or a cleanup pass converts every eager call into a closure and trades one waste for another. |
 | `needless_collect` (nursery) | A `Vec` built only to be iterated once. The structural fix is a function that returns `impl Iterator<Item = T>` instead of `Vec<T>`. On edition 2024 that return type needs no lifetime bound, because a return-position `impl Trait` captures every in-scope lifetime by default; the same signature fails on edition 2021 with E0700. |
 | `missing_asserts_for_indexing` (restriction) | Index sites where one `assert!` would let the compiler drop the bounds checks. It fires on `s[0] + s[1] + s[2]` with no preceding `assert!(s.len() > 2)`. It is the only automated way to find these sites. Restriction, so no default level and no config in this skill turns it on; run it as a one-off audit. See `rust-hot-path`. |
-| `ptr_arg` (style, not perf) | A `&Vec<T>` or `&mut Vec<T>` parameter where `&[T]` or `&mut [T]` works. It forces every caller to own a `Vec`. It is warn by default, so most projects see it, but a config that enables only `clippy::perf` misses it. The win is small and it is per call, not per iteration: measured on rustc 1.97.0 aarch64 at `-C opt-level=3`, for a body of `v.iter().sum()`, the `&Vec<u32>` version starts with two extra loads (the pointer and the length out of the `Vec` header) that the `&[u32]` version does not need, because a slice arrives in two registers. Both bodies came to 60 instructions. |
+| `ptr_arg` (style, not perf) | A `&Vec<T>` or `&mut Vec<T>` parameter where `&[T]` or `&mut [T]` works. It forces every caller to own a `Vec`. It is warn by default, so most projects see it, but a config that enables only `clippy::perf` misses it. The win is small and it is per call, not per iteration: measured on rustc 1.97.0 aarch64 at `-C opt-level=3`, for a body of `v.iter().sum()`, the `&Vec<u32>` version starts with two extra loads (the pointer and the length out of the `Vec` header) that the `&[u32]` version does not need, because a slice arrives in two registers. Both bodies came to 60 instructions. The suppression matrix below says when the owned reference is the right answer. |
 | `exhaustive_enums`, `exhaustive_structs` | A public enum or struct without `#[non_exhaustive]`. Adding a field or a variant later is then a breaking change for every downstream match or literal. |
 | `disallowed_methods` on `std::ptr::read` | A misaligned read from a byte buffer that came from I/O or FFI. `ptr::read` requires an aligned pointer, so a misaligned read is undefined behavior on every target, and it faults in practice on aarch64. Use `read_unaligned`. |
 | `disallowed_methods` on `std::env::set_var` | A mutation of the process environment after threads have started. It is not thread-safe. |
@@ -80,7 +81,49 @@ defect reached production.
 | `unused_must_use` (rustc) | A dropped `Result` or a dropped guard-like value. |
 | `unreachable_pub` (rustc) | An item marked `pub` that no external path can reach. It inflates the apparent API surface. |
 | `non_ascii_idents` (rustc) | Homoglyph identifiers. Two distinct items look identical in review. |
+| `refining_impl_trait` (rustc, warn by default) | An impl of a trait method that returns `impl Trait` writes the concrete type instead of repeating the opaque one. Every caller who holds the impl type then sees more than the trait promised, so the refinement is public API that nobody chose. Message: `impl trait in impl method signature does not match trait method signature`. The sub-lint is `refining_impl_trait_reachable` on a reachable impl and `refining_impl_trait_internal` on a private one; both sit under the `refining_impl_trait` group. Repeat the opaque form in the impl, with the same `use<..>` capture list. Do not silence it with `#[allow]`. |
 | `rustdoc::broken_intra_doc_links` = deny | Documentation that silently rots after a rename. |
+
+### The `ptr_arg` suppression matrix
+
+`ptr_arg` fires on the parameter type, not on the call site, and it models exactly which methods
+are unreachable through the borrowed view. Two facts decide every case: `str` has no `capacity`,
+and `[T]` cannot change its length. Everything else is reachable through the slice, so the owned
+reference buys nothing.
+
+Verified with clippy 0.1.97 on edition 2024. Each line is one function in one crate:
+
+```rust
+pub fn a(s: &String) -> usize { s.len() }         // fires -> &str
+pub fn b(s: &String) -> usize { s.capacity() }    // silent
+pub fn c(s: &String) -> String { s.clone() }      // fires -> &str plus s.to_owned()
+pub fn d(v: &mut Vec<u8>) { v.push(1); }          // silent
+pub fn e(v: &mut Vec<u8>) { v[0] = 1; }           // fires -> &mut [u8]
+pub fn f(v: &Vec<u8>) -> Vec<u8> { v.clone() }    // fires -> &[u8] plus v.to_owned()
+```
+
+The full result over 25 probe functions, all four parameter types. A dash marks a combination the
+probe did not cover:
+
+| Method the body calls | `&String` | `&mut String` | `&Vec<T>` | `&mut Vec<T>` |
+| --- | --- | --- | --- | --- |
+| `len`, `is_empty`, `chars`, `iter`, `v[0]` read | fires | - | fires | - |
+| `clone` | fires, and rewrites to `to_owned()` | - | fires, and rewrites to `to_owned()` | fires |
+| `capacity`, `reserve` | silent | silent | silent | silent |
+| `push`, `pop`, `truncate`, `insert`, `remove`, `clear` | - | silent | - | silent |
+| `make_ascii_uppercase`, `sort`, `v[0] = x` write | - | fires, to `&mut str` | - | fires, to `&mut [T]` |
+
+Three consequences an agent gets wrong on the first attempt:
+
+- Cloning does not justify the owned reference. Clippy rewrites `s.clone()` on a `&str` parameter
+  to `s.to_owned()` and still asks for the slice.
+- Writing through a `&mut Vec<T>`, by index or by `sort`, does not justify it either. Only a
+  length-changing call does.
+- `reserve` counts as capacity work, not as length change, so it does suppress the lint.
+
+Keep the owned reference when a suppressed row applies, and write the reason in a comment. Add no
+`#[allow(clippy::ptr_arg)]`: if the lint is silent, there is nothing to allow, and if it fires the
+signature is wrong.
 
 ## Optional block: pointer and FFI lints
 

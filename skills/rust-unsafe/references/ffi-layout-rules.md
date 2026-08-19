@@ -158,6 +158,13 @@ The clippy lint `cast_ref_to_mut` was renamed to the rustc lint `invalid_referen
 you need mutation through a shared reference, the type must contain an `UnsafeCell`. There is no
 other sound way to get one.
 
+`UnsafeCell` makes the cast legal. It does not make the design sound. A parameter-extraction
+layer that yields `&mut T` out of a shared `&Store` runs its extractor once per parameter, with
+no knowledge of the other parameters, so two parameters of the same type produce two live `&mut`
+to one allocation. Nothing in the type system rejects that call. Carry an access set per call,
+record the type of every `&mut` parameter, and fail the registration on a conflict. That runtime
+check is why every entity-component framework has one.
+
 ## Prefer `pointer::cast` over `as`
 
 ```rust
@@ -337,8 +344,39 @@ debug assertion.
 
 ## Attach `PhantomData` to a struct that holds raw pointers
 
-A raw pointer is invariant in its pointee and carries no lifetime, so a struct that holds one
-gets no variance and no drop check from the compiler. State the intent:
+A raw pointer carries no lifetime and gives the struct no drop check. A struct that holds one
+therefore outlives the data it points at, and the compiler reports nothing. Variance is not part
+of that loss. `*const T` is covariant in `T`, exactly like `&T`, and a struct whose only field is
+`*const T` is covariant in `T` with no `PhantomData` at all. Only `*mut T` is invariant.
+
+```rust
+pub struct ConstHolder<T> { p: *const T }
+pub struct MutHolder<T> { p: *mut T }
+
+// Compiles: `ConstHolder<T>` is covariant in `T`, so `'b` shrinks to `'a`.
+pub fn shrink<'a, 'b: 'a>(x: ConstHolder<&'b u8>) -> ConstHolder<&'a u8> { x }
+```
+
+The same function over `MutHolder` is rejected:
+
+```text
+error: lifetime may not live long enough
+  = note: requirement occurs because of the type `MutHolder<&u8>`, which makes the generic argument `&u8` invariant
+  = note: the struct `MutHolder<T>` is invariant over the parameter `T`
+```
+
+rustc names the struct here. A `*mut` that sits directly in the signature, with no struct around
+it, gives the other pair of notes:
+
+```text
+  = note: requirement occurs because of a mutable pointer to `&u8`
+  = note: mutable pointers are invariant over their type parameter
+```
+
+The two pairs never appear together. Grep a build log for the pair that matches the shape you
+wrote.
+
+What you must state with a marker is the lifetime and the ownership:
 
 ```rust
 use core::marker::PhantomData;
@@ -356,9 +394,77 @@ pub struct Owned<T> {
 }
 ```
 
-`PhantomData<&'a T>` for a borrow, `PhantomData<T>` for ownership, and
-`PhantomData<*mut T>` to remove `Send` and `Sync`. Getting this wrong produces a type that
-compiles and outlives its data.
+### Pick the marker by the three properties it changes
+
+`PhantomData<X>` makes the struct behave for variance, auto traits, and drop check as if it held
+an `X`. Pick the `X` from this table, not from habit. Every row is measured on rustc 1.97.0,
+edition 2024.
+
+| Marker | Variance in `T` | Auto traits | Owns a `T` for drop check |
+| --- | --- | --- | --- |
+| `PhantomData<T>` | covariant | inherits `T`'s `Send` and `Sync` | yes |
+| `PhantomData<&'a T>` | covariant | `Send` and `Sync`, each iff `T: Sync` | no |
+| `PhantomData<&'a mut T>` | invariant | inherits `T`'s `Send` and `Sync` | no |
+| `PhantomData<fn() -> T>` | covariant | always `Send + Sync` | no |
+| `PhantomData<fn(T)>` | contravariant | always `Send + Sync` | no |
+| `PhantomData<fn(T) -> T>` | invariant | always `Send + Sync` | no |
+| `PhantomData<Cell<T>>` | invariant | `Send` iff `T: Send`, never `Sync` | no |
+| `PhantomData<*const T>` | covariant | neither `Send` nor `Sync` | no |
+| `PhantomData<*mut T>` | invariant | neither `Send` nor `Sync` | no |
+
+`PhantomData<&'a mut T>` is covariant in `'a` and invariant only in `T`.
+
+The `rust-variance` skill holds the same markers from the variance side, with the coercion
+probes that measure each row, in
+[../../rust-variance/references/variance-tables.md](../../rust-variance/references/variance-tables.md).
+That table carries no drop-check column. Change both when you change a row.
+
+To strip `Send` and `Sync` from a handle, use `PhantomData<*const T>`. It removes both auto
+traits exactly as `PhantomData<*mut T>` does, and it stays covariant in `T`. Reach for
+`PhantomData<*mut T>` only when you also want invariance, which is the case where `T` is written
+through the handle. Choosing `*mut` by reflex freezes the type parameter for every caller of your
+API, and nothing in the code says why.
+
+```rust
+use core::marker::PhantomData;
+
+// Not `Send`, not `Sync`, still covariant in `T`.
+pub struct Handle<T> { raw: usize, _marker: PhantomData<*const T> }
+
+// Not `Send`, not `Sync`, and invariant in `T`. Pick this only if you want that.
+pub struct WriteHandle<T> { raw: usize, _marker: PhantomData<*mut T> }
+```
+
+### `PhantomData<T>` buys drop check only under `#[may_dangle]`
+
+On stable, a plain `impl Drop` already forces every type parameter to strictly outlive the value,
+so `PhantomData<T>` there buys variance and auto traits, not drop check. The marker becomes
+load-bearing for drop check only next to `unsafe impl<#[may_dangle] T> Drop`, which needs nightly
+and `#![feature(dropck_eyepatch)]`. On stable the attribute is
+`error[E0658]: may_dangle has unstable semantics and may be removed in the future`.
+
+The stable consequence is a trap in the other direction. `Vec<T>` and `Box<T>` carry the
+eyepatch. A newtype over one of them does not, so adding a `Drop` impl to the newtype breaks
+code that compiled before, even when the body of `drop` is empty:
+
+```rust,compile_fail
+struct Wrapper<T>(Vec<T>);
+impl<T> Drop for Wrapper<T> { fn drop(&mut self) {} }   // delete this and it compiles
+
+fn main() {
+    let mut w: Wrapper<&String> = Wrapper(Vec::new());
+    let s = String::new();
+    w.0.push(&s);
+}
+```
+
+```text
+error[E0597]: `s` does not live long enough
+   | `s` dropped here while still borrowed
+   | borrow might be used here, when `w` is dropped and runs the `Drop` code for type `Wrapper`
+```
+
+You cannot recover the relaxation on stable. Do not add a `Drop` impl you do not need.
 
 ## Restrict `union` to C interop
 
@@ -371,7 +477,22 @@ was never written is undefined behavior.
 - Pair every union with the discriminant that the C API uses, and read the discriminant first.
 - Prefer an `enum` whenever the layout is yours to choose. It carries the tag for you.
 
+A field type that implements `Drop` is rejected outright, because the union has no tag and the
+compiler cannot emit drop glue for it:
+
+```text
+error[E0740]: field must implement `Copy` or be wrapped in `ManuallyDrop<...>` to be used in a union
+  = note: union fields must not have drop side-effects, which is currently enforced via either
+          `Copy` or `ManuallyDrop<...>`
+```
+
+Adding `impl Drop` to a type therefore bans it retroactively from every union in the workspace
+that holds it. The fix rustc suggests, `ManuallyDrop<...>`, moves the destructor obligation into
+your unsafe code: you must then call `ManuallyDrop::drop` on the live variant yourself, exactly
+once, after reading the discriminant.
+
 ## Related
 
-- [unsafe-patterns.md](unsafe-patterns.md) — safety comments, transmute, Miri, and clippy runs
+- [unsafe-patterns.md](unsafe-patterns.md) — safety comments, FFI entry points, and transmute
+- [miri-and-aliasing.md](miri-and-aliasing.md) — auto traits, aliasing models, Miri, and clippy
 - [SKILL.md](../SKILL.md) — the lint floor, panic guards, and the audit checklist

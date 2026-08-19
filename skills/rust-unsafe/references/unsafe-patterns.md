@@ -26,6 +26,58 @@ The inner `unsafe` block is required even inside an `unsafe fn`, because
 a region where every operation is implicitly permitted and no operation is individually
 justified.
 
+## An output lifetime that appears in no input is unbounded
+
+`raw_slice` above returns `&'a [T]`, and `'a` appears in no argument. The caller picks `'a`, and
+the caller may pick `'static`. Nothing warns. Lifetime inference solves for the output from the
+constraints in the signature, and a raw pointer carries none, so there is no upper bound.
+`<*const T>::as_ref`, which returns `Option<&'a T>`, has the same shape and the same hazard.
+
+```rust
+/// # Safety
+/// No caller can discharge this contract. `'a` is unbounded: inference picks it,
+/// up to `'static`, and the signature gives the caller nowhere to attach it.
+pub unsafe fn deref_unbounded<'a, T>(p: *const T) -> &'a T {
+    // SAFETY: stated above, and the statement is not satisfiable.
+    unsafe { &*p }
+}
+```
+
+That compiles clean, and the returned reference outlives its owner. Tie the output lifetime to an
+input the caller must already hold:
+
+```rust
+/// # Safety
+/// `p` must point into `_owner`, and must stay valid for all of `'a`.
+pub unsafe fn deref_bounded<'a, T, O>(p: *const T, _owner: &'a O) -> &'a T {
+    // SAFETY: the caller guarantees `p` points into `_owner`, which lives for `'a`.
+    unsafe { &*p }
+}
+```
+
+An escape is now `error[E0597]: ... does not live long enough`, reported at the call site, with
+`borrowed value does not live long enough` on the owner argument.
+
+Marking the function `unsafe` does not repair the shape. `unsafe` moves blame to the caller, and
+the caller has no lever: the signature gives it no place to state which borrow the result belongs
+to. The obligation sits with the implementor. When the value is reachable from something the
+caller already names, take `&'a self` or a `&'a Owner` parameter and make the function safe. When
+a trait must produce a borrowed value, use a generic associated type, which puts the lifetime
+back into the signature:
+
+```rust
+pub struct Store;
+
+pub trait Extract {
+    type Out<'w>;
+    fn from_store<'w>(store: &'w Store) -> Self::Out<'w>;
+}
+```
+
+Keep an unbounded output lifetime only where the SAFETY comment names the owner, the function is
+private, and the owning type holds the data, as in the `mmap_as_slice` case in
+[ffi-layout-rules.md](ffi-layout-rules.md).
+
 ## `unsafe trait` and `unsafe fn` are separate axes
 
 `unsafe` on a trait and `unsafe` on a method constrain different people. Neither one implies the
@@ -343,6 +395,15 @@ let count = unsafe { end.offset_from(start) };
 `add` is UB on computation, not on dereference. This surprises people: computing a pointer one
 past the end of an allocation is allowed, computing two past is not.
 
+`add`, `offset`, and `wrapping_add` return a new pointer and never modify the receiver, so a
+cursor translated from C's `p++` must be assigned back: `self.ptr = unsafe { self.ptr.add(1) };`.
+Dropping the assignment compiles, and the cursor never advances. The only signal is a warning:
+
+```text
+warning: unused return value of `std::ptr::mut_ptr::<impl *mut T>::add` that must be used
+  = note: returns a new pointer rather than modifying its argument
+```
+
 `NonNull` documents the non-null invariant in the type instead of in a comment:
 
 ```rust
@@ -373,6 +434,71 @@ let owned_again = unsafe { Box::from_raw(nn.as_ptr()) };
 
 Every "Yes" row has a named function. Use the function: it cannot be applied to the wrong pair
 of types, and it survives a refactor that changes one of them.
+
+## Broken UTF-8 fails nowhere near where you built it
+
+`str::from_utf8_unchecked` is guarded for one case only: a byte-string literal. The
+deny-by-default lint `invalid_from_utf8_unchecked` catches that case.
+
+```text
+error: calls to `std::str::from_utf8_unchecked` with an invalid literal are undefined behavior
+  |                        the literal was valid UTF-8 up to the 1 bytes
+  = note: `#[deny(invalid_from_utf8_unchecked)]` on by default
+```
+
+For bytes produced at run time nothing checks anything: not the lint, not
+`-C debug-assertions=on`, and not Miri. UTF-8 validity is a library invariant, not a language
+validity invariant, so Miri's abstract machine sees nothing wrong at construction. A clean Miri
+run over the code that builds the `&str` proves nothing about that `&str`.
+
+The undefined behavior surfaces in the consumer, and only in one kind of consumer:
+
+```rust,ignore
+// `v` ends with a lone 0xF0, so `s` is not valid UTF-8.
+let s: &str = unsafe { std::str::from_utf8_unchecked(&v) };
+
+let _ = s.replace("a", "b");   // fine: a byte-wise search, it never decodes
+let _ = s.chars().count();     // fine: specialized to count non-continuation bytes
+for _c in s.chars() {}         // UB: this is the only one that decodes
+```
+
+`Chars::count` delegates to `core`'s `count_chars`, which counts non-continuation bytes and never
+builds a `char`. Only `Chars::next` reaches the decoder:
+
+```text
+error: Undefined Behavior: entering unreachable code
+  --> library/core/src/str/validations.rs:48:23
+   |
+48 |     let y = unsafe { *bytes.next().unwrap_unchecked() };
+```
+
+Write the reproducing test as a decode loop. A test that ends in `.chars().count()` passes and
+reports that the buffer is fine.
+
+### `black_box` is not a soundness argument
+
+Never justify an `unsafe` block with "`std::hint::black_box` stops the compiler from optimizing
+the check away". The std documentation says `black_box` is provided on a best-effort basis and
+"must not be relied upon to control critical program behavior". An argument that depends on an
+optimizer failing to notice something is not an argument.
+
+The shape appears when code validates bytes and then reuses the buffer:
+
+```rust,ignore
+// Do not do this. The unsafe block buys nothing over the safe call.
+let s = match String::from_utf8_lossy(std::hint::black_box(&v)) {
+    Cow::Owned(s) => s,
+    Cow::Borrowed(_) => unsafe { String::from_utf8_unchecked(v) },
+};
+```
+
+```rust,ignore
+// Do this. One validation pass, no unsafe, and the bad input is reported.
+let s = String::from_utf8(v)?;
+```
+
+`String::from_utf8` runs the same single scan, reuses the same buffer with no copy, and its
+`FromUtf8Error` carries `utf8_error().valid_up_to()` so you can report the offending offset.
 
 ## A `Drop` impl that cannot abort the process
 
@@ -405,154 +531,5 @@ impl BufferedWriter {
 }
 ```
 
-## Asserting an auto trait on each field
-
-A manual `unsafe impl Send` on a wrapper is unconditional, so it stays accepted after the fields
-change. Assert the fields, not the wrapper. The assertion needs no dependency:
-
-```rust
-pub struct Inner {
-    pub id: u32,
-}
-
-pub struct MyWrapper {
-    pub inner: Inner,
-}
-unsafe impl Send for MyWrapper {}
-
-const _: () = {
-    fn assert_send<T: Send>() {}
-    let _ = assert_send::<Inner>;
-};
-```
-
-An `Inner` that gains an `Rc<_>` field fails this with E0277.
-
-## Reference fabrication with `RefCell::as_ptr`
-
-`RefCell::as_ptr` returns the raw pointer and does not touch the dynamic borrow counter. An
-`unsafe` deref that hands a caller a `&'a T` or a `&'a mut T` therefore produces a reference the
-`RefCell` does not track. A later `borrow_mut()` succeeds instead of panicking, and safe caller
-code mutates the data behind a live shared reference.
-
-```rust
-use std::cell::RefCell;
-use std::rc::Rc;
-
-fn main() {
-    // Unsound: `as_ptr` skips the borrow flag, so `leaked` is not exclusive.
-    let cell = Rc::new(RefCell::new(String::from("moo")));
-    let leaked: &String = unsafe { &*cell.as_ptr() };
-    cell.borrow_mut().push_str(" MOO"); // Safe code. No `already borrowed` panic.
-    println!("{leaked}");               // Prints `moo MOO`.
-}
-```
-
-Measured on rustc 1.97.0, edition 2024: the program compiles, prints `moo MOO`, and exits 0. A
-`&String` observed a mutation and nothing panicked.
-
-The pattern appears when a borrowing iterator is written over `Rc<RefCell<T>>`. The safe form
-does not compile. Returning `&*cell.borrow()` from `next` is `error[E0515]: cannot return value
-referencing temporary value`, because the `Ref` guard dies at the end of `next`. `as_ptr` plus
-`unsafe` removes the error and leaves the API unsound.
-
-Change the API shape. In order of preference:
-
-1. Yield the guard: `type Item = Ref<'a, T>`. The caller holds the borrow, so the counter works.
-2. Yield an owned handle, `Rc<RefCell<T>>`, and let the caller call `borrow()` itself.
-3. Store the elements in a `Vec` or an arena and iterate a real slice. No interior mutability
-   and no unsafe.
-
-```rust
-use std::cell::{Ref, RefCell};
-use std::rc::Rc;
-
-pub struct List<T> { items: Vec<Rc<RefCell<T>>> }
-pub struct Iter<'a, T> { inner: std::slice::Iter<'a, Rc<RefCell<T>>> }
-
-impl<T> List<T> {
-    pub fn iter(&self) -> Iter<'_, T> { Iter { inner: self.items.iter() } }
-}
-
-impl<'a, T> Iterator for Iter<'a, T> {
-    type Item = Ref<'a, T>;
-    fn next(&mut self) -> Option<Ref<'a, T>> { Some(self.inner.next()?.borrow()) }
-}
-```
-
-Both Miri aliasing models reject the unsound form, but only when the program interleaves the
-fabricated reference with a mutation. A test suite that never holds a yielded reference across a
-`borrow_mut()` passes Miri clean. Treat the pattern as UB on inspection. Miri is a confirmation
-here, never the gate. See the `rust-sanitizers-miri` skill for the two messages.
-
-## Aliasing models: Stacked Borrows and Tree Borrows
-
-Miri checks unsafe code against a formal aliasing model. Tree Borrows, published at PLDI 2025,
-is the current recommended model. It accepts more valid patterns than the older Stacked Borrows,
-so code the older model rejected may pass now.
-
-```bash
-MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked
-```
-
-The classic violation both models reject:
-
-```rust
-let mut x = 5u32;
-let raw = &mut x as *mut u32;
-let shared = &x;         // a shared borrow of `x`
-let _ = unsafe { *raw }; // VIOLATION: the tag `raw` carries was invalidated
-```
-
-Under Stacked Borrows the rules are:
-
-1. Each borrow pushes a new tag onto the borrow stack for that location.
-2. A `&mut T` access pops every borrow above it, which invalidates them.
-3. A `&T` access stays valid while the shared reference is on the stack.
-4. A raw-pointer access requires its tag to still be on the stack.
-
-Tree Borrows replaces the stack with a tree and tracks each pointer's permission separately,
-which is what makes it more permissive. The practical guidance is unchanged: do not derive a
-raw pointer, then use a reference to the same place, then use the raw pointer again.
-
-## Miri invocations
-
-```bash
-# Baseline.
-cargo +nightly miri test --locked
-
-# The recommended model for new unsafe code.
-MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked
-
-# Stricter provenance checking; catches integer-to-pointer casts.
-MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test --locked
-
-# One test only.
-cargo +nightly miri test --locked test_my_unsafe_fn
-```
-
-Miri cannot execute a foreign function. Skip a test that crosses a real FFI boundary, and cover
-that path with `cargo-careful` instead:
-
-```rust
-#[test]
-#[cfg_attr(miri, ignore)]
-fn ffi_roundtrip() { /* ... */ }
-```
-
-See the `rust-sanitizers-miri` skill for the stubbing strategy that lets more of a crate run
-under Miri, and the `rust-test-tools` skill for `cargo-careful`.
-
-## Clippy invocations for unsafe
-
-```bash
-cargo clippy --locked --all-targets -- \
-  -W clippy::undocumented_unsafe_blocks \
-  -W clippy::multiple_unsafe_ops_per_block \
-  -W clippy::transmute_undefined_repr \
-  -W clippy::ptr_as_ptr
-```
-
-Use the command line only to try a lint out. Once you keep a lint, move it into
-`[workspace.lints]` so that CI and every developer get the same result. See the `rust-lints`
-skill.
+The auto-trait proofs, the two reference fabrications, the aliasing models, and the Miri and
+clippy invocations are in [miri-and-aliasing.md](miri-and-aliasing.md).

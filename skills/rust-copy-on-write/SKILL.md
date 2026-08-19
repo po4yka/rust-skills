@@ -29,6 +29,7 @@ across runs. Times do not; a range is the observed range. Re-measure on your tar
 | Chain two or more string or slice transforms | [`Cow` in argument position](#cow-in-argument-position) |
 | Write `cow.to_mut()` in front of a method | [`to_mut()`](#to_mut-is-for-mut-self-methods-only) |
 | Put a `Cow` field in a struct | [A `Cow` field infects the struct](#a-cow-field-infects-the-struct-with-a-lifetime) |
+| Write `Cow<'_, String>`, or any `impl Borrow<..>` | [The `Cow` parameter is the borrowed half](#the-cow-parameter-is-the-borrowed-half) |
 | Write `fn with(&self) -> Self` for a version history | [`Cow` is not structural sharing](#cow-is-not-structural-sharing) |
 | Choose between `Vec` and a persistent collection | [Persistent collections](#persistent-collections) |
 | Add `im`, `imbl`, or `rpds` to `Cargo.toml` | `references/persistent-collections.md` |
@@ -293,6 +294,28 @@ Add a `Cow` field only when both hold: a real zero-copy parse path exists, and t
 inside the borrow scope. Otherwise store `String`, or store `Arc<str>` when many owners share
 one immutable value. `Arc<str>` is 16 bytes and 1000 clones cost 0 allocations.
 
+## The `Cow` parameter is the borrowed half
+
+`Cow<'a, B>` requires `B: ToOwned`. `String: Clone`, and `alloc` ships
+`impl<T: Clone> ToOwned for T`, so `Cow<'_, String>` type-checks. It is legal and useless.
+`Cow::Borrowed` then holds `&'a String`. No `&str` coerces into that position, and `Cow::from`
+on a `&String` resolves to `Cow<'_, str>` instead: `error[E0308]: mismatched types`, "expected
+`Cow<'_, String>`, found `Cow<'_, str>`". Every caller that starts from a string slice must
+allocate a `String` first. A caller that already holds a `String` can still write
+`Cow::Borrowed(&s)`, and that is the case where the `Cow` buys nothing at all.
+
+Write `Cow<'_, str>`, `Cow<'_, [T]>`, `Cow<'_, Path>`. Never `Cow<'_, String>`,
+`Cow<'_, Vec<T>>`, or `Cow<'_, PathBuf>`. Grep for the defect:
+
+```bash
+rg 'Cow<[^>]*(String|Vec<|PathBuf|OsString|CString)' --type rust -n
+```
+
+`references/borrow-and-toowned.md` holds the layer under `Cow`: the `Borrow` contract that
+`HashMap::get` depends on and the silent lookup miss when a custom `Hash` breaks it, why
+`&String` does not satisfy `Borrow<str>`, the E0119 wall around `ToOwned` and the
+unsized-newtype pair that clears it, and the E0283 in every delegating `eq` and `hash`.
+
 ## `Cow` is not structural sharing
 
 `Cow` shares one value between one borrower and one owner. It never shares interior nodes.
@@ -377,13 +400,17 @@ and the `im` advisories that make `imbl` the crate to depend on.
    `Owned`. Move it inside the branch that writes.
 5. Does a new `Cow` field force a lifetime on a struct that a cache or a task must hold?
    Store owned data, or add `into_static`.
-6. Does a `fn with(&self) -> Self` clone a `Cow` of a non-`Copy` element type? That is
+6. Does a `Cow` name an owned type as its parameter? `Cow<'_, String>` compiles, and every
+   caller that holds a `&str` must allocate to call it. Use the borrowed half.
+7. Does a key type implement `Borrow<X>`? Then its `Hash`, `Eq` and `Ord` must delegate to `X`,
+   or `HashMap::get` misses keys the map holds.
+8. Does a `fn with(&self) -> Self` clone a `Cow` of a non-`Copy` element type? That is
    quadratic. Use a persistent collection: `references/persistent-collections.md`.
-7. Is the persistent collection read by index? Then it is the wrong structure.
-8. Does the write path use `&self -> Self` when only the newest version survives? Use the
-   `&mut self` shape.
-9. Does the value cross a thread? `rpds::Vector::new()` does not. Use `new_sync()`.
-10. Is `im` in the dependency tree? Replace it with `imbl` and add the advisory gate.
+9. Is the persistent collection read by index? Then it is the wrong structure.
+10. Does the write path use `&self -> Self` when only the newest version survives? Use the
+    `&mut self` shape.
+11. Does the value cross a thread? `rpds::Vector::new()` does not. Use `new_sync()`.
+12. Is `im` in the dependency tree? Replace it with `imbl` and add the advisory gate.
 
 ## Related skills
 

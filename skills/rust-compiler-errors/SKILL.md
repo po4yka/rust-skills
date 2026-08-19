@@ -1,6 +1,6 @@
 ---
 name: rust-compiler-errors
-description: Use when rustc or cargo reports a numbered error and you need the cause rather than the first fix that compiles. Covers ownership and move errors (E0382, E0505, E0507), borrow conflicts (E0499, E0502, E0596), lifetime errors (E0597, E0716, E0515, E0521, E0106), trait and type errors (E0038, E0277, E0271, E0308, E0599), the unnumbered "future cannot be sent between threads safely", resolution errors (E0433, E0425, E0603), and layout errors (E0072, E0793). States which reflexive fix hides the bug, which fix resolves it, and when a repeated error means the ownership design is wrong. Triggers on any "E0" code that no topic skill owns (E0207 is rust-iterator-impl, E0793 is rust-unsafe), "borrow checker", "value moved", "does not live long enough", "cannot borrow", "missing lifetime specifier", "trait bound not satisfied", "not dyn compatible", "dyn compatibility", "object safety", "cannot be sent between threads", or a paste of a cargo build failure.
+description: Use when rustc or cargo reports a numbered error and you need the cause rather than the first fix that compiles. Covers ownership and move errors (E0382, E0505, E0507, E0509), borrow conflicts (E0499, E0502, E0596), lifetime errors (E0597, E0716, E0515, E0521, E0106), trait and type errors (E0038, E0277, E0271, E0308, E0599, E0631, E0275), Drop impl errors (E0184, E0367, E0740), the unnumbered Send error on a future, resolution errors (E0433, E0425, E0603), and layout errors (E0072, E0793). States which reflexive fix hides the bug and which one resolves it. Triggers on any "E0" code that no topic skill owns (E0207 is rust-iterator-impl, E0793 is rust-unsafe, Send and Sync go to rust-send-sync), "borrow checker", "value moved", "does not live long enough", "cannot borrow", "missing lifetime specifier", "trait bound not satisfied", "not dyn compatible", "dyn compatibility", "object safety", "cannot be sent between threads", "overflow evaluating the requirement", or a paste of a cargo build failure.
 license: BSD-3-Clause
 ---
 
@@ -38,6 +38,7 @@ downstream, and most of them disappear on their own.
 | E0382 | borrow of moved value | The value was consumed, then used again | Decide the owner; borrow instead of moving |
 | E0505 | cannot move out of `x` because it is borrowed | A live borrow outlives the move | Shorten the borrow, or move before borrowing |
 | E0507 | cannot move out of `x` which is behind a shared reference | You need ownership but only hold `&` | `mem::take`, `Option::take`, `clone`, or take `self` |
+| E0509 | cannot move out of type `T`, which implements the `Drop` trait | A `Drop` impl blocks every partial move out of the value | Make the field an `Option` and call `.take()`, or `mem::replace` |
 | E0499 | cannot borrow `*x` as mutable more than once | Two live `&mut` to the same place | `split_at_mut`, index disjointly, or scope one borrow |
 | E0502 | cannot borrow as mutable because it is also borrowed as immutable | A read borrow is live across a write | Copy the value out, then mutate |
 | E0596 | cannot borrow as mutable, as it is behind a `&` reference | The parameter is `&T`, not `&mut T` | Change the signature; do not reach for interior mutability first |
@@ -50,7 +51,13 @@ downstream, and most of them disappear on their own.
 | E0271 | expected `A` to be an iterator that yields `B` | An associated type does not match | Fix the item type, usually with `map` |
 | E0308 | mismatched types | The two sides differ, often by one reference layer | Compare the two types the note prints, not the expressions |
 | E0599 | no method named `m` found | Typo, or the trait that defines `m` is not imported | `use` the trait |
+| E0631 | type mismatch in function arguments | A function item was passed to a higher-order call; no deref coercion applies at a trait bound | Wrap the call in a closure, or insert `.map(String::as_str)` |
+| E0275 | overflow evaluating the requirement `T: X` | A generic impl builds an unbounded type chain at instantiation | Fix the signature; never raise `recursion_limit` |
 | E0038 | the trait `T` is not dyn compatible | One item of the trait gets no vtable slot | Read the `...because` note; add `where Self: Sized` to that item |
+| E0562 | `impl Trait` is not allowed in the return type of `Fn` trait bounds | `impl FnMut(&T) -> impl Ord` puts `impl Trait` in an associated-type binding | Name a generic parameter instead: `<K: Ord>` |
+| E0184 | the trait `Copy` cannot be implemented for this type; the type has a destructor | One type asks for both `Copy` and `Drop` | Remove the `Copy` derive; a resource handle is not `Copy` |
+| E0367 | `Drop` impl requires `T: Clone` but the struct it is implemented for does not | The `Drop` impl added a bound the type definition does not carry | Move the bound onto the struct definition |
+| E0740 | field must implement `Copy` or be wrapped in `ManuallyDrop<...>` | A union field has drop glue | Wrap the field in `std::mem::ManuallyDrop` and drop it by hand |
 | E0433 | cannot find module or crate | The dependency is missing or the path is wrong | `cargo add`, or fix the path |
 | E0425 | cannot find value in this scope | Typo, or the item is not imported | Check the `use` list |
 | E0603 | module is private | The path exists but is not exported | `pub use` it, or use the public path |
@@ -110,7 +117,7 @@ v.push(first);
 ```
 
 Reach for `RefCell` only after both of these fail. `RefCell` moves the check from compile time
-to run time; it converts a build error into a `already borrowed: BorrowMutError` panic in
+to run time; it converts a build error into a `RefCell already borrowed` panic in
 production. Reach for it when the graph shape genuinely requires it, not to silence a message.
 
 The full catalogue of splits is in
@@ -169,6 +176,41 @@ Pick by what should happen to the original:
 `mem::take` needs `&mut` and needs `Default`. It is the cheapest of these: no allocation, no
 clone.
 
+## A `Drop` impl changes the borrow checker
+
+`impl Drop` is not a local change. It breaks code that compiled before, and no error title names
+`Drop`.
+
+| You add `Drop` to | The new error | Cause |
+| --- | --- | --- |
+| a type with a lifetime parameter | E0597 on the borrowed local | dropck extends the borrow to the drop point |
+| a guard that holds `&mut T` | E0502 at the next read of `T` | the drop point is one more use, after the last visible use |
+| any type | E0509 at each partial move out of it | drop glue needs the whole value |
+| a type that derives `Copy` | E0184 at the derive | `Copy` and `Drop` are exclusive |
+
+```rust,compile_fail
+struct Guard<'a>(&'a mut u32);
+impl Drop for Guard<'_> {
+    fn drop(&mut self) {}
+}
+
+fn read_while_guarded() {
+    let mut x = 0u32;
+    let _g = Guard(&mut x);
+    println!("{x}");   // E0502
+}
+```
+
+The note states the cause: "mutable borrow might be used here, when `_g` is dropped and runs the
+`Drop` code for type `Guard`". NLL ends a borrow at its last use, and a `Drop` impl adds one last
+use at the end of the scope. Call `drop(_g)` before the read, scope the guard in an inner block,
+or leave the type `Drop`-free.
+
+Inside `drop` you hold `&mut self`, so a by-value pattern on a field is E0507. Match on `self`
+instead: match ergonomics then bind the payload as `&mut`. That fix, the dropck E0597 case, and
+the E0509 partial-move case are in
+[references/borrow-checker-fixes.md](references/borrow-checker-fixes.md).
+
 ## Send and Sync
 
 `thread::spawn` reports a numbered error:
@@ -200,8 +242,9 @@ let value = {
 do_async(value).await;
 ```
 
-`clippy::await_holding_lock` catches the lock case at build time. See the `rust-async-internals`
-skill for cancel safety, and the `rust-lints` skill for the lint configuration.
+`clippy::await_holding_lock` catches the lock case at build time. See the `rust-send-sync` skill
+to decide whether a type is `Send` or `Sync` at all, the `rust-async-internals` skill for cancel
+safety, and the `rust-lints` skill for the lint configuration.
 
 ## E0106: missing lifetime specifier
 
@@ -257,6 +300,7 @@ ones.
 | --- | --- |
 | `fn describe() -> String;` | ...because associated function `describe` has no `self` parameter |
 | `fn go<T: Copy>(&self, t: T);` | ...because method `go` has generic type parameters |
+| `fn ser(&self, out: impl Write);` | ...because method `ser` has generic type parameters |
 | `fn dup(&self) -> Self;` | ...because method `dup` references the `Self` type in its return type |
 | `fn eq_me(&self, other: &Self) -> bool;` | ...because method `eq_me` references the `Self` type in this parameter |
 | `fn it(&self) -> impl Iterator<Item = u8>;` | ...because method `it` references an `impl Trait` type in its return type |
@@ -266,10 +310,14 @@ ones.
 | `trait T: Clone` or `trait T: Sized` | ...because it requires `Self: Sized` |
 | `trait T: PartialEq<Self>` | ...because it uses `Self` as a type parameter |
 
+Row two and row three print the same note for signatures that look nothing alike. An
+argument-position `impl Trait` is a hidden generic parameter: `fn ser(&self, out: impl Write)` is
+`fn ser<W: Write>(&self, out: W)`. Take `&mut dyn Write` when a consumer may need `Box<dyn Trait>`.
+
 The last four rows name no method, so they read like a different error. `Clone` has `Sized` as
 a supertrait, so `: Clone` on the trait alone removes the vtable.
 
-The first six sit on one item, and one clause on that item is the whole fix:
+The first seven sit on one item, and one clause on that item is the whole fix:
 
 ```rust
 pub trait Codec {
@@ -316,6 +364,45 @@ impl Clone for Box<dyn Shape> {
 rustc renamed this check from "object safety" to "dyn compatibility". A grep of a current build
 log for "object safe" finds nothing. Grep for `E0038` or for "dyn compatible".
 
+## `cargo check` and `cargo build` disagree on recursive generic instantiation
+
+```text
+error: reached the recursion limit while instantiating `<Node as Serialize>::serialize::<&mut &mut &mut &mut &mut &mut ...>`
+  = note: the full name for the type has been written to '<crate>.long-type-<hash>.txt'
+```
+
+**`cargo check` exits 0 on a crate that `cargo build` rejects.** `cargo check` stops after
+type-checking and metadata emission. The instantiation chain is walked only by the
+monomorphization collector, which runs during codegen. The collector starts at reachable roots, so
+an uncalled generic function stays silent until a caller appears. Gate CI on `cargo build`, not on
+`cargo check`, for any crate with recursive generic trait impls.
+
+**A higher `recursion_limit` only makes the failure slower.** The `&mut &mut ... &mut T` chain is
+infinite by construction, so no finite `recursion_limit` ends it. Measured on the `Node` shape
+below with rustc 1.97.0 on aarch64-apple-darwin: the default limit of 128 fails in 0.10 s, and
+`#![recursion_limit = "1024"]` fails in 11.1 s with the identical message. This error prints no
+`help:` line.
+
+The cause is a trait method that takes its writer by value and hands `&mut out` to the recursive
+call, so the type grows one `&mut` per level:
+
+```rust,ignore
+// W, then &mut W, then &mut &mut W, without end.
+trait Serialize { fn serialize(&self, out: impl Write) -> io::Result<()>; }
+// impl Serialize for Node { ... for c in &self.children { c.serialize(&mut out)?; } ... }
+```
+
+Take `&mut dyn Write` in the trait method. It is one concrete type at every depth, and it keeps
+the trait dyn compatible. In a free function `&mut impl Write` also stops the chain, but its
+implicit `Sized` bound rejects a caller that already holds `&mut dyn Write`, with E0277 "the size
+for values of type `dyn Write` cannot be known at compilation time". Write `&mut (impl Write +
+?Sized)` when both callers must work. See the `rust-type-erasure` skill for the wider trade.
+
+`error[E0275]: overflow evaluating the requirement ...` is a different error. The trait solver
+emits it during type checking, so `cargo check` does report it. It carries a `help:` line that
+asks for double the current `recursion_limit` every time. Do not take it either; the chain is
+still unbounded.
+
 ## Escalation rule
 
 Three failed attempts at the same error is a signal, not bad luck. Stop editing and answer these:
@@ -336,10 +423,13 @@ See the `rust-crate-architecture` skill for ownership across module boundaries, 
 ## Related skills
 
 - `rust-unsafe` — E0793 and the layout rules behind it
+- `rust-send-sync` — the auto trait decision behind every `cannot be sent` message
 - `rust-async-internals` — `Send` across `.await`, cancel safety, and shutdown
 - `rust-lints` — where `clippy::await_holding_lock` and the rest are configured
 - `rust-crate-architecture` — ownership and dependency direction across crates
 - `rust-discipline` — the API shapes that avoid E0038 and the borrow errors
+- `rust-callback-bounds` — E0309, E0621, and E0502 on a `Fn(&T) -> K` parameter
+- `rust-type-erasure` — `&mut dyn Trait` against `impl Trait`, and what each costs
 - `rust-performance` — the cost of the clone that silenced the error
 - `cargo-workflows` — build and check commands in full
 

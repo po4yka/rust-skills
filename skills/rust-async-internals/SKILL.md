@@ -250,9 +250,18 @@ future `!Send`.
   held across the `.await`.
 - Never capture `&T` into a spawned task. Convert to an owned value or an
   `Arc<T>` before the `spawn`.
-- Native `async fn` in traits adds no `Send` bound to the returned future, so
-  `tokio::spawn(obj.method())` fails to compile. Use
+- Native `async fn` in traits adds no `Send` bound to the returned future. A
+  call on a concrete type still spawns, because the opaque type leaks its auto
+  traits. A call through a generic `T: Trait` bound does not: it prints
+  `error: future cannot be sent between threads safely`. Use
   `#[trait_variant::make(TraitSend: Send)]` or keep `#[async_trait]`.
+- `F: AsyncFn(&T) + Send + Sync + 'static` bounds the callable, not the future
+  it returns. It does not make the callback spawnable. No stable bound names
+  that future. When the callback must stay an `Fn` bound, take
+  `F: for<'a> Fn(&'a T) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>`
+  instead. When you control the callee, a trait method that returns
+  `impl Future<Output = R> + Send` carries `Send` and allocates nothing. See
+  the pitfall catalog.
 
 ## Timeouts
 
@@ -371,6 +380,13 @@ when you author or review code touched by any of these:
 
 ## Related skills
 
+- `rust-callback-bounds` — `for<'a>` bounds on non-async `Fn` callbacks. This
+  skill covers only the async half.
+- `rust-event-loop-state` — sharing `&mut State` across concurrently polled
+  futures. This skill states the rule; that one holds the design patterns.
+- `rust-pin-projection` — what `Pin` enforces, and what it does not. This skill
+  covers polling and cancel safety; that one covers `Unpin`, `PhantomPinned`
+  and structural projection.
 - `rust-panic-safety` — `catch_unwind` at task and FFI boundaries.
 - `rust-unsafe` — `SAFETY:` conventions for SQE construction and `Pin`.
 - `rust-jni` and `ffi-error-progress-cancel` — the foreign-thread contract.

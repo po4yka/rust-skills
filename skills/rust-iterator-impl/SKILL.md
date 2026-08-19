@@ -30,6 +30,7 @@ aarch64-apple-darwin.
 | A panic inside `core/src/iter/traits/exact_size.rs` | [size_hint is a contract](#size_hint-is-a-contract) |
 | `error[E0277]: ... ExactSizeIterator is not satisfied`, pointing at `.rev()` | [Adapter order](#adapter-order-enumeraterev-needs-exactsizeiterator) |
 | `error[E0658]: gen blocks are experimental` | [Stateful generators](#stateful-generators-use-iterfrom_fn) |
+| `error[E0432]: unresolved import std::ops::Generator` | [Stateful generators](#stateful-generators-use-iterfrom_fn) |
 | The impls are correct, and iteration is slow | `rust-hot-path` |
 
 ## The three IntoIterator impls
@@ -376,6 +377,18 @@ Coroutines and `gen` blocks are nightly on 1.97.0: a `gen` block gives
 `error[E0658]: gen blocks are experimental`, and `#![feature(coroutines)]` gives
 `error[E0554]: #![feature] may not be used on the stable release channel`. Pinning
 `rust-toolchain.toml` to nightly for one iterator pins the whole workspace to nightly.
+
+Two further traps guard that road. First, `std::ops::Generator` does not exist. The trait was
+renamed to `Coroutine`, so `use std::ops::Generator;` gives `error[E0432]: unresolved import
+std::ops::Generator ... no Generator in ops` on stable and on nightly alike. Any snippet that
+names `Generator` or `GeneratorState` from `std::ops` predates the rename. The current names are
+`std::ops::Coroutine` and `std::ops::CoroutineState`, still behind `#![feature(coroutine_trait)]`,
+issue 43122. Second, a nightly `gen` block is an `impl Iterator` and nothing more. It
+implements no `Coroutine<R>` for any `R` other than `()`, so it accepts no resume argument:
+`let _: &dyn Coroutine<&mut u32, Yield = i32, Return = ()> = &g;` fails with `error[E0277]: the
+trait bound {gen block@...}: Coroutine<&mut u32> is not satisfied`, while the
+`&dyn Iterator<Item = i32>` coercion on the same value compiles. Nightly buys no state-carrying
+routine here, so `gen` is not a reason to leave stable.
 
 `std::iter::from_fn` is the stable shape. A `move` closure owns the state, and the function
 returns `impl Iterator`. No allocation, no `Pin`, no `Box<dyn>`:

@@ -216,7 +216,7 @@ pub type Buf = [u8; 256];
 pub fn copy(src: &Buf) -> Buf { *src }
 RS
 rustc -O --edition 2024 --emit asm --crate-type=lib probe.rs -o probe.s
-grep -c memcpy probe.s        # 0 = copied inline, 1 = calls memcpy
+grep -c memcpy probe.s        # 0 = copied inline, 1 or more = a call to memcpy
 ```
 
 Measured with this recipe on aarch64-apple-darwin: 256 prints 0 and 257 prints 1. Repeat the run
@@ -225,6 +225,30 @@ nothing about the shipped one.
 
 Raise the array size until `grep` prints 1. That size minus one is the largest type your target
 moves without a library call.
+
+### A zero `memcpy` count is not a zero copy count
+
+Do not read `grep -c memcpy` of 0 as "this value-passing signature is free". Below the boundary
+rustc lowers the move into inline `ldp`/`stp` pairs. The call leaves the assembly. The byte
+traffic stays. Count instructions per function as well:
+
+```bash
+rustc --edition 2024 -C opt-level=3 --emit=asm --crate-type=lib probe.rs -o probe.s
+awk '/^_[A-Za-z0-9_$.]*:$/{f=$0} /^[ \t]+[a-z]/{n[f]++} END{for(k in n) print n[k], k}' probe.s
+```
+
+Measured on aarch64-apple-darwin at `-C opt-level=3`, on a state struct of `[u8; N]` plus a
+function pointer plus a `NonNull`, driven by a loop:
+
+| State size | `fn step(s: &mut S)` loop | `s = step(s)` loop |
+| --- | --- | --- |
+| 216 bytes | 0 memcpy, 15 instructions | 0 memcpy, 51 instructions |
+| 256 bytes | 0 memcpy, 15 instructions | 0 memcpy, 51 instructions |
+| 1040 bytes | 0 memcpy, 15 instructions | 2 memcpy, 28 instructions |
+
+At 256 bytes both forms report zero `memcpy` calls, and the by-value loop still runs 3.4x the
+instructions. The `memcpy` call is the ceiling of the copy cost, not a switch that turns it on.
+Use the `grep` only to find the boundary. Use the instruction count to decide a signature.
 
 ## The clippy gates and where they stop
 
