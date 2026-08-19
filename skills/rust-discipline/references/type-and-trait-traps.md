@@ -6,7 +6,9 @@ consumer, or on a different target.
 
 Each item states a severity, a wrong example, a correct example, and a rule. Traps that come from
 the shape of the data — hash keys, text reversal, and large arrays — live in
-[data-shape-traps.md](data-shape-traps.md).
+[data-shape-traps.md](data-shape-traps.md). What each parameter bound accepts and rejects lives in
+[argument-shapes.md](argument-shapes.md). The full cost of `impl Drop` lives in
+[drop-and-raii.md](drop-and-raii.md).
 
 ---
 
@@ -42,8 +44,15 @@ impl Drop for SinkGuard {
 ```
 
 Rule: before you add `impl Drop` to a struct, check whether downstream code, or `Drop::drop`
-itself, must consume a field. If yes, use a dedicated guard type with `ManuallyDrop` and
-`#[repr(transparent)]`.
+itself, must consume a field. If yes, move the `Drop` onto a dedicated one-field guard type and
+keep the aggregate `Drop`-free. Reach for the `unsafe` `ManuallyDrop` + `#[repr(transparent)]` form
+only after `size_of` shows it saves a word. Measured on rustc 1.97.0: a payload with a niche —
+`Box`, `NonNull`, `&T`, `NonZero*` — makes `T`, `Option<T>` and `ManuallyDrop<T>` all 8 bytes, so
+the safe `Option` guard costs nothing and the `unsafe` rewrite buys nothing.
+
+[drop-and-raii.md](drop-and-raii.md) holds the rest: the eight error codes `impl Drop` turns on
+with their exact messages, the E0507 that `if let Some(x) = self.field` gives inside `Drop::drop`,
+the four escape hatches, drop order, and the two ways `impl Drop` changes the borrow checker.
 
 ---
 
@@ -52,8 +61,8 @@ itself, must consume a field. If yes, use a dedicated guard type with `ManuallyD
 **Severity: WARNING on hot paths**
 
 `fn(T) -> T` copies the value in and out. Once `T` crosses the target's inline-copy boundary,
-each call emits a `memcpy` call. rustc cannot rewrite it into `&mut T` mutation, because panic
-semantics require the original value to stay valid until the function returns.
+each call emits a `memcpy` call. rustc does not rewrite it into `&mut T` mutation. This is not a
+panic-safety restriction, and no build setting removes it.
 
 The boundary is target-dependent. Measured on rustc 1.97.0 at `-O`, with a
 `#[derive(Clone, Copy)] struct T([u8; N])` copied through a function: `x86_64-unknown-linux-gnu`
@@ -68,12 +77,54 @@ fn transform(mut state: BigState) -> BigState {
     state.counter += 1;
     state
 }
+```
 
+```rust
 // GOOD on a hot path: in-place mutation
+struct BigState {
+    payload: [u8; 1024],
+    counter: u64,
+}
+
 fn transform(state: &mut BigState) {
     state.counter += 1;
 }
 ```
+
+Three repairs look plausible and none of them works. Measured on rustc 1.97.0,
+`aarch64-apple-darwin`, `-C opt-level=3`, with a 1032-byte state mutated in a loop:
+
+| Form | `memcpy` calls per iteration | Instructions | Stack frame |
+| --- | --- | --- | --- |
+| `fn evolve_mut(&mut BigState)` | 0 | 14 | none |
+| `#[inline] fn evolve(BigState) -> BigState` | 2 | 27 | 1040 bytes |
+| the same, rebuilt with `-C panic=abort` | 2 | 27 | 1040 bytes |
+| `take_mut`-style `ptr::read` + closure + `ptr::write` | 3 | 42 | 2080 bytes |
+
+`#[inline]` and `#[inline(always)]` both leave the two `memcpy` calls in place: the move into the
+callee's argument slot and back out of its return slot are MIR-level copies, and LLVM hands them to
+a stack temporary. `-C panic=abort` produces a body that is identical instruction for instruction,
+so `panic = "abort"` in the release profile buys nothing here.
+
+The `take_mut` rewrite is the worst of the three. It adds a copy instead of removing one, and it
+turns any panic inside the closure into an unconditional abort:
+
+```rust
+// ANTI-PATTERN: more copies than the plain value-passing call, and it aborts on panic.
+pub fn take<T, F: FnOnce(T) -> T>(mut_ref: &mut T, closure: F) {
+    unsafe {
+        let old = std::ptr::read(mut_ref);
+        let new = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| closure(old)))
+            .unwrap_or_else(|_| std::process::abort());
+        std::ptr::write(mut_ref, new);
+    }
+}
+```
+
+Measured: a panic inside the closure exits the process with status 134 (`128 + SIGABRT`), and an
+enclosing `catch_unwind` never returns. The abort is forced by construction — the closure consumed
+a bitwise copy and may have dropped it, so unwinding past `take` would leave the original for a
+second drop. Write `fn evolve_mut(&mut BigState)` instead.
 
 Use `fn(T) -> T` only in two cases:
 
@@ -102,7 +153,9 @@ keeps `fn build(self) -> T`. Only the start of the chain constrains the terminal
 builder to a variable and the owned build compiles. Start the chain from a temporary, as in
 `CfgBuilder::default().name("a").build()`, and it fails with `error[E0507]: cannot move out of a
 mutable reference`, with the note `'CfgBuilder::build' takes ownership of the receiver 'self',
-which moves value`.
+which moves value`. The third failure — an owned setter called on a *field* from a `&mut self`
+method — is in [argument-shapes.md](argument-shapes.md), together with the `.clone()` that rustc
+suggests for it and must not get.
 
 ```rust
 #[derive(Default, Debug)]
@@ -337,6 +390,8 @@ lifetime that spans both the input borrow and the cache. In real code that inter
 collapses to empty almost immediately.
 
 ```rust
+use std::collections::HashMap;
+
 // BAD: 'a binds the input slice and the cache values together.
 fn first_word<'a>(s: &'a str, cache: &mut HashMap<String, &'a str>) -> &'a str {
     if let Some(cached) = cache.get(s) { return cached; }
@@ -344,17 +399,27 @@ fn first_word<'a>(s: &'a str, cache: &mut HashMap<String, &'a str>) -> &'a str {
     cache.insert(s.to_string(), word);
     word
 }
-// The cache outlives any single `s`. The first call pins 'a to the first input.
-// A second call from a different scope fails to compile.
+```
 
-// GOOD: split the lifetimes with a documented contract
+The definition above compiles. The call sites do not. The cache outlives any single `s`, so the
+first call pins `'a` to the first input, and a second call from a different scope fails.
+
+```rust
+use std::collections::HashMap;
+
+// GOOD: split the lifetimes with a documented contract.
 fn first_word<'cache, 'input: 'cache>(
     s: &'input str,
     cache: &mut HashMap<String, &'cache str>,
-) -> &'cache str { /* ... */ }
+) -> &'cache str { todo!() }
+```
 
-// BETTER: store owned data and decouple the lifetimes entirely
-fn first_word(s: &str, cache: &mut HashMap<String, String>) -> &str { /* ... */ }
+```rust
+use std::collections::HashMap;
+
+// BETTER: store owned data and decouple the lifetimes entirely.
+// The return then borrows the cache, so name that lifetime; elision cannot pick it.
+fn first_word<'c>(s: &str, cache: &'c mut HashMap<String, String>) -> &'c str { todo!() }
 ```
 
 Rule: when one `&'a` parameter appears in both an input position and a storage position,

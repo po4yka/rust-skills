@@ -1,9 +1,10 @@
 # Method resolution and trait coherence
 
-Read this file when a diff adds a `Deref` impl, an extension trait, a `downcast_ref` chain, or
-a second conversion impl between the same two types. Every trap here is a resolution decision
-the compiler makes for you. Two of them are silent: the code compiles and calls the wrong
-method. The rest are hard build breaks that arrive in downstream code.
+Read this file when a diff adds a `Deref` impl, an extension trait, a `downcast_ref` chain, a
+pointer-forwarding impl (`impl Trait for &mut T`, `Box<T>`, `Rc<T>`), a blanket impl, or a second
+conversion impl between the same two types. Every trap here is a resolution decision the compiler
+makes for you. Three of them are silent: the code compiles and calls the wrong method, or calls
+itself. The rest are hard build breaks that arrive in downstream code.
 
 Each item states a severity, the rule, the failing shape with its exact error, and the working
 shape. Measured on rustc 1.97.0, edition 2024.
@@ -123,6 +124,194 @@ Rule: implement `Deref` only on a smart pointer, as
 the target's trait impls, write delegating impls, or generate them with a macro. Count the
 delegating impls before you commit: if the target has 30 trait impls, `Deref` looks cheap and
 still gives you none of them at a bound.
+
+---
+
+## `DerefMut` turns a field borrow into a whole-`self` borrow
+
+**Severity: WARNING**
+
+The borrow checker splits a struct by field: `&mut ctx.a` and `&mut ctx.b` coexist. A `DerefMut`
+impl removes that split for every field it reaches. `&mut ctx.frame` compiles to
+`DerefMut::deref_mut(&mut ctx).frame`, which borrows all of `ctx`, so a second accessor on a
+disjoint field is rejected:
+
+```rust,compile_fail
+use std::ops::{Deref, DerefMut};
+struct Static { frame: u64 }
+struct World { entities: Vec<u32> }
+struct Ctx<S> { statics: S, world: World }
+impl<S> Deref for Ctx<S> { type Target = S; fn deref(&self) -> &S { &self.statics } }
+impl<S> DerefMut for Ctx<S> { fn deref_mut(&mut self) -> &mut S { &mut self.statics } }
+impl<S> Ctx<S> { fn world_mut(&mut self) -> &mut World { &mut self.world } }
+
+fn broken(ctx: &mut Ctx<Static>) {
+    let f: &mut u64 = &mut ctx.frame;      // via `deref_mut`: borrows all of `ctx`
+    let w: &mut World = ctx.world_mut();   // error[E0499]: cannot borrow `*ctx` as
+    w.entities.push(*f as u32);            //   mutable more than once at a time
+}
+```
+
+The same body written as `&mut ctx.statics.frame` plus `&mut ctx.world` compiles: those are
+disjoint fields. No call order fixes the `DerefMut` version. Drop the impl, and expose both
+halves through one splitting accessor that returns a tuple of `&mut`:
+
+```rust
+struct Static { frame: u64 }
+struct World { entities: Vec<u32> }
+struct Ctx<S> { statics: S, world: World }
+impl<S> Ctx<S> {
+    // One call, two disjoint `&mut`. The borrow checker splits the fields.
+    fn split_mut(&mut self) -> (&mut S, &mut World) { (&mut self.statics, &mut self.world) }
+}
+
+fn ok(ctx: &mut Ctx<Static>) {
+    let (s, w) = ctx.split_mut();
+    w.entities.push(s.frame as u32);
+}
+
+fn main() {
+    let mut ctx = Ctx { statics: Static { frame: 9 }, world: World { entities: vec![] } };
+    ok(&mut ctx);
+    assert_eq!(ctx.world.entities, [9]);
+}
+```
+
+Rule: never implement `DerefMut` on a context or state wrapper that also hands out other fields
+through inherent methods. The wrapper reads as convenient and costs the caller every disjoint
+borrow.
+
+---
+
+## A pointer-forwarding impl needs `?Sized` and a body that names the inner impl
+
+**Severity: CRITICAL**
+
+`impl<H: Handler> Handler for &mut H` carries an implicit `H: Sized`. `dyn Handler` is unsized,
+so `&mut dyn Handler: Handler` and `Box<dyn Handler>: Handler` never hold — and that is the only
+case the forwarding pattern exists to serve. The impl itself compiles. The failure lands at a
+distant call site, and it blames `Sized` rather than the impl:
+
+```text
+error[E0277]: the trait bound `&mut dyn Handler: Handler` is not satisfied
+   |
+20 |     process_request(h, Request);
+   |     --------------- ^ the trait `Sized` is not implemented for `dyn Handler`
+note: required for `&mut dyn Handler` to implement `Handler`
+   |
+ 7 | impl<H: Handler> Handler for &mut H {
+   |      -           ^^^^^^^     ^^^^^^
+   |      |
+   |      unsatisfied trait bound implicitly introduced here
+```
+
+The body is the second trap. Inside `impl<H: Handler + ?Sized> Handler for &mut H`, `self` has
+type `&mut &mut H`, which is exactly the self type of that impl. Method probing tries the
+receiver by value at step 0, so `self.handle(r)` binds to the impl it sits in:
+
+```rust
+// WRONG: `self.handle(r)` re-enters this impl. rustc emits
+// `warning: function cannot return without recursing`, and nothing else.
+struct Request;
+trait Handler { fn handle(&mut self, r: Request); }
+impl<H: Handler + ?Sized> Handler for &mut H {
+    fn handle(&mut self, r: Request) { self.handle(r) }
+}
+```
+
+A direct `h.handle(r)` on a `&mut dyn Handler` still prints the right answer, because there step
+0 matches `<dyn Handler as Handler>::handle`. The recursion detonates only when the impl is
+reached through a generic bound: measured `fatal runtime error: stack overflow, aborting`, exit
+code 134. Name the inner impl instead, with `H::method(self, ..)` or `(**self).method(..)`:
+
+```rust
+struct Request;
+trait Handler { fn handle(&mut self, r: Request) -> u32; }
+struct My(u32);
+impl Handler for My { fn handle(&mut self, _r: Request) -> u32 { self.0 } }
+
+impl<H: Handler + ?Sized> Handler for &mut H {
+    fn handle(&mut self, r: Request) -> u32 { H::handle(self, r) }
+}
+impl<H: Handler + ?Sized> Handler for Box<H> {
+    fn handle(&mut self, r: Request) -> u32 { (**self).handle(r) }
+}
+
+fn run<H: Handler>(mut h: H) -> u32 { h.handle(Request) }
+
+fn main() {
+    let mut m = My(42);
+    assert_eq!(run(&mut m as &mut dyn Handler), 42);
+    let b: Box<dyn Handler> = Box::new(My(7));
+    assert_eq!(run(b), 7);
+}
+```
+
+Generate the set with a macro so no impl in it drifts:
+
+```rust
+macro_rules! impl_handler_for_refs {
+    ($T:ident) => {
+        impl<H: $T + ?Sized> $T for &mut H { /* one $T::method(self, ..) per method */ }
+        impl<H: $T + ?Sized> $T for Box<H> { /* one $T::method(self, ..) per method */ }
+    };
+}
+```
+
+Rule: set `unconditional_recursion` to `deny` at the crate root as soon as a forwarding impl
+lands. It is warn-by-default, and this is the bug it exists for.
+
+---
+
+## The method receiver decides which pointers can forward
+
+**Severity: WARNING**
+
+Forwarding needs `Deref`, `DerefMut`, or a move out of the deref. Each receiver shape therefore
+admits a different set of pointers, and the set is fixed the moment the trait ships.
+
+| Receiver | Forwards to | `?Sized` |
+|----------|-------------|----------|
+| `&self` | `&T`, `&mut T`, `Box<T>`, `Rc<T>`, `Arc<T>` | on all five |
+| `&mut self` | `&mut T`, `Box<T>` | on both |
+| `self` | `Box<T>` only | impossible |
+
+The rejections, measured on rustc 1.97.0:
+
+| Impl you cannot write | Error |
+|-----------------------|-------|
+| `&mut self` for `Rc<T>` or `Arc<T>` | `error[E0596]: cannot borrow data in an 'Rc' as mutable`, with `help: trait 'DerefMut' is required to modify through a dereference` |
+| `&mut self` for `&T` | `error[E0596]: cannot borrow '**self' as mutable, as it is behind a '&' reference` |
+| `self` for `Box<T>` with `+ ?Sized` | `error[E0277]: the size for values of type 'T' cannot be known at compilation time`, with `note: all function arguments must have a statically known size` |
+| `self` for `&mut T`, at any sizedness | `error[E0507]: cannot move out of '*self' which is behind a mutable reference` |
+
+```rust
+use std::rc::Rc;
+use std::sync::Arc;
+
+// `&self`: forwards to every pointer, `?Sized` throughout.
+trait Shared { fn go(&self); }
+impl<T: Shared + ?Sized> Shared for &T     { fn go(&self) { T::go(self) } }
+impl<T: Shared + ?Sized> Shared for &mut T { fn go(&self) { T::go(self) } }
+impl<T: Shared + ?Sized> Shared for Box<T> { fn go(&self) { T::go(self) } }
+impl<T: Shared + ?Sized> Shared for Rc<T>  { fn go(&self) { T::go(self) } }
+impl<T: Shared + ?Sized> Shared for Arc<T> { fn go(&self) { T::go(self) } }
+
+// `&mut self`: only these two exist.
+trait Uniq { fn go(&mut self); }
+impl<T: Uniq + ?Sized> Uniq for &mut T { fn go(&mut self) { T::go(self) } }
+impl<T: Uniq + ?Sized> Uniq for Box<T> { fn go(&mut self) { T::go(self) } }
+
+// `self` by value: only `Box`, and the `?Sized` is gone with it.
+trait Consume { fn go(self); }
+impl<T: Consume> Consume for Box<T> { fn go(self) { T::go(*self) } }
+
+fn main() {}
+```
+
+Rule: pick the receiver for the pointer set the callers need, before the trait ships. A
+`self`-by-value method forces `Sized` on its one forwarding impl, so `Box<dyn Trait>` can never
+satisfy the trait. Widening `&mut self` to `&self` later changes every implementor.
 
 ---
 
@@ -292,6 +481,10 @@ fn main() {
 `Any` adds a `'static` bound to the trait, so no implementor can hold a non-`'static`
 reference. Check that first.
 
+When the value set is genuinely open, or the values borrow and `Any` therefore cannot key them
+at all, the store is a design problem and not a taste problem. See `rust-type-erasure` for the
+three-rung ladder and for the `'static` bound that `Any` puts on your caller.
+
 ---
 
 ## `impl From<X> for Y` forecloses `impl TryFrom<X> for Y` for ever
@@ -360,3 +553,114 @@ Find both impls on one pair:
 ```bash
 rg "impl (Try)?From<" --type rust -n | sort -k2
 ```
+
+---
+
+## A blanket impl forecloses every other impl on the same `Self`
+
+**Severity: CRITICAL**
+
+Stable Rust has no specialisation. A blanket impl overlaps every instantiation it covers, so
+every impl you might want later on the same `Self` type is `E0119`. Two shapes hit this.
+
+**A bridge blanket impl excludes pointer forwarding.** `impl<T: Sink> Handler for T` and
+`impl<H: Handler + ?Sized> Handler for &mut H` cannot coexist:
+
+```rust,compile_fail
+struct Request;
+trait Handler { fn handle(&mut self, r: Request); }
+trait Sink { fn send(&mut self, r: Request); }
+
+// Pick ONE of these two impls. Together they are E0119.
+impl<T: Sink> Handler for T { fn handle(&mut self, r: Request) { self.send(r) } }
+
+impl<H: Handler + ?Sized> Handler for &mut H {
+    fn handle(&mut self, r: Request) { H::handle(self, r) }
+}
+```
+
+The note names the reason: `downstream crates may implement trait 'Sink' for type '&mut _'`.
+Coherence reasons about what a downstream crate may do, not about what your crate did. So you
+choose once: either your trait derives itself from another trait, or callers may pass `&mut h`,
+`Box<h>`, and `Arc<h>`. You cannot have both.
+
+**A blanket impl over a parameter blocks every later concrete impl.** `impl<S> Handler<S> for X`
+is a one-way door for `X`:
+
+```rust,compile_fail
+struct Mouse;
+struct ConcreteState;
+struct Standalone;
+trait InputHandler<S> { fn handle_mouse(&mut self, s: &mut S, m: &Mouse); }
+
+impl<S> InputHandler<S> for Standalone { fn handle_mouse(&mut self, _: &mut S, _: &Mouse) {} }
+// error[E0119]: conflicting implementations of trait `InputHandler<ConcreteState>`
+//               for type `Standalone`
+impl InputHandler<ConcreteState> for Standalone {
+    fn handle_mouse(&mut self, _: &mut ConcreteState, _: &Mouse) {}
+}
+```
+
+The conflict is per `Self` type. `impl<S> InputHandler<S> for Standalone` and
+`impl<S: TimeState> InputHandler<S> for Timed` coexist without a complaint.
+
+Rule: write `impl<S> Trait<S> for X` only for an `X` that ignores `S` for ever. Otherwise bound
+the blanket impl (`impl<S: SomeCapability> Trait<S> for X`), which leaves a disjoint bound
+available for the concrete case later.
+
+---
+
+## `#[fundamental]` decides which wrappers can carry a foreign trait
+
+**Severity: WARNING**
+
+The orphan rule treats `&T`, `&mut T`, and `Box<T>` as transparent, because they are
+`#[fundamental]`. `&Local` therefore counts as a local type and the impl is legal. `Rc`, `Arc`,
+`Vec`, and every other container are ordinary foreign types, so `Rc<Local>` is a foreign type and
+the impl is an orphan.
+
+```rust
+use std::fmt;
+use std::rc::Rc;
+pub struct Local(i32);
+
+// ALLOWED: `&T`, `&mut T` and `Box<T>` are #[fundamental], so they count as local.
+impl fmt::Display for &Local {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+impl fmt::Display for Box<Local> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+// `impl fmt::Display for Rc<Local>` is E0117. Newtype the wrapper instead.
+pub struct SharedLocal(Rc<Local>);
+impl fmt::Display for SharedLocal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0.0) }
+}
+
+fn main() {
+    assert_eq!(format!("{}", &Local(1)), "1");
+    assert_eq!(format!("{}", Box::new(Local(3))), "3");
+    assert_eq!(format!("{}", SharedLocal(Rc::new(Local(5)))), "5");
+}
+```
+
+`Rc<Local>`, `Arc<Local>`, and `Vec<Local>` each give the same rejection:
+
+```text
+error[E0117]: only traits defined in the current crate can be implemented for types defined
+              outside of the crate
+ --> src/lib.rs:5:1
+  |
+5 | impl fmt::Display for Rc<Local> {
+  | ^^^^^^^^^^^^^^^^^^^^^^---------
+  |                       |
+  |                       `Rc` is not defined in the current crate
+  |
+  = note: impl doesn't have any local type before any uncovered type parameters
+  = note: define and implement a trait or new type instead
+```
+
+Rule: when a foreign trait must reach a refcounted local type, newtype the wrapper
+(`struct SharedLocal(Rc<Local>)`), not the payload. Wrapping `Local` itself changes nothing,
+because the impl still names `Rc` on the outside.
