@@ -21,10 +21,19 @@ Profiling and optimization for Rust workloads on the host, on Android, and on iO
 
 | Target | CPU profile | Heap profile | Notes |
 |--------|-------------|--------------|-------|
-| Host (Linux) | `cargo flamegraph`, `perf record` | `heaptrack`, DHAT | `perf_event_paranoid <= 1` required |
-| Host (macOS) | `cargo flamegraph` (DTrace), Instruments | DHAT through the `dhat` crate, Instruments Allocations | DTrace needs `sudo` and SIP consideration |
+| Host (Linux) | `samply`, `cargo flamegraph`, `perf record` | `heaptrack`, DHAT | `perf_event_paranoid <= 1` required |
+| Host (macOS) | `samply`, `cargo flamegraph` (DTrace), Instruments | DHAT through the `dhat` crate, Instruments Allocations | DTrace needs `sudo` and SIP consideration; `samply` does not |
 | Android | `simpleperf`, Perfetto | Android Studio native allocations, HWASan for errors | `perf`, `heaptrack` and DHAT do not work here |
 | iOS | Instruments Time Profiler, `os_signpost` | Instruments Allocations and Leaks | No `simpleperf`; MetricKit for production data |
+
+`samply` 0.13.1 is the lowest-friction sampling profiler on the host. It runs on macOS and Linux, needs no DTrace, no `sudo` and no Instruments, and opens the result in the Firefox Profiler:
+
+```bash
+cargo install samply
+samply record ./target/release/app
+```
+
+The Firefox Profiler is also a viewer for raw `perf` data on Linux.
 
 ---
 
@@ -83,13 +92,23 @@ Differential flamegraphs use color: red marks a regression, blue marks an improv
 - `perf stat` and `perf record` — Linux only. Build with `RUSTFLAGS="-C force-frame-pointers=yes"` for reliable call graphs.
 - `heaptrack` — Linux heap profiler. Run `heaptrack ./target/release/myapp`.
 - DHAT through Valgrind — Linux only. Run `valgrind --tool=dhat ./target/debug/myapp`.
-- DHAT through the `dhat` crate — gate it behind a feature and run on nightly:
+- DHAT through the `dhat` crate — version 0.3.3 builds and runs on stable. No nightly is needed. Keep the feature gate so the profiler and its global allocator stay out of the shipped binary:
 
 ```bash
-cargo +nightly run --locked -p myapp --features dhat-heap -- <args>
+cargo run --release --locked -p myapp --features dhat-heap -- <args>
 # Writes dhat-heap.json on exit.
 # View at https://nnethercote.github.io/dh_view/dh_view.html
 ```
+
+The same crate also turns a heap measurement into a regression test. Build the profiler in testing mode, then assert on `dhat::HeapStats`:
+
+```rust,ignore
+let _p = dhat::Profiler::builder().testing().build();
+// run the code under test
+dhat::assert_eq!(dhat::HeapStats::get().total_blocks, 1);
+```
+
+`dhat::assert_eq!` is not a no-op outside testing mode. Under a non-testing profiler it panics with `dhat: asserting while not in testing mode`, and with no profiler running it panics with `dhat: asserting when no profiler is running`. For what to change in the code once DHAT names the allocation sites, see `rust-hot-path`.
 
 - DTrace on macOS — `cargo flamegraph` calls it for you.
 - Instruments on macOS — Allocations and Leaks templates also work on host builds.
@@ -299,6 +318,22 @@ Check the crates with the heaviest generic iterator chains and the widest trait-
 
 ## 6. Criterion microbenchmarks
 
+### Pick the harness first
+
+| Harness | Measures | Reach for it when |
+|---------|----------|-------------------|
+| Criterion | Wall clock, in process | The default. Baselines, statistics, HTML reports |
+| Divan 0.1.21 | Wall clock, in process | You want a lighter in-process harness with less code per benchmark |
+| Hyperfine 1.20.0 | Wall clock of a whole process | The unit of work is one CLI invocation, not one function |
+| Gungraun 0.19.4 | Valgrind instruction counts | You need a number that does not move with machine noise, inside `cargo bench` |
+
+Two naming traps:
+
+- Gungraun is the rename of `iai-callgrind`. `iai-callgrind` is still published separately at 0.16.1, so pin the crate you mean instead of taking whichever name you remember.
+- Rust's built-in `#[bench]` attribute is nightly-only. On stable it fails with E0554.
+
+### Running Criterion
+
 Declare `harness = false` for every benchmark target in the crate manifest, otherwise the built-in test harness intercepts the arguments.
 
 ```bash
@@ -328,6 +363,8 @@ decode/medium           time:   [12.345 µs 12.456 µs 12.567 µs]
 ```
 
 Do not read a change with `p > 0.05` as a result. Increase `sample_size` or `measurement_time` instead.
+
+A low p-value is not proof either. Wall-clock variance caused by memory layout — symbol order, environment size, stack alignment — is systematic within one build, so it repeats across samples and Criterion reports `p < 0.05` on it. The result is reproducible and still wrong. Instruction counts do not have that failure mode, so confirm a small wall-clock win with Gungraun before you keep the change.
 
 Benchmark structure, `Throughput` reporting, statistical configuration and async benchmarks are in [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md).
 
@@ -370,6 +407,14 @@ rayon::ThreadPoolBuilder::new()
 
 Profile names are your own convention. Define them once in the workspace `Cargo.toml`.
 
+Cargo reads `[profile.*]` only from the workspace-root manifest. A profile table in a workspace member, or in a dependency, is discarded. The build gives one warning and continues:
+
+```text
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+```
+
+A library crate therefore cannot ship optimization settings to its consumers. Document the settings for downstream users instead.
+
 ```toml
 [profile.release]
 lto = "thin"          # good performance, much faster to link than "fat"
@@ -411,12 +456,17 @@ LTO comparison:
 
 | Setting | Link time | Runtime performance | Use when |
 |---------|-----------|---------------------|----------|
-| `lto = false` | Fast | Baseline | Dev builds |
+| `lto = "off"` | Fast | Baseline | The true no-LTO baseline for an A/B |
+| `lto = false` | Fast | Above the baseline | Dev builds. Thin-local LTO stays on |
 | `lto = "thin"` | Moderate | +5-15% | Most release builds |
 | `lto = "fat"` | Slow | +15-30% | Maximum performance or minimum size |
 | `codegen-units = 1` | Slowest | Best | Always pair with LTO for release |
 
+`lto = false` does not turn LTO off. Thin-local LTO is the implicit default for every build with `opt-level > 0`, release included, and `false` stops only the cross-crate part. Verified with `cargo build --release -v`: `lto = false` passes rustc `-C embed-bitcode=no` alone, `lto = "off"` passes `-C embed-bitcode=no -C lto=off`. Benchmarking "LTO on against LTO off" by flipping `false` and `"thin"` therefore compares thin-local LTO against thin LTO and under-reports the delta.
+
 `opt-level = "z"` trades throughput for size. Measure it. On a compute-bound hot path `opt-level = 3` can be the better ship setting even on mobile.
+
+Where Cargo reads each setting from, `target-cpu`, profile-guided optimization and the global allocator are in [references/build-configuration.md](references/build-configuration.md).
 
 ---
 
@@ -479,7 +529,7 @@ Before you claim a performance change:
 | Per-crate binary size | `cargo bloat --locked --profile mobile-release --target aarch64-linux-android --crates` |
 | Monomorphization bloat | `cargo llvm-lines --locked --release -p my-crate \| head -30` |
 | Compile all benchmarks | `cargo bench --locked --workspace --no-run` |
-| Save a benchmark baseline | `cargo bench --locked -p my-crate -- --save-baseline before` |
+| Save a benchmark baseline | `cargo bench --locked -p my-crate --bench decode -- --save-baseline before` |
 | Build timing report | `cargo build --locked --release --timings` |
 | Cache hit rate | `sccache --show-stats` |
 
@@ -489,6 +539,7 @@ Before you claim a performance change:
 
 - [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) — flamegraph prerequisites, install, and the Criterion authoring reference.
 - [references/android-profiling.md](references/android-profiling.md) — HWASan, offline symbolication, panic backtraces, Android Studio LLDB and native memory profiler.
+- [references/build-configuration.md](references/build-configuration.md) — where Cargo reads settings from, `opt-level`, `target-cpu`, PGO, global allocator.
 - [references/build-time-optimization.md](references/build-time-optimization.md) — sccache, cross-compilation matrix, workspace splitting, linkers.
 - Android NDK simpleperf documentation: `$ANDROID_NDK_HOME/simpleperf/doc/`
 - Perfetto UI: https://ui.perfetto.dev
@@ -496,6 +547,7 @@ Before you claim a performance change:
 
 ## Related skills
 
+- `rust-hot-path` — what to change in the code once a profile names the hotspot. This skill produces the profile; `rust-hot-path` turns it into a diff.
 - `cargo-workflows` — workspace layout, feature flags, profile plumbing.
 - `rust-discipline` — allocation and clone anti-patterns on hot paths.
 - `rust-sanitizers-miri` — HWASan, ASan, TSan and Miri for correctness under optimization.

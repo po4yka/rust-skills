@@ -226,12 +226,16 @@ fn bench_async(c: &mut Criterion) {
 
 ```bash
 # Save a baseline on the base branch
-cargo bench --locked -p my-crate -- --save-baseline main-branch
+cargo bench --locked -p my-crate --bench decode -- --save-baseline main-branch
 
 # Switch branch and compare against it
 git checkout my-feature
-cargo bench --locked -p my-crate -- --baseline main-branch
+cargo bench --locked -p my-crate --bench decode -- --baseline main-branch
 ```
+
+Name the bench target with `--bench`. Without it, cargo also runs the lib target, which keeps the
+libtest bench harness even when every `[[bench]]` sets `harness = false`. libtest reads the Criterion
+flag first and stops with `error: Unrecognized option: 'save-baseline'`.
 
 Output:
 

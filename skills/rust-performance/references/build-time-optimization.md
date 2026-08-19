@@ -145,11 +145,11 @@ See `rust-crate-architecture` for the layering rules behind this.
 
 ### Host builds
 
-```toml
-# lld, LLVM's linker. Faster than GNU ld.
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+`rust-lld` is the default linker for `x86_64-unknown-linux-gnu` since Rust 1.90. Do not configure `-C link-arg=-fuse-ld=lld` there. It is dead config on 1.97.0. Verified in a `rust:1.97-slim` container with no flags and no `.cargo/config.toml`: `readelf -p .comment` on the built binary reports `Linker: LLD 22.1.6`, and adding the flag changes nothing.
 
+mold is the remaining upgrade on Linux:
+
+```toml
 # mold, the fastest option. Linux ELF only.
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
@@ -158,9 +158,11 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 Rough link speed on a large project: GNU ld, then lld at about 2x, then mold at about 5-10x. mold is Linux ELF only.
 
+`wild-linker` 0.10.0 is a newer incremental Linux linker. It is less mature than mold, so treat it as an experiment. Note the name: the crates.io crate called `wild` is an unrelated Windows glob-expansion library.
+
 ### Platform rules
 
-- **macOS**: the default Apple linker is adequate. Do not use `mold`.
+- **macOS**: the default Apple linker needs no alternative. `mold` is Linux ELF only.
 - **Android**: the NDK ships its own `lld`. Do not override the linker for `*-linux-android*` targets.
 - **iOS**: use the Xcode-provided Apple linker through the standard Cargo iOS target configuration. Do not override.
 
