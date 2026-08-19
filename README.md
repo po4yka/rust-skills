@@ -294,7 +294,7 @@ add a skill, and how to verify a change locally before you open a pull request.
 
 ## Sources
 
-The skills are generalized from production Rust codebases. Five additions have an outside source,
+The skills are generalized from production Rust codebases. Six additions have an outside source,
 recorded here because the topic inventory is theirs even though the text and the examples are not.
 
 <details>
@@ -340,6 +340,23 @@ recorded here because the topic inventory is theirs even though the text and the
   inherent `into_iter`, the two shapes chapter 10 of the same book argues against. Its derive
   example points the dependency from the derive crate at the trait crate, so a user must depend
   on both; the facade re-export runs the other way.
+
+- The topic inventory of `rust-pin-projection`, `rust-variance`, `rust-callback-bounds`,
+  `rust-type-erasure`, `rust-send-sync`, and `rust-event-loop-state` follows
+  [crabbook](https://github.com/Nekrolm/crabbook) by Nekrolm, a Russian-language collection of
+  Rust edge cases: pinning, variance, callback bounds in generic functions, type erasure without
+  `'static`, the auto traits, and event loops over shared state are its article set. That
+  repository states no license, so nothing here is copied from it. Every rule, example, diagnostic,
+  and number is original and was measured on rustc 1.97.0. Several of its conclusions are the
+  counter-example rather than the model. It teaches `Unpin` as `Movable` and `!Unpin` as
+  `Unmovable`; every Rust type is movable, and a `PhantomPinned` value still moves, swaps, and
+  boxes in safe code. Its hand-rolled stack-pinning macro does not compile in safe code, and the
+  reflex fix of wrapping the invocation in `unsafe` compiles and silently does nothing, because the
+  shadowing binding dies with the block. Its non-`'static` type map calls a reverse GAT constraint
+  optional; adding it neither restores soundness nor produces the `E0207` the text predicts. Its
+  event-loop chapter reaches for nightly coroutines; a coroutine is not higher-ranked over its
+  resume argument, so it cannot carry `&mut State`, and the author's own generator crate has the
+  same limit.
 
 - The compile-check harness in `checks/` is adapted from
   [leonardomso/rust-skills](https://github.com/leonardomso/rust-skills) (MIT). The design that
