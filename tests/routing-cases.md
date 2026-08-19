@@ -94,3 +94,23 @@ wrong skill, and put the phrase in the right description in the same change.
 | XCFramework | uniffi-packaging-versioning |
 | RustBuffer | uniffi-packaging-versioning |
 | checksum mismatch | uniffi-packaging-versioning |
+| reduce allocations | rust-hot-path |
+| too many allocations | rust-hot-path |
+| this type is too big | rust-hot-path |
+| large_enum_variant | rust-hot-path |
+| which hasher | rust-hot-path |
+| FxHashMap | rust-hot-path |
+| bounds check | rust-hot-path |
+| inline always | rust-hot-path |
+| cold path | rust-hot-path |
+| BufWriter | rust-hot-path |
+| clone_from | rust-hot-path |
+| SmallVec | rust-hot-path |
+| swap_remove | rust-hot-path |
+| with_capacity | rust-hot-path |
+| reserve_exact | rust-hot-path |
+| size_hint | rust-hot-path |
+| print-type-sizes | rust-hot-path |
+| ThinVec | rust-hot-path |
+| memcpy | rust-hot-path |
+| workhorse | rust-hot-path |

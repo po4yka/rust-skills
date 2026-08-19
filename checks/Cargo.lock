@@ -18,6 +18,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "arrayvec"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
 name = "askama"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -783,6 +789,7 @@ name = "rust-skills-checks"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "flume",
  "futures",
  "jni",
@@ -793,8 +800,11 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "proptest",
+ "rustc-hash",
  "serde",
  "serde_json",
+ "smallvec",
+ "thin-vec",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -1076,6 +1086,12 @@ checksum = "c13547615a44dc9c452a8a534638acdf07120d4b6847c8178705da06306a3057"
 dependencies = [
  "smawk",
 ]
+
+[[package]]
+name = "thin-vec"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79def32ffcd477db1ff26f76dab9e3a91f0bd42a85ca96577089b24623056f9d"
 
 [[package]]
 name = "thiserror"
