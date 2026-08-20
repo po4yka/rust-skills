@@ -347,7 +347,7 @@ review, because the pairing is not visible at the access site.
 |---------|-----|
 | `Relaxed` used for publish/subscribe | Use `Release` on the store and `Acquire` on the load. |
 | `SeqCst` used everywhere "to be safe" | Derive the ordering from the data dependency. Benchmark before you keep `SeqCst`. |
-| `Release` on one atomic paired with `Acquire` on a different atomic | Pair the ordering on the same atomic, or use a `SeqCst` fence. |
+| `Release` on one atomic paired with `Acquire` on a different atomic | Pair the operations on the same atomic, or establish an explicit synchronization chain. A `SeqCst` fence alone does not connect different atomics. |
 | Writes placed after the `Release` store | Move every published write before the store. |
 | Reads placed before the `Acquire` load | Move every dependent read after the load. |
 | `unsafe` mutable statics used for shared data | Use `Mutex`, `RwLock`, `OnceLock`, or an atomic. |
