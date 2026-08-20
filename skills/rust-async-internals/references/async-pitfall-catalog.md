@@ -270,15 +270,16 @@ Read against sqlx 0.7.4, 0.8.6 and 0.9.0. The `Drop` body is the same in all thr
 ```rust
 let tx = conn.begin().await?;
 // ... operations ...
-tx.commit().await?;  // If THIS fails, tx is dropped with no rollback decision made.
+tx.commit().await?;  // Consumes `tx`; an error can leave the durable outcome unknown.
 ```
 
 `Transaction::drop` calls `TransactionManager::start_rollback`, a non-async
 function that queues a ROLLBACK on the connection. Nothing blocks in `drop`.
 The rollback runs on the next async use of that connection, which includes the
-moment the pool recycles it. The hazard is the silence: the failed commit
-leaves the transaction open, the rollback is deferred to an unrelated call
-site, and no error surfaces at either point.
+moment the pool recycles it. This cleans up a transaction that the driver still
+considers open. It does not prove that a failed `commit` was absent from the
+database. For example, the database can commit and the connection can fail
+before the acknowledgement reaches the client.
 
 `Transaction::commit(self)` consumes the transaction. After it returns `Err`,
 there is no `tx` value on which to call `rollback`; an example that tries does
@@ -299,9 +300,10 @@ tx.commit().await?;
 Ok(value)
 ```
 
-A commit transport error can also leave the database outcome unknown. Do not
-retry the transaction blindly. Make the operation idempotent or reconcile its
-durable state with a new connection.
+A commit transport or protocol error can leave the database outcome unknown.
+The queued rollback is local connection cleanup, not evidence that the commit
+did not happen. Do not retry blindly. Make the operation idempotent or reconcile
+its durable state with a new connection.
 
 ### deadpool connections
 
