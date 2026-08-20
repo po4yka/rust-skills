@@ -141,38 +141,58 @@ Keep the readiness path separate from the snapshot path:
 
 ## Panic reporting
 
-A platform log writer truncates long lines. Android's `liblog` is the common
-case. A panic payload plus a backtrace exceeds the limit, so the root cause is
-the part that gets cut.
-
 Install a hook when the library loads — in `JNI_OnLoad` on Android, or in your
-init entry point elsewhere — and write the payload in chunks of 4 KiB or less.
+init entry point elsewhere. Emit one bounded structured record. Do not format
+`PanicHookInfo`, inspect its payload, or emit a backtrace. A panic payload is
+arbitrary application text and can contain input data, paths, identifiers, or
+secrets.
 
 ```rust
-std::panic::set_hook(Box::new(|info| {
-    let text = format!("{info}");
-    let mut rest = text.as_str();
-    while !rest.is_empty() {
-        // Cut at a char boundary at or below 4 KiB. Byte chunking splits a
-        // multi-byte character and corrupts the payload.
-        let mut end = rest.len().min(4096);
-        while !rest.is_char_boundary(end) {
-            end -= 1;
-        }
-        let (chunk, tail) = rest.split_at(end);
-        write_platform_log(chunk);
-        rest = tail;
+#[derive(Clone, Copy)]
+enum PanicSite {
+    Boundary,
+    Engine,
+    Unknown,
+}
+
+fn classify_site(file: &str) -> PanicSite {
+    if file.starts_with("src/boundary/") {
+        PanicSite::Boundary
+    } else if file.starts_with("src/engine/") {
+        PanicSite::Engine
+    } else {
+        PanicSite::Unknown
     }
+}
+
+std::panic::set_hook(Box::new(|info| {
+    let (site, line, column) = info
+        .location()
+        .map(|location| {
+            (
+                classify_site(location.file()),
+                location.line(),
+                location.column(),
+            )
+        })
+        .unwrap_or((PanicSite::Unknown, 0, 0));
+
+    write_platform_panic("rust_panic", site, line, column);
 }));
 ```
 
-Two constraints:
+The event name and site code come from closed vocabularies. The line and column
+are bounded integers. Unknown paths collapse to `Unknown`; never use an unknown
+path as a fallback field value.
+
+Three constraints:
 
 - The hook runs on the panicking thread. Keep it allocation-light and
   lock-free where you can. A lock held by the panicking thread deadlocks here.
-- The hook writes to the platform log, not to a redacting sink. A panic message
-  is free text by definition. Treat it as a debug-build or opt-in surface if
-  your privacy floor forbids free text in production.
+- The platform writer accepts structured fields, not one formatted string. Cap
+  the encoded record before it reaches a platform-specific line limit.
+- A debug or opt-in build does not make a raw panic payload safe. Keep the same
+  redaction contract in every profile.
 
 See the `rust-panic-safety` skill for unwinding across a boundary.
 

@@ -365,6 +365,8 @@ host-side tools only. Use `allow-print-in-tests` for test code that lives inside
 - [ ] The queue is bounded, drops the oldest, and counts the drop.
 - [ ] The determinism test still passes, with its negative control.
 - [ ] No correlation identifier is derived from a forbidden value.
+- [ ] A panic hook emits only bounded structured fields. It never formats raw
+      `PanicHookInfo`, its payload, or a backtrace.
 
 ## Related skills
 
