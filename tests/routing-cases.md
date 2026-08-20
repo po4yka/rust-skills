@@ -98,6 +98,12 @@ wrong skill, and put the phrase in the right description in the same change.
 | workspace.lints | rust-lints |
 | tracing | rust-observability |
 | telemetry snapshot | rust-observability |
+| production metrics | rust-observability |
+| metric naming | rust-observability |
+| histogram boundaries | rust-observability |
+| label cardinality | rust-observability |
+| OpenTelemetry context propagation | rust-observability |
+| exporter shutdown | rust-observability |
 | catch_unwind | rust-panic-safety |
 | panic hook | rust-panic-safety |
 | flamegraph | rust-performance |

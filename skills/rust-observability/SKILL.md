@@ -1,6 +1,6 @@
 ---
 name: rust-observability
-description: Use when you add a log field, wire a host or embedded log sink, keep a hot path free of tracing macros, design a telemetry snapshot for a foreign caller, diagnose missing output, or review sensitive-data leakage. Covers Rust diagnostics built on tracing, redaction, one process-wide dispatcher across FFI boundaries, control-plane and data-plane logging, bounded queues, drop accounting, snapshot polling, and deterministic emission order.
+description: Use when you add a log field, production metric, OpenTelemetry exporter, context propagation across an async, HTTP, or FFI boundary, host or embedded log sink, hot-path telemetry, telemetry snapshot for a foreign caller, or sensitive-data review. Covers Rust diagnostics, tracing, metric names and units, counters, gauges, histograms, cardinality, exemplars, redaction, bounded export, and deterministic emission order. Triggers on "production metrics", "metric naming", "histogram boundaries", "label cardinality", "OpenTelemetry context propagation", or "exporter shutdown".
 license: BSD-3-Clause
 ---
 
@@ -224,6 +224,26 @@ edge. See the `memory-model` skill for the rationale.
 A counter read is a snapshot of independent values. Two counters read in one
 pass are not consistent with each other. Do not derive an invariant from a
 ratio of two relaxed counters.
+
+## Production metrics and distributed context
+
+Treat a metric and its labels as a public resource contract. Choose the
+instrument from the value semantics. Set the unit, histogram boundaries, and a
+numeric series budget before you emit it. Do not use an identifier, free-text
+error, URL, or trace ID as a label.
+
+Preserve one OpenTelemetry context across each logical operation. Make the
+handoff explicit at async task, HTTP, message, callback, and FFI boundaries.
+Do not keep a thread-local context guard alive across `.await`.
+
+Keep exporter work outside request and data-plane paths. Bound its queue,
+batch, export time, retry time, and shutdown time. Export failure never changes
+the domain result.
+
+Read
+[references/production-metrics-and-propagation.md](references/production-metrics-and-propagation.md)
+before you add a production metric, propagate OpenTelemetry context, or change
+an exporter.
 
 ## Snapshot polling, not per-event callbacks
 
