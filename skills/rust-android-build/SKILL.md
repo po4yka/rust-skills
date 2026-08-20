@@ -208,8 +208,11 @@ design.
 - **A transitive C dependency compiled without the `-z` flag.** Enumerate the
   shared-library dependencies with
   `llvm-readelf -d libnative.so | grep NEEDED`, find the offender, and
-  rebuild it with an explicit `CFLAGS=-Wl,-z,max-page-size=16384`. Crypto
-  backends with C sources are the usual source.
+  rebuild it with an explicit linker option. Use the link channel that its
+  build system provides, for example `LDFLAGS=-Wl,-z,max-page-size=16384` or
+  CMake `target_link_options(... PRIVATE "-Wl,-z,max-page-size=16384")`. Do not
+  put a linker option in `CFLAGS`; compile-only invocations do not apply it to
+  the final shared object. Crypto backends with C sources are the usual source.
 - **An `mmap(addr, size, ...)` call in vendor C code where `size` is not 16 KiB
   aligned.** The kernel rounds the mapping up; the C code keeps using its
   smaller original size and reads or writes past what it believes it owns.
