@@ -2,7 +2,7 @@
 
 # rust-skills
 
-**Forty agent skills for production Rust:**
+**Forty-one agent skills for production Rust:**
 unsafe review · networking · FFI boundaries · native linking · profiling · crate releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
@@ -91,6 +91,7 @@ Enter by the symptom, not by the skill name.
 | A `HashMap<TypeId, _>` whose values borrow, `dyn Any`, `downcast_ref` | [rust-type-erasure](skills/rust-type-erasure/SKILL.md) |
 | Every handler in an event loop needs `&mut` to one shared state | [rust-event-loop-state](skills/rust-event-loop-state/SKILL.md) |
 | 16 KiB page alignment, NDK linkers, per-ABI rustflags, `.so` size gates | [rust-android-build](skills/rust-android-build/SKILL.md) |
+| `Rust for iOS`, `IPHONEOS_DEPLOYMENT_TARGET`, XCFramework assembly outside UniFFI | [rust-ios-build](skills/rust-ios-build/SKILL.md) |
 | A SemVer bump, `cargo package`, `cargo publish`, or crates.io recovery | [rust-crate-release](skills/rust-crate-release/SKILL.md) |
 | `build.rs`, `pkg-config`, an undefined symbol, or a packaged DLL failure | [rust-native-linking](skills/rust-native-linking/SKILL.md) |
 | HTTP timeout, safe retries, TLS verification, body limits, or graceful shutdown | [rust-networking](skills/rust-networking/SKILL.md) |
@@ -189,7 +190,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Build, dependencies, and supply chain</b> — eight skills</summary>
+<summary><b>Build, dependencies, and supply chain</b> — nine skills</summary>
 
 <br>
 
@@ -201,6 +202,7 @@ owns it.
 | [rust-serde](skills/rust-serde/SKILL.md) | `deny_unknown_fields` and the `rename_all` migration trap, the four enum representations and their wire forms, `flatten` constraints, boundary validation with `try_from`, and the `default` plus `alias` pair for version compatibility. |
 | [rust-security](skills/rust-security/SKILL.md) | cargo-audit, cargo-deny policy, RUSTSEC advisory triage, new-crate vetting against typosquat risk, and untrusted-input parser hardening. |
 | [rust-android-build](skills/rust-android-build/SKILL.md) | Android cdylib builds: NDK linkers, per-ABI rustflags, 16 KiB page alignment, the exported ELF symbol allowlist, and `.so` size gates. |
+| [rust-ios-build](skills/rust-ios-build/SKILL.md) | iOS device and simulator static libraries, C headers and modulemaps, XCFramework and SwiftPM packaging, deployment-target and symbol verification, and simulator and device release smoke tests. |
 | [rust-wasm](skills/rust-wasm/SKILL.md) | Exact WebAssembly host and target selection, JavaScript boundary ownership, panic and async behavior, WASI capabilities, runtime tests, feature compatibility, and packaged size gates. |
 | [rust-embedded-no-std](skills/rust-embedded-no-std/SKILL.md) | Bare-metal and `no_std` policy for runtime and memory layout, panic and allocation, interrupts and critical sections, task frameworks, finite resource budgets, and real-device diagnostics. |
 
