@@ -392,7 +392,9 @@ inner loops.
   caller-supplied `job_id` synchronously before you expose cancellation or
   launch the worker. A cancel between reservation and worker start sets that
   reserved flag. A cancel for an unreserved id stays a no-op and must not add a
-  map entry. Reject duplicate ids and reservations above the active-job limit.
+  map entry. Reject empty or oversized ids, duplicate ids, and reservations
+  above the active-job limit. Release the reservation if launch fails. Reap
+  reservations that do not start within a short TTL; never expire running jobs.
 - Never cancel by panicking and never by killing the thread. A panic that
   unwinds out of an `extern "C"` function aborts the process, and a killed
   thread leaks every lock it held. Catch the panic at the boundary and convert
@@ -455,9 +457,10 @@ client's FFI work off the main actor - an actor-isolated client with
       else. The stage enum is closed and has a terminal `Done`.
 - [ ] Progress is observational only. Golden output is byte-identical with and
       without a listener.
-- [ ] `reserve_job` rejects duplicate ids and capacity overflow. `cancel_job`
-      is idempotent and non-blocking, never inserts unknown ids, supports cancel
-      after reservation but before worker start, and cleans up partial output.
+- [ ] `reserve_job` limits id bytes and entry count and rejects duplicate ids.
+      Launch failure releases its reservation, and a TTL reaps abandoned
+      reservations. `cancel_job` never inserts unknown ids and supports cancel
+      after reservation but before worker start.
 - [ ] Coroutine cancel and `Task` cancel both reach `cancel_job` through
       `awaitClose` and `onTermination`. `Cancelled` maps to
       `CancellationException` and `CancellationError`.

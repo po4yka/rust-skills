@@ -28,48 +28,102 @@ limit.
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+const MAX_ACTIVE_JOBS: usize = 64;
+const MAX_JOB_ID_BYTES: usize = 128;
+const RESERVATION_TTL: Duration = Duration::from_secs(30);
+
+struct JobEntry {
+    flag: Arc<AtomicBool>,
+    reserved_at: Instant,
+    running: bool,
+}
 
 #[derive(Default)]
 pub struct JobRegistry {
-    flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    entries: Mutex<HashMap<String, JobEntry>>,
 }
 
 impl JobRegistry {
     /// Called before the worker is launched and before cancellation is visible.
     pub fn reserve(&self, job_id: &str) -> Result<(), &'static str> {
-        let mut flags = self.flags.lock().expect("job registry poisoned");
-        if flags.contains_key(job_id) {
+        if job_id.is_empty() || job_id.len() > MAX_JOB_ID_BYTES {
+            return Err("invalid job id size");
+        }
+        let mut entries = self.entries.lock().expect("job registry poisoned");
+        Self::reap_expired(&mut entries);
+        if entries.contains_key(job_id) {
             return Err("duplicate job id");
         }
-        const MAX_ACTIVE_JOBS: usize = 64;
-        if flags.len() >= MAX_ACTIVE_JOBS {
+        if entries.len() >= MAX_ACTIVE_JOBS {
             return Err("too many active jobs");
         }
-        flags.insert(job_id.to_owned(), Arc::new(AtomicBool::new(false)));
+        entries.insert(job_id.to_owned(), JobEntry {
+            flag: Arc::new(AtomicBool::new(false)),
+            reserved_at: Instant::now(),
+            running: false,
+        });
         Ok(())
     }
 
     /// Called by the worker when it starts. Picks up a cancel after reserve.
     pub fn register(&self, job_id: &str) -> Option<Arc<AtomicBool>> {
-        let flags = self.flags.lock().expect("job registry poisoned");
-        flags.get(job_id).cloned()
+        let mut entries = self.entries.lock().expect("job registry poisoned");
+        Self::reap_expired(&mut entries);
+        let entry = entries.get_mut(job_id)?;
+        entry.running = true;
+        Some(entry.flag.clone())
     }
 
     /// Idempotent, non-blocking. Unknown or finished id is a no-op success.
     pub fn cancel(&self, job_id: &str) {
-        let flags = self.flags.lock().expect("job registry poisoned");
+        let mut entries = self.entries.lock().expect("job registry poisoned");
+        Self::reap_expired(&mut entries);
         // Release pairs with the Acquire load in the worker's poll, so every
         // write made before cancel is visible once the worker observes the flag.
         // See the memory-model skill.
-        if let Some(flag) = flags.get(job_id) {
-            flag.store(true, Ordering::Release);
+        if let Some(entry) = entries.get(job_id) {
+            entry.flag.store(true, Ordering::Release);
         }
     }
 
-    /// Called by the worker on every exit path, including the cancel path.
-    pub fn finish(&self, job_id: &str) {
-        let mut flags = self.flags.lock().expect("job registry poisoned");
-        flags.remove(job_id);
+    /// Called on launch failure and on every worker exit path.
+    pub fn release(&self, job_id: &str) {
+        let mut entries = self.entries.lock().expect("job registry poisoned");
+        entries.remove(job_id);
+    }
+
+    fn reap_expired(entries: &mut HashMap<String, JobEntry>) {
+        entries.retain(|_, entry| {
+            entry.running || entry.reserved_at.elapsed() < RESERVATION_TTL
+        });
+    }
+}
+
+pub struct LaunchReservation<'a> {
+    registry: &'a JobRegistry,
+    job_id: String,
+    committed: bool,
+}
+
+impl<'a> LaunchReservation<'a> {
+    pub fn new(registry: &'a JobRegistry, job_id: &str) -> Result<Self, &'static str> {
+        registry.reserve(job_id)?;
+        Ok(Self { registry, job_id: job_id.to_owned(), committed: false })
+    }
+
+    /// Call only after the worker launch succeeds.
+    pub fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for LaunchReservation<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.registry.release(&self.job_id);
+        }
     }
 }
 ```
@@ -79,10 +133,16 @@ Points that matter:
 - `reserve` runs before the worker is launched. A later `cancel` sets the
   reserved flag, and `register` picks it up when the worker starts.
 - `cancel` uses `get`, not `entry`. An unknown or finished id never allocates.
-- The active-job limit bounds reservations that never reach `finish`. Set the
-  limit from the product's real concurrency budget.
-- `finish` runs on every exit path. Without it the map grows for the process
-  lifetime. Use a guard type with `Drop` so a `?` early return cannot skip it.
+- Limit the encoded id size as well as the entry count. The two limits bound
+  both key bytes and per-entry overhead.
+- Use `LaunchReservation` when Rust launches the worker. A failed launch drops
+  the guard and releases the entry. After a successful launch, call `commit`.
+  A host-side launcher must call `release_job` on the equivalent failure path.
+- `release` runs on every worker exit path. Use a worker guard with `Drop` so a
+  `?` early return cannot skip it.
+- Reap reservations that never reach `register` after a short startup TTL.
+  Reap on every registry operation so abandoned reservations cannot exhaust
+  availability. Never expire a running job.
 - Hold the mutex only for the map operation. Never hold it across engine work.
 - The `Ordering` arguments are deliberately left to `memory-model`. Do not pick
   them by feel.
@@ -328,7 +388,9 @@ single-protocol test suite misses.
 | Cancel after completion | Cancel an id that already finished. | No-op success. Finished output still present and intact. |
 | Double cancel | Cancel the same id twice. | Second call is a no-op success. |
 | Unknown id cancel | Cancel many ids that were never reserved. | No-op success, no error, and no map growth. |
-| Reservation limit | Reserve more than the configured active-job limit. | The excess reservation fails and memory stays bounded. |
+| Reservation limits | Reserve an oversized id and more than the active-job limit. | Both fail and total key bytes and entry count stay bounded. |
+| Launch failure | Reserve an id, then fail before the worker starts. | The launch guard or explicit release removes the entry immediately. |
+| Abandoned reservation | Reserve without register or release, advance past the TTL, then reserve again. | The stale entry is reaped and capacity becomes available. |
 | Consumer drops the stream | Collector goes out of scope without cancelling. | `awaitClose` / `onTermination` fires, `cancel_job` is called, no worker thread survives. |
 | Engine error mid-job | Force a recoverable failure. | Stream throws the mapped domain error; partial output removed; `job_id` in the log lines matches the request. |
 | Unknown error code | Feed the mapper a code it does not know. | Programmer-error bucket, not a crash and not a raw string in the UI. |
