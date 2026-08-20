@@ -54,15 +54,18 @@ signals.
    here because `DuplexStream: Unpin`, and the helper's own stack frame owns
    the waker for the duration of the poll call.
 3. **Cancellation is cooperative, not waker-driven.** The loop checks a
-   `CancellationToken` between polling rounds. A stream whose peer half was
-   dropped surfaces `Poll::Ready(Err(BrokenPipe))` on the next poll. That is
-   the cancellation signal.
+   `CancellationToken` between polling rounds. A read after the peer closes
+   surfaces `Poll::Ready(Ok(()))` with zero filled bytes: EOF. A write to a
+   closed peer can surface `BrokenPipe`. Handle the read and write signals
+   separately.
 
 ## Extend the bridge
 
 - A new stream type must implement `AsyncRead + AsyncWrite + Unpin`.
-- The `try_*` wrapper must translate `Poll::Ready(Ok(0))` into `WriteZero` or
-  `UnexpectedEof`. Do not let a zero-length result pass as success.
+- A read wrapper translates `Poll::Ready(Ok(0))` into EOF or `UnexpectedEof`,
+  according to its contract. A write wrapper translates `Ok(0)` into
+  `WriteZero` and handles `BrokenPipe` as peer closure. Do not report a
+  zero-length operation as ordinary progress.
 - Do not add an `async fn` wrapper around these helpers. It stalls under the
   no-op waker.
 
