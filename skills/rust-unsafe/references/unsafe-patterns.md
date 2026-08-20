@@ -366,23 +366,67 @@ shows. The rules that govern it are in [SKILL.md](../SKILL.md).
 
 ## Unaligned reads from untrusted bytes
 
-Four forms of the same parse, worst first:
+Four forms of the same parse, worst first. Each one is a whole example, because only the first
+is wrong and a reader must be able to copy the others without carrying the mistake along.
+
+The bad form compiles, runs, and returns the right bytes on an x86-64 development host. Nothing
+in the toolchain reports it except Miri:
 
 ```rust
-// BAD: assumes an alignment the input slice does not promise.
-let header: Header = unsafe { std::ptr::read(buf.as_ptr() as *const Header) };
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Header { magic: u32, len: u32 }
 
-// CORRECT: an explicit unaligned read.
-let header: Header = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const Header) };
+fn parse(buf: &[u8]) -> Header {
+    // BAD: `read` requires an aligned pointer, and a byte slice promises nothing.
+    unsafe { std::ptr::read(buf.as_ptr() as *const Header) }
+}
+```
 
-// BETTER: no unsafe at all.
-use zerocopy::FromBytes;
-let header = Header::read_from_prefix(buf).ok_or(Error::Truncated)?;
+The correct form states that the read tolerates misalignment, and checks the length first:
 
-// Or, for a streaming parser, endianness-explicit and safe:
+```rust
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Header { magic: u32, len: u32 }
+
+fn parse(buf: &[u8]) -> Option<Header> {
+    if buf.len() < std::mem::size_of::<Header>() {
+        return None;
+    }
+    // SAFETY: the length is checked, and `read_unaligned` needs no alignment.
+    Some(unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const Header) })
+}
+```
+
+The better form removes the `unsafe` block. `zerocopy` proves the layout at compile time and
+returns the remaining bytes with the value:
+
+```rust
+use zerocopy::{FromBytes, Immutable, KnownLayout};
+
+#[derive(FromBytes, KnownLayout, Immutable, Clone, Copy)]
+#[repr(C)]
+struct Header { magic: u32, len: u32 }
+
+fn parse(buf: &[u8]) -> Option<Header> {
+    let (header, _rest) = Header::read_from_prefix(buf).ok()?;
+    Some(header)
+}
+```
+
+A streaming parser reads field by field with an explicit endianness, and never casts a pointer:
+
+```rust
 use bytes::Buf;
-let mut cur = std::io::Cursor::new(buf);
-let magic = cur.get_u32_le();
+
+fn magic(buf: &[u8]) -> Option<u32> {
+    let mut cursor = std::io::Cursor::new(buf);
+    if cursor.remaining() < 4 {
+        return None;
+    }
+    Some(cursor.get_u32_le())
+}
 ```
 
 ## Pointer arithmetic

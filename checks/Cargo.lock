@@ -855,6 +855,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "arrayvec",
+ "bytes",
  "flume",
  "futures",
  "imbl",
@@ -879,6 +880,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uniffi",
+ "zerocopy",
 ]
 
 [[package]]
