@@ -224,8 +224,10 @@ See also: `rust-panic-safety`.
 - Prefer `?` over `match result { Ok(v) => v, Err(e) => return Err(e.into()) }` for
   pass-through.
 - Use `anyhow::Context::context` for static messages. Use `with_context` only when the
-  message needs allocation or formatting. `with_context(|| format!(...))` on a happy path is
-  an allocation hazard, because the closure captures eagerly even when it never runs.
+  message needs allocation or formatting. `with_context(|| format!(...))` does not allocate
+  the formatted message on the success path; it calls the closure only for `Err`. The closure
+  captures variables when it is created, so do not clone an owned capture before the call
+  unless ownership requires it.
 - **A library crate never returns `Box<dyn std::error::Error>`.** Define a crate-level error
   type with `thiserror`, and translate at the boundary.
 - Push `map_err` adapters to module boundaries and public APIs. Inside a leaf function, a
