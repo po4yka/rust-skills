@@ -75,13 +75,33 @@ error: cannot find macro `only_here` in this scope
   = help: have you added the `#[macro_use]` on the module/import?
 ```
 
-Three ways to widen the scope:
+Four ways to widen the scope. Prefer the first: it keeps the macro private and needs no
+crate-root placement.
 
 | Goal | Write | Effect |
 | --- | --- | --- |
+| Use it in another module, crate-private | `pub(crate) use name;` after the definition | The macro becomes an ordinary item of that module, reachable by path |
 | Use it in later modules of the same crate | `#[macro_use] mod a;` | The macro joins the crate-root macro scope from that point on |
 | Import it by path anywhere in the crate | `#[macro_export]` on the definition, then `use crate::name;` | The macro lands at the crate root, whatever module defines it |
 | Export it to other crates | `#[macro_export]`, then `use thatcrate::name;` in the caller | Same crate-root placement, now public |
+
+`#[macro_export]` puts the macro in the public API of the crate and at its root. Do not reach
+for it to cross a module boundary inside one crate.
+
+```rust
+mod math {
+    macro_rules! twice {
+        ($v:expr) => {
+            $v * 2
+        };
+    }
+    pub(crate) use twice;
+}
+
+fn main() {
+    println!("{}", math::twice!(21));
+}
+```
 
 ```rust
 #[macro_use]
@@ -104,11 +124,15 @@ fn main() {
 }
 ```
 
-### `#[macro_export]` needs `$crate` on every emitted path
+### An exported macro needs `$crate` on every path into its own crate
 
 An exported macro expands in the caller's crate, where none of your items are in scope. Write
-`$crate::` in front of every path the expansion names. `$crate` resolves to your crate in the
-caller and to `crate` at home.
+`$crate::` in front of every path that names an item of your crate. `$crate` resolves to your
+crate in the caller and to `crate` at home.
+
+The rule stops there. A path to `::core` or `::std`, a path into a dependency, and a path the
+caller passed in as a metavariable all name something outside your crate, so `$crate::` in
+front of them is wrong.
 
 ```rust,ignore
 // Fails in every other crate: `render` is not in the caller's scope.
@@ -417,8 +441,10 @@ Test a procedural macro on three axes:
 ## Review checklist
 
 - Every `macro_rules!` definition appears above every use in its file.
-- A macro used from a later module carries `#[macro_use]` on its module, or `#[macro_export]`.
-- Every path an exported macro emits starts with `$crate::`.
+- A macro used from another module is reachable: `pub(crate) use name;`, `#[macro_use]`, or
+  `#[macro_export]`. `#[macro_export]` only when the macro is part of the public API.
+- Every path an exported macro emits into its own crate starts with `$crate::`, and no other
+  path does.
 - Every generated item name comes from a metavariable, or sits in an anonymous `const _: () = { ... };`.
 - Every repetition that spans lines ends with `$(,)?`.
 - Separators respect the follow set of the fragment before them.
