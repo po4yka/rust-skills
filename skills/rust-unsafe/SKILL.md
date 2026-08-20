@@ -252,8 +252,10 @@ Every syscall wrapper must:
 1. Carry a `# Safety` rustdoc block on the `unsafe fn` that lists the descriptor-validity and
    layout-match invariants.
 2. Use `zeroed()` only when the exact type has a proven all-zero value, per the rule above.
-3. Cast with `.cast()` rather than `as *mut _`. The method preserves pointer provenance, which
-   matters to Miri's Tree Borrows model.
+3. Prefer `.cast()` to an equivalent raw pointer-to-pointer `as` cast. It makes the pointee
+   conversion explicit and is easier to review. Both forms preserve the source pointer's
+   provenance; provenance is lost or exposed when a pointer is converted through an integer,
+   not by this pointer-to-pointer spelling choice.
 4. Check the return value and convert `io::Error::last_os_error()`. Never discard `errno`.
 
 An `ioctl` call needs a SAFETY comment that states three facts: the descriptor is valid, the
