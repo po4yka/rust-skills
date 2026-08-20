@@ -125,21 +125,30 @@ receives `error_kind` and nothing else. Both are correct for their reader.
 ## Sink registration
 
 ```text
-register_sink(sink, level) -> bool
+install_dispatcher() -> Result<(), InstallError>
+register_sink(id, sink, level) -> Result<(), SinkError>
 ```
 
 Semantics:
 
-- `true`: this call installed the process dispatcher.
-- `false`: another dispatcher already owns the process. Nothing was installed.
+- `install_dispatcher` calls `set_global_default` once during process bootstrap.
+  It creates a dispatcher with a dynamic fan-out registry, but no sinks.
+- `register_sink` never installs a subscriber. It adds one sink to the installed
+  dispatcher's registry and updates the effective level ceiling.
+- A duplicate sink ID returns `SinkError::DuplicateId` and leaves the original
+  sink unchanged.
+- A missing or failed dispatcher returns `SinkError::DispatcherUnavailable`.
+  Keep this distinct from duplicate registration.
 
-Return the boolean across the FFI boundary. Do not raise. A diagnostic surface
+Return the installation or registration status across the FFI boundary. Do not
+panic and do not turn it into a domain-operation failure. A diagnostic surface
 must not be able to fail application start-up.
 
-The level passed at registration sets the dispatcher's ceiling. `enabled` uses
-it to reject callsites cheaply. With no sink the ceiling is off, and every
-callsite is rejected by design — that is why an unregistered process looks
-completely silent rather than partly silent.
+The fan-out registry can add sinks after the dispatcher is installed. Its
+effective ceiling is the highest enabled level among registered sinks. With no
+sink the ceiling is off, and every callsite is rejected by design. See the main
+skill for the callsite-interest cache rule that makes a later registration
+visible.
 
 ## The gate
 
