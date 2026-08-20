@@ -81,13 +81,16 @@ let len = u32::try_from(buf.len()).map_err(|_| Error::TooLarge)?;
 ```
 
 Keep the `.unwrap()` only when the bound is checked in the same function, and write the
-proof:
+proof. The check must survive release builds:
 
 ```rust
-debug_assert!(buf.len() <= MAX_U32 as usize);
+assert!(buf.len() <= MAX_U32 as usize, "buffer length is bounded by construction");
 // Infallible: `buf.len() <= MAX_U32` is checked above.
 let len: u32 = buf.len().try_into().unwrap();
 ```
+
+Use the `map_err` form above when the length comes from input. An assertion is
+only for a bound that construction already guarantees.
 
 ### Arithmetic
 
