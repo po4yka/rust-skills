@@ -23,6 +23,12 @@ wrong skill, and put the phrase in the right description in the same change.
 | SemVer bump | rust-crate-release |
 | MSRV change | rust-crate-release |
 | yank a crate version | rust-crate-release |
+| build.rs | rust-native-linking |
+| rustc-link-lib | rust-native-linking |
+| pkg-config | rust-native-linking |
+| undefined reference | rust-native-linking |
+| library not loaded | rust-native-linking |
+| DLL not found | rust-native-linking |
 | callbackFlow | ffi-error-progress-cancel |
 | AsyncThrowingStream | ffi-error-progress-cancel |
 | cancel_job | ffi-error-progress-cancel |
