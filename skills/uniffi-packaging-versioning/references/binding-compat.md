@@ -20,14 +20,17 @@ Treat that as the second line of defence, not the first. The properties matter:
 | What it covers | Function signatures, type identities, method sets |
 | What it does **not** cover | Field additions inside an exported record (uniffi-rs #1789) |
 
-The uncovered case is the dangerous one. Adding a field to an exported record
-changes the serialized layout in the `RustBuffer`, but the checksum does not
-move. Stale bindings then read the buffer with the old field offsets. The
-symptoms are a deserialization panic, a "wrong number of fields" error, or -
-worst case - plausible but wrong values.
+The uncovered case is dangerous in both skew directions. New bindings with a
+stale library expect a field that is absent and exhaust the `RustBuffer`. A new
+library with stale bindings emits an extra field; the old reader can reject or
+ignore trailing data, depending on the generated reader and UniFFI version.
+Plausible but wrong values require a layout change that still has a compatible
+encoded shape, such as reordering two fields of the same type. Do not claim that
+every appended field silently shifts old values.
 
-There is no run-time defence against this. The only defence is process: the
-regenerated bindings and the rebuilt library land in the same commit.
+There is no reliable run-time defence across versions and skew directions. The
+portable defence is process: regenerated bindings and the rebuilt library land
+in the same commit.
 
 Do not group every skew failure under the record checksum gap:
 
@@ -35,7 +38,9 @@ Do not group every skew failure under the record checksum gap:
 |-----------------------|-------------------|------------------|
 | Same generated revision | Same revision | No skew failure |
 | Changed checksummed export | Stale revision | Hard checksum mismatch at first use |
-| Record-layout-only change from #1789 | Stale revision | Checksum can still match; deserialization fails or reads wrong values |
+| Stale library without an added record field | New bindings with that field | `RustBuffer` exhaustion or deserialization error |
+| New library with an added record field | Stale bindings without that field | Trailing data is rejected or ignored; behavior depends on generated reader and version |
+| Type-compatible field reorder on either side | Opposite stale layout | Values can be assigned to the wrong fields without a checksum error |
 | One generated interface side is stale at link time | Newer other side | Undefined symbols or linker failure; #333 asks for clearer diagnostics |
 
 ---

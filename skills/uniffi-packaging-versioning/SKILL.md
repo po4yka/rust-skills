@@ -239,10 +239,12 @@ startup. A mismatch raises a hard error immediately. That is the good case:
 loud, at load time, before any data moves.
 
 The gap: **checksums do not cover record field additions** (uniffi-rs issue
-#1789). Add a field to a `#[uniffi::Record]`, rebuild the library, and
-keep stale bindings, and the consumer deserializes the buffer with the old field
-layout. No checksum error fires. You get wrong field offsets and silent data
-corruption instead.
+#1789). If new bindings expect an added field but the loaded library is stale,
+deserialization exhausts the old `RustBuffer`. In the other direction, stale
+bindings receive an extra encoded field and can reject or ignore trailing data,
+depending on the generated reader and UniFFI version. A type-compatible field
+reorder is worse: both sides can consume the same number and shape of values but
+assign them to the wrong fields without a checksum error.
 
 Issue #333 is a different skew mode. It reports inscrutable undefined symbols
 when generated interface sides are out of date at link time. It is not evidence
