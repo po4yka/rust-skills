@@ -397,10 +397,12 @@ and cancellation back across the boundary.
 
 ## Hot-path data: JByteArray versus DirectByteBuffer
 
-The byte-array accessors (`env.convert_byte_array`, `env.get_byte_array_region`,
-and `env.get_byte_array_elements` on `jni` 0.21) **copy** the whole array
-between the JVM heap and native memory. Per-call that is cheap; per-packet it
-couples your throughput to the JNI boundary.
+`env.convert_byte_array` and `env.get_byte_array_region` copy bytes out of the
+JVM heap. `GetByteArrayElements` and the `jni` 0.21 elements guard may return a
+copy or pin the array. The VM reports which choice it made through `isCopy`.
+Release elements on every path; use `JNI_ABORT` for read-only access and mode
+`0` when writes must be copied back. Do not hold elements across `.await` or a
+blocking call.
 
 Three options, best first:
 
@@ -410,7 +412,7 @@ Three options, best first:
    The memory belongs to the JVM, so the slice is valid only while the Java
    reference to that buffer is alive.
 3. **`JByteArray`** for control-plane payloads only: configuration, a report, a
-   command. The copy is irrelevant when the call is rare.
+   command. Copy or pin overhead is irrelevant when the call is rare.
 
 [references/hot-path-data.md](references/hot-path-data.md) has the direct-buffer
 mapping code with its SAFETY argument, the file-descriptor handoff rules, and

@@ -9,7 +9,8 @@ Deep material for moving bytes between the JVM and Rust. The decision rule is in
 |--------|--------------------|------------|
 | File-descriptor handoff | 0 | A stream that Rust owns for the life of the session. |
 | DirectByteBuffer | 0 | Bytes that must transit, at a rate that makes a copy visible. |
-| `JByteArray` | 1 each way | Control-plane payloads: configuration, a report, a command. |
+| `JByteArray` region or conversion | 1 each way | Control-plane payloads: configuration, a report, a command. |
+| `GetByteArrayElements` | VM choice: copy or pin | Short synchronous access that always releases the elements. |
 
 ## File-descriptor handoff
 
@@ -68,9 +69,9 @@ binding class as well: state which side owns the buffer between calls.
 
 ## JByteArray
 
-The byte-array accessors copy the whole array between the JVM heap and native
-memory. That cost is irrelevant for a call that happens once per session and
-decisive for a call that happens per packet.
+`convert_byte_array` and the region accessors copy between the JVM heap and
+native memory. That cost is irrelevant for a call that happens once per
+session and decisive for a call that happens per packet.
 
 ```rust
 use jni::objects::JByteArray;
@@ -89,3 +90,10 @@ fn process_config(_bytes: &[u8]) {}
 If a per-packet path already uses `JByteArray`, treat the change to a descriptor
 handoff or a direct buffer as a throughput fix, not a style fix. The copy
 couples throughput to the boundary.
+
+Raw `GetByteArrayElements` is different. The VM can return a copy or pin the
+array, and `isCopy` reports that choice. Pair every successful get with
+`ReleaseByteArrayElements`, including error paths. Use `JNI_ABORT` after
+read-only access. Use mode `0` when native writes must reach the Java array.
+The `jni` elements guard releases on drop; keep its scope explicit. Never hold
+elements across `.await` or a blocking operation.
