@@ -200,8 +200,17 @@ def check_routing_cases(descriptions: dict[str, str]) -> None:
         fail("tests/routing-cases.md", "routing corpus is missing")
         return
 
-    rows = re.findall(r"^\|\s*(.+?)\s*\|\s*([a-z0-9-]+)\s*\|\s*$", ROUTING.read_text(encoding="utf-8"), re.M)
-    rows = [(phrase, skill) for phrase, skill in rows if not set(phrase) <= {"-", " "}]
+    text = ROUTING.read_text(encoding="utf-8")
+    # `[^|]` in the phrase group keeps a three-column row out of this match.
+    rows = re.findall(r"^\|\s*([^|]+?)\s*\|\s*([a-z0-9-]+)\s*\|\s*$", text, re.M)
+    # A three-column row also names a skill that must not answer the phrase.
+    guarded = re.findall(
+        r"^\|\s*([^|]+?)\s*\|\s*([a-z0-9-]+)\s*\|\s*([a-z0-9-]+)\s*\|\s*$", text, re.M
+    )
+    separator = lambda cell: set(cell) <= {"-", " "}
+    rows = [(phrase, skill) for phrase, skill in rows if not separator(phrase)]
+    guarded = [row for row in guarded if not separator(row[0])]
+    rows += [(phrase, skill) for phrase, skill, _ in guarded]
     if not rows:
         fail("tests/routing-cases.md", "routing corpus has no rows")
         return
@@ -214,6 +223,18 @@ def check_routing_cases(descriptions: dict[str, str]) -> None:
                 f"skills/{skill}/SKILL.md",
                 f"description no longer contains the routing phrase {phrase!r}; "
                 f"restore it or update tests/routing-cases.md",
+            )
+
+    # The other half of a decision that was already made once. Without it, an
+    # edit to either description can quietly re-create the ambiguity.
+    for phrase, owner, rival in guarded:
+        if rival not in descriptions:
+            fail("tests/routing-cases.md", f"names {rival!r} as a rival, which is not in skills/")
+        elif phrase.lower() in descriptions[rival].lower():
+            fail(
+                f"skills/{rival}/SKILL.md",
+                f"description claims {phrase!r}, which tests/routing-cases.md gives to "
+                f"{owner!r}; drop the phrase or change the corpus",
             )
 
     routed = {skill for _, skill in rows}

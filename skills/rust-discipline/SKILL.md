@@ -1,6 +1,6 @@
 ---
 name: rust-discipline
-description: Rust code discipline for API design, anti-patterns, panic policy, error propagation, RAII and Drop, allocation in hot paths, concurrency primitive choice, atomic ordering, unsafe encapsulation, FFI panic containment, and lint non-regression. Use when you author or review pub and pub(crate) signatures, struct definitions, and trait bounds, during code review or pre-merge self-check, and when you tighten existing Rust code.
+description: Rust code discipline for API design, anti-patterns, error propagation, RAII and Drop, allocation in hot paths, concurrency primitive choice, atomic ordering, unsafe encapsulation, FFI panic containment, and lint non-regression. Use when you author or review pub and pub(crate) signatures, struct definitions, and trait bounds, during code review or pre-merge self-check, and when you tighten existing Rust code.
 license: BSD-3-Clause
 ---
 

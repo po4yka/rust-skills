@@ -37,14 +37,12 @@ wrong skill, and put the phrase in the right description in the same change.
 | borrow checker | rust-compiler-errors |
 | does not live long enough | rust-compiler-errors |
 | missing lifetime specifier | rust-compiler-errors |
-| cannot be sent between threads | rust-compiler-errors |
 | dependency cycle | rust-crate-architecture |
 | layering violation | rust-crate-architecture |
 | tombstone | rust-debugging |
 | RUST_BACKTRACE | rust-debugging |
 | addr2line | rust-debugging |
 | tokio-console | rust-debugging |
-| panic policy | rust-discipline |
 | RAII | rust-discipline |
 | UnsatisfiedLinkError | rust-jni |
 | AttachCurrentThread | rust-jni |
@@ -174,7 +172,6 @@ wrong skill, and put the phrase in the right description in the same change.
 | anymap | rust-type-erasure |
 | extensions map | rust-type-erasure |
 | resource registry | rust-type-erasure |
-| cannot be sent between threads safely | rust-send-sync |
 | cannot be shared between threads safely | rust-send-sync |
 | MutexGuard is not Send | rust-send-sync |
 | auto trait | rust-send-sync |
@@ -188,3 +185,20 @@ wrong skill, and put the phrase in the right description in the same change.
 | system and world | rust-event-loop-state |
 | E0499 in my dispatch loop | rust-event-loop-state |
 | coroutine resume | rust-event-loop-state |
+
+## Phrases that must not reach another skill
+
+Two skills can both look right for one phrase. Where the choice has been made, record it here.
+`scripts/validate-skills.py` then checks both halves: the phrase is in the description that must
+answer, and it is absent from the description that must not. That keeps the decision alive
+through a later edit to either skill.
+
+A phrase that appears in two descriptions is not automatically a conflict. A description may
+name a term to hand it away, as `rust-crate-architecture` does with "A cyclic package dependency
+that involves a proc-macro crate belongs to rust-macros." Add a row here only when one skill was
+claiming a phrase the other owns.
+
+| Phrase a user types | Must answer | Must not answer |
+| --- | --- | --- |
+| cannot be sent between threads safely | rust-send-sync | rust-compiler-errors |
+| panic policy | rust-panic-safety | rust-discipline |

@@ -18,6 +18,7 @@ Run:
 """
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 
 SOURCE = pathlib.Path(__file__).resolve().parent / "validate-skills.py"
@@ -79,6 +80,61 @@ class TestCatalog(unittest.TestCase):
                     continue
                 with self.subTest(skill=skill.parent.name, key=key.strip()):
                     self.assertIsNone(problem(value.strip()))
+
+
+class TestRoutingGuard(unittest.TestCase):
+    """A three-column row records a decision between two skills that both fit."""
+
+    # Both skills carry a row of their own, as they do in the real corpus, so
+    # the "every skill has a routing case" rule does not colour the result.
+    CORPUS = """| Phrase a user types | Skill that must answer |
+| --- | --- |
+| API design | rust-discipline |
+
+## Phrases that must not reach another skill
+
+| Phrase a user types | Must answer | Must not answer |
+| --- | --- | --- |
+| panic policy | rust-panic-safety | rust-discipline |
+"""
+
+    def run_corpus(self, descriptions: dict, corpus: str | None = None) -> list:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "routing-cases.md"
+            path.write_text(corpus or self.CORPUS, encoding="utf-8")
+            validate_skills.ROUTING = path
+            validate_skills.failures.clear()
+            validate_skills.check_routing_cases(descriptions)
+            return list(validate_skills.failures)
+
+    def test_the_rival_keeping_the_phrase_fails(self):
+        found = self.run_corpus(
+            {
+                "rust-panic-safety": "covers panic policy",
+                "rust-discipline": "covers API design and panic policy",
+            }
+        )
+        self.assertEqual(len(found), 1)
+        self.assertIn("rust-discipline", found[0])
+
+    def test_the_rival_without_the_phrase_passes(self):
+        found = self.run_corpus(
+            {"rust-panic-safety": "covers panic policy", "rust-discipline": "covers API design"}
+        )
+        self.assertEqual(found, [])
+
+    def test_the_owner_losing_the_phrase_fails(self):
+        found = self.run_corpus(
+            {"rust-panic-safety": "covers catch_unwind", "rust-discipline": "covers API design"}
+        )
+        self.assertEqual(len(found), 1)
+        self.assertIn("rust-panic-safety", found[0])
+
+    def test_a_two_column_row_still_works(self):
+        corpus = "| Phrase | Skill |\n| --- | --- |\n| catch_unwind | rust-panic-safety |\n"
+        self.assertEqual(
+            self.run_corpus({"rust-panic-safety": "covers catch_unwind"}, corpus), []
+        )
 
 
 if __name__ == "__main__":
