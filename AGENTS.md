@@ -171,6 +171,12 @@ and a ` #` has cut a description in half without a warning. `plain_scalar_proble
 `scripts/validate-skills.py` now rejects both, and `scripts/test_validate_skills.py` holds the
 rule in place, but the CLI is the only end-to-end proof.
 
+### What `main` enforces
+
+`main` blocks force-pushes and branch deletion, and merged head branches are deleted
+automatically. Status checks are not required, so a direct push still lands: CI reports on it,
+it does not gate it. Run `bash checks/check.sh` before you push, because nothing else will.
+
 ### Do not run `skills remove` inside this repository
 
 `npx skills remove --skill <name>` treats this repository's own `skills/` directory as an
