@@ -140,9 +140,11 @@ correct. It becomes a trap the moment a trait method takes the same trait **by v
 body re-borrows into a recursive call: each level adds one `&mut`, and on a self-recursive data
 type the chain never terminates.
 
-`std::io::Write` already carries such a delegating impl, so this reproduces with no custom trait:
+`std::io::Write` already carries such a delegating impl, so this reproduces with no custom trait.
+The fence says `ignore` because the harness runs `cargo check`, which accepts this block; the
+failure arrives at monomorphization, as the note under it shows:
 
-```rust,compile_fail
+```rust,ignore
 use std::io::{Result, Write};
 
 struct Tree { tag: u8, kids: Vec<Tree> }

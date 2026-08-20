@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """Extract ```rust blocks from ../skills/**/*.md into cargo examples.
 
-Each candidate block becomes examples/<name>.rs, which `cargo check --examples`
-then type-checks. analyze.py classifies whatever fails.
-
 Adapted from the harness in https://github.com/leonardomso/rust-skills (MIT).
 
-A block opts out by tagging its fence. The tags follow rustdoc:
+The fence tag decides what happens to a block, and nothing else:
 
-    ```rust,compile_fail   the block is a deliberate error demonstration
-    ```rust,ignore         the block cannot compile standalone by design
+    ```rust                the block must compile
+    ```rust,compile_fail   the block must not compile
+    ```rust,ignore         the block is not checked
 
-Only a bare ```rust fence is extracted, so tagging is the explicit escape and
-the heuristics below are the safety net for blocks nobody tagged.
+`compile_fail` accepts the expected error codes after the tag, and
+`analyze.py` then requires them:
+
+    ```rust,compile_fail,E0499
+
+Every block reaches manifest.json with its mode, so coverage is a number the
+gate can check rather than a claim. There is no heuristic skip: a block that
+cannot compile on its own carries `ignore` or it fails the gate.
 """
+import hashlib
 import json
 import pathlib
 import re
@@ -22,15 +27,10 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 SKILLS = (HERE.parent / "skills").resolve()
 OUT = HERE / "examples"
-OUT.mkdir(exist_ok=True)
-for stale in OUT.glob("*.rs"):
-    stale.unlink()
 
-PLACEHOLDER = re.compile(r"\b(my_crate|mycrate|mylib|my_app|my_project|my_lib)\b")
-
-# Markers a skill uses for code that is wrong on purpose. A block carrying one
-# is documentation of a mistake, not an example to compile.
-WRONG_ON_PURPOSE = ("// BAD", "// DON'T", "// WRONG", "// Rejected", "// UB")
+# A compile_fail example carries this prefix so analyze.py can tell the two
+# populations apart from the target name alone.
+XFAIL = "xfail__"
 
 HEADER = (
     "#![allow(unused, dead_code, unreachable_code, unused_imports, "
@@ -47,21 +47,28 @@ RESULT_ALIAS = "type Result<T, E = Box<dyn std::error::Error>> = std::result::Re
 WRAPPER_OPEN = "async fn __ex() -> std::result::Result<(), Box<dyn std::error::Error>> {\n"
 WRAPPER_CLOSE = "\n;\nstd::result::Result::Ok(())\n}\nfn main() {}\n"
 
+CODE_RE = re.compile(r"^E\d{4}$")
 
-def is_candidate(block: str) -> bool:
-    if "#![feature" in block:
-        return False
-    if "proc_macro" in block:
-        return False
-    if PLACEHOLDER.search(block):
-        return False
-    for line in block.splitlines():
-        stripped = line.strip()
-        if stripped == "...":
-            return False
-        if stripped.startswith(WRONG_ON_PURPOSE):
-            return False
-    return True
+
+def parse_fence(fence: str) -> tuple[str, list[str]] | None:
+    """Return (mode, expected codes) for a ```rust fence, or None when unknown.
+
+    An unknown tag is not a silent pass. main() reports it and exits non-zero,
+    because a typo in a fence would otherwise remove a block from the gate.
+    """
+    parts = [p.strip() for p in fence[len("```") :].split(",") if p.strip()]
+    if not parts or parts[0] != "rust":
+        return None
+    tags = parts[1:]
+    if not tags:
+        return "compile", []
+    if tags[0] == "ignore":
+        return ("ignore", []) if len(tags) == 1 else None
+    if tags[0] == "compile_fail":
+        codes = tags[1:]
+        if all(CODE_RE.match(c) for c in codes):
+            return "compile_fail", codes
+    return None
 
 
 def needs_result_alias(block: str) -> bool:
@@ -79,8 +86,8 @@ def needs_result_alias(block: str) -> bool:
     return True
 
 
-def wrap(block: str) -> str:
-    """Build a compilable file around one block."""
+def wrap(block: str) -> tuple[str, str]:
+    """Build a compilable file around one block, and name the shape used."""
     prelude = HEADER + (RESULT_ALIAS if needs_result_alias(block) else "")
     has_main = re.search(r"\bfn\s+main\s*\(", block) is not None
     has_inner_attr = "#![" in block
@@ -88,10 +95,29 @@ def wrap(block: str) -> str:
     # `mod m { use super::*; }` still resolves.
     has_mod = re.search(r"(?m)^\s*(pub(\([^)]*\))?\s+)?mod\s+\w", block) is not None
     if has_main:
-        return prelude + block + "\n"
+        return prelude + block + "\n", "crate"
     if has_inner_attr or has_mod:
-        return prelude + block + "\nfn main() {}\n"
-    return prelude + WRAPPER_OPEN + block + WRAPPER_CLOSE
+        return prelude + block + "\nfn main() {}\n", "item"
+    return prelude + WRAPPER_OPEN + block + WRAPPER_CLOSE, "async-body"
+
+
+def blocks_of(lines: list[str]):
+    """Yield (fence, section, start line, block text) for every ```rust fence."""
+    section = ""
+    i = 0
+    while i < len(lines):
+        heading = re.match(r"^#{2,}\s+(.*)", lines[i])
+        if heading:
+            section = heading.group(1).strip()
+        fence = lines[i].strip()
+        if fence.startswith("```rust"):
+            start = i + 1
+            end = start
+            while end < len(lines) and lines[end].strip() != "```":
+                end += 1
+            yield fence, section or "(top)", start + 1, "\n".join(lines[start:end])
+            i = end
+        i += 1
 
 
 def main() -> int:
@@ -99,48 +125,56 @@ def main() -> int:
         print(f"no skills directory at {SKILLS}", file=sys.stderr)
         return 1
 
+    OUT.mkdir(exist_ok=True)
+    for stale in OUT.glob("*.rs"):
+        stale.unlink()
+
     manifest: dict[str, dict[str, object]] = {}
-    scanned = 0
-    tagged = 0
+    counts = {"compile": 0, "compile_fail": 0, "ignore": 0}
+    bad_fences: list[str] = []
+    total = 0
 
     for markdown in sorted(SKILLS.rglob("*.md")):
+        rel = str(markdown.relative_to(SKILLS))
+        stem = rel[: -len(".md")].replace("/", "__").replace("-", "_")
         lines = markdown.read_text(encoding="utf-8").splitlines()
-        section = ""
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            heading = re.match(r"^#{2,}\s+(.*)", line)
-            if heading:
-                section = heading.group(1).strip()
-            fence = line.strip()
-            if fence.startswith("```rust"):
-                start = i + 1
-                end = start
-                while end < len(lines) and lines[end].strip() != "```":
-                    end += 1
-                if fence != "```rust":
-                    tagged += 1
-                else:
-                    scanned += 1
-                    block = "\n".join(lines[start:end])
-                    if is_candidate(block):
-                        rel = markdown.relative_to(SKILLS)
-                        stem = str(rel)[: -len(".md")].replace("/", "__").replace("-", "_")
-                        name = f"{stem}__{scanned}"
-                        (OUT / f"{name}.rs").write_text(wrap(block), encoding="utf-8")
-                        manifest[name] = {
-                            "file": str(rel),
-                            "line": start + 1,
-                            "section": section or "(top)",
-                        }
-                i = end
-            i += 1
+        for fence, section, line, block in blocks_of(lines):
+            total += 1
+            parsed = parse_fence(fence)
+            if parsed is None:
+                bad_fences.append(f"{rel}:{line}: unknown fence {fence!r}")
+                continue
+            mode, codes = parsed
+            counts[mode] += 1
+            name = f"{'' if mode == 'compile' else XFAIL}{stem}__{total}"
+            entry: dict[str, object] = {
+                "file": rel,
+                "line": line,
+                "section": section,
+                "mode": mode,
+                # A stable identity for the block. The baseline signature uses
+                # it so two blocks in one section cannot share a line.
+                "hash": hashlib.sha256(block.encode()).hexdigest()[:8],
+            }
+            if mode != "ignore":
+                source, shape = wrap(block)
+                (OUT / f"{name}.rs").write_text(source, encoding="utf-8")
+                entry["wrapper"] = shape
+                if codes:
+                    entry["codes"] = codes
+            manifest[name] = entry
 
     (HERE / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     print(
-        f"generated {len(manifest)} example files "
-        f"(scanned {scanned} rust blocks, skipped {tagged} tagged by fence)"
+        f"rust blocks {total}: {counts['compile']} compile, "
+        f"{counts['compile_fail']} compile_fail, {counts['ignore']} ignore"
     )
+    if bad_fences:
+        print("\nFAIL: a fence tag decides whether a block is checked, and these are unknown:\n")
+        for problem in bad_fences:
+            print(f"  {problem}")
+        print("\nUse ```rust, ```rust,compile_fail[,E0000...], or ```rust,ignore.")
+        return 1
     return 0
 
 

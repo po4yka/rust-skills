@@ -175,7 +175,7 @@ Hygiene is not a general namespace shield. It covers exactly the identifiers rus
 
 A generated local is invisible outside the expansion:
 
-```rust,compile_fail
+```rust,compile_fail,E0425
 macro_rules! decl {
     () => {
         let tmp = 7;

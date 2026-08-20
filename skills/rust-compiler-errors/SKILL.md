@@ -139,7 +139,10 @@ println!("{r}");
 
 Fix by moving the binding out, so the owner lives at least as long as the borrow.
 
-```rust,compile_fail
+```rust,compile_fail,E0716
+fn foo() -> Vec<u8> { vec![1, 2, 3] }
+fn bar(v: &Vec<u8>) -> &u8 { &v[0] }
+
 // E0716: `foo()` produced a temporary with no name. It dies at the `;`.
 let p = bar(&foo());
 let q = *p;
@@ -148,6 +151,9 @@ let q = *p;
 Fix by giving the temporary a name, which extends it to the end of the enclosing block:
 
 ```rust
+fn foo() -> Vec<u8> { vec![1, 2, 3] }
+fn bar(v: &Vec<u8>) -> &u8 { &v[0] }
+
 let tmp = foo();
 let p = bar(&tmp);
 let q = *p;

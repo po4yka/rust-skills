@@ -15,14 +15,25 @@ bucketed instead:
   SUSPECT   everything else: type mismatch, missing method, wrong arity, bad
             syntax. These are real defects until shown otherwise.
 
+An error code enters the excused sets only when it means "the name is defined in
+the prose, not in the block". Every other code, and every code this file does
+not know, is a suspect. A wider excuse list is how a real defect passes as a
+harmless fragment; test_analyze.py holds the regression cases.
+
+Three gates run before the buckets:
+
+  every example cargo was asked to build appears in its output,
+  every compile_fail example does fail,
+  every error code a compile_fail fence names does occur.
+
 Usage:
   analyze.py check.json                        summary plus suspect detail
   analyze.py check.json --emit-baseline        one signature per suspect
   analyze.py check.json --check-baseline FILE  exit 1 on a suspect not in FILE
 
-A signature is `file :: section :: sorted error codes`. It carries no line
-number, so it survives edits above the block and only changes when the failure
-itself changes. CI gates on signatures absent from the committed baseline.
+A signature is `file :: section :: block hash :: sorted error codes`. It carries
+no line number, so it survives edits above the block, and the hash keeps two
+blocks in one section apart. CI gates on signatures absent from the baseline.
 """
 import collections
 import json
@@ -33,8 +44,16 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 # Errors that mean "this name is defined in the prose, not in the block".
 RESOLUTION_CODES = {
-    "E0405", "E0412", "E0422", "E0423", "E0425", "E0432", "E0433",
-    "E0463", "E0531", "E0561", "E0573", "E0583", "E0658",
+    "E0405",  # cannot find trait
+    "E0412",  # cannot find type
+    "E0422",  # cannot find struct
+    "E0423",  # expected value, found something else with that name
+    "E0425",  # cannot find value
+    "E0432",  # unresolved import
+    "E0433",  # failed to resolve
+    "E0463",  # can't find crate
+    "E0531",  # cannot find tuple struct or variant in pattern
+    "E0583",  # file for module not found
 }
 RESOLUTION_PREFIXES = (
     "cannot find",
@@ -91,17 +110,11 @@ def token(diagnostic: dict) -> str:
     return "P:" + " ".join(words[:5])
 
 
-def parse(path: str) -> tuple[dict[str, list[dict]], bool, int]:
-    """Return the errors per example, whether cargo ran, and the artifact count.
-
-    "Whether cargo ran" is not a detail. When cargo cannot start at all - an
-    unresolvable dependency, a malformed manifest, a missing toolchain - it
-    writes nothing to stdout, so this file is empty. Every downstream count is
-    then zero and the gate would report success on a build that never happened.
-    """
+def parse(path: str) -> tuple[dict[str, list[dict]], set[str], bool]:
+    """Return the errors per example, the targets cargo touched, and whether it finished."""
     errors: dict[str, list[dict]] = collections.defaultdict(list)
+    seen: set[str] = set()
     finished = False
-    artifacts = 0
     with open(path, encoding="utf-8") as handle:
         for raw in handle:
             raw = raw.strip()
@@ -115,29 +128,77 @@ def parse(path: str) -> tuple[dict[str, list[dict]], bool, int]:
             if reason == "build-finished":
                 finished = True
                 continue
+            target = (record.get("target") or {}).get("name")
             if reason == "compiler-artifact":
-                artifacts += 1
+                if target:
+                    seen.add(target)
                 continue
             if reason != "compiler-message":
                 continue
-            message = record.get("message", {})
-            if message.get("level") != "error":
+            if not target:
                 continue
-            target = (record.get("target") or {}).get("name")
-            if target:
+            seen.add(target)
+            message = record.get("message", {})
+            if message.get("level") == "error":
                 errors[target].append(message)
-    return errors, finished, artifacts
+    return errors, seen, finished
 
 
-def require_cargo_ran(path: str, finished: bool, artifacts: int) -> None:
+def unbuilt(manifest: dict, seen: set[str]) -> list[str]:
+    """Examples that were generated but never appear in cargo's output."""
+    return sorted(
+        name
+        for name, info in manifest.items()
+        if info.get("mode") != "ignore" and name not in seen
+    )
+
+
+def compile_fail_failures(manifest: dict, errors: dict[str, list[dict]]) -> list[str]:
+    """compile_fail examples that compiled, or missed the codes their fence names."""
+    problems = []
+    for name, info in sorted(manifest.items()):
+        if info.get("mode") != "compile_fail":
+            continue
+        where = f"{info.get('file', '?')}:{info.get('line', 0)}"
+        found = {code_of(d) for d in errors.get(name, [])}
+        if not errors.get(name):
+            problems.append(f"{where}: tagged compile_fail, but it compiles")
+            continue
+        missing = [c for c in info.get("codes", []) if c not in found]
+        if missing:
+            seen = ",".join(sorted(c for c in found if c)) or "no coded error"
+            problems.append(
+                f"{where}: fence expects {','.join(missing)}, cargo reported {seen}"
+            )
+    return problems
+
+
+def weak_compile_fail(manifest: dict, errors: dict[str, list[dict]]) -> list[str]:
+    """compile_fail examples that fail only because a name does not resolve.
+
+    These do not demonstrate what the prose says they demonstrate. Naming the
+    expected code in the fence is the fix. Reported, not gated: a fragment that
+    also carries the intended error is common and legitimate.
+    """
+    weak = []
+    for name, info in sorted(manifest.items()):
+        if info.get("mode") != "compile_fail" or info.get("codes"):
+            continue
+        diagnostics = errors.get(name, [])
+        if diagnostics and all(is_resolution(d) for d in diagnostics):
+            weak.append(f"{info.get('file', '?')}:{info.get('line', 0)}")
+    return weak
+
+
+def require_cargo_ran(path: str, finished: bool, seen: set[str]) -> None:
     """Exit non-zero when the output does not prove cargo compiled something."""
-    if finished and artifacts:
+    if finished and seen:
         return
     print("FAIL: the compile check did not run.\n")
     if not finished:
         print(f"  {path} carries no build-finished record.")
-    if not artifacts:
-        print(f"  {path} carries no compiler-artifact record.")
+    if not seen:
+        print(f"  {path} names no target at all.")
     stderr_path = pathlib.Path(path).with_suffix(".err")
     if stderr_path.is_file():
         tail = stderr_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
@@ -181,14 +242,46 @@ def main() -> int:
 
     args = sys.argv[1:]
     path = next((a for a in args if not a.startswith("--")), "check.json")
-    errors, finished, artifacts = parse(path)
-    require_cargo_ran(path, finished, artifacts)
-    fragment, artifact, low, suspects = classify(errors)
+    errors, seen, finished = parse(path)
+    require_cargo_ran(path, finished, seen)
+
+    missing = unbuilt(manifest, seen)
+    if missing:
+        print(f"FAIL: {len(missing)} generated example(s) never reached the compiler:\n")
+        for name in missing[:20]:
+            info = manifest[name]
+            print(f"  {info.get('file', '?')}:{info.get('line', 0)}")
+        print("\nCoverage dropped without a fence tag saying so. Do not accept this run.")
+        return 1
+
+    broken = compile_fail_failures(manifest, errors)
+    if broken:
+        print(f"FAIL: {len(broken)} compile_fail block(s) do not fail as tagged:\n")
+        for problem in broken:
+            print(f"  {problem}")
+        print(
+            "\nA compile_fail block that compiles is a claim the language no"
+            " longer supports.\nFix the block, retag it, or correct the expected"
+            " code in the fence."
+        )
+        return 1
+
+    # Only the compile-mode examples take part in the buckets below. A
+    # compile_fail example is expected to fail and was gated above.
+    compile_errors = {
+        name: diagnostics
+        for name, diagnostics in errors.items()
+        if manifest.get(name, {}).get("mode") == "compile"
+    }
+    fragment, artifact, low, suspects = classify(compile_errors)
 
     def signature(example: str, diagnostics: list[dict]) -> str:
         info = manifest.get(example, {})
         tokens = ",".join(sorted({token(d) for d in diagnostics}))
-        return f"{info.get('file', '?')} :: {info.get('section', '?')} :: {tokens}"
+        return (
+            f"{info.get('file', '?')} :: {info.get('section', '?')}"
+            f" :: {info.get('hash', '?')} :: {tokens}"
+        )
 
     signatures = sorted({signature(e, d) for e, d in suspects.items()})
 
@@ -198,6 +291,10 @@ def main() -> int:
         print("# CI fails on any signature that is not listed here.")
         print("\n".join(signatures))
         return 0
+
+    modes = collections.Counter(info.get("mode") for info in manifest.values())
+    checked = modes["compile"]
+    clean = checked - len(compile_errors)
 
     if "--check-baseline" in args:
         baseline_path = args[args.index("--check-baseline") + 1]
@@ -223,14 +320,29 @@ def main() -> int:
             # saying so is how the baseline stops growing forever.
             print(f"note: {len(stale)} baseline entr(ies) no longer occur; consider regenerating:")
             print("\n".join(f"  - {s}" for s in stale))
+        weak = weak_compile_fail(manifest, errors)
+        print(
+            f"OK: {clean}/{checked} compile blocks build clean,"
+            f" {modes['compile_fail']} compile_fail blocks fail as tagged,"
+            f" {modes['ignore']} not checked"
+        )
+        if weak:
+            print(
+                f"note: {len(weak)} compile_fail block(s) fail only on an undefined name."
+                " Name the expected code in the fence to pin what they prove."
+            )
         print(f"OK: no new compile suspects ({len(signatures)} known, all in the baseline)")
         return 0
 
-    checked = len(manifest)
-    failed = len(errors)
+    total = sum(modes.values())
+    print("== catalog coverage ==")
+    print(f"rust blocks                 : {total}")
+    print(f"  must compile              : {checked}")
+    print(f"  must not compile          : {modes['compile_fail']}")
+    print(f"  not checked (ignore)      : {modes['ignore']}")
+    print()
     print("== compile-check summary ==")
-    print(f"examples checked            : {checked}")
-    print(f"compiled clean              : {checked - failed}")
+    print(f"compiled clean              : {clean}")
     print(f"fragments (undefined syms)  : {fragment}")
     print(f"wrapper artifacts           : {artifact}")
     print(f"low signal (needs type ann) : {low}")
@@ -242,13 +354,13 @@ def main() -> int:
         rows.append((info.get("file", "?"), info.get("line", 0), info.get("section", "?"), diagnostics))
     for file, line, section, diagnostics in sorted(rows):
         print(f"\n--- {file}:{line}  [{section}]")
-        seen = set()
+        seen_lines = set()
         for diagnostic in diagnostics:
             code = code_of(diagnostic) or "----"
             first = diagnostic.get("message", "").splitlines()[0]
-            if (code, first) in seen:
+            if (code, first) in seen_lines:
                 continue
-            seen.add((code, first))
+            seen_lines.add((code, first))
             print(f"    {code}: {first}")
     return 0
 
