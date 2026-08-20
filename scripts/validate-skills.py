@@ -27,6 +27,33 @@ ROUTING = ROOT / "tests" / "routing-cases.md"
 ALLOWED_KEYS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
 REQUIRED_KEYS = {"name", "description", "license"}
 
+# A frontmatter value is written unquoted, so a YAML reader has to give it back
+# unchanged. That reader is what an agent runtime and the skills CLI use, not
+# the `key: value` split below, and the difference has shipped twice from this
+# repository: a `: ` inside a description is a syntax error that drops the whole
+# skill from the catalog, and a ` #` starts a comment that truncates the value
+# without a warning. Neither is visible to a parser that splits on the first
+# colon, so the rule lives here.
+YAML_INDICATORS = "-?:,[]{}#&*!|>'\"%@`"
+
+
+def plain_scalar_problem(value: str) -> str | None:
+    """Say why a YAML reader would not return `value` as written, or None."""
+    if not value:
+        return None
+    if value[0] in YAML_INDICATORS:
+        return f"starts with {value[0]!r}, which YAML reads as an indicator, not as text"
+    if ": " in value or value.endswith(":"):
+        return "contains ': ', which YAML reads as a second mapping key"
+    if " #" in value:
+        return "contains ' #', which YAML reads as the start of a comment"
+    if "\t" in value:
+        return "contains a tab, which YAML does not allow in a plain scalar"
+    if value != value.strip():
+        return "has leading or trailing whitespace, which YAML drops"
+    return None
+
+
 NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 MAX_NAME = 64
 MAX_DESCRIPTION = 1024
@@ -111,9 +138,12 @@ def check_skill(skill_dir: Path) -> None:
     if len(name) > MAX_NAME:
         fail(where, f"name is {len(name)} characters, the limit is {MAX_NAME}")
 
+    for key, value in sorted(fields.items()):
+        problem = plain_scalar_problem(value)
+        if problem:
+            fail(where, f"{key} {problem}. Rewrite the line so it needs no quoting.")
+
     description = fields.get("description", "")
-    if description.startswith((">", "|")):
-        fail(where, "description uses a YAML block scalar; it must be one plain line")
     if not description:
         fail(where, "description is empty")
     elif len(description) > MAX_DESCRIPTION:
