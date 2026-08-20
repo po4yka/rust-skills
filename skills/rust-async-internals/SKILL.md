@@ -263,8 +263,10 @@ future `!Send`.
   that future. When the callback must stay an `Fn` bound, take
   `F: for<'a> Fn(&'a T) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>`
   instead. When you control the callee, a trait method that returns
-  `impl Future<Output = R> + Send` carries `Send` and allocates nothing. See
-  the pitfall catalog.
+  `impl Future<Output = R> + Send` carries `Send` and allocates nothing. A
+  future that borrows its argument is not `'static`; move the owned argument
+  into an outer spawned task and create the borrowed future inside it. See the
+  pitfall catalog.
 
 ## Timeouts
 

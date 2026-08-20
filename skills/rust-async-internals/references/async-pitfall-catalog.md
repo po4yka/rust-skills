@@ -458,11 +458,13 @@ Rule: when the future must cross `tokio::spawn` and the callback must stay an
 `Box::pin` per call is the price. Use `AsyncFn` everywhere else.
 
 When you control the callee's shape, a trait method that returns
-`impl Future<Output = R> + Send` (RPITIT, stable since 1.75) carries `Send`,
-borrows its argument, crosses `tokio::spawn`, and allocates nothing:
+`impl Future<Output = R> + Send` (RPITIT, stable since 1.75) carries `Send` and
+allocates nothing. It does not add `'static`. A future that borrows its argument
+cannot be passed directly to `tokio::spawn`:
 
 ```rust
 use std::future::Future;
+use std::sync::Arc;
 
 struct Request { body: String }
 
@@ -474,7 +476,22 @@ struct Len;
 impl Handler for Len {
     async fn call(&self, r: &Request) -> usize { r.body.len() }
 }
+
+fn spawn_call(
+    handler: Arc<impl Handler>,
+    request: Request,
+) -> tokio::task::JoinHandle<usize> {
+    tokio::spawn(async move {
+        // The outer task owns both values. Create the borrowed future here.
+        handler.call(&request).await
+    })
+}
 ```
+
+`tokio::spawn(handler.call(&request))` fails because both borrows are local and
+the spawned future must be `'static`. Move owned values or `Arc` handles into an
+outer `async move` block. Then create and await the borrowed RPITIT future
+inside that block.
 
 `#[trait_variant::make(TraitSend: Send)]` generates the same shape from an
 `async fn` in a trait. Reach for FIX B only when the bound must accept an
