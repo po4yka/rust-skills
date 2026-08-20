@@ -35,6 +35,12 @@ wrong skill, and put the phrase in the right description in the same change.
 | connection pool | rust-networking |
 | response body limit | rust-networking |
 | graceful shutdown | rust-networking |
+| database pool exhaustion | rust-database |
+| transaction rollback | rust-database |
+| database migration ordering | rust-database |
+| transaction cancellation safety | rust-database |
+| serialization failure | rust-database |
+| schema integration test | rust-database |
 | callbackFlow | ffi-error-progress-cancel |
 | AsyncThrowingStream | ffi-error-progress-cancel |
 | cancel_job | ffi-error-progress-cancel |

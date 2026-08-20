@@ -2,7 +2,7 @@
 
 # rust-skills
 
-**Thirty-six agent skills for production Rust:**
+**Thirty-seven agent skills for production Rust:**
 unsafe review · networking · FFI boundaries · native linking · profiling · crate releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
@@ -96,6 +96,7 @@ Enter by the symptom, not by the skill name.
 | A SemVer bump, `cargo package`, `cargo publish`, or crates.io recovery | [rust-crate-release](skills/rust-crate-release/SKILL.md) |
 | `build.rs`, `pkg-config`, an undefined symbol, or a packaged DLL failure | [rust-native-linking](skills/rust-native-linking/SKILL.md) |
 | HTTP timeout, safe retries, TLS verification, body limits, or graceful shutdown | [rust-networking](skills/rust-networking/SKILL.md) |
+| Pool exhaustion, transaction rollback, migration ordering, or serialization failure | [rust-database](skills/rust-database/SKILL.md) |
 
 The full phrase-to-skill list lives in [tests/routing-cases.md](tests/routing-cases.md), and CI
 checks every row against the skill descriptions.
@@ -140,6 +141,7 @@ flowchart LR
     D --> D1[rust-debugging]
     D --> D2[rust-observability]
     D --> D3[rust-networking]
+    D --> D4[rust-database]
 
     E --> E1[rust-jni]
     E --> E2[uniffi-boundary]
@@ -156,7 +158,7 @@ flowchart LR
 
 ## Catalog
 
-Thirty-six skills in six groups. Deep material sits in `references/*.md` next to the skill that
+Thirty-seven skills in six groups. Deep material sits in `references/*.md` next to the skill that
 owns it.
 
 <details open>
@@ -226,7 +228,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Networking, performance, debugging, and observability</b> — six skills</summary>
+<summary><b>Networking, database, performance, debugging, and observability</b> — seven skills</summary>
 
 <br>
 
@@ -238,6 +240,7 @@ owns it.
 | [rust-debugging](skills/rust-debugging/SKILL.md) | Host-first reproduction, logcat and tombstones, symbolication with addr2line and atos, FFI panic hooks, and a panic-to-cause triage table. |
 | [rust-observability](skills/rust-observability/SKILL.md) | `tracing` instrumentation, a redacting visitor over a closed field vocabulary, host log sinks, bounded event rings, and telemetry snapshots. |
 | [rust-networking](skills/rust-networking/SKILL.md) | Production client and server policy for deadline budgets, safe retries, TLS, proxy and DNS, connection pools, streaming limits, overload, cancellation, and graceful shutdown. |
+| [rust-database](skills/rust-database/SKILL.md) | Production database policy for pool budgets, transaction ownership, cancellation, isolation and bounded retries, compatible migrations, and real-schema integration tests. |
 
 </details>
 
