@@ -29,6 +29,12 @@ wrong skill, and put the phrase in the right description in the same change.
 | undefined reference | rust-native-linking |
 | library not loaded | rust-native-linking |
 | DLL not found | rust-native-linking |
+| HTTP timeout | rust-networking |
+| Retry-After | rust-networking |
+| TLS verification | rust-networking |
+| connection pool | rust-networking |
+| response body limit | rust-networking |
+| graceful shutdown | rust-networking |
 | callbackFlow | ffi-error-progress-cancel |
 | AsyncThrowingStream | ffi-error-progress-cancel |
 | cancel_job | ffi-error-progress-cancel |

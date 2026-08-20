@@ -2,8 +2,8 @@
 
 # rust-skills
 
-**Thirty-five agent skills for production Rust:**
-unsafe review · atomics · FFI boundaries · native linking · profiling · crate releases · supply chain
+**Thirty-six agent skills for production Rust:**
+unsafe review · networking · FFI boundaries · native linking · profiling · crate releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
 [![Rust 1.97 · edition 2024](https://img.shields.io/badge/rust-1.97%20%C2%B7%20edition%202024-000000?style=flat-square&logo=rust)](checks/rust-toolchain.toml)
@@ -95,6 +95,7 @@ Enter by the symptom, not by the skill name.
 | 16 KiB page alignment, NDK linkers, per-ABI rustflags, `.so` size gates | [rust-android-build](skills/rust-android-build/SKILL.md) |
 | A SemVer bump, `cargo package`, `cargo publish`, or crates.io recovery | [rust-crate-release](skills/rust-crate-release/SKILL.md) |
 | `build.rs`, `pkg-config`, an undefined symbol, or a packaged DLL failure | [rust-native-linking](skills/rust-native-linking/SKILL.md) |
+| HTTP timeout, safe retries, TLS verification, body limits, or graceful shutdown | [rust-networking](skills/rust-networking/SKILL.md) |
 
 The full phrase-to-skill list lives in [tests/routing-cases.md](tests/routing-cases.md), and CI
 checks every row against the skill descriptions.
@@ -138,6 +139,7 @@ flowchart LR
 
     D --> D1[rust-debugging]
     D --> D2[rust-observability]
+    D --> D3[rust-networking]
 
     E --> E1[rust-jni]
     E --> E2[uniffi-boundary]
@@ -154,7 +156,7 @@ flowchart LR
 
 ## Catalog
 
-Thirty-five skills in six groups. Deep material sits in `references/*.md` next to the skill that
+Thirty-six skills in six groups. Deep material sits in `references/*.md` next to the skill that
 owns it.
 
 <details open>
@@ -224,7 +226,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Performance, debugging, and observability</b> — five skills</summary>
+<summary><b>Networking, performance, debugging, and observability</b> — six skills</summary>
 
 <br>
 
@@ -235,6 +237,7 @@ owns it.
 | [rust-copy-on-write](skills/rust-copy-on-write/SKILL.md) | The decision before the profile: `Cow` in return and argument position, the `to_mut` allocation trap, the lifetime a `Cow` field forces on callers, and measured persistent-collection costs. |
 | [rust-debugging](skills/rust-debugging/SKILL.md) | Host-first reproduction, logcat and tombstones, symbolication with addr2line and atos, FFI panic hooks, and a panic-to-cause triage table. |
 | [rust-observability](skills/rust-observability/SKILL.md) | `tracing` instrumentation, a redacting visitor over a closed field vocabulary, host log sinks, bounded event rings, and telemetry snapshots. |
+| [rust-networking](skills/rust-networking/SKILL.md) | Production client and server policy for deadline budgets, safe retries, TLS, proxy and DNS, connection pools, streaming limits, overload, cancellation, and graceful shutdown. |
 
 </details>
 
