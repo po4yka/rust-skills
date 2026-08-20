@@ -250,9 +250,12 @@ their trigger terms explicitly, for example `unsafe`, `transmute`, `RUSTSEC`, `c
 
 You can also read any skill directly. Every `SKILL.md` is plain Markdown.
 
-`SKILL.md` frontmatter holds only the three keys that the
-[Agent Skills specification](https://agentskills.io/specification) allows here: `name`,
-`description`, and `license`. The `name` always equals the directory name.
+The [Agent Skills specification](https://agentskills.io/specification) requires `name` and
+`description`, and allows `license`, `compatibility`, `metadata`, and `allowed-tools`. This
+repository uses three of them — `name`, `description`, and `license` — and requires all three;
+that is a rule of this catalog, not of the specification. The `name` always equals the directory
+name. Every value stays a plain YAML scalar, because the skills CLI and the agent runtimes read
+the file with a real YAML parser.
 
 ## Repository layout
 
@@ -265,6 +268,7 @@ scripts/validate-skills.py    # catalog structure checks
 tests/routing-cases.md        # phrase -> skill, checked against every description
 checks/                       # compile-check harness for the rust examples
 checks/check.sh               # one command that reproduces CI
+THIRD_PARTY_NOTICES.md        # the MIT notice the harness carries
 ```
 
 Only `skills/` is published. The rest is tooling; `npx skills add` never sees it.
@@ -375,3 +379,6 @@ recorded here because the topic inventory is theirs even though the text and the
 ## License
 
 BSD-3-Clause. See [LICENSE](LICENSE).
+
+The compile-check harness in `checks/` adapts an MIT-licensed project.
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) carries that notice and says what is derived.

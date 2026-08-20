@@ -8,7 +8,9 @@ the fence tag says, and fails CI on any result the tag did not promise.
 There is no heuristic skip. A block is checked, is proved to fail, or carries
 `ignore` on its fence, and the counts are printed on every run.
 
-Adapted from the harness in [leonardomso/rust-skills](https://github.com/leonardomso/rust-skills) (MIT).
+Adapted from the harness in [leonardomso/rust-skills](https://github.com/leonardomso/rust-skills)
+(MIT). [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) carries the notice and says which
+part is derived.
 
 It is a development tool. It is not part of any skill, and `npx skills add`
 never sees it.
