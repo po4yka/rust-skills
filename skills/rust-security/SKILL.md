@@ -263,8 +263,9 @@ Core rules:
   call `Vec::with_capacity` or `vec![0u8; n]`.
 - **Limit recursion depth** in nested protobuf, XML, and JSON parsers.
 - **Validate floating-point input** for `NaN` and infinity before arithmetic.
-- **Reject path traversal.** Canonicalize every extracted path and prove it
-  stays inside the staging root.
+- **Reject path traversal.** Accept only normal UTF-8 `Path::components`.
+  Create entries relative to an open staging-root handle with no-follow
+  semantics. Do not canonicalize a destination that does not exist yet.
 - **Disable entity expansion** in XML parsers.
 - **Authenticate before you mutate.** Verify the digest or MAC of a container
   before you apply any of its content to live state.

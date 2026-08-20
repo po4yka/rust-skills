@@ -99,13 +99,21 @@ second reader is a second attack surface.
 
 ### Reject path traversal
 
-Canonicalize every filesystem target derived from untrusted input. Prove the
-canonical path stays inside the operation-scoped staging root or repository
-root before you open, create, or write it. Check the path after canonicalization,
-not before. A check on the raw string misses symlinks and encoded separators.
+Inspect the decoded entry path with `Path::components`. Accept only
+`Component::Normal` values. Reject `Prefix`, `RootDir`, `ParentDir`, and
+`CurDir`. Also reject non-UTF-8 components and platform-reserved names. Do this
+in the parser before any filesystem access.
 
-Reject absolute paths, paths with `..` components, non-UTF-8 paths, and paths
-with platform-reserved names. Do the rejection in the parser, not in the caller.
+Do not join the entry to a root and then call `canonicalize`. A new target does
+not exist yet. A separate check followed by create also has a symlink race.
+
+Open the private staging root once as a directory handle. Walk and create every
+component relative to that handle. Disable symlink and reparse-point following
+on every operation. Use exclusive creation for the final file. On Linux, use
+`openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`. Use equivalent
+directory-relative operations on other platforms. Reject archive symlink and
+hard-link entries. If the platform API cannot provide these semantics, do not
+extract an untrusted archive there.
 
 ## Archive extraction checklist
 
@@ -115,8 +123,10 @@ Apply all of these before you expose an extracted path to any consumer:
   else.
 - Compare the central directory against the local headers. Reject disagreement.
 - Reject duplicate entry names.
-- Validate that every entry path is UTF-8 and stays inside the staging root
-  after canonicalization.
+- Accept only normal UTF-8 path components. Reject absolute paths, parent
+  components, platform-reserved names, symlinks, and hard links.
+- Create each entry relative to the staging-root handle. Do not follow links at
+  any component, and create the final file exclusively.
 - Cap the entry count.
 - Cap both the compressed size and the decompressed size, per entry and for the
   whole archive. This is the decompression-bomb defense. A declared
