@@ -36,8 +36,8 @@ Rules:
 
 - Keep the numbers stable. A binding layer hard-codes them.
 - Map the typed error to the code in one function, in one module.
-- Log the panic message on the Rust side before you return `Panic`. The number alone tells
-  the caller nothing.
+- Install the privacy-safe panic hook before you return `Panic`. It records a closed site code
+  plus numeric location. Never log or transfer the raw payload.
 
 ## Returning a pointer or an opaque handle
 
@@ -45,14 +45,26 @@ A constructor cannot return a status code and a pointer at the same time. Return
 failure and expose the reason through a separate call.
 
 ```rust
-thread_local! {
-    static LAST_ERROR: std::cell::RefCell<Option<std::ffi::CString>> =
-        const { std::cell::RefCell::new(None) };
+#[derive(Clone, Copy)]
+#[repr(i32)]
+enum LastError {
+    None = 0,
+    Domain = 1,
+    Panic = 2,
 }
 
-fn set_last_error(msg: &str) {
-    let value = std::ffi::CString::new(msg).ok();
-    LAST_ERROR.with(|slot| *slot.borrow_mut() = value);
+thread_local! {
+    static LAST_ERROR: std::cell::Cell<LastError> =
+        const { std::cell::Cell::new(LastError::None) };
+}
+
+fn set_last_error(error: LastError) {
+    LAST_ERROR.with(|slot| slot.set(error));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lib_last_error_code() -> i32 {
+    LAST_ERROR.with(|slot| slot.get() as i32)
 }
 
 #[unsafe(no_mangle)]
@@ -66,12 +78,12 @@ pub extern "C" fn lib_session_new(config: *const std::os::raw::c_char) -> *mut S
     });
     match result {
         Ok(Ok(session)) => Box::into_raw(Box::new(session)),
-        Ok(Err(err)) => {
-            set_last_error(&err.to_string());
+        Ok(Err(_)) => {
+            set_last_error(LastError::Domain);
             std::ptr::null_mut()
         }
-        Err(payload) => {
-            set_last_error(&format!("panic: {}", panic_message(&payload)));
+        Err(_) => {
+            set_last_error(LastError::Panic);
             std::ptr::null_mut()
         }
     }
@@ -126,20 +138,13 @@ pub unsafe extern "C" fn lib_measure(input: *const u8, len: usize, out_len: *mut
 }
 ```
 
-## Transferring the panic message as a string
+## Transferring a bounded panic category
 
-Foreign callers usually want the text, not just the code. Two safe options:
-
-1. **Caller-allocated buffer.** The caller passes a pointer and a capacity. You copy at most
-   `cap - 1` bytes and write a trailing null. You return the required length so the caller can
-   retry with a bigger buffer.
-2. **Rust-allocated string plus a free function.** You return `CString::into_raw`, and you
-   export a `lib_string_free` that calls `CString::from_raw`. Never let the foreign side call
-   `free()` on Rust memory.
-
-Truncate on a character boundary when you copy UTF-8 into a fixed buffer. Use
-`str::floor_char_boundary` when your minimum supported toolchain has it. Otherwise walk
-`char_indices` and copy whole characters until the budget runs out.
+Return a stable integer category such as `LastError::Panic`. Do not transfer the
+panic payload as a string. Truncation does not make arbitrary text safe. The
+privacy-safe hook records a closed site code and numeric location for diagnosis.
+Use a local host repro or an offline crash artifact when you need a backtrace or
+message.
 
 ## Callbacks that foreign code invokes
 
@@ -156,11 +161,13 @@ extern "C" fn on_event(ctx: *mut std::ffi::c_void, code: i32) -> i32 {
     match result {
         Ok(Ok(())) => 0,
         Ok(Err(_)) => -1,
-        Err(payload) => {
-            log::error!("panic in callback: {}", panic_message(&payload));
-            // Latch the failure so the next owning call can report it.
-            FAILED.store(true, std::sync::atomic::Ordering::Release);
-            -99
+        Err(_) => {
+            // Latch the stable category so the next owning call can report it.
+            CALLBACK_FAILURE.store(
+                Status::Panic as i32,
+                std::sync::atomic::Ordering::Release,
+            );
+            Status::Panic as i32
         }
     }
 }
@@ -172,6 +179,7 @@ Rules:
   tolerate errors.
 - Do not attach the panic to the current call only. Latch it, and surface it at the next call
   the owner makes, so the failure is not lost.
+- Latch only a stable category or status code. Discard the arbitrary panic payload.
 - Keep the callback body short. Long work inside a foreign callback multiplies the ways a
   panic can start.
 
@@ -187,18 +195,16 @@ macro_rules! ffi_entry {
         pub extern "C" fn $name($($arg: $arg_ty),*) -> $ret {
             match std::panic::catch_unwind(move || $entry($($arg),*)) {
                 Ok(value) => value,
-                Err(payload) => {
-                    log::error!(
-                        concat!("panic in ", stringify!($name), ": {}"),
-                        panic_message(&payload)
-                    );
-                    $on_panic
-                }
+                Err(_) => $on_panic,
             }
         }
     };
 }
 ```
+
+Pass a fixed status code, null pointer, or other documented sentinel as
+`$on_panic`. The macro discards the payload. The process-wide privacy-safe hook
+records the bounded site information once.
 
 Audit that nothing bypasses it:
 
