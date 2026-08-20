@@ -90,7 +90,7 @@ pub struct JobResult {
 
 #[uniffi::export(callback_interface)]
 pub trait ProgressListener: Send + Sync {
-    fn on_progress(&self, event: ProgressEvent);
+    fn on_progress(&self, event: ProgressEvent) -> Result<(), ProgressCallbackError>;
 }
 
 #[uniffi::export]
@@ -148,6 +148,12 @@ A `Box<dyn ProgressListener>` keeps the foreign object alive for as long as Rust
   either side.
 - Assume the foreign implementation can be slow. A synchronous callback into Kotlin or Swift
   blocks the Rust worker thread. Coalesce events before you emit.
+- Assume the foreign implementation can throw. Give the callback method a
+  `Result<_, ProgressCallbackError>` return, and map that declared UniFFI error
+  into the operation's `EngineError`. Implement
+  `From<uniffi::UnexpectedUniFFICallbackError>` for the callback error too, so
+  an undeclared foreign exception becomes `Err` instead of a Rust panic. Never
+  discard the callback result.
 
 ## Boundary crossing cost
 

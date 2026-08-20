@@ -165,9 +165,21 @@ Deliver progress and events through a **callback interface** that the platform i
 Rust calls. Declare the trait once and take it as a parameter.
 
 ```rust
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum ProgressCallbackError {
+    #[error("foreign progress callback failed")]
+    Unexpected,
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for ProgressCallbackError {
+    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        Self::Unexpected
+    }
+}
+
 #[uniffi::export(callback_interface)]
 pub trait ProgressListener: Send + Sync {
-    fn on_progress(&self, event: ProgressEvent);
+    fn on_progress(&self, event: ProgressEvent) -> Result<(), ProgressCallbackError>;
 }
 
 #[uniffi::export]
@@ -176,9 +188,22 @@ impl Engine {
         &self,
         request: JobRequest,
         listener: Box<dyn ProgressListener>,
-    ) -> Result<JobResult, EngineError> { /* … */ }
+    ) -> Result<JobResult, EngineError> {
+        listener
+            .on_progress(ProgressEvent::started(&request))
+            .map_err(EngineError::from)?;
+        self.execute(request, listener)
+    }
 }
 ```
+
+`ProgressCallbackError` is a `#[derive(uniffi::Error)]` boundary type. Its
+`From<UnexpectedUniFFICallbackError>` implementation converts an undeclared
+foreign exception into `Err` instead of letting UniFFI panic. Also implement an
+exhaustive `From<ProgressCallbackError> for EngineError`. The generated foreign
+method translates a declared platform error into that `Result` channel, and
+`run_job` decides whether to stop, retry, or degrade. Do not use a unit-return
+callback and assume that a Kotlin or Swift implementation cannot throw.
 
 Two forms exist. Choose one and use it consistently:
 
@@ -195,8 +220,10 @@ Rules for callback traits:
   Every call crosses the FFI and re-enters the foreign runtime; a per-pixel or per-row
   callback dominates the work it reports on.
 - Coalesce and rate-limit inside Rust before you call out.
-- Treat a callback as fallible from the caller's view. The foreign implementation can throw.
-  Decide the policy in `ffi-error-progress-cancel`; this skill fixes only the signature.
+- Give every callback method a `Result<_, CallbackError>` return. The foreign
+  implementation can throw. Map the callback error into the exported
+  operation's typed error before it leaves Rust. Decide retry or degradation
+  policy in `ffi-error-progress-cancel`; this skill fixes the error channel.
 
 The mapping of these events to Kotlin `Flow` or Swift `AsyncThrowingStream` belongs to
 `ffi-error-progress-cancel`.
@@ -351,8 +378,9 @@ Answer every item before you merge a change to the boundary crate.
 10. Does any exported function pass a large `Vec<u8>` or byte array? Move it to a file path.
 11. Is the new method coarse — a whole operation — or is it a getter that will be called in a
     loop?
-12. Does every callback trait declare `Send + Sync`, and is it coarse enough to not dominate
-    the work it reports?
+12. Does every callback trait declare `Send + Sync`, return `Result` with a
+    UniFFI error type, and stay coarse enough to not dominate the work it
+    reports?
 13. Is the callback handle released when the job ends? Is there a cycle across the boundary?
 14. Does the change add real computation to the boundary crate instead of an inner crate?
 15. Does an inner crate now depend on the boundary crate? Reverse it.
