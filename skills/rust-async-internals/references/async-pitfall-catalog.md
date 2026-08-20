@@ -585,11 +585,50 @@ self-referential type needs a pin at all. You need it for:
 - FFI types that must not move after construction, because C++ objects have
   non-trivial move constructors that Rust cannot call.
 
-`cxx`-generated bindings expose C++ types as `Pin<&mut CppType>`. That is
-correct: C++ may have a destructor that captures `this`, so the object address
-must stay stable. The same logic applies to any FFI handle that C allocates and
-returns by pointer. If the C API says "do not move this after init", wrap it in
-`Pin<Box<T>>` on the Rust side.
+`cxx`-generated bindings expose C++ types as `Pin<&mut CppType>`. Use that
+generated contract as documented by `cxx`. Do not generalize it to an opaque
+pointer that a C library allocates. `Pin<Box<T>>` claims that Rust owns a `T`
+allocation and must free it with the Rust allocator. That is false for a
+C-owned allocation.
+
+Store a C-owned handle as `NonNull<Opaque>`. Call the matching C destructor in
+`Drop`. Moving the Rust wrapper does not move the C allocation:
+
+```rust
+use std::ptr::NonNull;
+
+#[repr(C)]
+pub struct OpaqueHandle {
+    _private: [u8; 0],
+}
+
+unsafe extern "C" {
+    fn handle_destroy(handle: *mut OpaqueHandle);
+}
+
+pub struct OwnedHandle {
+    ptr: NonNull<OpaqueHandle>,
+}
+
+impl OwnedHandle {
+    /// # Safety
+    /// `ptr` must be a live handle returned by the matching C constructor.
+    pub unsafe fn from_raw(ptr: *mut OpaqueHandle) -> Option<Self> {
+        NonNull::new(ptr).map(|ptr| Self { ptr })
+    }
+}
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        // SAFETY: `from_raw` accepts a live owned handle, and Drop runs once.
+        unsafe { handle_destroy(self.ptr.as_ptr()) };
+    }
+}
+```
+
+Do not add `Send` or `Sync` unless the C API documents the same thread-safety
+contract. Use `Pin` only for Rust-owned values whose address-stability contract
+requires it, or when the generated binding API requires a pinned reference.
 
 Rules:
 
