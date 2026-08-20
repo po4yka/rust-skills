@@ -1,6 +1,6 @@
 ---
 name: rust-observability
-description: Instrument, review, and debug Rust diagnostics built on tracing — spans and events, a redacting visitor over a closed field vocabulary, one process-wide dispatcher shared by every FFI boundary, control-plane versus data-plane logging, bounded event queues with drop accounting, relaxed atomic counters, snapshot polling instead of per-event host callbacks, and deterministic emission ordering. Use when you add a log field, wire a host or embedded log sink, keep a hot path free of tracing macros, design a telemetry snapshot for a foreign caller, diagnose a library that emits nothing, or review whether a diagnostic can leak sensitive data.
+description: Use when you add a log field, wire a host or embedded log sink, keep a hot path free of tracing macros, design a telemetry snapshot for a foreign caller, diagnose missing output, or review sensitive-data leakage. Covers Rust diagnostics built on tracing, redaction, one process-wide dispatcher across FFI boundaries, control-plane and data-plane logging, bounded queues, drop accounting, snapshot polling, and deterministic emission order.
 license: BSD-3-Clause
 ---
 

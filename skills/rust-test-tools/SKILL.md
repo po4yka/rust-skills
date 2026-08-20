@@ -1,6 +1,6 @@
 ---
 name: rust-test-tools
-description: Dynamic check toolkit beyond cargo test — cargo-nextest as the baseline runner, cargo-careful (hardened std where Miri cannot run), loom (concurrency model checker), proptest (property tests), cargo-fuzz (libFuzzer), cargo-mutants with survived-mutant triage, and golden tests for deterministic output. Use when you write or review tests for unsafe code, hand-rolled atomics and lock-free primitives, parsers and decoders that read untrusted bytes, FFI boundaries, deterministic export pipelines, or before you promote an AI-generated module past basic test coverage.
+description: Use when you write or review tests for unsafe code, hand-rolled atomics, lock-free primitives, untrusted parsers, FFI boundaries, deterministic export pipelines, or a generated module that needs more than basic coverage. Covers dynamic checks beyond cargo test with cargo-nextest, cargo-careful, loom, proptest, cargo-fuzz, cargo-mutants with survived-mutant triage, and golden tests for deterministic output.
 license: BSD-3-Clause
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: rust-tdd
-description: Test-first workflow for Rust — a rigid red-green-refactor-lint cycle with cargo and cargo-nextest for new features, bug fixes, and refactors. Covers running one test at a time, test placement from unit to integration to end-to-end, hand-written fakes instead of mocking crates, a fault-injection queue for error paths, async test structure with tokio, golden-contract tests with a safe bless procedure, and a subagent split that keeps test design free of implementation bias. Use when you start a behavior change in Rust, reproduce a reported bug, refactor code that must keep its behavior, or review whether a test suite was really written test-first.
+description: Use when you start a Rust behavior change, reproduce a bug, refactor code that must keep its behavior, or review whether tests were written first. Covers a red-green-refactor-lint cycle with cargo and cargo-nextest, single-test runs, unit through end-to-end placement, hand-written fakes, a fault-injection queue, async tests with tokio, golden-contract tests with a safe bless procedure, and a subagent split that separates test design from implementation.
 license: BSD-3-Clause
 ---
 

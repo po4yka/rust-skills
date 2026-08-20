@@ -1,6 +1,6 @@
 ---
 name: rust-code-style
-description: Rust source layout and readability rules — module file layout, lib.rs re-export policy, visibility levels, item order inside a file, import grouping, function structure, error-handling crate choice, and naming. Use when you create a module or a crate, add or move a source file, decide what to make pub, order items in a file, clean up imports, or review a diff for structure and readability.
+description: Use when you create a module or crate, move a source file, choose visibility, clean up imports, or review structure and readability. Covers Rust source layout and readability rules, module file layout, lib.rs re-export policy, visibility levels, item order, import grouping, function structure, error-handling crate choice, and naming.
 license: BSD-3-Clause
 ---
 

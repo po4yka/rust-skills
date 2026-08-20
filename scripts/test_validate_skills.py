@@ -73,13 +73,12 @@ class TestCatalog(unittest.TestCase):
         root = pathlib.Path(__file__).resolve().parent.parent / "skills"
         for skill in sorted(root.glob("*/SKILL.md")):
             text = skill.read_text(encoding="utf-8")
-            end = text.find("\n---\n", 3)
-            for line in text[4:end].split("\n"):
-                key, sep, value = line.partition(":")
-                if not sep:
-                    continue
-                with self.subTest(skill=skill.parent.name, key=key.strip()):
-                    self.assertIsNone(problem(value.strip()))
+            fields = validate_skills.split_frontmatter(text, str(skill))
+            assert fields is not None
+            for key, value in fields.items():
+                if isinstance(value, str):
+                    with self.subTest(skill=skill.parent.name, key=key):
+                        self.assertIsNone(problem(value))
 
 
 class TestStructuralValidation(unittest.TestCase):
@@ -98,6 +97,65 @@ license: BSD-3-Clause
         validate_skills.split_frontmatter(text, "SKILL.md")
         self.assertEqual(len(validate_skills.failures), 1)
         self.assertIn("duplicate frontmatter key", validate_skills.failures[0])
+
+    def test_name_with_consecutive_hyphens_fails(self):
+        self.assertIsNotNone(validate_skills.NAME_RE.fullmatch("rust-example"))
+        self.assertIsNone(validate_skills.NAME_RE.fullmatch("rust--example"))
+
+    def run_skill(self, frontmatter: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            skill = root / "skills" / "rust-example"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                f"---\n{frontmatter}\n---\n# Example\n", encoding="utf-8"
+            )
+            original_root = validate_skills.ROOT
+            try:
+                validate_skills.ROOT = root
+                validate_skills.failures.clear()
+                validate_skills.descriptions.clear()
+                validate_skills.check_skill(skill)
+                return list(validate_skills.failures)
+            finally:
+                validate_skills.ROOT = original_root
+
+    def test_optional_spec_fields_are_supported(self):
+        frontmatter = """name: rust-example
+description: Use when you need a sufficiently detailed example for optional field validation.
+license: BSD-3-Clause
+compatibility: Requires Rust and network access
+metadata:
+  author: example-org
+  version: v1.0
+allowed-tools: Bash(cargo:*) Read"""
+        self.assertEqual(self.run_skill(frontmatter), [])
+
+    def test_metadata_must_be_a_mapping(self):
+        frontmatter = """name: rust-example
+description: Use when you need a sufficiently detailed example for optional metadata validation.
+license: BSD-3-Clause
+metadata: author"""
+        found = self.run_skill(frontmatter)
+        self.assertEqual(len(found), 1)
+        self.assertIn("metadata must be a mapping", found[0])
+
+    def test_compatibility_length_is_limited(self):
+        frontmatter = """name: rust-example
+description: Use when you need a sufficiently detailed example for optional compatibility validation.
+license: BSD-3-Clause
+compatibility: {}""".format("x" * 501)
+        found = self.run_skill(frontmatter)
+        self.assertEqual(len(found), 1)
+        self.assertIn("limit is 500", found[0])
+
+    def test_description_must_start_with_use_when(self):
+        frontmatter = """name: rust-example
+description: Covers an example with enough detail, but it does not use the required routing prefix.
+license: BSD-3-Clause"""
+        found = self.run_skill(frontmatter)
+        self.assertEqual(len(found), 1)
+        self.assertIn("must start with 'Use when '", found[0])
 
     def test_unclosed_rust_fence_fails(self):
         validate_skills.check_rust_fences("# Example\n\n```rust\nfn main() {}\n", "example.md")

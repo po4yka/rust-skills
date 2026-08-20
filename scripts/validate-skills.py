@@ -54,10 +54,11 @@ def plain_scalar_problem(value: str) -> str | None:
     return None
 
 
-NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_NAME = 64
 MAX_DESCRIPTION = 1024
 MIN_DESCRIPTION = 80
+MAX_COMPATIBILITY = 500
 
 # Terms that mean a skill still carries coupling to a source codebase. Add a
 # term here the moment one leaks; that is cheaper than finding it after publish.
@@ -80,8 +81,8 @@ def fail(where: str, message: str) -> None:
     failures.append(f"{where}: {message}")
 
 
-def split_frontmatter(text: str, where: str) -> dict[str, str] | None:
-    """Return the frontmatter as a flat mapping, or None when it is malformed."""
+def split_frontmatter(text: str, where: str) -> dict[str, object] | None:
+    """Return the supported Agent Skills frontmatter subset."""
     if not text.startswith("---\n"):
         fail(where, "file does not start with a '---' frontmatter fence")
         return None
@@ -90,12 +91,27 @@ def split_frontmatter(text: str, where: str) -> dict[str, str] | None:
         fail(where, "frontmatter fence is not closed")
         return None
 
-    fields: dict[str, str] = {}
+    fields: dict[str, object] = {}
+    metadata: dict[str, str] | None = None
     for line in text[4:end].split("\n"):
         if not line.strip():
             continue
         if line.startswith((" ", "\t")):
-            fail(where, f"frontmatter must stay flat, found an indented line: {line.strip()!r}")
+            if metadata is None:
+                fail(
+                    where,
+                    f"only metadata can contain an indented mapping, found: {line.strip()!r}",
+                )
+                continue
+            key, sep, value = line.strip().partition(":")
+            key = key.strip()
+            if not sep or not key or not value.strip():
+                fail(where, f"metadata line is not 'key: value': {line.strip()!r}")
+                continue
+            if key in metadata:
+                fail(where, f"duplicate metadata key: {key!r}")
+                continue
+            metadata[key] = value.strip()
             continue
         key, sep, value = line.partition(":")
         if not sep:
@@ -105,7 +121,12 @@ def split_frontmatter(text: str, where: str) -> dict[str, str] | None:
         if key in fields:
             fail(where, f"duplicate frontmatter key: {key!r}")
             continue
-        fields[key] = value.strip()
+        if key == "metadata" and not value.strip():
+            metadata = {}
+            fields[key] = metadata
+        else:
+            metadata = None
+            fields[key] = value.strip()
 
     body = text[end + 5 :]
     if not body.strip():
@@ -149,20 +170,33 @@ def check_skill(skill_dir: Path) -> None:
     if missing:
         fail(where, f"missing required frontmatter key(s): {sorted(missing)}")
 
-    declared = fields.get("name", "")
+    declared_value = fields.get("name", "")
+    declared = declared_value if isinstance(declared_value, str) else ""
     if declared != name:
         fail(where, f"name {declared!r} does not match the directory name {name!r}")
     if not NAME_RE.match(name):
-        fail(where, f"directory name {name!r} is not lowercase-alphanumeric-with-hyphens")
+        fail(where, f"directory name {name!r} is not lowercase kebab-case")
     if len(name) > MAX_NAME:
         fail(where, f"name is {len(name)} characters, the limit is {MAX_NAME}")
 
     for key, value in sorted(fields.items()):
-        problem = plain_scalar_problem(value)
-        if problem:
-            fail(where, f"{key} {problem}. Rewrite the line so it needs no quoting.")
+        if isinstance(value, str):
+            problem = plain_scalar_problem(value)
+            if problem:
+                fail(where, f"{key} {problem}. Rewrite the line so it needs no quoting.")
+        elif key == "metadata" and isinstance(value, dict):
+            for metadata_key, metadata_value in sorted(value.items()):
+                key_problem = plain_scalar_problem(metadata_key)
+                value_problem = plain_scalar_problem(metadata_value)
+                if key_problem:
+                    fail(where, f"metadata key {metadata_key!r} {key_problem}")
+                if value_problem:
+                    fail(where, f"metadata.{metadata_key} {value_problem}")
+        else:
+            fail(where, f"{key} must be a string")
 
-    description = fields.get("description", "")
+    description_value = fields.get("description", "")
+    description = description_value if isinstance(description_value, str) else ""
     if not description:
         fail(where, "description is empty")
     elif len(description) > MAX_DESCRIPTION:
@@ -176,12 +210,33 @@ def check_skill(skill_dir: Path) -> None:
             f"description is {len(description)} characters; state what the skill covers "
             f"and when to use it, in at least {MIN_DESCRIPTION}",
         )
+    elif not description.startswith("Use when "):
+        fail(where, "description must start with 'Use when '")
 
     descriptions[name] = description
 
     license_value = fields.get("license")
     if license_value and license_value != "BSD-3-Clause":
         fail(where, f"license is {license_value!r}, this repository publishes BSD-3-Clause")
+
+    compatibility = fields.get("compatibility")
+    if compatibility is not None:
+        if not isinstance(compatibility, str) or not compatibility:
+            fail(where, "compatibility must be a non-empty string")
+        elif len(compatibility) > MAX_COMPATIBILITY:
+            fail(
+                where,
+                f"compatibility is {len(compatibility)} characters, the limit is "
+                f"{MAX_COMPATIBILITY}",
+            )
+
+    allowed_tools = fields.get("allowed-tools")
+    if allowed_tools is not None and (not isinstance(allowed_tools, str) or not allowed_tools):
+        fail(where, "allowed-tools must be a non-empty space-separated string")
+
+    metadata_value = fields.get("metadata")
+    if metadata_value is not None and not isinstance(metadata_value, dict):
+        fail(where, "metadata must be a mapping from string keys to string values")
 
     # Every pointer to a reference file must resolve, or the agent hits a dead
     # end halfway through a task. The skills name a reference in two ways: as a

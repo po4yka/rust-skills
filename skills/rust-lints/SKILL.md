@@ -1,6 +1,6 @@
 ---
 name: rust-lints
-description: Canonical workspace-level Rust lint configuration - workspace.lints, clippy.toml, rustfmt.toml and deny.toml - together with the workflows to add a crate that inherits them, tighten a lint safely, justify a suppression, and triage a lint or supply-chain failure. Use when you edit workspace lint sections, add a new crate, choose the level for a clippy or rustc lint, review an allow or expect attribute, or debug why clippy, rustfmt or cargo-deny fails.
+description: Use when you edit workspace lint sections, add a crate, choose a clippy or rustc lint level, review an allow or expect attribute, or debug why clippy, rustfmt, or cargo-deny fails. Covers canonical workspace-level Rust lint configuration in workspace.lints, clippy.toml, rustfmt.toml, and deny.toml, plus safe lint tightening, suppression review, and failure triage.
 license: BSD-3-Clause
 ---
 

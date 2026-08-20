@@ -1,6 +1,6 @@
 ---
 name: rust-performance
-description: Profile and optimize Rust code and native libraries. Covers host flamegraphs with cargo-flamegraph and perf, Android on-device profiling with simpleperf, Perfetto, HWASan and ndk-stack symbolication, iOS profiling with Instruments, os_signpost and MetricKit, binary size analysis with cargo-bloat, monomorphization bloat with cargo-llvm-lines, Criterion microbenchmarks and baselines, heap profiling with heaptrack and DHAT, data-parallel work with rayon, and build-time tuning with cargo --timings, sccache, LTO, codegen-units and linker choice. Use when a workload is slow, a binary or app bundle grew, a benchmark regressed, a flamegraph needs reading, a native crash needs symbolication, or a cross-compilation build is slow. Triggers on "flamegraph", "simpleperf", "Perfetto", "Instruments", "cargo-bloat", "binary size", "build time", "LTO", "monomorphization", or any performance question.
+description: Use when a Rust workload is slow, a binary or app bundle grew, a benchmark regressed, a flamegraph needs analysis, a native crash needs symbolication, or a cross-build is slow. Covers cargo-flamegraph, perf, simpleperf, Perfetto, HWASan, ndk-stack, Instruments, os_signpost, MetricKit, cargo-bloat, cargo-llvm-lines, Criterion, heaptrack, DHAT, rayon, cargo --timings, sccache, LTO, codegen-units, and linker choice. Triggers on "flamegraph", "simpleperf", "Perfetto", "Instruments", "cargo-bloat", "binary size", "build time", "LTO", "monomorphization", or any performance question.
 license: BSD-3-Clause
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: rust-panic-safety
-description: Panic policy for Rust — pick unwind or abort, stop panics at any FFI boundary that must not unwind with catch_unwind, convert them into typed errors and foreign status codes or exceptions, audit unwrap and expect, and keep data valid when a panic passes through. Use when you add or review an extern "C", extern "system", JNI, or UniFFI entry point, set the panic strategy in a Cargo profile, install a panic hook, replace unwrap or expect with typed errors, choose between thiserror and anyhow, debug an abort with no Rust backtrace, or handle a panic in an async task, a spawned thread, or a Drop implementation.
+description: Use when you add or review an extern "C", extern "system", JNI, or UniFFI entry point, set a Cargo panic strategy, install a panic hook, replace unwrap or expect, debug an abort, or handle a panic in an async task, spawned thread, or Drop implementation. Covers Rust panic policy, unwind versus abort, catch_unwind at FFI boundaries, typed errors, foreign status mapping, and invariant preservation.
 license: BSD-3-Clause
 ---
 
