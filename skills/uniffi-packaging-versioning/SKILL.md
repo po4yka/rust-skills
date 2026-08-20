@@ -238,11 +238,15 @@ generated Kotlin and Swift verify these checksums against the loaded library at
 startup. A mismatch raises a hard error immediately. That is the good case:
 loud, at load time, before any data moves.
 
-The gap: **checksums do not cover record field additions** (uniffi-rs issues
-#1789 and #333). Add a field to a `#[uniffi::Record]`, rebuild the library, and
+The gap: **checksums do not cover record field additions** (uniffi-rs issue
+#1789). Add a field to a `#[uniffi::Record]`, rebuild the library, and
 keep stale bindings, and the consumer deserializes the buffer with the old field
 layout. No checksum error fires. You get wrong field offsets and silent data
 corruption instead.
+
+Issue #333 is a different skew mode. It reports inscrutable undefined symbols
+when generated interface sides are out of date at link time. It is not evidence
+for the record-field checksum gap.
 
 **Rule.** Any structural change to a record, enum, or error that crosses the
 boundary requires an **atomic** regenerate-plus-rebuild before the artifact is
@@ -375,8 +379,8 @@ or a failing test, never a silent mismatch.
   and Xcode integration guide.
 - <https://github.com/mozilla/uniffi-rs/issues/1789> - record-field checksum
   gap.
-- <https://github.com/mozilla/uniffi-rs/issues/333> - earlier report of the same
-  class of gap.
+- <https://github.com/mozilla/uniffi-rs/issues/333> - linker diagnostics when
+  generated interface sides are out of date.
 - <https://github.com/mozilla/uniffi-rs/issues/1190> - uniffi runtime and
   bindgen version pinning.
 - <https://github.com/mozilla/uniffi-rs/blob/main/CHANGELOG.md> - breaking

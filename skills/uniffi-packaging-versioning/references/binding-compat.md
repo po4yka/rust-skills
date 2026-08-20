@@ -18,7 +18,7 @@ Treat that as the second line of defence, not the first. The properties matter:
 | When it fires | At library load or first call, not at compile time |
 | How it fails | Hard error, no silent fallback |
 | What it covers | Function signatures, type identities, method sets |
-| What it does **not** cover | Field additions inside an exported record (uniffi-rs #1789, #333) |
+| What it does **not** cover | Field additions inside an exported record (uniffi-rs #1789) |
 
 The uncovered case is the dangerous one. Adding a field to an exported record
 changes the serialized layout in the `RustBuffer`, but the checksum does not
@@ -28,6 +28,15 @@ worst case - plausible but wrong values.
 
 There is no run-time defence against this. The only defence is process: the
 regenerated bindings and the rebuilt library land in the same commit.
+
+Do not group every skew failure under the record checksum gap:
+
+| Native or scaffolding | Consumer bindings | Expected failure |
+|-----------------------|-------------------|------------------|
+| Same generated revision | Same revision | No skew failure |
+| Changed checksummed export | Stale revision | Hard checksum mismatch at first use |
+| Record-layout-only change from #1789 | Stale revision | Checksum can still match; deserialization fails or reads wrong values |
+| One generated interface side is stale at link time | Newer other side | Undefined symbols or linker failure; #333 asks for clearer diagnostics |
 
 ---
 
