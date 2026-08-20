@@ -17,13 +17,18 @@ Controls RUSTSEC advisory enforcement.
 | Field | Recommended value | Why |
 |---|---|---|
 | `yanked` | `"deny"` | A yanked version is a version the publisher withdrew. Treat it as broken. |
+| `unsound` | `"all"` | Fail on unsoundness in direct and transitive dependencies. The default `"workspace"` scope checks direct dependencies only. |
 | `ignore` | Empty by default | Every entry is a time-boxed exemption, not a policy. |
 
-Vulnerability and unsound advisories are denied by default. Do not relax that.
+Vulnerability advisories are errors. Set `unsound = "all"` explicitly. The
+default scope is `"workspace"`, which does not fail on an unsound advisory that
+reaches the workspace only through a transitive dependency. See the current
+[cargo-deny advisory configuration](https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html).
 
 ```toml
 [advisories]
 yanked = "deny"
+unsound = "all"
 ignore = [
     # Tracking: https://example.invalid/issues/42 - re-evaluate by 2026-06-01
     { id = "RUSTSEC-0000-0000", reason = "proc-macro only, compile-time, no runtime code path; no upstream fix published" },
