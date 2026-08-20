@@ -612,7 +612,10 @@ pub struct OwnedHandle {
 
 impl OwnedHandle {
     /// # Safety
-    /// `ptr` must be a live handle returned by the matching C constructor.
+    /// For a non-null `ptr`, the caller must transfer exclusive ownership of a
+    /// live handle from the matching C constructor. No second owner or wrapper
+    /// may exist. Foreign code must not destroy the handle or retain an access
+    /// that can outlive this wrapper.
     pub unsafe fn from_raw(ptr: *mut OpaqueHandle) -> Option<Self> {
         NonNull::new(ptr).map(|ptr| Self { ptr })
     }
@@ -620,11 +623,16 @@ impl OwnedHandle {
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
-        // SAFETY: `from_raw` accepts a live owned handle, and Drop runs once.
+        // SAFETY: `from_raw` transfers the only ownership claim to this value.
+        // Drop runs once, after all mediated foreign accesses have ended.
         unsafe { handle_destroy(self.ptr.as_ptr()) };
     }
 }
 ```
+
+Expose foreign operations as methods that borrow `OwnedHandle`. Do not expose a
+second owning constructor. If C retains the pointer after a method returns, add
+an explicit unregister-and-join step before `Drop` can run.
 
 Do not add `Send` or `Sync` unless the C API documents the same thread-safety
 contract. Use `Pin` only for Rust-owned values whose address-stability contract
