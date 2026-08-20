@@ -33,10 +33,17 @@ jobs:
       # The checks above prove the files are well formed. This one proves the
       # CLI that consumers actually run can still find every skill, which is
       # what breaks if the directory layout drifts.
+      #
+      # The version is pinned, and checks/check.sh is the one place that holds
+      # it. A CLI release must not change the result of a check on a commit
+      # that was green yesterday; skills-cli-compat.yml watches `latest`
+      # separately and files the news without blocking a pull request.
       - name: Check the skills CLI discovers every skill
         run: |
           set -euo pipefail
-          npx -y skills@latest add ./ --list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > /tmp/discovered.txt
+          version="$(grep '^SKILLS_CLI_VERSION=' checks/check.sh | cut -d'"' -f2)"
+          echo "skills CLI ${version}"
+          npx -y "skills@${version}" add ./ --list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > /tmp/discovered.txt
           failed=0
           for dir in skills/*/; do
             name="$(basename "$dir")"

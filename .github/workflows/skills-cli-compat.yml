@@ -1,0 +1,85 @@
+name: Skills CLI compatibility
+
+# The required CI gate pins the skills CLI, so a release published after a
+# commit cannot turn that commit red. This job carries the other half of the
+# deal: it runs the newest CLI on a schedule and opens an issue when discovery
+# breaks, which is news about the CLI, not a verdict on a pull request.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  latest:
+    name: Discovery against skills@latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Compare the pinned CLI with the published one
+        id: probe
+        run: |
+          set -euo pipefail
+          pinned="$(grep '^SKILLS_CLI_VERSION=' checks/check.sh | cut -d'"' -f2)"
+          latest="$(npm view skills version)"
+          echo "pinned=${pinned}" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "pinned ${pinned}, latest ${latest}"
+
+          npx -y skills@latest add ./ --list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > /tmp/discovered.txt
+          missing=""
+          for dir in skills/*/; do
+            name="$(basename "$dir")"
+            grep -qx "[^a-z0-9-]*${name}[^a-z0-9-]*" /tmp/discovered.txt || missing="${missing} ${name}"
+          done
+          echo "missing=${missing}" >> "$GITHUB_OUTPUT"
+          if [ -n "${missing}" ]; then
+            echo "skills@latest did not discover:${missing}"
+            exit 1
+          fi
+          echo "skills@latest discovered every skill"
+
+      - name: Open an issue when the newest CLI stops discovering a skill
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PINNED: ${{ steps.probe.outputs.pinned }}
+          LATEST: ${{ steps.probe.outputs.latest }}
+          MISSING: ${{ steps.probe.outputs.missing }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="skills CLI ${LATEST:-latest} does not discover every skill"
+          gh label create skills-cli --force --color D93F0B \
+            --description "Skills CLI compatibility" > /dev/null
+          if gh issue list --label skills-cli --state open --json title \
+              --jq '.[].title' | grep -Fxq "$title"; then
+            echo "an open issue already reports this"
+            exit 0
+          fi
+          cat > /tmp/body.md <<EOF
+          Pinned in \`checks/check.sh\`: **${PINNED:-unknown}**. Published: **${LATEST:-unknown}**.
+
+          Not discovered:${MISSING:- the run failed before the comparison}
+
+          Run: ${RUN_URL}
+
+          Reproduce with \`npx -y skills@latest add ./ --list\`.
+          Raise \`SKILLS_CLI_VERSION\` in \`checks/check.sh\` once the catalog works with the
+          new CLI, in the same commit that proves the catalog still passes.
+          EOF
+          gh issue create --title "$title" --label skills-cli --body-file /tmp/body.md
