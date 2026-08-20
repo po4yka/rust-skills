@@ -214,8 +214,16 @@ Apply this gate to every new crate in `Cargo.toml`:
    crate. Loosen to `^1.2` only after the crate has stayed in the tree for at
    least one release cycle without incident.
 4. **Create and inspect the candidate lockfile.** After you edit `Cargo.toml`,
-   run `cargo update -p <crate> --precise <version>`. Inspect every new package
-   in `Cargo.lock`. Do not use `cargo deny --locked` before this step. The old
+   resolve the exact manifest addition once without `--locked`:
+
+   ```bash
+   cargo metadata --format-version 1 > /dev/null
+   git diff -- Cargo.lock
+   ```
+
+   Inspect every new package in `Cargo.lock`. Do not use `cargo update -p
+   <crate>` for a crate that is not in the old lockfile. Cargo cannot select
+   that package yet. Do not run `cargo deny --locked` before this step. The old
    lockfile does not contain the proposed dependency graph.
 5. **Run policy against the candidate graph.** Run `cargo deny --locked check
    bans advisories sources`. Reject the dependency if the new graph fails.
