@@ -41,6 +41,12 @@ wrong skill, and put the phrase in the right description in the same change.
 | transaction cancellation safety | rust-database |
 | serialization failure | rust-database |
 | schema integration test | rust-database |
+| wasm32-unknown-unknown | rust-wasm |
+| wasm32-wasip1 | rust-wasm |
+| wasm32-wasip2 | rust-wasm |
+| wasm-bindgen | rust-wasm |
+| WebAssembly Component Model | rust-wasm |
+| wasm binary size | rust-wasm |
 | callbackFlow | ffi-error-progress-cancel |
 | AsyncThrowingStream | ffi-error-progress-cancel |
 | cancel_job | ffi-error-progress-cancel |
