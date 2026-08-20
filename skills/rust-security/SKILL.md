@@ -206,16 +206,20 @@ Apply this gate to every new crate in `Cargo.toml`:
    intended upstream. Check the repository URL, the owner list, the download
    count, and the first-publish date on crates.io. A one-week-old crate with a
    familiar name is a red flag.
-2. **Policy check before the first update.** Run `cargo deny --locked check
-   bans advisories sources` before the first `cargo update`.
-3. **Read the code.** Scan the published crate's `build.rs`, `src/lib.rs`, and
+2. **Read the code.** Scan the published crate's `build.rs`, `src/lib.rs`, and
    any proc-macro crate it pulls in. Look for network calls, shell-out,
    `std::process::Command`, environment-variable reads, and file writes outside
    `OUT_DIR`. A pure utility crate that opens a socket is a red flag.
-4. **Pin exactly on first adoption.** Use `=1.2.3` in the commit that adds the
+3. **Pin exactly on first adoption.** Use `=1.2.3` in the commit that adds the
    crate. Loosen to `^1.2` only after the crate has stayed in the tree for at
    least one release cycle without incident.
-5. **Justify the dependency.** Check whether the standard library or a crate
+4. **Create and inspect the candidate lockfile.** After you edit `Cargo.toml`,
+   run `cargo update -p <crate> --precise <version>`. Inspect every new package
+   in `Cargo.lock`. Do not use `cargo deny --locked` before this step. The old
+   lockfile does not contain the proposed dependency graph.
+5. **Run policy against the candidate graph.** Run `cargo deny --locked check
+   bans advisories sources`. Reject the dependency if the new graph fails.
+6. **Justify the dependency.** Check whether the standard library or a crate
    already in the graph does the job. Every new crate widens the attack
    surface and adds a `multiple-versions` risk.
 
