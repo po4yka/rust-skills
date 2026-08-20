@@ -24,9 +24,17 @@ bash checks/check.sh
 That is the whole contract, and it is exactly what CI runs. The steps, if you
 need one of them alone:
 
+`check.sh` holds a checkout-scoped process lock for the complete run. Parallel
+calls wait instead of replacing `examples/`, `manifest.json`, `check.json`, or
+`check.err` while another call reads them. The lock is outside the checkout and
+the operating system releases it when the process exits. The individual phase
+commands below do not hold this lock. Do not run those commands concurrently in
+one checkout.
+
 ```bash
 python3 scripts/validate-skills.py            # catalog structure; no toolchain needed
 python3 scripts/test_validate_skills.py       # the frontmatter rules themselves
+python3 checks/test_with_lock.py               # parallel-run serialization
 python3 checks/test_analyze.py                # the failure classifier itself
 python3 checks/gen.py                         # blocks -> checks/examples/
 cd checks

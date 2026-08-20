@@ -15,6 +15,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="x86_64-unknown-linux-gnu"
 SKILLS_CLI_VERSION="1.5.23"
 
+# gen.py, cargo, and analyze.py share examples/, manifest.json, check.json, and
+# check.err. Hold one checkout-scoped process lock across the complete sequence
+# so parallel agents cannot replace an artifact while another run reads it.
+if [ "${RUST_SKILLS_CHECK_LOCKED:-}" != "1" ]; then
+    exec python3 "$ROOT/checks/with_lock.py" --root "$ROOT" -- \
+        bash "$ROOT/checks/check.sh" "$@"
+fi
+
 echo "==> catalog: frontmatter, references, routing, README parity"
 python3 "$ROOT/scripts/validate-skills.py"
 
@@ -23,8 +31,9 @@ cd "$ROOT/checks"
 # The classifier decides which compile failures the catalog may ignore. A wrong
 # entry in its excuse list turns a broken example into a passing one, so the
 # excuse list has its own tests and they run before anything depends on them.
-echo "==> unit tests: frontmatter rules and the failure classifier"
+echo "==> unit tests: frontmatter, check locking, and the failure classifier"
 python3 "$ROOT/scripts/test_validate_skills.py" 2>&1 | tail -3
+python3 test_with_lock.py 2>&1 | tail -3
 python3 test_analyze.py 2>&1 | tail -3
 
 echo "==> extracting rust examples from skills/"
