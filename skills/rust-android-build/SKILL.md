@@ -172,11 +172,36 @@ four.
 
 Verify the merged native-library tree that the packaging step consumes, not one
 hand-picked file. A verification script that walks `.../merged_native_libs/.../out/lib`
-catches a stale artifact that a single-file check misses. The check inspects the
-merged JNI library tree; it does not open or validate an APK or AAB archive.
+catches a stale artifact that a single-file check misses.
 
-Gate the release path: fail the build when `0x4000` is missing from any shipped
-ABI. See `references/elf-verification.md` for the full gate design.
+Then verify the final package. ELF segment alignment and ZIP entry alignment are
+different properties. A correctly linked `.so` can still be packaged at a 4 KiB
+ZIP boundary.
+
+```bash
+# Check every uncompressed native library entry in the final APK.
+"$ANDROID_SDK_ROOT/build-tools/<version>/zipalign" -c -P 16 -v 4 app-release.apk
+
+# An AAB records the page-alignment policy used when bundletool builds APKs.
+bundletool dump config --bundle=app-release.aab | grep PAGE_ALIGNMENT_16K
+
+# Build the release APK set from the AAB. Extract it, then run the same
+# zipalign command on every generated APK that contains a native library.
+bundletool build-apks \
+  --bundle=app-release.aab \
+  --output=app-release.apks \
+  --mode=universal \
+  --overwrite
+unzip -q app-release.apks -d <apks-dir>
+find <apks-dir> -name '*.apk' -print0 \
+  | xargs -0 -n1 "$ANDROID_SDK_ROOT/build-tools/<version>/zipalign" -c -P 16 -v 4
+```
+
+Gate the release path on both layers. Fail when any shipped ELF LOAD segment is
+not `0x4000`, when `zipalign` rejects a final APK, or when an AAB does not declare
+`PAGE_ALIGNMENT_16K`. Do not treat a check of the merged JNI tree as proof about
+the archive that ships. See `references/elf-verification.md` for the full gate
+design.
 
 ### Common traps
 
@@ -377,6 +402,7 @@ NDK r29 changed these items:
 |---------|-----|
 | Missing `crate-type = ["cdylib"]` | Add it. An `rlib` produces no `.so`. |
 | Missing 16 KiB alignment flags | Add `-Wl,-z,max-page-size=16384` to every Android target block. |
+| ELF alignment passes but the packaged app fails the 16 KiB check | Run `zipalign -c -P 16 -v 4` on the final APK and inspect the AAB page-alignment policy. |
 | Alignment flags on 64-bit targets only | Apply the same block to all four ABIs. |
 | `panic = "abort"` in an Android profile | Use `panic = "unwind"`. The JNI boundary needs `catch_unwind`. |
 | Wrong triple for `armeabi-v7a` | Use `armv7-linux-androideabi` as the Cargo target. |
@@ -411,6 +437,8 @@ Before you approve a change to the Android build:
 - [ ] Each ABI has its own `CARGO_TARGET_DIR`.
 - [ ] The release path fails when alignment, the symbol allowlist, or the size
       budget regresses.
+- [ ] The alignment gate checks every shipped ELF and the final APK or the APKs
+      generated from the release AAB.
 - [ ] The size baseline change, if any, is a separate commit with a reason.
 
 ## Reference
