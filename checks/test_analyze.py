@@ -15,8 +15,13 @@ import unittest
 import analyze
 
 
-def error(code: str | None, message: str = "") -> dict:
-    return {"code": {"code": code} if code else None, "message": message, "level": "error"}
+def error(code: str | None, message: str = "", **extra) -> dict:
+    return {
+        "code": {"code": code} if code else None,
+        "message": message,
+        "level": "error",
+        **extra,
+    }
 
 
 def entry(mode: str, **extra) -> dict:
@@ -43,6 +48,28 @@ class TestExcuses(unittest.TestCase):
             {"ex": [error(None, "cannot find macro `criterion_main` in this scope")]}
         )
         self.assertEqual((fragment, suspects), (1, {}))
+
+    def test_missing_required_external_crate_is_a_suspect(self):
+        _, _, _, suspects = analyze.classify(
+            {
+                "ex": [
+                    error(
+                        "E0432",
+                        "unresolved import `criterion`",
+                    )
+                ]
+            }
+        )
+        self.assertIn("ex", suspects)
+
+    def test_required_external_crates_are_declared(self):
+        self.assertLessEqual(analyze.REQUIRED_EXTERNAL_CRATES, analyze.HARNESS_CRATES)
+
+    def test_disabled_feature_on_harness_crate_is_a_suspect(self):
+        _, _, _, suspects = analyze.classify(
+            {"ex": [error("E0432", "unresolved import `nix::sys::socket`")]}
+        )
+        self.assertIn("ex", suspects)
 
     def test_unstable_feature_is_a_suspect(self):
         # E0658 means the example uses nightly-only Rust on a stable pin. That

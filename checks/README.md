@@ -67,7 +67,9 @@ method that the crate does not have — all look like they need a tag and do not
 
 `analyze.py` sorts every failing example:
 
-- **fragment** — every error is name resolution. Expected, ignored.
+- **fragment** — every error is a name that the surrounding prose defines.
+  A missing harness dependency or disabled dependency feature is a suspect,
+  because it can hide all later type errors in the block.
 - **artifact** — the extraction caused it: a `&self` method body lifted into a
   free function, a doc comment with nothing after it.
 - **low** — only "type annotations needed", which the real context supplies.
@@ -113,7 +115,10 @@ can express, and write down why.
 
 When a skill starts using a crate in its examples, add it to `Cargo.toml`.
 Without it every block that imports the crate degrades to a fragment and stops
-being checked.
+being checked. `test_analyze.py` pins this contract: a missing external crate or
+a disabled feature on a required crate is never an allowed fragment. Add each
+dependency-backed import to `REQUIRED_EXTERNAL_CRATES` in `analyze.py` so a
+later manifest edit cannot silently reduce its coverage.
 
 ## Changing the toolchain
 

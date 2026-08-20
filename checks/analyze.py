@@ -8,7 +8,8 @@ surrounding prose defines, so they cannot resolve on their own. A plain
 pass/fail gate would drown a real defect in that noise. Every failing example is
 bucketed instead:
 
-  FRAGMENT  every error is name resolution. Expected, ignored.
+  FRAGMENT  every error is a name that the surrounding prose defines.
+            Missing harness dependencies and features are suspects.
   ARTIFACT  the extraction caused it: a `&self` method body lifted into a free
             function, a doc comment with no item after it, pseudocode tokens.
   LOW       only "type annotations needed", which the real context supplies.
@@ -38,9 +39,21 @@ blocks in one section apart. CI gates on signatures absent from the baseline.
 import collections
 import json
 import pathlib
+import re
 import sys
+import tomllib
 
 HERE = pathlib.Path(__file__).resolve().parent
+
+
+def harness_crates() -> set[str]:
+    """Return import names for dependencies that the example harness declares."""
+    manifest = tomllib.loads((HERE / "Cargo.toml").read_text(encoding="utf-8"))
+    return {name.replace("-", "_") for name in manifest.get("dependencies", {})}
+
+
+HARNESS_CRATES = harness_crates()
+REQUIRED_EXTERNAL_CRATES = {"criterion", "libfuzzer_sys", "nix", "rayon"}
 
 # Errors that mean "this name is defined in the prose, not in the block".
 RESOLUTION_CODES = {
@@ -86,7 +99,23 @@ def code_of(diagnostic: dict) -> str | None:
     return (diagnostic.get("code") or {}).get("code")
 
 
+def is_dependency_failure(diagnostic: dict) -> bool:
+    """True when name resolution failed because the harness is incomplete."""
+    message = diagnostic.get("message", "")
+    patterns = (
+        r"unresolved import `([^`:]+)",
+        r"(?:module or crate|crate) `([^`]+)`",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message)
+        if match and match.group(1).split("::", 1)[0] in REQUIRED_EXTERNAL_CRATES:
+            return True
+    return False
+
+
 def is_resolution(diagnostic: dict) -> bool:
+    if is_dependency_failure(diagnostic):
+        return False
     if code_of(diagnostic) in RESOLUTION_CODES:
         return True
     message = diagnostic.get("message", "")
