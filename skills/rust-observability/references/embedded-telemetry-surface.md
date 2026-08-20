@@ -94,11 +94,11 @@ The host polls. It does not receive pushes per event.
 
 ```rust
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_example_app_TelemetryNative_jniSnapshot(
-    mut env: EnvUnowned<'_>,
-    _thiz: JObject,
-) -> JString {
-    env.with_env(|env| -> jni::errors::Result<JString> {
+pub extern "system" fn Java_com_example_app_TelemetryNative_jniSnapshot<'local>(
+    mut env: EnvUnowned<'local>,
+    _thiz: JObject<'local>,
+) -> JString<'local> {
+    env.with_env(|env| -> jni::errors::Result<JString<'local>> {
         let snap = TelemetrySnapshot {
             counters: COUNTERS.read(),
             events: EVENT_RING.drain(),
@@ -108,12 +108,12 @@ pub extern "system" fn Java_com_example_app_TelemetryNative_jniSnapshot(
             .map_err(|_| jni::errors::Error::JavaException)?;
         env.new_string(json)
     })
-    .into_outcome()
-    .ok_or_throw(env, JString::default())
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
 }
 ```
 
-The exact env wrapper and outcome helpers depend on your JNI binding version.
+`resolve` is the exit: it rebuilds an `Env`, throws for an error or a caught
+panic, and returns the default. The helper names differ per binding version.
 See the `rust-jni` skill for the binding rules and the `uniffi-boundary` skill
 if you generate the surface instead of writing it.
 

@@ -7,20 +7,20 @@ destructor pattern, and the two callback wirings.
 ## Capture the JavaVM once
 
 The env handle (`Env` on `jni` 0.22, `JNIEnv` on 0.21) is per-thread and
-frame-scoped. `JavaVM` is process-wide and `Send + Sync`. Store the `JavaVM` at
+frame-scoped. `JavaVM` is process-wide and `Clone + Send + Sync`. Store the `JavaVM` at
 library load time and derive an env from it on every thread that needs one:
 
 ```rust
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use jni::{JavaVM, sys::{jint, JNI_VERSION_1_6}};
 
-static JVM: OnceLock<Arc<JavaVM>> = OnceLock::new();
+static JVM: OnceLock<JavaVM> = OnceLock::new();
 
 #[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)]
 pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) -> jint {
     match std::panic::catch_unwind(|| {
-        let _ = JVM.set(Arc::new(vm));
+        let _ = JVM.set(vm);
         install_panic_hook();
         init_logging();
         JNI_VERSION_1_6
@@ -33,18 +33,18 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) 
 
 `JNI_OnLoad` receives a `JavaVM`, not an env handle, so `EnvUnowned::with_env`
 is not available there. Use raw `catch_unwind`. A panic that escapes this
-function is undefined behavior like any other unwind across `extern "system"`.
+function aborts the process, exactly like any other panic that reaches an
+`extern "system"` export.
 
 Do the one-time setup here: store the `JavaVM`, install the panic hook,
 initialize logging, and apply any process-wide signal setup (`SIGPIPE`, for
 example).
 
-If another part of the crate needs its own handle, derive it once with
-`unsafe { JavaVM::from_raw(vm.get_raw()) }` and share the result behind an
-`Arc`. The raw pointer is valid for the life of the process, and `jni::JavaVM`
-has no `Drop`, so a duplicate handle can never reach `DestroyJavaVM`. Keep that
-`unsafe` block at one site with its SAFETY comment; do not repeat it per
-call site.
+If another part of the crate needs its own handle, call `vm.clone()`.
+`jni::JavaVM` is `Clone + Send + Sync`, it is one pointer wide, and it has no
+`Drop`, so a clone can never reach `DestroyJavaVM`. Do not rebuild the handle
+with `unsafe { JavaVM::from_raw(vm.get_raw()) }`: the safe `Clone` impl already
+does it, and an `Arc` around a pointer-sized handle only adds an indirection.
 
 ## Attach and detach
 
@@ -129,12 +129,12 @@ let `Drop` do the work.
 
 ## Callback from an async task
 
-The task must not capture an env handle. It captures `Arc<JavaVM>` and a global
-reference, and attaches when it is ready to report:
+The task must not capture an env handle. It captures a `JavaVM` clone and a
+global reference, and attaches when it is ready to report:
 
 ```rust
 // jni 0.22.
-fn handle(env: &mut Env<'_>, vm: Arc<JavaVM>, listener: Global<JObject<'static>>) {
+fn handle(env: &mut Env<'_>, vm: JavaVM, listener: Global<JObject<'static>>) {
     let payload = extract_payload(env); // synchronous use of env
 
     tokio::spawn(async move {
@@ -206,7 +206,7 @@ outbound connection per session.
 ```rust
 // jni 0.22. A scoped attach: this thread is not left attached after the call.
 fn protect_socket(
-    vm: &Arc<JavaVM>,
+    vm: &JavaVM,
     service: &Global<JObject<'static>>,
     fd: RawFd,
 ) -> io::Result<()> {

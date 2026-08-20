@@ -11,7 +11,7 @@ across all entry points of the crate.
 | C ABI, returns a scalar | `catch_unwind` in the `extern` body | A reserved negative status code |
 | C ABI, returns a pointer or handle | `catch_unwind` in the `extern` body | Null, plus a last-error slot |
 | C ABI, writes through out-params | `catch_unwind` in the `extern` body | A status code; out-params untouched |
-| JNI method | `with_env` + `into_outcome`, or `catch_unwind` | A thrown exception and a neutral return value |
+| JNI method | `with_env` + `resolve`, or `catch_unwind` | A thrown exception and a neutral return value |
 | UniFFI `#[uniffi::export]` | Generated scaffolding | The generated error path |
 | Rust callback that foreign code invokes | `catch_unwind` in the callback body | A status code, or a recorded flag |
 | Runtime entry that drives async work | `catch_unwind(AssertUnwindSafe(...))` around `block_on` | A status code plus a join-point check |
@@ -232,9 +232,9 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) 
 Store the VM handle before the guard. A later call needs it to attach a thread or to report a
 failure, and a panic during init must not lose it.
 
-### Method entry point without `into_outcome`
+### Method entry point without `with_env`
 
-Use this when the workspace pins `jni` 0.21 or earlier, which has no `with_env`/`into_outcome`.
+Use this when the workspace pins `jni` 0.21 or earlier, which has no `with_env`/`resolve`.
 
 ```rust
 #[unsafe(no_mangle)]

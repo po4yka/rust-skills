@@ -204,16 +204,16 @@ pub extern "system" fn JNI_OnLoad(_vm: JavaVM, _reserved: *mut c_void) -> jint {
 ```
 
 For individual JNI methods, `jni` 0.22 gives you `jni::EnvUnowned::with_env`,
-which returns an `Outcome` that separates an error from a caught panic. Log both
-and throw a Java exception:
+which catches the panic and returns a `#[must_use]` `EnvOutcome`. Exit through
+`resolve`, which rebuilds an `Env` and lets an `ErrorPolicy` log and throw:
 
-```rust
-match env.with_env(|env| { /* body */ }).into_outcome() {
-    Outcome::Ok(val) => val,
-    Outcome::Err(err) => { /* log, throw a Java exception, return a default */ }
-    Outcome::Panic(_) => { /* already caught: log it, throw, return a default */ }
-}
+```rust,ignore
+env.with_env(|env| { /* body */ })
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
 ```
+
+Write your own `ErrorPolicy` when an error and a caught panic need different
+log lines. `into_outcome()` gives the raw tri-state, but then nothing can throw.
 
 When you add a new JNI export, use `EnvUnowned::with_env` or wrap the body in
 `catch_unwind(AssertUnwindSafe(|| { ... }))`. There is no third option. See

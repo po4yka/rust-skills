@@ -49,7 +49,7 @@ cargo tree --invert jni
 |------|------------|------------|
 | Env type inside a call | `JNIEnv<'local>` | `Env<'local>` |
 | Env type in an export signature | `JNIEnv<'local>` | `EnvUnowned<'local>` |
-| Panic guard | `std::panic::catch_unwind` | `env.with_env(..).into_outcome()` with `Outcome::{Ok, Err, Panic}` |
+| Panic guard | `std::panic::catch_unwind` | `env.with_env(..)` then `.resolve::<P>()` with an `ErrorPolicy` |
 | Read a `JString` | `env.get_string(&s)?.into()` | `s.mutf8_chars(env)?.to_str().into_owned()` |
 | Attach a thread | `let _guard = vm.attach_current_thread()?` (RAII guard) | `vm.attach_current_thread(closure)`; the thread-local guard detaches at thread exit |
 | Attach for one call only | `attach_current_thread_as_daemon` keeps the thread attached | `vm.attach_current_thread_for_scope(closure)` detaches when the closure returns |
@@ -111,16 +111,18 @@ parameter types to silence it.
 
 ### Panic containment
 
-**Severity: CRITICAL.** A panic that unwinds into the JVM is undefined
-behavior. Guard every export. Keep the extern body to a single delegation call
-and put the logic in a plain Rust entry function:
+**Severity: CRITICAL.** A Rust panic that reaches an `extern "system"` export
+aborts the process on Rust 1.81 and later; before 1.81 it is undefined
+behavior. The JVM reports a native crash, not a Rust panic. Guard every export:
+keep the extern body to one delegation call, with the logic in a plain function:
 
 ```rust
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JObject, JString};
 use jni::sys::jlong;
-use jni::{EnvUnowned, Outcome};
+use jni::EnvUnowned;
 
 /// Outer guard. Catches a panic raised before or outside `with_env`.
 pub fn ffi_boundary<T, F: FnOnce() -> T>(default_on_panic: T, f: F) -> T {
@@ -128,34 +130,34 @@ pub fn ffi_boundary<T, F: FnOnce() -> T>(default_on_panic: T, f: F) -> T {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_example_app_NativeBindings_nativeCreate(
-    env: EnvUnowned<'_>,
-    _thiz: JObject<'_>,
-    config_json: JString<'_>,
+pub extern "system" fn Java_com_example_app_NativeBindings_nativeCreate<'local>(
+    env: EnvUnowned<'local>,
+    _thiz: JObject<'local>,
+    config_json: JString<'local>,
 ) -> jlong {
     ffi_boundary(0, move || create_entry(env, config_json))
 }
 
-pub(crate) fn create_entry(mut env: EnvUnowned<'_>, config_json: JString<'_>) -> jlong {
-    match env
-        .with_env(move |env| -> jni::errors::Result<jlong> {
-            let config: String = config_json.mutf8_chars(env)?.to_str().into_owned();
-            Ok(create_session(&config))
-        })
-        .into_outcome()
-    {
-        Outcome::Ok(handle) => handle,
-        Outcome::Err(_err) => 0,       // throw a Java exception, return the default
-        Outcome::Panic(_payload) => 0, // caught: log it, throw, return the default
-    }
+pub(crate) fn create_entry<'local>(
+    mut env: EnvUnowned<'local>,
+    config_json: JString<'local>,
+) -> jlong {
+    env.with_env(|env| -> jni::errors::Result<jlong> {
+        let config: String = config_json.mutf8_chars(env)?.to_str().into_owned();
+        Ok(create_session(&config))
+    })
+    .resolve::<ThrowRuntimeExAndDefault>()
 }
+
+fn create_session(_config: &str) -> jlong { todo!() }
 ```
 
-`EnvUnowned::with_env` plus `into_outcome` is the inner guard on `jni` 0.22.
-`Outcome` separates an error from a caught panic, so you can log and map them
-differently. On `jni` 0.21 there is no `Outcome`: wrap the whole body in
-`catch_unwind(AssertUnwindSafe(|| { ... }))` and throw a Java exception in the
-`Err` arm. There is no third option.
+`with_env` is the inner guard on `jni` 0.22: it catches the panic and returns a
+`#[must_use]` `EnvOutcome`. `resolve` rebuilds an `Env` and runs an
+`ErrorPolicy` over the error and the caught panic, so it is the only place an
+exception can be thrown. `into_outcome` gives the raw tri-state instead; take it
+only when the exit does not throw. On `jni` 0.21 wrap the whole body in
+`catch_unwind(AssertUnwindSafe(|| { ... }))` and throw in the `Err` arm.
 
 Raw `catch_unwind` is also the only choice in `JNI_OnLoad` and `JNI_OnUnload`,
 where `EnvUnowned` is not available.
@@ -171,8 +173,9 @@ that macro and for the ownership rules of `JString::from_raw` and friends.
 
 ### Throwing a Java exception
 
-Throw with `env.throw_new`, then return a default value in the same arm. The
-exception becomes visible to the JVM only after the native function returns.
+An `ErrorPolicy` throws for you. Inside `with_env`, and on `jni` 0.21, throw
+with `env.throw_new` and return a default value in the same arm. The exception
+becomes visible to the JVM only after the native function returns.
 After you call any Java method from Rust, check `env.exception_check()` before
 you use the result; a pending exception makes most later JNI calls illegal.
 
@@ -255,9 +258,8 @@ Additional rules:
 - A `jlong` handle is a `Box::into_raw` pointer or an index into a registry.
   Validate it before you dereference. Never dereference a handle of `0`.
 - If a JNI string payload carries a structured document (JSON), that document
-  is a compatibility boundary. Field removal and field rename are breaking
-  changes. Keep contract tests on both the Rust side and the JVM side, and
-  update both in the same patch.
+  is a compatibility boundary: field removal and field rename are breaking
+  changes. Keep contract tests on both sides and update both in one patch.
 - Setup failures surface as Java exceptions, not as magic return values, unless
   the return value is already documented as a status code.
 
@@ -287,12 +289,12 @@ JNI WARNING: native thread exiting without DetachCurrentThread
 On Android this warning is upgraded to a fatal abort under some combinations of
 `android:debuggable` and API level. Treat it as fatal always.
 
-To attach, a thread needs the `JavaVM`. `JavaVM` is `Send + Sync` and stays
-valid for the life of the process, so capture it once at library load and share
-it as `Arc<JavaVM>`. Duplicate the handle with
-`unsafe { JavaVM::from_raw(vm.get_raw()) }` in exactly one place in the crate,
-and give that call site the SAFETY comment. `jni::JavaVM` has no `Drop`, so no
-number of clones can reach `DestroyJavaVM`.
+To attach, a thread needs the `JavaVM`. `JavaVM` is `Clone + Send + Sync` and
+stays valid for the life of the process, so capture it once at library load and
+duplicate it with `vm.clone()`. The handle is one pointer and has no `Drop`, so
+a clone can never reach `DestroyJavaVM`, and an `Arc` around it buys nothing.
+Do not rebuild it with `unsafe { JavaVM::from_raw(vm.get_raw()) }`: that is an
+`unsafe` call for what the safe `Clone` impl already does.
 
 On `jni` 0.22 you attach with a closure. The crate installs the thread-local
 guard, so the detach cannot be forgotten:
@@ -391,12 +393,12 @@ tokio::spawn(async move { env.call_method(/* ... */); });
 ```
 
 Correct pattern: use the env synchronously, extract owned data, then spawn. The
-task captures `Arc<JavaVM>` and a global reference, never an env and never a
-local reference, and it attaches its own thread when it needs to call back:
+task captures a `JavaVM` clone and a global reference, never an env and never
+a local reference, and attaches its own thread when it needs to call back:
 
 ```rust
 // jni 0.22.
-fn handle(env: &mut Env<'_>, vm: Arc<JavaVM>, listener: Global<JObject<'static>>) {
+fn handle(env: &mut Env<'_>, vm: JavaVM, listener: Global<JObject<'static>>) {
     let payload = extract_payload(env); // synchronous use of env
 
     tokio::spawn(async move {
@@ -467,7 +469,7 @@ allowlist, and page alignment.
 | Local reference table overflow abort | A loop created local refs without a frame | Wrap the loop body in `with_local_frame`. Create outliving objects in the outer frame |
 | `SIGABRT` right after a Rust panic message | The panic unwound into the JVM | Add the panic guard at that export |
 | Native crash with no Rust message in logcat | No Android logger installed | Initialize logging and the panic hook in `JNI_OnLoad` |
-| Crash inside a callback long after the call returned | A local reference or an env handle was stored between calls | Store a global reference plus `Arc<JavaVM>` instead |
+| Crash inside a callback long after the call returned | A local reference or an env handle was stored between calls | Store a global reference plus a `JavaVM` clone instead |
 | Corruption after passing a DirectByteBuffer | The Java-side reference was collected while Rust held the slice | Hold a global reference for the buffer |
 | Native abort with no exception, and `catch_unwind` never runs | The profile that builds the `cdylib` sets `panic = "abort"` | Accept the abort, or build that profile with `panic = "unwind"` |
 | `improper_ctypes_definitions` warning on an export | The `jni` types carry lifetime parameters | Allow the lint on the bridge crate. Do not change the parameter types |
@@ -480,12 +482,11 @@ skill. For the panic hook and `Drop` hazards, use `rust-panic-safety`.
 Apply to every diff that touches a JNI export or its binding class.
 
 - [ ] Every new `Java_*` export uses `#[unsafe(no_mangle)]` and `extern "system"`.
-- [ ] Every export body is `EnvUnowned::with_env` plus `into_outcome`, or
+- [ ] Every export body is `EnvUnowned::with_env` plus `resolve`, or
       `catch_unwind`. No bare extern body.
 - [ ] The symbol name matches the declaring class, character for character.
-- [ ] Every callback from an async task or worker thread captures
-      `Arc<JavaVM>` plus a global reference, never an env handle or a local
-      reference.
+- [ ] Every callback from an async task or worker thread captures a `JavaVM`
+      clone plus a global reference, never an env handle or a local reference.
 - [ ] Every attachment detaches: a bound named guard on `jni` 0.21, an attach
       closure on 0.22.
 - [ ] Repeated callbacks on one worker thread do not use a scoped attach.
@@ -503,7 +504,7 @@ Apply to every diff that touches a JNI export or its binding class.
 - [ ] Structured string payloads keep contract tests on both sides in the same patch.
 - [ ] The `cdylib` profile is `panic = "unwind"` if the design needs a Java
       exception instead of an abort.
-- [ ] `JavaVM::from_raw` appears at most once in the crate, with a SAFETY comment.
+- [ ] No `JavaVM::from_raw`. A second handle comes from `vm.clone()`.
 - [ ] If the platform requires the JVM to act on a native socket (for example
       `VpnService.protect`), every affected socket passes through that path
       before first use.

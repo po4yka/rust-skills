@@ -148,7 +148,7 @@ macro_rules! export_jni {
 ```
 
 The generated function does one thing: delegate. All logic, error mapping, and the
-`with_env`/`into_outcome` guard live in the plain `_entry` function, which is ordinary Rust that
+`with_env`/`resolve` guard live in the plain `_entry` function, which is ordinary Rust that
 you can unit-test without a JVM.
 
 ## A hand-rolled `extern "C"` entry point
@@ -191,27 +191,35 @@ pub unsafe extern "C" fn render_into_buffer(
 Return a plain integer status. Do not return a `Result`, a `String`, or any type whose layout
 the foreign caller cannot rely on.
 
-## A JNI entry point with a tri-state guard
+## A JNI entry point with a policy exit
 
-`jni` 0.22 gives a tri-state guard. `EnvUnowned::with_env` plus `into_outcome` separates a caught
-panic from a normal error, so you do not lose that distinction at the exit:
+`EnvUnowned::with_env` catches the panic and returns a `#[must_use]` `EnvOutcome`. `resolve`
+rebuilds an `Env` and applies an `ErrorPolicy` to the error and to the caught panic, so it is
+the only place the entry point can throw:
 
 ```rust
-use jni::{EnvUnowned, Outcome};
+use jni::errors::ThrowRuntimeExAndDefault;
+use jni::objects::JString;
+use jni::sys::jlong;
+use jni::{Env, EnvUnowned};
 
-pub(crate) fn create_entry(mut env: EnvUnowned<'_>, config: JString<'_>) -> jlong {
-    match env
-        .with_env(move |env| -> jni::errors::Result<jlong> {
-            Ok(create_session(env, config)?)
-        })
-        .into_outcome()
-    {
-        Outcome::Ok(handle) => handle,
-        Outcome::Err(_err) => 0,       // throw a Java exception, return the default
-        Outcome::Panic(_payload) => 0, // already caught: log it, throw, return the default
-    }
+pub(crate) fn create_entry<'local>(
+    mut env: EnvUnowned<'local>,
+    config: JString<'local>,
+) -> jlong {
+    env.with_env(|env| -> jni::errors::Result<jlong> { create_session(env, config) })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+fn create_session(_env: &mut Env<'_>, _config: JString<'_>) -> jni::errors::Result<jlong> {
+    todo!()
 }
 ```
+
+`into_outcome` gives the raw `Outcome::{Ok, Err, Panic}` instead of a resolved value. Take it
+only when the exit does not throw: `EnvUnowned` has no JNI methods, so nothing after that call
+can raise an exception. Write your own `ErrorPolicy` when the error and the panic need
+different messages.
 
 On `jni` 0.21 and earlier, which has no `EnvUnowned`, wrap the body in
 `catch_unwind(AssertUnwindSafe(|| { ... }))` and throw a Java exception in the `Err` arm. Raw

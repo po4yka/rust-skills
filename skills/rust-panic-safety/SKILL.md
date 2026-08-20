@@ -32,7 +32,7 @@ rg -n 'extern "(C|system|C-unwind|system-unwind)"' --type rust
 rg -n '#\[unsafe\(no_mangle\)\]|#\[no_mangle\]|#\[export_name|#\[unsafe\(export_name' --type rust
 
 # Every guard that already exists.
-rg -n 'catch_unwind|AssertUnwindSafe|into_outcome' --type rust
+rg -n 'catch_unwind|AssertUnwindSafe|with_env' --type rust
 
 # Every panic strategy declared in the workspace.
 rg -n 'panic\s*=\s*"(abort|unwind)"' -g '**/Cargo.toml'
@@ -176,51 +176,51 @@ otherwise in a review.
 
 ### Per-method entry point
 
-`jni` 0.22 gives a tri-state guard. `jni::EnvUnowned::with_env` plus `into_outcome` separates
-a caught panic from a normal error, so you never lose that distinction at the exit.
+`jni` 0.22 catches the panic inside `EnvUnowned::with_env` and returns a `#[must_use]`
+`EnvOutcome`. You exit through `resolve`, which rebuilds an `Env` and applies an `ErrorPolicy`
+to the error and to the caught panic. It is the only place an exception can be thrown.
 
 ```rust
+use jni::errors::ThrowRuntimeExAndDefault;
+use jni::objects::{JObject, JString};
+use jni::sys::jlong;
+use jni::{Env, EnvUnowned};
+
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_example_app_NativeBridge_nativeCreate(
-    mut env: EnvUnowned<'_>,
-    _thiz: JObject,
-    config_json: JString,
+pub extern "system" fn Java_com_example_app_NativeBridge_nativeCreate<'local>(
+    mut env: EnvUnowned<'local>,
+    _thiz: JObject<'local>,
+    config_json: JString<'local>,
 ) -> jlong {
-    match env
-        .with_env(move |env| -> jni::errors::Result<jlong> {
-            Ok(create_session(env, config_json))
-        })
-        .into_outcome()
-    {
-        Outcome::Ok(handle) => handle,
-        Outcome::Err(err) => {
-            let _ = env.throw_new("java/lang/RuntimeException", err.to_string());
-            0
-        }
-        Outcome::Panic(payload) => {
-            let msg = payload
-                .downcast_ref::<&str>()
-                .copied()
-                .unwrap_or("panic at the FFI boundary");
-            let _ = env.throw_new("java/lang/RuntimeException", msg);
-            0
-        }
-    }
+    env.with_env(|env| -> jni::errors::Result<jlong> { create_session(env, config_json) })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+fn create_session(_env: &mut Env<'_>, _config: JString<'_>) -> jni::errors::Result<jlong> {
+    todo!()
 }
 ```
 
+`ThrowRuntimeExAndDefault` throws `java.lang.RuntimeException` for an error and for a caught
+panic, then returns the default value. It throws nothing when an exception is already pending.
+Write your own `ErrorPolicy` when the two cases need different messages or different logging;
+`jni::errors` also gives `LogErrorAndDefault` and `LogContextErrorAndDefault`.
+
 Rules for this boundary:
 
-- Never write a bare `extern "system" fn` body. A bare body propagates the panic.
+- Never write a bare `extern "system" fn` body. A bare body aborts the process at the first
+  panic, and the JVM reports a native crash instead of a Rust panic.
+- `into_outcome()` gives the raw `Outcome::{Ok, Err, Panic}` instead of a resolved value. Take
+  it only when the exit does not throw: after that call there is no `Env` left to throw with.
 - Read the `with_env` documentation for the `jni` version in your lock file. The helper
   names, and the point at which the exception is thrown, changed between versions.
-- On `jni` 0.21 and earlier, which has no `with_env`/`into_outcome`, wrap the body in `catch_unwind` and
-  throw in the `Err` arm. The exit path is what matters, not the helper.
+- On `jni` 0.21 and earlier, which has no `with_env`/`resolve`, wrap the body in `catch_unwind`
+  and throw in the `Err` arm. The exit path is what matters, not the helper.
 - Throw one exception type unless the caller needs to branch. A single `RuntimeException`
   keeps one catch site on the managed side. A new exception class per panic class fragments
   that handling for no gain.
-- Return a neutral sentinel (`0`, `-1`, null) after `throw_new`. The JVM raises the pending
-  exception when control returns; the value is never read.
+- Return a neutral sentinel (`0`, `-1`, null) with the exception. The JVM raises the pending
+  exception when control returns; the value is never read. Any `AndDefault` policy does this.
 - Generate the `extern` layer with a macro when the crate exports many methods, so no
   hand-written body can drift from the pattern.
 
