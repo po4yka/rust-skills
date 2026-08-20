@@ -81,6 +81,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | 16 KiB page alignment | rust-android-build |
 | jniLibs | rust-android-build |
 | NDK | rust-android-build |
+| native debug symbols | rust-android-build |
+| Prefab | rust-android-build |
 | Rust for iOS | rust-ios-build |
 | IPHONEOS_DEPLOYMENT_TARGET | rust-ios-build |
 | SwiftPM binaryTarget | rust-ios-build |

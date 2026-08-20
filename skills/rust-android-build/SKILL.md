@@ -1,6 +1,6 @@
 ---
 name: rust-android-build
-description: Use when you build, verify, or package a Rust cdylib for Android - install cross-compilation targets, set up the NDK toolchain, write per-ABI rustflags in .cargo/config.toml, enforce 16 KiB page alignment, tune a size-optimized release profile, audit the exported ELF symbol set, hold .so size budgets, or drive the cargo build from a Gradle task that produces jniLibs.
+description: Use when you build, verify, or package a Rust cdylib for Android - install cross-compilation targets, set up the NDK toolchain, write per-ABI rustflags in .cargo/config.toml, enforce 16 KiB page alignment, tune a size-optimized release profile, audit the exported ELF symbol set, hold .so size budgets, drive cargo from Gradle into jniLibs, produce native debug symbols, or publish a reusable AAR or Prefab package.
 license: BSD-3-Clause
 ---
 
@@ -20,6 +20,7 @@ the NDK release notes after any bump and re-verify the artifacts.
 - You edit the release profile that the Android build uses.
 - You audit a built `.so` before a release.
 - You review the Gradle wiring that calls cargo.
+- You create native debug symbols or publish an AAR or Prefab package.
 - You investigate a store rejection that cites 16 KiB alignment, a native
   crash, or an unexpected exported symbol.
 
@@ -388,6 +389,22 @@ Build through the Gradle task, not through a hand-written cargo command. The
 task fixes the profile, the linker, the ABI set, and the output layout in one
 place, so what you verify locally is what the app packages.
 
+## Production release packaging
+
+Keep the unstripped Rust outputs as symbol inputs. Let the Android packaging
+step strip the copies that ship. Build the app package and its native symbol
+sidecar from the same release variant and invocation. Then compare the ELF
+build ID for every ABI and library. File names and archive presence do not
+prove that symbols match the shipped code.
+
+Run an installed release smoke test from the final APK or from APKs generated
+from the final AAB. The test must load the native library and call one stable
+JNI entry point. A successful assemble task is not runtime proof.
+
+Read `references/release-packaging.md` when you configure native debug symbols,
+verify an exact release closure, test an installed package, or distribute a
+reusable Android SDK as an AAR or Prefab package.
+
 ## NDK 29 specifics
 
 NDK r29 changed these items:
@@ -457,11 +474,22 @@ Before you approve a change to the Android build:
 - [ ] The alignment gate checks every shipped ELF and the final APK or the APKs
       generated from the release AAB.
 - [ ] The size baseline change, if any, is a separate commit with a reason.
+- [ ] Every shipped native library has a matching symbol input with the same
+      ELF build ID.
+- [ ] No release `keepDebugSymbols` pattern matches a shipped Rust library, and
+      no extracted final ELF contains a `.debug_*` section.
+- [ ] An installed smoke test loads and calls the native library from the final
+      APK or from APKs generated from the final AAB.
+- [ ] A Prefab AAR contains metadata, headers, and the Rust library for every
+      shipping ABI, and a clean CMake consumer links and runs it.
+- [ ] Any Play or repository upload has separate explicit authorization.
 
 ## Reference
 
 - `references/elf-verification.md` - the full verification and size-gate
   design: what to inspect, in what order, and how to wire it into CI.
+- `references/release-packaging.md` - native debug symbols, exact artifact
+  correlation, installed release smoke tests, and reusable AAR or Prefab SDKs.
 
 ## Related skills
 
