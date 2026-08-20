@@ -268,9 +268,10 @@ future `!Send`.
 
 ## Timeouts
 
-`tokio::time::timeout` checks the deadline before each poll of the wrapped
-future. If the wrapped future never reaches an `.await` point, the timeout
-never fires and the work runs to completion.
+`tokio::time::timeout` polls the wrapped future before it reports the elapsed
+deadline. It cannot preempt one call to `Future::poll`. If that poll runs past
+the deadline and returns `Ready`, `timeout` returns `Ok`. If the poll never
+returns, the timeout never fires.
 
 ```rust
 use std::time::Duration;
@@ -324,7 +325,7 @@ registered-buffer rules.
 | Shutdown never completes | a `select!` loop without a `cancelled()` arm | add `biased;` + `_ = cancel.cancelled() => break` |
 | Async tasks abort, but the process will not exit | `JoinSet` drop cannot abort `spawn_blocking` threads | pass a `CancellationToken` into the blocking closure and check it |
 | Latency spikes with no obvious cause | blocking pool saturated by long-lived tasks | move indefinite work to `std::thread::spawn` |
-| A `timeout` never fires | the wrapped future never yields | wrap `spawn_blocking` inside the `timeout`; add cooperative cancellation if the work itself must stop |
+| A timeout is exceeded but returns `Ok`, or never returns | one poll of the wrapped future does not yield | wrap `spawn_blocking` inside the `timeout`; add cooperative cancellation if the work itself must stop |
 | Panic: "can call blocking only when running on the multi-thread runtime" | `block_in_place` on a `current_thread` runtime | use `spawn_blocking` |
 | Events are missing, no error is logged | `broadcast` `Lagged` handled as a generic `Err` | match `RecvError::Lagged(n)` explicitly, or switch to `mpsc` |
 | Deadlock only under concurrent load | `std::sync::Mutex` guard held across `.await` | drop the guard before the `.await`, or use `tokio::sync::Mutex` |

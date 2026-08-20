@@ -16,7 +16,7 @@ rating. Read the section that matches the code you author or review.
 - [Async + shared state in event loops](#async--shared-state-in-event-loops)
 - [Pin necessity in FFI](#pin-necessity-in-ffi)
 - [impl Trait (RPIT) overcaptures lifetimes in edition 2024](#impl-trait-rpit-overcaptures-lifetimes-in-edition-2024)
-- [tokio::time::timeout is cooperative](#tokiotimetimeout-is-cooperative--never-fires-on-non-yielding-futures)
+- [tokio::time::timeout is cooperative](#tokiotimetimeout-is-cooperative--one-poll-can-exceed-the-deadline)
 - [JoinSet drop cannot abort spawn_blocking threads](#joinset-drop-cannot-abort-spawn_blocking-threads--silent-shutdown-hang)
 - [spawn_blocking pool exhaustion from long-lived tasks](#spawn_blocking-pool-exhaustion-from-long-lived-tasks)
 - [block_in_place panics on current_thread runtime](#block_in_place-panics-on-current_thread-runtime)
@@ -704,14 +704,15 @@ Reference:
 [Rust Blog: impl Trait capture rules](https://blog.rust-lang.org/2024/09/05/impl-trait-capture-rules/),
 Edition Guide RPIT section.
 
-## `tokio::time::timeout` is cooperative — never fires on non-yielding futures
+## `tokio::time::timeout` is cooperative — one poll can exceed the deadline
 
 **Severity: CRITICAL**
 
-`tokio::time::timeout` wraps a future and checks the deadline before each poll.
-If the wrapped future never reaches an `.await` point — a tight CPU loop, a
-blocking syscall, a heavy synchronous computation — the timeout never fires.
-The future runs to completion regardless of the deadline.
+`tokio::time::timeout` polls the wrapped future before it reports the elapsed
+deadline. It cannot preempt one call to `Future::poll`. A tight CPU loop,
+blocking syscall, or heavy synchronous computation can run past the deadline.
+If that poll then returns `Ready`, `timeout` returns `Ok`. If the poll never
+returns, the timeout never fires.
 
 ```rust
 use std::time::Duration;
@@ -722,7 +723,7 @@ fn expensive_cpu_computation() {}
 let result = tokio::time::timeout(
     Duration::from_secs(1),
     async {
-        // No .await -- timeout will never fire
+        // One poll can exceed the deadline and still return Ok.
         expensive_cpu_computation()
     }
 ).await;
