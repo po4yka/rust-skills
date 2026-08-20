@@ -221,7 +221,7 @@ Memorize this table. The documentation entries are easy to miss.
 | `AsyncReadExt::read_exact` | **No** | May consume some bytes before cancellation; the caller loses them. |
 | `AsyncWriteExt::write` | Yes | Single syscall. |
 | `AsyncWriteExt::write_all` | **No** | Same partial-write hazard. |
-| `tokio::sync::Mutex::lock` | Yes | Acquisition is the only state change; cancellation releases the wait. |
+| `tokio::sync::Mutex::lock` | **No for queue position** | The mutex is fair. Cancellation removes the waiter, so retrying loses its FIFO place. No lock is leaked. |
 | `tokio::sync::oneshot::Receiver` | Yes | Single state transition. |
 | `tokio::sync::mpsc::Receiver::recv` | Yes | Documented cancel-safe. |
 | `tokio::sync::Notify::notified` | **Conditional** | Must be awaited via `Pin<&mut>` to be cancel-safe; a bare `.notified().await` re-arms on each call. |
