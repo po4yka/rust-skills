@@ -21,8 +21,9 @@ rustc --explain E0499
 # One line per diagnostic. Use it when the build produces a wall of output.
 cargo build --message-format=short
 
-# Stop at the first failing crate instead of reporting every downstream break.
-cargo build --keep-going=false
+# Use Cargo's default failure behavior. Add `--keep-going` only when you want
+# Cargo to continue with independent crates after one crate fails.
+cargo build
 
 # Machine-readable, for counting error codes across a large failure.
 cargo build --message-format=json 2>/dev/null | grep -o '"code":{"code":"E[0-9]*"' | sort | uniq -c | sort -rn
