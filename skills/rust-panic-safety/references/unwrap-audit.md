@@ -247,8 +247,9 @@ Rules:
   source type do not compile, and that is a design signal.
 - Keep the `Display` text short and free of secrets. It can end up in a host log or in an
   exception message that a user sees.
-- Do not put a backtrace in the error type on an FFI path. The panic hook already captures
-  one, and the boundary flattens the error anyway.
+- Do not put a backtrace in the error type on an FFI path. The shipped panic hook emits only a
+  closed site code plus bounded numeric location. Reproduce locally with
+  `RUST_BACKTRACE=full`, or symbolicate the crash artifact offline against the exact binary.
 
 ### Where `anyhow` still fits
 
