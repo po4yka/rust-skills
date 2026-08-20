@@ -2,7 +2,7 @@
 
 # rust-skills
 
-**Thirty-nine agent skills for production Rust:**
+**Forty agent skills for production Rust:**
 unsafe review · networking · FFI boundaries · native linking · profiling · crate releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
@@ -97,6 +97,7 @@ Enter by the symptom, not by the skill name.
 | Pool exhaustion, transaction rollback, migration ordering, or serialization failure | [rust-database](skills/rust-database/SKILL.md) |
 | `wasm32-unknown-unknown`, WASI, `wasm-bindgen`, or a WebAssembly size regression | [rust-wasm](skills/rust-wasm/SKILL.md) |
 | `no_std`, `memory.x`, an interrupt race, Embassy, RTIC, `probe-rs`, or `defmt` | [rust-embedded-no-std](skills/rust-embedded-no-std/SKILL.md) |
+| `clap` arguments, stdout or exit-code compatibility, Ctrl-C, atomic output, or shell completions | [rust-cli](skills/rust-cli/SKILL.md) |
 
 The full phrase-to-skill list lives in [tests/routing-cases.md](tests/routing-cases.md), and CI
 checks every row against the skill descriptions.
@@ -111,6 +112,7 @@ flowchart LR
     Q --> D["It fails in<br/>the field"]
     Q --> E["It crosses a<br/>language boundary"]
     Q --> F["It is not built<br/>or shipped yet"]
+    Q --> G["It is a command-line<br/>interface"]
 
     A --> A1[rust-compiler-errors]
     A --> A2[rust-discipline]
@@ -156,15 +158,17 @@ flowchart LR
     F --> F7[rust-native-linking]
     F --> F8[rust-wasm]
     F --> F9[rust-embedded-no-std]
+
+    G --> G1[rust-cli]
 ```
 
 ## Catalog
 
-Thirty-nine skills in six groups. Deep material sits in `references/*.md` next to the skill that
+Forty skills in six groups. Deep material sits in `references/*.md` next to the skill that
 owns it.
 
 <details open>
-<summary><b>Language and code discipline</b> — ten skills</summary>
+<summary><b>Language, interfaces, and code discipline</b> — eleven skills</summary>
 
 <br>
 
@@ -180,6 +184,7 @@ owns it.
 | [rust-variance](skills/rust-variance/SKILL.md) | Variance, subtyping, and lifetime coercion: the two probe functions that settle any case in one `rustc` run, the table for every constructor and `PhantomData` form, why a trait bound matches by equality, and why adding interior mutability is a breaking change. |
 | [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) | Shaping a callable in a public signature: which bound accepts which closure, `for<'a> Fn(&'a T) -> &'a K` for reference projections, HRTB as a no-escape promise, positional closure inference, and the cost of a generic `F` field against `Box<dyn Fn>`. |
 | [rust-type-erasure](skills/rust-type-erasure/SKILL.md) | Type-keyed storage when the values are not `'static`: why `Any` is bound to `'static`, the ladder from a lifetime-parameterized enum to a `Box<dyn Any>` map to the GAT owner/element bijection, and where the pattern turns unsound. |
+| [rust-cli](skills/rust-cli/SKILL.md) | Stable command-line contracts for arguments, stdout and stderr, exit status, configuration precedence, signals, terminal behavior, atomic file output, and packaged shell completions. |
 
 </details>
 

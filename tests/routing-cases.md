@@ -53,6 +53,14 @@ wrong skill, and put the phrase in the right description in the same change.
 | embedded-hal | rust-embedded-no-std |
 | Embassy | rust-embedded-no-std |
 | probe-rs | rust-embedded-no-std |
+| Rust CLI | rust-cli |
+| clap arguments | rust-cli |
+| CLI exit codes | rust-cli |
+| config precedence | rust-cli |
+| broken pipe | rust-cli |
+| atomic file replacement | rust-cli |
+| Ctrl-C | rust-cli |
+| shell completions | rust-cli |
 | callbackFlow | ffi-error-progress-cancel |
 | AsyncThrowingStream | ffi-error-progress-cancel |
 | cancel_job | ffi-error-progress-cancel |
