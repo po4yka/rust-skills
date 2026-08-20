@@ -142,10 +142,12 @@ not automatically the smallest, and a compute-bound path can prefer `3`. See
 Select the profile from the host build system with a property, and give local
 development a separate default so a debug loop does not pay for a release build.
 
-**Keep `panic = "unwind"` on any profile that builds an FFI artifact.** With
-`panic = "abort"`, a Rust panic kills the whole process. The JVM side, the
-Swift/Objective-C side, and UniFFI-generated bindings all need the unwind
-strategy so a panic converts into an exception or an error instead of a crash.
+**Keep `panic = "unwind"` on any profile that builds an FFI artifact.** This is
+only a prerequisite for panic containment. With `panic = "abort"`,
+`catch_unwind` cannot catch a panic. With `panic = "unwind"`, a panic still must
+not cross a raw `extern "C"` or `extern "system"` boundary. Catch it inside each
+entry point and map it to an ABI-safe status, sentinel, or host exception.
+Verify the generated binding runtime before you rely on it to do this work.
 
 ### Build only the artifact the platform consumes
 
@@ -196,7 +198,7 @@ workspace can use the FFI crate, and doc-tests cannot compile.
 
 | Rule | Reason |
 |------|--------|
-| `panic = "unwind"` | The host runtime must catch the panic instead of aborting. |
+| `panic = "unwind"` plus a boundary panic guard | The profile permits `catch_unwind`; the guard prevents a Rust unwind from reaching the host ABI. |
 | One FFI crate where possible | A second boundary duplicates error mapping and lifetime rules. |
 | No business logic in the FFI crate | Keep it a thin translation layer over the pure-logic crates. |
 | Build `cdylib` or `staticlib` on demand with `cargo rustc` | Workspace builds stay fast. |
@@ -212,6 +214,48 @@ workspace can use the FFI crate, and doc-tests cannot compile.
   `not_unsafe_ptr_arg_deref` allowed, because the JNI entry points take raw
   pointers from the JVM. Scope the allowance to the FFI crate if you can. See
   `rust-jni`.
+
+Apply the same guard to every raw C, JNI, and callback entry point. Convert a
+normal Rust error and a panic to explicit ABI values:
+
+```rust
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
+#[repr(C)]
+pub enum Status {
+    Ok = 0,
+    InvalidArgument = 1,
+    Failed = 2,
+    Panicked = 3,
+}
+
+fn calculate() -> Result<u32, ()> {
+    todo!()
+}
+
+/// # Safety
+/// `out` must be null or valid for one aligned `u32` write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn calculate_for_host(out: *mut u32) -> Status {
+    if out.is_null() {
+        return Status::InvalidArgument;
+    }
+
+    match catch_unwind(AssertUnwindSafe(calculate)) {
+        Ok(Ok(value)) => {
+            // SAFETY: The caller contract and the null check make this write valid.
+            unsafe { out.write(value) };
+            Status::Ok
+        }
+        Ok(Err(())) => Status::Failed,
+        Err(_) => Status::Panicked,
+    }
+}
+```
+
+Do not use `catch_unwind` as a general recovery boundary. It catches only
+unwinding Rust panics. It does not catch aborts, foreign exceptions, or memory
+unsafety.
 
 ### UniFFI crates
 
