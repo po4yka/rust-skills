@@ -1,10 +1,10 @@
 ---
 name: rust-security
-description: Use when you audit Rust dependencies with cargo-audit, configure or change a cargo-deny policy in deny.toml, triage a RUSTSEC advisory, evaluate a new crate for typosquat and supply-chain risk before you add it to Cargo.toml, respond to a published CVE on a pinned dependency, decide whether an advisory ignore entry is acceptable, or harden a Rust parser that reads untrusted files. Triggers on "cargo audit", "cargo deny", "deny.toml", "RUSTSEC", "advisory", "supply chain", "typosquat", "malicious crate", "yanked", new-dependency-addition reviews, and archive, backup, or binary-format parser hardening.
+description: Use when you audit Rust dependencies with cargo-audit, configure or change a cargo-deny policy in deny.toml, triage a RUSTSEC advisory, evaluate a new crate for typosquat and supply-chain risk before you add it to Cargo.toml, respond to a published CVE on a pinned dependency, decide whether an advisory ignore entry is acceptable, or harden a Rust parser that reads untrusted files. Do not use for ordinary authentication, secret storage, cryptographic design, key lifecycle, payments, or network TLS policy. Triggers on "cargo audit", "cargo deny", "deny.toml", "RUSTSEC", "advisory", "supply chain", "typosquat", "malicious crate", "yanked", new-dependency-addition reviews, and archive, backup, or binary-format parser hardening.
 license: BSD-3-Clause
 ---
 
-# Rust Supply Chain Security
+# Rust Dependency and Parser Security
 
 ## Purpose
 
@@ -16,6 +16,16 @@ hardening for files that come from outside your trust boundary.
 For memory-safety validation, see the `rust-sanitizers-miri` skill. For unsafe
 code audits, see the `rust-unsafe` skill. For lockfile and workspace mechanics,
 see the `cargo-workflows` skill.
+
+## Scope and routing
+
+| Request | Route |
+|---|---|
+| Dependency advisories, dependency vetting, registry policy, or supply-chain risk | Use this skill. |
+| Untrusted file, archive, backup, or binary-format parsing | Use this skill. |
+| Unsafe-code soundness or runtime memory-safety validation | Use `rust-unsafe` or `rust-sanitizers-miri`. |
+| Network TLS transport policy | Use `rust-networking`. |
+| Ordinary authentication or authorization, secret storage, cryptographic protocol design, key lifecycle, or payments | Do not use this skill. Follow the applicable domain policy and security review process. |
 
 ## Triggers
 
