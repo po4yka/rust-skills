@@ -114,10 +114,14 @@ If a worker is a raw pthread that you do not own the exit path of, register a
 thread-local destructor that detaches:
 
 ```rust
+// Runs on the worker thread at exit; `vm` comes from the process-wide handle.
+extern "C" fn detach_destructor(_value: *mut libc::c_void) {
+    // JVM.get().unwrap().detach_current_thread();
+}
+
 // Once at startup.
 let mut key: libc::pthread_key_t = 0;
 unsafe { libc::pthread_key_create(&mut key, Some(detach_destructor)) };
-// `detach_destructor` calls vm.detach_current_thread().
 ```
 
 Set a non-null value for that key on each worker thread after it attaches, so
@@ -231,12 +235,54 @@ fn protect_socket(
 Cost: the attachment alone is roughly 5-15 microseconds on Android. Acceptable
 for control-plane sockets. Unacceptable for per-flow socket creation at scale.
 
+## Local reference frames
+
+Every `env.find_class`, `env.get_field`, `env.new_string`, and `env.call_method`
+that returns a `JObject` consumes a local-reference slot. The JNI specification
+guarantees only 16 slots per frame. A VM may offer more, but Android aborts the
+process when its local-reference table overflows. Never assume the frame you
+are in holds more than 16; push your own frame with the capacity you need.
+
+```rust
+// BAD: one local ref per iteration; aborts once the table is full.
+for client in &clients {
+    let s = env.new_string(&client.host)?;
+    notify_listener(env, s)?;
+}
+
+// GOOD: each iteration gets its own frame; refs drop when the frame exits.
+for client in &clients {
+    env.with_local_frame::<_, (), jni::errors::Error>(32, |env| {
+        let s = env.new_string(&client.host)?;
+        notify_listener(env, s)?;
+        Ok(())
+    })?;
+}
+```
+
+Wrap every loop that creates JNI objects. When the loop fills an array or an
+object that must outlive the loop, create that object in the outer frame and
+wrap only the loop body; a reference created inside the frame dies when the
+frame pops. Size the frame at the element count plus a small margin for the
+references the JNI calls allocate internally.
+
+For a single object with a short scope, `env.auto_local(obj)` (`jni` 0.21) or an
+explicit `delete_local_ref` is enough.
+
+A local reference is valid only inside the frame that created it. To keep a
+Java object between JNI calls, promote it to a global reference with
+`env.new_global_ref(obj)` and drop that reference when the owner dies. Do not
+make the wrapper type `Copy`: a `Copy` handle lets safe code drop
+`DeleteGlobalRef` twice.
+
 ## Name every thread
 
 An unnamed worker appears as `Thread-42` in logcat and in a tombstone. That
 makes a native crash much harder to attribute. Name threads at creation:
 
 ```rust
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 let runtime = tokio::runtime::Builder::new_multi_thread()
     .worker_threads(2)
     .thread_name_fn(|| {

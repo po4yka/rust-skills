@@ -152,27 +152,12 @@ exception instead of a status code.
 
 ### Loader entry point
 
-```rust
-#[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
-pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) -> jint {
-    // Store the VM handle BEFORE catch_unwind so it survives a panic during init.
-    let _ = JVM.set(vm);
-    match std::panic::catch_unwind(|| {
-        init_logging("app-native");   // your crate-local helper
-        install_panic_hook();         // your crate-local helper, idempotent
-        JNI_VERSION
-    }) {
-        Ok(version) => version,
-        Err(_) => jni::sys::JNI_ERR,
-    }
-}
-```
-
-The whole loader initialization stays inside `catch_unwind`, so a failed init returns
-`JNI_ERR` instead of unwinding into the JVM. A panic that fires before `install_panic_hook()`
-runs is still contained by `catch_unwind`, but the custom hook cannot report it. Do not claim
-otherwise in a review.
+`JNI_OnLoad` receives the VM, not an env handle, so raw `catch_unwind` is the only guard
+available. Store the VM handle before the guard, and keep the whole initialization inside it
+so a failed init returns `JNI_ERR` instead of unwinding into the JVM. A panic that fires
+before `install_panic_hook()` runs is still contained, but the custom hook cannot report it;
+do not claim otherwise in a review. The code is in
+[references/boundary-patterns.md](references/boundary-patterns.md).
 
 ### Per-method entry point
 

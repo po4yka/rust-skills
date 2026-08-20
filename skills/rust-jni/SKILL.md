@@ -188,36 +188,17 @@ the full Kotlin-to-Rust type table.
 
 ## The JVM side
 
-```kotlin
-class NativeBindings : Bindings {
-    companion object {
-        init {
-            System.loadLibrary("example_native")
-        }
-    }
+The binding class is half of the contract, and three rules decide whether it holds:
 
-    private val mutex = ReentrantLock()
+- Load the library exactly once, from a `companion object` initializer or a shared
+  loader object. A loader object is better when several binding classes share one `.so`.
+- Keep the `external fun` declarations `private` and expose a plain interface. The
+  interface is what tests fake; an `external fun` cannot be faked.
+- Serialize every call that touches a session handle unless the Rust side documents
+  itself as thread-safe for that handle. A use-after-free of a handle is a native
+  abort, not an exception.
 
-    override fun create(configJson: String): Long = mutex.withLock { nativeCreate(configJson) }
-    override fun start(handle: Long): Int = mutex.withLock { nativeStart(handle) }
-    override fun destroy(handle: Long) = mutex.withLock { nativeDestroy(handle) }
-
-    private external fun nativeCreate(configJson: String): Long
-    private external fun nativeStart(handle: Long): Int
-    private external fun nativeDestroy(handle: Long)
-}
-```
-
-Rules for this side:
-
-- Load the library exactly once, from a `companion object` initializer or a
-  shared loader object. A loader object is better when several binding classes
-  share one `.so`.
-- Keep the `external fun` declarations `private` and expose a plain interface.
-  The interface is what tests fake; the `external fun` cannot be faked.
-- Serialize every call that touches a session handle (`mutex.withLock`) unless
-  the Rust side documents itself as thread-safe for that handle. A use-after-free
-  of a handle is a native abort, not an exception.
+The worked Kotlin class is in [references/jvm-side.md](references/jvm-side.md).
 
 ## Add a new export
 
@@ -338,41 +319,15 @@ an async task, and thread naming.
 
 Every `env.find_class`, `env.get_field`, `env.new_string`, and `env.call_method`
 that returns a `JObject` consumes a local-reference slot. The JNI specification
-guarantees only 16 slots per frame. A VM may offer more, but Android aborts the
-process when its local-reference table overflows. Never assume the frame you
-are in holds more than 16; push your own frame with the capacity you need.
+guarantees only 16 per frame, and Android aborts the process when its table
+overflows. Wrap every loop that creates JNI objects in
+`env.with_local_frame(capacity, |env| ...)`, sized at the element count plus a
+margin. A reference created inside the frame dies when the frame pops, so build
+anything that must outlive the loop in the outer frame. To keep a Java object
+between calls, promote it with `env.new_global_ref(obj)`.
 
-```rust
-// BAD: one local ref per iteration; aborts once the table is full.
-for client in &clients {
-    let s = env.new_string(&client.host)?;
-    notify_listener(env, s)?;
-}
-
-// GOOD: each iteration gets its own frame; refs drop when the frame exits.
-for client in &clients {
-    env.with_local_frame::<_, (), jni::errors::Error>(32, |env| {
-        let s = env.new_string(&client.host)?;
-        notify_listener(env, s)?;
-        Ok(())
-    })?;
-}
-```
-
-Wrap every loop that creates JNI objects. When the loop fills an array or an
-object that must outlive the loop, create that object in the outer frame and
-wrap only the loop body; a reference created inside the frame dies when the
-frame pops. Size the frame at the element count plus a small margin for the
-references the JNI calls allocate internally.
-
-For a single object with a short scope, `env.auto_local(obj)` (`jni` 0.21) or an
-explicit `delete_local_ref` is enough.
-
-A local reference is valid only inside the frame that created it. To keep a
-Java object between JNI calls, promote it to a global reference with
-`env.new_global_ref(obj)` and drop that reference when the owner dies. Do not
-make the wrapper type `Copy`: a `Copy` handle lets safe code drop
-`DeleteGlobalRef` twice.
+[references/jni-threading-and-callbacks.md](references/jni-threading-and-callbacks.md) has the
+loop pair, the single-object forms, and the global-reference ownership rules.
 
 ## The env must not cross an await point
 
@@ -427,21 +382,17 @@ couples your throughput to the JNI boundary.
 
 Three options, best first:
 
-1. **Do not move the bytes at all.** Transfer ownership of the file descriptor
-   once, as a `jint`, at session start. Rust then reads and writes the device
-   or socket directly and the payload never crosses JNI again. Duplicate the fd
-   (for example with `nix::unistd::dup`) before you use it asynchronously,
-   because the JVM side can revoke the original.
-2. **DirectByteBuffer** when bytes must transit and copying is too expensive.
-   Allocate with `ByteBuffer.allocateDirect` on the JVM side and map the address
-   in Rust. The memory belongs to the JVM, so the slice is valid only while the
-   Java reference to that buffer is alive.
+1. **Do not move the bytes at all.** Hand the file descriptor over once, as a
+   `jint`, at session start. The payload never crosses JNI again.
+2. **DirectByteBuffer** when bytes must transit and a copy is too expensive.
+   The memory belongs to the JVM, so the slice is valid only while the Java
+   reference to that buffer is alive.
 3. **`JByteArray`** for control-plane payloads only: configuration, a report, a
    command. The copy is irrelevant when the call is rare.
 
-See [references/hot-path-data.md](references/hot-path-data.md) for the
-direct-buffer mapping code, its SAFETY argument, and the file-descriptor
-handoff rules.
+[references/hot-path-data.md](references/hot-path-data.md) has the direct-buffer
+mapping code with its SAFETY argument, the file-descriptor handoff rules, and
+why a duplicated fd is required for asynchronous use.
 
 ## Native library and build boundaries
 
