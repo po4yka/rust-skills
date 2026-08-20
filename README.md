@@ -2,7 +2,7 @@
 
 # rust-skills
 
-**Thirty-eight agent skills for production Rust:**
+**Thirty-nine agent skills for production Rust:**
 unsafe review · networking · FFI boundaries · native linking · profiling · crate releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
@@ -98,6 +98,7 @@ Enter by the symptom, not by the skill name.
 | HTTP timeout, safe retries, TLS verification, body limits, or graceful shutdown | [rust-networking](skills/rust-networking/SKILL.md) |
 | Pool exhaustion, transaction rollback, migration ordering, or serialization failure | [rust-database](skills/rust-database/SKILL.md) |
 | `wasm32-unknown-unknown`, WASI, `wasm-bindgen`, or a WebAssembly size regression | [rust-wasm](skills/rust-wasm/SKILL.md) |
+| `no_std`, `memory.x`, an interrupt race, Embassy, RTIC, `probe-rs`, or `defmt` | [rust-embedded-no-std](skills/rust-embedded-no-std/SKILL.md) |
 
 The full phrase-to-skill list lives in [tests/routing-cases.md](tests/routing-cases.md), and CI
 checks every row against the skill descriptions.
@@ -156,11 +157,12 @@ flowchart LR
     F --> F6[rust-crate-release]
     F --> F7[rust-native-linking]
     F --> F8[rust-wasm]
+    F --> F9[rust-embedded-no-std]
 ```
 
 ## Catalog
 
-Thirty-eight skills in six groups. Deep material sits in `references/*.md` next to the skill that
+Thirty-nine skills in six groups. Deep material sits in `references/*.md` next to the skill that
 owns it.
 
 <details open>
@@ -184,7 +186,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Build, dependencies, and supply chain</b> — seven skills</summary>
+<summary><b>Build, dependencies, and supply chain</b> — eight skills</summary>
 
 <br>
 
@@ -197,6 +199,7 @@ owns it.
 | [rust-security](skills/rust-security/SKILL.md) | cargo-audit, cargo-deny policy, RUSTSEC advisory triage, new-crate vetting against typosquat risk, and untrusted-input parser hardening. |
 | [rust-android-build](skills/rust-android-build/SKILL.md) | Android cdylib builds: NDK linkers, per-ABI rustflags, 16 KiB page alignment, the exported ELF symbol allowlist, and `.so` size gates. |
 | [rust-wasm](skills/rust-wasm/SKILL.md) | Exact WebAssembly host and target selection, JavaScript boundary ownership, panic and async behavior, WASI capabilities, runtime tests, feature compatibility, and packaged size gates. |
+| [rust-embedded-no-std](skills/rust-embedded-no-std/SKILL.md) | Bare-metal and `no_std` policy for runtime and memory layout, panic and allocation, interrupts and critical sections, task frameworks, finite resource budgets, and real-device diagnostics. |
 
 </details>
 
