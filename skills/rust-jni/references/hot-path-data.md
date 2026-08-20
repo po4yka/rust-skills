@@ -37,24 +37,30 @@ use jni::objects::JByteBuffer;
 use jni::Env;
 
 // The accessor names are the same on 0.21 and 0.22. On 0.22 both are safe
-// functions; only the slice construction needs an `unsafe` block.
-fn map_direct_buffer<'a>(env: &Env<'_>, buf: &JByteBuffer<'_>) -> jni::errors::Result<&'a [u8]> {
+// functions. The wrapper is unsafe because Rust cannot prove the JVM-side
+// lifetime and aliasing contract.
+unsafe fn map_direct_buffer<'local>(
+    env: &Env<'local>,
+    buf: &'local JByteBuffer<'local>,
+) -> jni::errors::Result<&'local [u8]> {
     let ptr = env.get_direct_buffer_address(buf)?;
     let len = env.get_direct_buffer_capacity(buf)?;
-    // SAFETY: ptr and len come from the JVM for a direct buffer whose Java-side
-    // reference outlives this slice; no other thread writes it concurrently.
+    // SAFETY: the caller upholds this function's safety contract.
     Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 ```
 
-The returned lifetime is unbounded, which is the whole hazard in one signature: nothing ties
-the slice to the Java reference. Give the wrapper a lifetime that comes from an owner you
-control before you expose it.
+The returned lifetime is tied to the borrowed local reference. The function is
+still `unsafe`. The caller must prove that the direct buffer stays allocated and
+that no Java or native thread writes the bytes while the shared slice exists.
+Do not widen the returned lifetime or store the slice after the JNI call.
 
 The memory belongs to the JVM. The slice is valid only while a Java reference to
-that buffer is alive. If Rust holds the slice past the current call, hold a
-global reference to the buffer for exactly as long as the slice lives, and drop
-both together.
+that buffer is alive. If Rust must retain the buffer after the current call,
+store a `GlobalRef` with the native owner. Do not store a borrowed slice in the
+owner. Recreate the slice from the retained buffer only inside a method that
+borrows the owner, and do not let the slice escape that borrow. Drop the slice
+before you drop the `GlobalRef`.
 
 The `no other thread writes it concurrently` half of that SAFETY comment is a
 contract with the JVM side, not something Rust can check. Write it down in the
