@@ -28,6 +28,8 @@ the method against the docs of the version in your lockfile.
 ```rust
 use jni::strings::JNIString;
 
+let err = std::io::Error::other("the write failed");
+
 // jni 0.22: the class name and the message are JNIString values.
 let class = JNIString::new("java/io/IOException");
 let message = JNIString::new(&err.to_string());

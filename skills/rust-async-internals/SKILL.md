@@ -153,6 +153,9 @@ See `rust-jni` and `ffi-error-progress-cancel` for the boundary contract, and
 is dropped at that instant. Work in progress inside a dropped branch is lost.
 
 ```rust
+async fn fetch_a() -> u32 { todo!() }
+async fn fetch_b() -> u32 { todo!() }
+
 tokio::select! {
     result = fetch_a() => { /* fetch_b() is dropped mid-flight */ }
     result = fetch_b() => { /* fetch_a() is dropped mid-flight */ }
@@ -270,6 +273,10 @@ future. If the wrapped future never reaches an `.await` point, the timeout
 never fires and the work runs to completion.
 
 ```rust
+use std::time::Duration;
+
+fn expensive_cpu_computation() {}
+
 // DANGEROUS: looks protected, is not
 let r = tokio::time::timeout(Duration::from_secs(1), async {
     expensive_cpu_computation()   // no .await inside

@@ -29,6 +29,10 @@ rating. Read the section that matches the code you author or review.
 **Severity: CRITICAL**
 
 ```rust
+use std::time::Duration;
+
+fn heavy_cpu_work() {}
+
 // WRONG: blocks a runtime thread, starves other tasks
 async fn bad() {
     std::thread::sleep(Duration::from_secs(1));
@@ -110,6 +114,8 @@ cancels every unit on shutdown. One unit's failure does not cancel siblings.
 **DropGuard — cancellation on an RAII boundary.**
 
 ```rust
+use tokio_util::sync::CancellationToken;
+
 let token = CancellationToken::new();
 let _guard = token.clone().drop_guard();
 // ... do work, possibly with early returns / ? ...
@@ -185,12 +191,19 @@ Every `async fn` that may transitively be polled inside `select!` / `timeout` /
 `FuturesUnordered` MUST carry a doc comment of this form:
 
 ```rust
-/// cancel-safe: only `.await`s on `read` and `mpsc::recv`, both individually cancel-safe.
-async fn read_request(&mut self) -> Result<Request> { todo!() }
+use tokio::net::TcpStream;
 
-/// NOT cancel-safe: `db.insert().await` followed by `send_ack().await` —
-/// cancellation between them leaves the DB written but the client unacked.
-async fn process(&self, stream: TcpStream) -> Result<()> { todo!() }
+struct Request;
+struct Connection;
+
+impl Connection {
+    /// cancel-safe: only `.await`s on `read` and `mpsc::recv`, both individually cancel-safe.
+    async fn read_request(&mut self) -> Result<Request> { todo!() }
+
+    /// NOT cancel-safe: `db.insert().await` followed by `send_ack().await` —
+    /// cancellation between them leaves the DB written but the client unacked.
+    async fn process(&self, stream: TcpStream) -> Result<()> { todo!() }
+}
 ```
 
 Rule: prefix the comment with `cancel-safe:` or `NOT cancel-safe:` and give a
@@ -654,6 +667,10 @@ blocking syscall, a heavy synchronous computation — the timeout never fires.
 The future runs to completion regardless of the deadline.
 
 ```rust
+use std::time::Duration;
+
+fn expensive_cpu_computation() {}
+
 // DANGEROUS: looks protected but is not
 let result = tokio::time::timeout(
     Duration::from_secs(1),
@@ -668,9 +685,13 @@ Fix: move any blocking or CPU-heavy work into `spawn_blocking` before you wrap
 it with `timeout`:
 
 ```rust
+use std::time::Duration;
+
+fn expensive_cpu_computation() {}
+
 let result = tokio::time::timeout(
     Duration::from_secs(1),
-    tokio::task::spawn_blocking(|| expensive_cpu_computation())
+    tokio::task::spawn_blocking(|| expensive_cpu_computation()),
 ).await;
 ```
 

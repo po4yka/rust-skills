@@ -33,14 +33,23 @@ Allocate the buffer with `ByteBuffer.allocateDirect` on the JVM side, then map
 the address in Rust:
 
 ```rust
-// jni 0.21 accessor names; check the docs of your version.
-let buf: JByteBuffer = jbuffer.into();
-let ptr = unsafe { env.get_direct_buffer_address(&buf)? };
-let len = unsafe { env.get_direct_buffer_capacity(&buf)? };
-// SAFETY: ptr and len come from the JVM for a direct buffer whose Java-side
-// reference outlives this slice; no other thread writes it concurrently.
-let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+use jni::objects::JByteBuffer;
+use jni::Env;
+
+// The accessor names are the same on 0.21 and 0.22. On 0.22 both are safe
+// functions; only the slice construction needs an `unsafe` block.
+fn map_direct_buffer<'a>(env: &Env<'_>, buf: &JByteBuffer<'_>) -> jni::errors::Result<&'a [u8]> {
+    let ptr = env.get_direct_buffer_address(buf)?;
+    let len = env.get_direct_buffer_capacity(buf)?;
+    // SAFETY: ptr and len come from the JVM for a direct buffer whose Java-side
+    // reference outlives this slice; no other thread writes it concurrently.
+    Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
+}
 ```
+
+The returned lifetime is unbounded, which is the whole hazard in one signature: nothing ties
+the slice to the Java reference. Give the wrapper a lifetime that comes from an owner you
+control before you expose it.
 
 The memory belongs to the JVM. The slice is valid only while a Java reference to
 that buffer is alive. If Rust holds the slice past the current call, hold a
@@ -58,9 +67,17 @@ memory. That cost is irrelevant for a call that happens once per session and
 decisive for a call that happens per packet.
 
 ```rust
-// jni 0.21: acceptable for control-plane payloads.
-let bytes = env.convert_byte_array(jarray)?;
-process_config(&bytes)?;
+use jni::objects::JByteArray;
+use jni::Env;
+
+// Acceptable for control-plane payloads. The accessor is the same on 0.21.
+fn read_control_payload(env: &Env<'_>, array: &JByteArray<'_>) -> jni::errors::Result<()> {
+    let bytes = env.convert_byte_array(array)?;
+    process_config(&bytes);
+    Ok(())
+}
+
+fn process_config(_bytes: &[u8]) {}
 ```
 
 If a per-packet path already uses `JByteArray`, treat the change to a descriptor
