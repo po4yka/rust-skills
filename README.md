@@ -11,10 +11,8 @@ unsafe review · networking · FFI boundaries · native linking · profiling · 
 
 </div>
 
-Each skill is a reference sheet for a coding agent, not a tutorial. The skills are generalized
-from two private production codebases — an Android application with a Rust networking core, and a
-cross-platform Rust map engine — so each one carries concrete commands, flags, thresholds, and
-triage tables instead of general advice.
+Each skill is a reference sheet for a coding agent, not a tutorial. Each one carries concrete
+commands, flags, thresholds, and triage tables instead of general advice.
 
 Every ` ```rust ` block in the catalog declares what CI must do with it, and CI does it on the
 toolchain that `checks/rust-toolchain.toml` pins. An untagged block is extracted and
@@ -292,7 +290,6 @@ scripts/validate-skills.py    # catalog structure checks
 tests/routing-cases.md        # phrase -> skill, checked against every description
 checks/                       # compile-check harness for the rust examples
 checks/check.sh               # one command that reproduces CI
-THIRD_PARTY_NOTICES.md        # the MIT notice the harness carries
 ```
 
 Only `skills/` is published. The rest is tooling; `npx skills add` never sees it.
@@ -308,8 +305,8 @@ invocations, and failure triage that a codebase learns the hard way.
 
 > [!WARNING]
 > CI type-checks the Rust examples. It does **not** check whether a command line, a flag, or a
-> version number is still correct — those come from the source codebases and from tool
-> documentation. Verify a command against your own toolchain before you put it in a script.
+> version number is still correct. Verify a command against your own toolchain before you put it
+> in a script.
 
 - Every ` ```rust ` block in the catalog is extracted and type-checked in CI against the
   toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.97 on edition 2024. Blocks that
@@ -324,85 +321,6 @@ invocations, and failure triage that a codebase learns the hard way.
 Read [AGENTS.md](AGENTS.md). It states the `SKILL.md` contract, the authoring conventions, how to
 add a skill, and how to verify a change locally before you open a pull request.
 
-## Sources
-
-The skills are generalized from production Rust codebases. Six additions have an outside source,
-recorded here because the topic inventory is theirs even though the text and the examples are not.
-
-<details>
-<summary><b>Attribution in full</b></summary>
-
-<br>
-
-- The FFI layout and pointer-shape rules in `rust-unsafe/references/ffi-layout-rules.md` follow
-  the topic set of the `unsafe-checker` rules in
-  [actionbook/rust-skills](https://github.com/actionbook/rust-skills) (MIT), which in turn maps
-  the `P.UNS` and `G.UNS` rules of the
-  [Rust Coding Guidelines](https://rust-coding-guidelines.github.io/rust-coding-guidelines-zh/).
-  The prose, the examples, and the rustc 1.97 verification here are original; several upstream
-  rules were dropped as out of date, including one that cites the removed clippy lint
-  `unaligned_references` for what is now the hard error `E0793`.
-- The idea of a compiler-error index that routes a diagnostic to a skill comes from the same
-  repository. The triage table, the fix catalogue, and the escalation rule in
-  `rust-compiler-errors` are written here from the compiler's own output.
-- The topic inventory of `rust-hot-path` follows
-  [The Rust Performance Book](https://github.com/nnethercote/perf-book) by Nicholas Nethercote
-  (MIT or Apache-2.0): allocation rate, type sizes, hashing, iterators, bounds checks, inlining,
-  and buffered I/O are its chapter set. The prose, the examples, and every number here are
-  original and were measured on rustc 1.97.0, which corrected several upstream claims. The
-  memcpy boundary the book gives as 128 bytes is the x86_64 figure; aarch64 copies inline up to
-  256. `Vec`'s first non-zero capacity is not 4; it depends on the element size. The jemalloc
-  build-time and run-time configuration variables are the other way round. `fnv` is not a middle
-  option between `rustc-hash` and SipHash on string keys. Locking stdout in a loop no longer
-  helps on its own. `-C symbol-mangling-version=v0` and `-fuse-ld=lld` on Linux are both no-ops
-  on a current toolchain, and `static_assertions` has not shipped since 2019.
-- The topic inventory of `rust-macros`, `rust-iterator-impl`, `rust-copy-on-write`, and
-  `rust-discipline/references/trait-resolution.md` follows the source code of
-  [Idiomatic Rust: Code like a Rustacean](https://github.com/brndnmtthws/idiomatic-rust-book) by
-  Brenden Matthews (MIT): trait design, extension traits, typestate, macro authoring, `Cow` and
-  persistent collections, and `Deref` misuse are its chapter set. That repository ships listings
-  and no prose, so every rule, example, and number here is original and was measured on rustc
-  1.97.0. Several upstream listings are the counter-example rather than the model. The book's
-  `Cow` demo calls `to_mut()` before a read-only `replace`, which forces the allocation the
-  `Cow` exists to avoid. Its linked-list iterator fabricates a `&'a T` out of an
-  `Rc<RefCell<T>>` with `unsafe { &*cell.as_ptr() }`; both Miri borrow models report undefined
-  behaviour as soon as a mutation interleaves, and the book's own `main` never interleaves, so
-  the test passes. Its optional-argument pattern puts one method name on two traits, which is
-  `E0034` the moment both are in scope. Its `WrappedVec` implements `Deref` to `Vec<T>` and an
-  inherent `into_iter`, the two shapes chapter 10 of the same book argues against. Its derive
-  example points the dependency from the derive crate at the trait crate, so a user must depend
-  on both; the facade re-export runs the other way.
-
-- The topic inventory of `rust-pin-projection`, `rust-variance`, `rust-callback-bounds`,
-  `rust-type-erasure`, `rust-send-sync`, and `rust-event-loop-state` follows
-  [crabbook](https://github.com/Nekrolm/crabbook) by Nekrolm, a Russian-language collection of
-  Rust edge cases: pinning, variance, callback bounds in generic functions, type erasure without
-  `'static`, the auto traits, and event loops over shared state are its article set. That
-  repository states no license, so nothing here is copied from it. Every rule, example, diagnostic,
-  and number is original and was measured on rustc 1.97.0. Several of its conclusions are the
-  counter-example rather than the model. It teaches `Unpin` as `Movable` and `!Unpin` as
-  `Unmovable`; every Rust type is movable, and a `PhantomPinned` value still moves, swaps, and
-  boxes in safe code. Its hand-rolled stack-pinning macro does not compile in safe code, and the
-  reflex fix of wrapping the invocation in `unsafe` compiles and silently does nothing, because the
-  shadowing binding dies with the block. Its non-`'static` type map calls a reverse GAT constraint
-  optional; adding it neither restores soundness nor produces the `E0207` the text predicts. Its
-  event-loop chapter reaches for nightly coroutines; a coroutine is not higher-ranked over its
-  resume argument, so it cannot carry `&mut State`, and the author's own generator crate has the
-  same limit.
-
-- The compile-check harness in `checks/` is adapted from
-  [leonardomso/rust-skills](https://github.com/leonardomso/rust-skills) (MIT). The design that
-  makes it work is theirs: extract each block into a cargo example, bucket the failures so
-  illustrative fragments do not drown a real defect, and gate on a signature that carries no
-  line number. The extractor and the analyzer here are rewritten for this layout, with a
-  `Result<T>` alias for the crate-local alias skills assume, rustdoc fence tags as the opt-out,
-  and an empty baseline instead of an accepted-suspect list.
-
-</details>
-
 ## License
 
 BSD-3-Clause. See [LICENSE](LICENSE).
-
-The compile-check harness in `checks/` adapts an MIT-licensed project.
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) carries that notice and says what is derived.

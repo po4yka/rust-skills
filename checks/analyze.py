@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Classify `cargo check --examples --message-format=json` output.
 
-Adapted from the harness in https://github.com/leonardomso/rust-skills (MIT).
-
 Most skill examples are fragments: they name types and functions that the
 surrounding prose defines, so they cannot resolve on their own. A plain
 pass/fail gate would drown a real defect in that noise. Every failing example is

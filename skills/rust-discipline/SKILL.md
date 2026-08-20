@@ -301,9 +301,8 @@ See also: `rust-performance` for measurement with `cargo-bloat` and `cargo-llvm-
 - Document the lock order at the struct level with a `// Lock order: a -> b -> c` comment.
   Every nested acquisition follows that order.
 - `parking_lot` 0.12.5 locks are not automatically faster or smaller than `std::sync` locks.
-  Std improved its own lock implementations on several platforms, and the Rust Performance Book
-  now tells you to measure both before you switch. `parking_lot` locks still do not poison. Add
-  `parking_lot` only after you measure contention.
+  Measure both before you switch. `parking_lot` locks still do not poison. Add `parking_lot`
+  only after you measure contention.
 - **`parking_lot` and `tokio::sync` mutexes do not poison on panic.** `std::sync::Mutex` does.
   See [`references/type-and-trait-traps.md`](references/type-and-trait-traps.md) before you
   migrate.

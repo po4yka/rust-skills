@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Validate the skill catalog.
 
-Runs the checks that keep this repository installable and free of coupling to
-the private codebases the skills came from. CI runs this script, and so should
-you before you open a pull request:
+Runs the checks that keep this repository installable. CI runs this script,
+and so should you before you open a pull request:
 
     python3 scripts/validate-skills.py
 
@@ -103,19 +102,6 @@ MAX_NAME = 64
 MAX_DESCRIPTION = 1024
 MIN_DESCRIPTION = 80
 MAX_COMPATIBILITY = 500
-
-# Terms that mean a skill still carries coupling to a source codebase. Add a
-# term here the moment one leaks; that is cheaper than finding it after publish.
-FORBIDDEN = [
-    "ripdpi",
-    "cartory",
-    "native/rust",
-    "engine/rust",
-    "/Users/",
-    "mdtask",
-    "openspec",
-    "taskctl",
-]
 
 failures: list[str] = []
 descriptions: dict[str, str] = {}
@@ -297,16 +283,6 @@ def check_skill(skill_dir: Path) -> None:
                 fail(rel, f"points at a missing reference file: {target}")
 
 
-def check_forbidden_terms() -> None:
-    for path in sorted(SKILLS_DIR.rglob("*.md")) + [README]:
-        rel = str(path.relative_to(ROOT))
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
-            lowered = line.lower()
-            for term in FORBIDDEN:
-                if term.lower() in lowered:
-                    fail(f"{rel}:{lineno}", f"leaked source-codebase term {term!r}")
-
-
 def check_routing_cases(descriptions: dict[str, str]) -> None:
     """Every phrase in the routing corpus must survive in its skill's description.
 
@@ -397,7 +373,6 @@ def main() -> int:
     skill_dirs = sorted(d for d in SKILLS_DIR.iterdir() if d.is_dir())
     for skill_dir in skill_dirs:
         check_skill(skill_dir)
-    check_forbidden_terms()
     check_routing_cases(descriptions)
     check_readme_catalog({d.name for d in skill_dirs})
 

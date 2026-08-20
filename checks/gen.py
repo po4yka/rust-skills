@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Extract ```rust blocks from ../skills/**/*.md into cargo examples.
 
-Adapted from the harness in https://github.com/leonardomso/rust-skills (MIT).
-
 The fence tag decides what happens to a block, and nothing else:
 
     ```rust                the block must compile

@@ -9,8 +9,7 @@ license: BSD-3-Clause
 ## Purpose
 
 Code is technical writing for future readers. Lead with the most important details. Keep
-related things close together. These rules are adapted from the
-[epage Rust Style Guide](https://epage.github.io/dev/rust-style/).
+related things close together.
 
 Use this skill when you:
 

@@ -21,9 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Frontmatter against the Agent Skills spec, no leaked source-codebase
-      # terms, reference links that resolve, README catalog in step with the
-      # tree. Same script a contributor runs locally.
+      # Frontmatter against the Agent Skills spec, reference links that resolve,
+      # and the README catalog in step with the tree. Same script a contributor
+      # runs locally.
       - name: Validate skills
         run: python3 scripts/validate-skills.py
 

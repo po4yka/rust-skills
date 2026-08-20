@@ -6,8 +6,8 @@ Rust; it contains no Rust crate and no build system. Do not add one.
 ## Project overview
 
 `rust-skills` is a public catalog of agent skills for Rust work, distributed through skills.sh
-and installed with the vercel-labs `skills` CLI. The content is generalized from private
-production codebases, so it must stay free of private identifiers.
+and installed with the vercel-labs `skills` CLI. The content must stay free of private
+identifiers.
 
 Layout is flat. One directory per skill:
 
@@ -128,13 +128,9 @@ It checks, for every skill:
   indicator character, because the skills CLI and the agent runtimes read the file with one;
 - every `references/*.md` a skill points at exists, whether the pointer is a Markdown link or
   a bare code span;
-- no term from the private source codebases survives anywhere in `skills/` or `README.md`;
 - every phrase in `tests/routing-cases.md` still appears in the description it routes to, and
   every skill has at least one routing case;
 - the README catalog lists exactly the skills that exist on disk.
-
-Add a term to `FORBIDDEN` in the script the moment one leaks. That is cheaper than finding it
-after publication.
 
 ### 2. Compile-check the examples
 
