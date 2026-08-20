@@ -7,26 +7,71 @@ destructor pattern, and the two callback wirings.
 ## Capture the JavaVM once
 
 The env handle (`Env` on `jni` 0.22, `JNIEnv` on 0.21) is per-thread and
-frame-scoped. `JavaVM` is process-wide and `Clone + Send + Sync`. Store the `JavaVM` at
-library load time and derive an env from it on every thread that needs one:
+frame-scoped. `JavaVM` is process-wide and `Clone + Send + Sync`. Store it in
+the same immutable cache as the global classes and IDs. Publish that cache once:
 
 ```rust
-use std::sync::OnceLock;
-use jni::{JavaVM, sys::{jint, JNI_VERSION_1_6}};
+use std::{panic::AssertUnwindSafe, sync::OnceLock};
 
-static JVM: OnceLock<JavaVM> = OnceLock::new();
+use jni::{
+    Env, JavaVM, NativeMethod, jni_sig, jni_str, native_method,
+    objects::{Global, JClass, JMethodID},
+    sys::{JNI_ERR, JNI_VERSION_1_6, jint},
+};
+
+struct JniCache {
+    vm: JavaVM,
+    listener_class: Global<JClass<'static>>,
+    on_update: JMethodID,
+}
+
+static JNI_CACHE: OnceLock<JniCache> = OnceLock::new();
+
+const PING_METHOD: NativeMethod = native_method! {
+    static fn native_ping() -> jint,
+};
+
+fn native_ping<'local>(
+    _env: &mut Env<'local>,
+    _class: JClass<'local>,
+) -> jni::errors::Result<jint> {
+    Ok(1)
+}
+
+fn build_cache(vm: &JavaVM) -> jni::errors::Result<JniCache> {
+    vm.with_local_frame(16, |env| {
+        let listener = env.find_class(jni_str!("com/example/app/NativeListener"))?;
+        let on_update = env.get_method_id(
+            &listener,
+            jni_str!("onUpdate"),
+            jni_sig!("(I)V"),
+        )?;
+        let listener_class = env.new_global_ref(&listener)?;
+
+        let bindings = env.find_class(jni_str!("com/example/app/NativeBindings"))?;
+        // SAFETY: NativeBindings.nativePing is static and has signature ()I.
+        unsafe { env.register_native_methods(&bindings, &[PING_METHOD])? };
+
+        Ok(JniCache {
+            vm: vm.clone(),
+            listener_class,
+            on_update,
+        })
+    })
+}
 
 #[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)]
 pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) -> jint {
-    match std::panic::catch_unwind(|| {
-        let _ = JVM.set(vm);
-        install_panic_hook();
-        init_logging();
-        JNI_VERSION_1_6
-    }) {
-        Ok(version) => version,
-        Err(_) => jni::sys::JNI_ERR,
+    let init = std::panic::catch_unwind(AssertUnwindSafe(|| -> Result<(), ()> {
+        let cache = build_cache(&vm).map_err(|_| ())?;
+        JNI_CACHE.set(cache).map_err(|_| ())?;
+        Ok(())
+    }));
+
+    match init {
+        Ok(Ok(())) => JNI_VERSION_1_6,
+        Ok(Err(())) | Err(_) => JNI_ERR,
     }
 }
 ```
@@ -36,9 +81,10 @@ is not available there. Use raw `catch_unwind`. A panic that escapes this
 function aborts the process, exactly like any other panic that reaches an
 `extern "system"` export.
 
-Do the one-time setup here: store the `JavaVM`, install the panic hook,
-initialize logging, and apply any process-wide signal setup (`SIGPIPE`, for
-example).
+Build all global references and IDs in a local `JniCache`. Register all native
+methods. Run any fallible logger or process setup in the same builder. Call
+`OnceLock::set` once, check its result, and return success only after it succeeds.
+An error before publication drops the local cache and its global references.
 
 If another part of the crate needs its own handle, call `vm.clone()`.
 `jni::JavaVM` is `Clone + Send + Sync`, it is one pointer wide, and it has no
@@ -53,7 +99,7 @@ The API differs by crate version. Pick the form that matches your lockfile.
 ### jni 0.22: attach with a closure
 
 ```rust
-let vm = JVM.get().expect("JNI_OnLoad must populate JVM");
+let vm = &JNI_CACHE.get().expect("JNI_OnLoad must populate JNI_CACHE").vm;
 
 // Long-lived worker: attach once. The thread-local guard detaches at thread
 // exit, and later calls take the cheap "already attached" path.
@@ -88,7 +134,7 @@ Choose between the two by call rate:
 ### jni 0.21: bind the RAII guard
 
 ```rust
-let vm = JVM.get().expect("JNI_OnLoad must populate JVM");
+let vm = &JNI_CACHE.get().expect("JNI_OnLoad must populate JNI_CACHE").vm;
 let _guard = vm.attach_current_thread()?;   // RAII guard
 let env = _guard.deref_mut();               // &mut JNIEnv
 env.call_method(&listener, "onUpdate", "(I)V", &[update.into()])?;
@@ -116,7 +162,7 @@ thread-local destructor that detaches:
 ```rust
 // Runs on the worker thread at exit; `vm` comes from the process-wide handle.
 extern "C" fn detach_destructor(_value: *mut libc::c_void) {
-    // JVM.get().unwrap().detach_current_thread();
+    // JNI_CACHE.get().unwrap().vm.detach_current_thread();
 }
 
 // Once at startup.

@@ -80,7 +80,7 @@ Enter by the symptom, not by the skill name.
 | The profile already named the hot spot: allocations, type size, hasher | [rust-hot-path](skills/rust-hot-path/SKILL.md) |
 | Borrow or clone at an API boundary: `Cow<str>`, `to_mut`, clone cost | [rust-copy-on-write](skills/rust-copy-on-write/SKILL.md) |
 | A tombstone, a stripped backtrace, `addr2line` symbolication | [rust-debugging](skills/rust-debugging/SKILL.md) |
-| `UnsatisfiedLinkError`, `AttachCurrentThread`, a native crash from Kotlin | [rust-jni](skills/rust-jni/SKILL.md) |
+| `UnsatisfiedLinkError`, `AttachCurrentThread`, `FindClass`, or an Android ClassLoader failure | [rust-jni](skills/rust-jni/SKILL.md) |
 | Swift calls Rust through a C ABI, an opaque handle, or an `@MainActor` callback | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) |
 | UniFFI checksum mismatch, XCFramework or jniLibs packaging | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
 | `Activity` lifecycle, `ViewModel.onCleared`, process death, or a callback release race | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) |
@@ -264,7 +264,7 @@ owns it.
 
 | Skill | What it covers |
 | --- | --- |
-| [rust-jni](skills/rust-jni/SKILL.md) | JNI export symbol naming, panic containment, thread attach and detach discipline, local-reference frames, and native crash triage. |
+| [rust-jni](skills/rust-jni/SKILL.md) | JNI symbols and panic containment, thread attachment, local references, Android ClassLoader-safe caches, R8 lookup tests, and native crash triage. |
 | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) | A hand-written Rust C ABI for Swift with opaque handles, allocator symmetry, callback lifetime, Swift concurrency isolation, cancellation, and real consumer tests. |
 | [uniffi-boundary](skills/uniffi-boundary/SKILL.md) | Record-versus-Object shape, `Arc` ownership, callbacks, type mapping, async exports, and mobile engine ownership across Kotlin and Swift. |
 | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) | Artifact packaging for jniLibs and XCFramework, binding and runtime version pinning, and checksum-mismatch debugging. |

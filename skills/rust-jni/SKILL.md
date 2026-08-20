@@ -1,6 +1,6 @@
 ---
 name: rust-jni
-description: Use when you export a Rust function to the JVM with the jni crate, write or change Kotlin external fun bindings, choose between raw JNI and UniFFI, or triage a JNI linkage error or a native crash on Android. Covers Java_package_class_method symbol naming, no_mangle plus extern system, panic containment at every export, AttachCurrentThread and DetachCurrentThread discipline for worker threads, 16-slot local-reference frames and with_local_frame, why JNIEnv must never cross an await point, JByteArray copies versus DirectByteBuffer and file-descriptor handoff on hot paths, Kotlin and Rust type mapping, Java exception throwing and exception_check, session-handle lifecycle contracts, and a triage table for UnsatisfiedLinkError, JNI DETECTED ERROR, and local-reference-table overflow. Triggers on JNI, external fun, no_mangle, JNIEnv, AttachCurrentThread, local ref, GlobalRef, UnsatisfiedLinkError, or native crash on Android.
+description: Use when you export a Rust function to the JVM with the jni crate, write or change Kotlin external fun bindings, choose between raw JNI and UniFFI, or triage a JNI linkage error or a native crash on Android. Covers Java_package_class_method symbol naming, no_mangle plus extern system, panic containment at every export, AttachCurrentThread and DetachCurrentThread discipline for worker threads, 16-slot local-reference frames and with_local_frame, why JNIEnv must never cross an await point, JByteArray copies versus DirectByteBuffer and file-descriptor handoff on hot paths, Kotlin and Rust type mapping, Java exception throwing and exception_check, session-handle lifecycle contracts, and a triage table for UnsatisfiedLinkError, JNI DETECTED ERROR, and local-reference-table overflow. Triggers on JNI, external fun, no_mangle, JNIEnv, AttachCurrentThread, local ref, GlobalRef, FindClass, Android ClassLoader, UnsatisfiedLinkError, or native crash on Android.
 license: BSD-3-Clause
 ---
 
@@ -30,6 +30,8 @@ rg -n 'external fun|System\.loadLibrary' --type kotlin
 
 - You add, rename, or remove any `#[unsafe(no_mangle)] pub extern "system" fn Java_*` export.
 - You add a callback from Rust back into Java that needs `JavaVM::attach_current_thread`.
+- You resolve an application class from a Rust-created thread or diagnose why
+  `FindClass` cannot see that class.
 - You decide between the raw `jni` crate and UniFFI for a new binding surface.
 - You review a diff that touches a `cdylib` crate or its Kotlin binding class.
 - You triage `UnsatisfiedLinkError`, `JNI DETECTED ERROR IN APPLICATION`, or a
@@ -337,6 +339,31 @@ for the attach-form decision table, the 0.21 daemon attachment, the
 `pthread_key_create` destructor for pure pthread workers, callback wiring from
 an async task, and thread naming.
 
+## Class lookup from attached threads
+
+`FindClass` does not use the application loader on a newly attached native
+thread. No managed application method exists on that thread's Java stack, so
+Android falls back to the system class loader. That loader cannot see
+application classes.
+
+Resolve stable application classes in `JNI_OnLoad`. That call runs in the
+loader context that loaded the native library. Promote every cached `jclass`
+to a global reference. Cache the required method and field IDs with it. Publish
+the cache only after all lookups and `RegisterNatives` calls succeed. Return
+`JNI_ERR` if any required lookup fails, so the library load fails before a
+worker starts.
+
+Never cache a local `jclass` or any env handle. For a dynamic feature or a
+custom loader, pass a managed `Class` argument or cache that feature's
+`ClassLoader` and call `loadClass`. A process-lifetime global class reference
+pins its loader, so do not use the base-app cache for classes that must unload
+or reload.
+
+Read [references/android-class-loading.md](references/android-class-loading.md)
+before you add an application-class lookup, cache a method or field ID, enable
+R8 for a JNI surface, or test a callback from a Rust-created thread. It gives
+the separate `jni` 0.21 and 0.22 forms.
+
 ## Local reference frames
 
 Every `env.find_class`, `env.get_field`, `env.new_string`, and `env.call_method`
@@ -445,6 +472,7 @@ allowlist, and page alignment.
 | `SIGABRT` right after a Rust panic message | The panic unwound into the JVM | Add the panic guard at that export |
 | Native crash with no Rust message in logcat | No Android logger installed | Initialize logging and the panic hook in `JNI_OnLoad` |
 | Crash inside a callback long after the call returned | A local reference or an env handle was stored between calls | Store a global reference plus a `JavaVM` clone instead |
+| `ClassNotFoundException` only on a Rust-created thread | `FindClass` selected the system loader because no application frame exists | Use the global class cache populated in `JNI_OnLoad`, or pass the correct `Class` or `ClassLoader` from managed code |
 | Corruption after passing a DirectByteBuffer | The Java-side reference was collected while Rust held the slice | Hold a global reference for the buffer |
 | Native abort with no exception, and `catch_unwind` never runs | The profile that builds the `cdylib` sets `panic = "abort"` | Accept the abort, or build that profile with `panic = "unwind"` |
 | `improper_ctypes_definitions` warning on an export | The `jni` types carry lifetime parameters | Allow the lint on the bridge crate. Do not change the parameter types |
@@ -462,6 +490,11 @@ Apply to every diff that touches a JNI export or its binding class.
 - [ ] The symbol name matches the declaring class, character for character.
 - [ ] Every callback from an async task or worker thread captures a `JavaVM`
       clone plus a global reference, never an env handle or a local reference.
+- [ ] Every application-class lookup on a Rust-created thread uses a cached
+      global class, a managed `Class`, or an explicit application
+      `ClassLoader`. It does not call `FindClass` directly.
+- [ ] Required classes and method or field IDs resolve before `JNI_OnLoad`
+      returns success. The minified release build keeps string-only JNI members.
 - [ ] Every attachment detaches: a bound named guard on `jni` 0.21, an attach
       closure on 0.22.
 - [ ] Repeated callbacks on one worker thread do not use a scoped attach.
@@ -489,6 +522,9 @@ Apply to every diff that touches a JNI export or its binding class.
 - [references/jni-threading-and-callbacks.md](references/jni-threading-and-callbacks.md)
   — attachment lifetime, pthread destructors, callback wiring, file-descriptor
   handoff over a Unix socket, thread naming.
+- [references/android-class-loading.md](references/android-class-loading.md) —
+  application class lookup, loader ownership, cache initialization, R8 rules,
+  and an attached-thread integration test.
 - [references/uniffi-vs-raw-jni.md](references/uniffi-vs-raw-jni.md) — the
   UniFFI shape, UDL and proc-macro forms, and bindings generation.
 - [references/hot-path-data.md](references/hot-path-data.md) — file-descriptor
