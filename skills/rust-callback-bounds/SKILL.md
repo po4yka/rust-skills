@@ -351,7 +351,7 @@ Three shapes, and the choice is not stylistic.
 | Field type | Size | Captures | Different expressions in one `Vec` | Caller can name the type | Allocates |
 | --- | --- | --- | --- | --- | --- |
 | `F` on `struct S<F: Fn(u32)>` | Size of `F`. 0 for a non-capturing closure | Yes | No, `E0308` | No, `E0747` / `E0562` | No |
-| `Box<dyn Fn(u32)>` | 16, fat pointer | Yes | Yes | Yes | Only if the closure captures |
+| `Box<dyn Fn(u32)>` | 16, fat pointer | Yes | Yes | Yes | Only if the closure value is not zero-sized |
 | `fn(u32)` | 8 | **No** | Yes | Yes | No |
 | `B` on `struct S<B: MyTrait>` with a blanket impl | Size of `B`. 0 for a user unit struct | Yes | No | Yes, if the user declares a named type | No |
 
@@ -370,11 +370,13 @@ fn main() {
 }
 ```
 
-`Box<dyn Fn(..)>` does **not** allocate for a non-capturing closure: `Box` of a ZST never calls
-the allocator. Measured with a counting global allocator, `Box::new(|| {}) as Box<dyn Fn()>` costs
-0 allocations and `Box::new(move || { let _ = &s; })` costs 1. Do not avoid `Box<dyn Fn>` for a
-stateless callback on allocation grounds; the residual cost is 16 bytes inline and one indirect
-call. See `references/storing-callables.md`.
+`Box<dyn Fn(..)>` allocates when the concrete closure value has non-zero size.
+`Box` of a ZST does not call the allocator. A non-capturing closure is a ZST,
+but a closure that captures only a zero-sized value can also stay zero-sized.
+Most closures that capture data are non-zero-sized and allocate. Measure the
+closure value; capture presence alone is not the rule. The residual cost of a
+boxed ZST callback is 16 bytes inline and one indirect call. See
+`references/storing-callables.md`.
 
 ### The generic field blocks naming, not `dyn`
 

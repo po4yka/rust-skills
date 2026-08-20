@@ -90,13 +90,16 @@ error[E0277]: expected a `Fn()` closure, found `Arc<dyn Fn()>`
 Two repairs. Take `Arc<dyn Fn(..)>` in the signature and call it directly, which is the honest
 form for a shared callback. Or follow the `note:` and wrap: `takes(move || a())`.
 
-## `Box<dyn Fn>` allocates only when the closure captures
+## `Box<dyn Fn>` allocates for a non-zero-sized closure value
 
-A non-capturing closure is a ZST, and `Box` of a ZST never calls the allocator; it stores a
-dangling, well-aligned pointer. Measured with a counting global allocator:
+A non-capturing closure is a ZST. A closure that captures only a zero-sized
+value can also be a ZST. `Box` of either value does not call the allocator; it
+stores a dangling, well-aligned pointer. Measure the value size, not whether a
+capture exists:
 
 ```rust
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::mem::{size_of, size_of_val};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static ALLOCS: AtomicUsize = AtomicUsize::new(0);
@@ -118,19 +121,30 @@ fn main() {
     let f: Box<dyn Fn()> = Box::new(|| {});
     assert_eq!(ALLOCS.load(Ordering::Relaxed) - before, 0);   // 0 allocations
 
+    struct Marker;
+    let marker = Marker;
+    let zst_capture = move || { let _ = &marker; };
+    assert_eq!(size_of_val(&zst_capture), 0);
+    let mark = ALLOCS.load(Ordering::Relaxed);
+    let z: Box<dyn Fn()> = Box::new(zst_capture);
+    assert_eq!(ALLOCS.load(Ordering::Relaxed) - mark, 0);     // 0 allocations
+
     let s = String::from("x");
     let mark = ALLOCS.load(Ordering::Relaxed);
     let g: Box<dyn Fn()> = Box::new(move || { let _ = &s; });
     assert_eq!(ALLOCS.load(Ordering::Relaxed) - mark, 1);     // 1 allocation
 
     f();
+    z();
     g();
     assert_eq!(size_of::<Box<dyn Fn()>>(), 16);
 }
 ```
 
-The capture set decides whether you allocate, not the `Box`. The residual cost of a stateless
-`Box<dyn Fn>` is 16 bytes inline and one indirect call.
+The concrete closure size decides whether `Box` allocates. Capturing a non-ZST
+usually makes the closure non-zero-sized, but capture presence alone does not.
+The residual cost of a boxed ZST callback is 16 bytes inline and one indirect
+call.
 
 ## By-value `impl Trait` plus a delegating impl is a monomorphization bomb
 
