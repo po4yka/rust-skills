@@ -12,10 +12,10 @@ staticlib linked into an application, and a plain crate consumed by a host CLI.
 
 ## The six rules that are not style
 
-1. **One dispatcher per process.** `tracing::subscriber::set_global_default`
-   succeeds once. A second call returns `Err(SetGlobalDefaultError)`. If you
-   discard that error, the boundary that lost emits nothing for the life of the
-   process, and nothing reports it.
+1. **One dispatcher install per process.** Call
+   `tracing::subscriber::set_global_default` once during process bootstrap. The
+   installed subscriber owns a fan-out registry for all embedded sinks. Never
+   call `set_global_default` once per sink or once per FFI boundary.
 2. **`skip_all` on every `#[instrument]`.** Without it the macro records every
    argument through `Debug`.
 3. **No `?` and no `%` sigils, and no `format!` inside an emission** that can
@@ -99,28 +99,38 @@ rg 'tracing::(event|span|info|debug|trace)!|log::(info|debug|trace)!' \
   | grep -vE 'control|lifecycle|error'
 ```
 
-## One dispatcher, not one per boundary
+## One dispatcher install, multiple sinks
 
 An application can load two FFI crates from the same workspace. Each one
 installs a subscriber. The second install returns an error that an init function
 usually discards, and that boundary then stays silent for the life of the
 process.
 
-Put the dispatcher in one shared observability crate. Let every boundary
-register into it.
+Put the dispatcher and the sink registry in one shared observability crate.
+Install the dispatcher once. Let every boundary add its sink to the registry
+owned by that installed subscriber.
 
 ```text
-register_sink(sink, level) -> bool     shared observability crate
-init_core_logging(sink, level)         FFI crate A, delegates to register_sink
-init_render_logging(sink, level)       FFI crate B, delegates to register_sink
+install_dispatcher() -> Result<(), InstallError>         process bootstrap, once
+register_sink(id, sink, level) -> Result<(), SinkError>   shared sink registry
+init_core_logging(sink, level)                           registers sink "core"
+init_render_logging(sink, level)                         registers sink "render"
 ```
 
-`register_sink` returns `false` when another dispatcher already owns the
-process. Report that value. Never panic and never return an error that a caller
-must handle. A diagnostic surface must not be able to fail application start-up.
+`install_dispatcher` is the only function that calls `set_global_default`. Store
+its result in a one-time state. Do not retry a failed global install from a
+boundary. `register_sink` only mutates the installed subscriber's fan-out
+registry. Reject a duplicate sink ID, and report a missing or failed dispatcher
+separately from a duplicate registration.
 
-Cover this with a test that registers from both boundaries in one process, and
-asserts that both still emit.
+Logging remains optional for application start-up. Return installation and
+registration status to the host, but do not panic or turn a diagnostic failure
+into a domain-operation failure.
+
+Cover this with one process-level test. Install once, register both boundary
+sinks, emit through both boundaries, and assert that both sinks receive their
+records. Also assert that a duplicate ID is rejected without replacing the
+original sink.
 
 ## Host and embedded sink see different things
 
@@ -293,7 +303,8 @@ Work down this list before you suspect the instrumentation.
 | Check | Symptom when it is the cause |
 |-------|------------------------------|
 | Is a sink registered at all? | With no sink the dispatcher's level ceiling is off, and `enabled` rejects every callsite by design. |
-| Did `register_sink` return `false`? | Something else installed a subscriber first. This boundary is silent for the life of the process. |
+| Did the one-time dispatcher install fail? | Another global subscriber won. Report the bootstrap error; do not retry from each boundary. |
+| Did sink registration fail? | The dispatcher is unavailable or the sink ID is already registered. Inspect the distinct registration status. |
 | Is the sink's level above the emission's level? | Higher-severity events still arrive; the quiet ones do not. |
 | On a host, is the env filter set and valid? | An invalid filter is reported on stderr and leaves diagnostics off. |
 | Is the instrumented function on the path you exercise? | Unit tests pass, the CLI prints nothing. See step 4 of *Add an emission*. |
@@ -347,7 +358,8 @@ host-side tools only. Use `allow-print-in-tests` for test code that lives inside
 - [ ] Every new field name exists in the vocabulary tables.
 - [ ] The instrumented entry point is the one the boundary actually calls.
 - [ ] No log macro on a per-item or per-byte path.
-- [ ] Only one crate installs a dispatcher.
+- [ ] Only one bootstrap path installs the dispatcher. Boundary initializers
+      only register sinks in its fan-out registry.
 - [ ] No library crate depends on `tracing-subscriber`.
 - [ ] Counters use `Relaxed`. The drop counter is exposed.
 - [ ] The queue is bounded, drops the oldest, and counts the drop.
