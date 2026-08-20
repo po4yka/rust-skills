@@ -133,10 +133,7 @@ pub unsafe extern "C" fn lib_render(ptr: *mut u8, len: usize) -> i32 {
         Ok(Ok(())) => OK,
         Ok(Err(Error::InvalidInput)) => ERR_INVALID_INPUT,
         Ok(Err(Error::Io(_))) => ERR_IO,
-        Err(payload) => {
-            log::error!("panic at FFI boundary: {}", panic_message(&payload));
-            ERR_PANIC
-        }
+        Err(_) => ERR_PANIC,
     }
 }
 ```
@@ -214,49 +211,49 @@ scaffolding, and apply the full guard yourself to any hand-rolled `extern "C"` i
 same crate. See the `uniffi-boundary` and `rust-jni` skills for the binding rules, and
 `ffi-error-progress-cancel` for the error-object shape.
 
-## Report the panic instead of swallowing it
+## Report the panic without exposing its payload
 
-A guard that returns `-99` and logs nothing turns a bug into a mystery. Extract the payload
-and install a hook.
-
-```rust
-use std::any::Any;
-
-pub fn panic_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(s) = payload.downcast_ref::<&'static str>() {
-        (*s).to_owned()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "panic with a non-string payload".to_owned()
-    }
-}
-```
-
-`panic!("literal")` produces a `&'static str`. `panic!("{x}")` and every formatted assertion
-produce a `String`. Handle both, or you lose half the messages.
+A guard that returns `-99` with no other signal turns a bug into a mystery. Install a hook
+that emits one bounded structured record. Do not inspect the panic payload in shipped code.
+It can contain input data, paths, identifiers, or secrets.
 
 ```rust
 use std::sync::Once;
 
 static HOOK: Once = Once::new();
 
+#[derive(Clone, Copy)]
+enum PanicSite {
+    Boundary,
+    Engine,
+    Unknown,
+}
+
+fn classify_site(file: &str) -> PanicSite {
+    if file.starts_with("src/boundary/") {
+        PanicSite::Boundary
+    } else if file.starts_with("src/engine/") {
+        PanicSite::Engine
+    } else {
+        PanicSite::Unknown
+    }
+}
+
 pub fn install_panic_hook() {
     HOOK.call_once(|| {
-        let previous = std::panic::take_hook();
-        // `set_hook` passes `&PanicHookInfo` since Rust 1.81.
-        // An older toolchain passes `&PanicInfo` instead.
-        std::panic::set_hook(Box::new(move |info| {
-            let location = info
+        std::panic::set_hook(Box::new(|info| {
+            let (site, line, column) = info
                 .location()
-                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
-                .unwrap_or_else(|| "<unknown>".to_owned());
-            let backtrace = std::backtrace::Backtrace::force_capture();
-            log::error!(
-                "rust panic at {location}: {}\n{backtrace}",
-                panic_message(info.payload())
-            );
-            previous(info);
+                .map(|location| {
+                    (
+                        classify_site(location.file()),
+                        location.line(),
+                        location.column(),
+                    )
+                })
+                .unwrap_or((PanicSite::Unknown, 0, 0));
+
+            write_platform_panic("rust_panic", site, line, column);
         }));
     });
 }
@@ -266,14 +263,15 @@ Rules:
 
 - Install the hook once, at the first entry point the host calls. `set_hook` replaces the
   previous hook globally.
-- Call the previous hook at the end unless you have a reason not to. You keep the default
-  stderr report for local runs.
-- The hook runs before unwinding starts, so it sees the location and a full backtrace that
-  `catch_unwind` no longer has.
-- Set `RUST_BACKTRACE=1` in the test and debug environment. `Backtrace::force_capture()`
-  ignores that variable and always captures, at a cost — keep it on the panic path only.
-- Route the log line through the platform sink the rest of the crate uses. See the
-  `rust-observability` skill.
+- Do not chain the default hook in a shipped embedded process. It formats the payload and file
+  path. Keep it only in a local host binary whose stderr is not forwarded to telemetry.
+- The hook runs before unwinding starts. Map the file path to a closed site code. Emit only
+  that code plus the bounded numeric line and column.
+- Do not format `PanicHookInfo`, inspect its payload, emit a file path, or capture a backtrace
+  into a shipped platform log.
+- Use `RUST_BACKTRACE=full` in a local host repro. Symbolicate a tombstone or crash report
+  offline against the exact unstripped binary for an app process.
+- Route the structured record through the platform sink. See the `rust-observability` skill.
 
 ## `.unwrap()` and `.expect()` policy
 
@@ -414,8 +412,8 @@ of data is a separate problem from panic safety of the boundary.
   match handle.await {
       Ok(value) => Ok(value),
       Err(err) if err.is_panic() => {
-          let msg = panic_message(&err.into_panic());
-          Err(Error::TaskPanicked(msg))
+          drop(err.into_panic());
+          Err(Error::TaskPanicked)
       }
       Err(_) => Err(Error::TaskCancelled),
   }
@@ -430,8 +428,8 @@ of data is a separate problem from panic safety of the boundary.
 
 - A detached task whose `JoinHandle` you drop reports nothing. Keep the handle, or wrap the
   task body in its own guard that records the panic.
-- `std::thread::spawn` returns the payload from `join()` as `Box<dyn Any + Send>`. Feed it to
-  `panic_message` and treat it as a fatal internal error.
+- `std::thread::spawn` returns the payload from `join()` as `Box<dyn Any + Send>`. Discard the
+  payload after you classify the result as a fatal internal error.
 - A panic that crosses a task boundary loses its location. The panic hook is the only place
   that still has it, which is why the hook must be installed before any task starts.
 
@@ -447,7 +445,7 @@ See the `rust-async-internals` skill for runtime-level panic handling and cancel
 | `fatal runtime error: Rust cannot catch foreign exceptions` | A C++ or foreign unwind entered Rust frames | Catch it on the foreign side; never let it enter Rust |
 | Abort during unwinding, second panic in the log | A `Drop` implementation panicked while a panic was in flight | Make the `Drop` infallible |
 | `memory allocation of N bytes failed`, then abort | Allocation failure, which is not a catchable panic | Bound the size; use `Vec::try_reserve` for large or input-driven buffers |
-| Panic message arrives as an empty or generic string | The payload was neither `&str` nor `String`, or only one was handled | Use `panic_message` and read the hook output |
+| The bounded panic record has no message or backtrace | This is the shipped privacy contract | Reproduce on the host with `RUST_BACKTRACE=full`, or symbolicate the crash artifact offline |
 | Every later call fails with a poison error | An earlier panic poisoned a shared lock | Decide the poison policy; report the original panic, not the poison |
 | `#[should_panic]` test kills the test runner | `-C panic=abort` reached the test build through `RUSTFLAGS` or `-Z panic-abort-tests` | Build the tests under unwind; the manifest `panic` key alone cannot cause this |
 | Panic location points into a macro or `core` | The real cause is an index, a slice range, or an overflow | Reproduce with `overflow-checks = true` and a debug build; see the `rust-debugging` skill |
@@ -460,8 +458,9 @@ See the `rust-async-internals` skill for runtime-level panic handling and cancel
 - [ ] The shipped profile sets `panic = "unwind"` if any guard uses `catch_unwind`.
 - [ ] The panic exit path has a status code, an exception, or an error object distinct from
       every domain error.
-- [ ] The panic payload is extracted and logged before the boundary discards it.
-- [ ] The panic hook is installed once, early, and chains to the previous hook.
+- [ ] The panic boundary discards the raw payload and returns a distinct panic result.
+- [ ] The panic hook is installed once and emits only a closed site code plus numeric location.
+- [ ] No shipped platform log contains a panic payload, file path, or backtrace.
 - [ ] Every `AssertUnwindSafe` carries a comment that names the invariant.
 - [ ] Every new `.unwrap()` or `.expect()` outside tests carries an infallibility proof.
 - [ ] The crate denies `clippy::unwrap_used` and `clippy::panic` on FFI paths.
