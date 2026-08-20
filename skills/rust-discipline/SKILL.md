@@ -99,11 +99,14 @@ impl Order {
 
 **Severity: WARNING**
 
-No two closures share a type, so a `Vec<F>` never holds two of them, and `impl Fn` in a field
-fails with `E0562`. The stored form is `Box<dyn Fn(..)>`. `Box<dyn FnMut(..)>` needs a unique
-borrow at the call, so `publish(&self)` fails with `E0596` and must become `&mut self`, which
-propagates to every caller and blocks sharing the owner behind an `Arc`. Require `Fn`, and put
-the mutation inside the callback's own `Cell` or `Mutex`.
+Each closure expression has one unique anonymous type. Multiple evaluations of
+the same expression have that type, so a `Vec<F>` can hold those instances. It
+cannot hold values from different closure expressions without type erasure, and
+`impl Fn` in a field fails with `E0562`. The stored form is `Box<dyn Fn(..)>`.
+`Box<dyn FnMut(..)>` needs a unique borrow at the call, so `publish(&self)` fails
+with `E0596` and must become `&mut self`, which propagates to every caller and
+blocks sharing the owner behind an `Arc`. Require `Fn`, and put the mutation
+inside the callback's own `Cell` or `Mutex`.
 
 ```rust
 pub struct Bus {

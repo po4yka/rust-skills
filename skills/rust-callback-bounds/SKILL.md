@@ -348,7 +348,7 @@ the output as an associated type.
 
 Three shapes, and the choice is not stylistic.
 
-| Field type | Size | Captures | Two instances in one `Vec` | Caller can name the type | Allocates |
+| Field type | Size | Captures | Different expressions in one `Vec` | Caller can name the type | Allocates |
 | --- | --- | --- | --- | --- | --- |
 | `F` on `struct S<F: Fn(u32)>` | Size of `F`. 0 for a non-capturing closure | Yes | No, `E0308` | No, `E0747` / `E0562` | No |
 | `Box<dyn Fn(u32)>` | 16, fat pointer | Yes | Yes | Yes | Only if the closure captures |
@@ -422,7 +422,7 @@ impl<F: Fn(u32)> Run for Gadget<F> { fn run(&self) { (self.f)(1) } }
 fn main() {
     let a = Gadget { f: |x| assert_eq!(x, 1) };
     let b = Gadget { f: |x| assert!(x > 0) };
-    // vec![a, b] is E0308: "no two closures, even if identical, have the same type"
+    // E0308: `a` and `b` come from different closure expressions.
     let v: Vec<Box<dyn Run>> = vec![Box::new(a), Box::new(b)];
     for g in &v { g.run(); }
 }
