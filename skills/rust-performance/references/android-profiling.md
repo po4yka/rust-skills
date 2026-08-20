@@ -9,7 +9,7 @@ Deep reference for Rust `cdylib` and `staticlib` targets running on Android devi
 | `-C force-frame-pointers=yes` for every Android target | `simpleperf` cannot walk ARM64 stacks reliably without it; flamegraphs come out empty or truncated | Per-target `rustflags` in `.cargo/config.toml` |
 | Debug symbols kept in the debug APK | Otherwise the profiler and the debugger see raw addresses | Android Gradle `keepDebugSymbols` packaging option for your `.so` |
 | An unstripped `.so` kept on the host | Needed for offline symbolication of release crashes | The copy under `target/<triple>/<profile>/`, before Gradle packages a stripped one |
-| A global panic hook with backtrace capture | Native panics otherwise reach logcat with no stack | Installed at library init, after logging init |
+| A global panic hook with a bounded site record | Native panics otherwise reach logcat with no Rust site | Installed at library init, after logging init |
 
 The frame pointer cost is negligible. One general-purpose register (`x29` on ARM64) is reserved.
 
@@ -127,28 +127,61 @@ $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-addr2line \
   0x29ba4
 ```
 
-### Panic backtraces
+### Privacy-safe panic records
 
-Install a global panic hook at library init. Capture the backtrace and log it, because the default panic output does not reach logcat.
+Install a global panic hook at library init. Emit a bounded structured record
+because the default panic output does not reliably reach logcat.
 
 ```rust
+#[derive(Clone, Copy)]
+enum PanicSite {
+    Boundary,
+    Engine,
+    Unknown,
+}
+
+fn classify_site(file: &str) -> PanicSite {
+    if file.starts_with("src/boundary/") {
+        PanicSite::Boundary
+    } else if file.starts_with("src/engine/") {
+        PanicSite::Engine
+    } else {
+        PanicSite::Unknown
+    }
+}
+
 pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
-        let backtrace = std::backtrace::Backtrace::force_capture();
-        log::error!("PANIC: {info}\n{backtrace}");
+        let (site, line, column) = info
+            .location()
+            .map(|location| {
+                (
+                    classify_site(location.file()),
+                    location.line(),
+                    location.column(),
+                )
+            })
+            .unwrap_or((PanicSite::Unknown, 0, 0));
+
+        write_platform_panic("rust_panic", site, line, column);
     }));
 }
 ```
 
-Call it after the Android logger is initialized. If you install it first, the panic message has nowhere to go.
+Call it after the Android platform writer is initialized. The event name and
+site are closed vocabulary values. The line and column are bounded integers.
+Unknown paths collapse to `Unknown`. Never format `PanicHookInfo`, inspect its
+payload, emit its file path, or capture a backtrace into a shipped platform log.
 
 Filter the output:
 
 ```bash
-adb logcat -s mycrate-native:E | grep -A 50 "PANIC:"
+adb logcat -s mycrate-native:E | grep 'rust_panic'
 ```
 
-Backtraces from a profile with `debug = "line-tables-only"` show file and line. Backtraces from a stripped ship profile show addresses only, so symbolicate them offline with `ndk-stack`.
+Preserve the unstripped `.so` for each shipped build. Symbolicate tombstones and
+crash reports offline with `ndk-stack` or `llvm-addr2line`. For a local host
+repro, keep the default stderr hook and use `RUST_BACKTRACE=full`.
 
 See `rust-panic-safety` for catching the panic at the FFI boundary, and `rust-debugging` for crash triage.
 
@@ -220,7 +253,7 @@ Stack traces in the native profiler need unstripped symbols. Debug builds have t
 | Symbolication shows `<unknown>` | Use the unstripped `.so` from `target/<triple>/<profile>/`, not the packaged copy |
 | ASan build fails | ASan is unsupported since NDK r26; use HWASan |
 | HWASan reports nothing on an x86_64 emulator | HWASan is ARM64-only; use a physical device or an ARM64 emulator image |
-| Panic backtrace missing from logcat | Install the panic hook after the Android logger is initialized |
+| Panic details are missing from logcat | Install the bounded panic-record hook after the platform writer is initialized; symbolicate the crash artifact offline |
 | `simpleperf record` gives permission denied | Target a debuggable app (`android:debuggable="true"`), or run `adb shell` as root |
 | Profiling a release build shows no symbols | Expected. The ship profile strips symbols. Profile the on-device debug profile instead |
 | Profile numbers differ wildly between runs | Thermal throttling. Cool the device, disable background sync, and repeat the run |
