@@ -226,7 +226,7 @@ class EngineClient(
             }
         }
         awaitClose { engine.cancelJob(request.jobId) }
-    }.flowOn(dispatcher)
+    }.buffer(Channel.CONFLATED).flowOn(dispatcher)
 }
 ```
 
@@ -243,10 +243,12 @@ deliberate guard against exactly the leak this bridge would otherwise have.
 
 ### Backpressure
 
-`trySend` does not suspend and does not block. If the buffer is full it drops
-the event and returns a failed result. That is the right trade for progress:
-the newest fraction matters, an old one does not, and blocking the engine
-worker to deliver a progress tick is never correct.
+`trySend` does not suspend and does not block. The adjacent
+`buffer(Channel.CONFLATED)` fuses with `callbackFlow`, so a new progress event
+replaces the older pending event. The newest fraction survives. Without this
+buffer policy, a full channel rejects the new event and keeps stale progress.
+Treat a failed `trySend` as a closed-consumer signal, not as normal overflow.
+Never block the engine worker to deliver a progress tick.
 
 If you need every event delivered, that is a sign the event carries data it
 should not - move that data out of the progress channel.

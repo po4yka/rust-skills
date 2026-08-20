@@ -325,13 +325,15 @@ fun export(request: ExportRequest): Flow<ExportProgress> = callbackFlow {
         }
     }
     awaitClose { engine.cancelJob(request.jobId) }   // see section 3
-}
+}.buffer(Channel.CONFLATED)
 ```
 
 Use `callbackFlow`, not `flow {}`: progress is push-based, so the producer is
-not a suspending loop you control. `trySend` honors backpressure without
-blocking the worker thread. `awaitClose` is the cancellation hook and is
-mandatory - `callbackFlow` throws if the block returns without it.
+not a suspending loop you control. Fuse it with `buffer(Channel.CONFLATED)` so
+`trySend` replaces an older pending progress event with the newest event
+without blocking the worker. Without conflation, a full buffer rejects the
+current event and keeps stale progress. `awaitClose` is the cancellation hook
+and is mandatory - `callbackFlow` throws if the block returns without it.
 
 ### Swift - `AsyncThrowingStream`
 
