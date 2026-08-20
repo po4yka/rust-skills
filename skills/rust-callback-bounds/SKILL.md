@@ -368,7 +368,7 @@ fn main() {
     let g: fn(u64) = h;
     assert_eq!(size_of_val(&g), size_of::<usize>()); // one machine word
     assert_eq!(size_of::<Box<dyn Fn()>>(), 2 * size_of::<usize>()); // fat pointer
-    assert_eq!(size_of::<&dyn Fn()>>(), 2 * size_of::<usize>());
+    assert_eq!(size_of::<&dyn Fn()>(), 2 * size_of::<usize>());
 }
 ```
 
