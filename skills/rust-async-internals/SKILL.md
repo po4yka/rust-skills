@@ -40,7 +40,7 @@ Read this table first. It answers most async design questions in one line.
 | Run an indefinite blocking loop | `std::thread::spawn` | `spawn_blocking` |
 | Hold a lock across `.await` | `tokio::sync::Mutex` | `std::sync::Mutex` |
 | Deliver every message without loss | `mpsc` | `broadcast` |
-| Bound a CPU-heavy operation in time | `timeout(d, spawn_blocking(..))` | `timeout(d, cpu_work())` |
+| Bound how long a caller waits for CPU work | `timeout(d, spawn_blocking(..))` | `timeout(d, cpu_work())` |
 | Keep a critical `.await` sequence atomic | `tokio::spawn` + join the handle | `select!` around it |
 
 ## Runtime configuration
@@ -282,15 +282,18 @@ let r = tokio::time::timeout(Duration::from_secs(1), async {
     expensive_cpu_computation()   // no .await inside
 }).await;
 
-// CORRECT: give the timeout a yield point to work with
+// This bounds the wait, but the blocking closure continues after timeout.
 let r = tokio::time::timeout(
     Duration::from_secs(1),
     tokio::task::spawn_blocking(|| expensive_cpu_computation()),
 ).await;
 ```
 
-Apply this to every CPU-heavy classification, parsing, compression, or crypto
-path before you wrap it in `timeout`.
+Use `spawn_blocking` so the runtime can observe the deadline. This bounds only
+how long the async caller waits. It does not stop a blocking closure that has
+started. Pass a `CancellationToken` into CPU work and check it between bounded
+work units when the operation itself must stop after the deadline. Cancel that
+token when `timeout` returns `Elapsed`.
 
 ## Manual polling from a synchronous loop
 
@@ -321,7 +324,7 @@ registered-buffer rules.
 | Shutdown never completes | a `select!` loop without a `cancelled()` arm | add `biased;` + `_ = cancel.cancelled() => break` |
 | Async tasks abort, but the process will not exit | `JoinSet` drop cannot abort `spawn_blocking` threads | pass a `CancellationToken` into the blocking closure and check it |
 | Latency spikes with no obvious cause | blocking pool saturated by long-lived tasks | move indefinite work to `std::thread::spawn` |
-| A `timeout` never fires | the wrapped future never yields | wrap `spawn_blocking` inside the `timeout` |
+| A `timeout` never fires | the wrapped future never yields | wrap `spawn_blocking` inside the `timeout`; add cooperative cancellation if the work itself must stop |
 | Panic: "can call blocking only when running on the multi-thread runtime" | `block_in_place` on a `current_thread` runtime | use `spawn_blocking` |
 | Events are missing, no error is logged | `broadcast` `Lagged` handled as a generic `Err` | match `RecvError::Lagged(n)` explicitly, or switch to `mpsc` |
 | Deadlock only under concurrent load | `std::sync::Mutex` guard held across `.await` | drop the guard before the `.await`, or use `tokio::sync::Mutex` |

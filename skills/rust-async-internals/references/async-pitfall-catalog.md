@@ -681,22 +681,40 @@ let result = tokio::time::timeout(
 ).await;
 ```
 
-Fix: move any blocking or CPU-heavy work into `spawn_blocking` before you wrap
-it with `timeout`:
+Move blocking or CPU-heavy work into `spawn_blocking` before you wrap it with
+`timeout`. This makes the deadline observable, but it bounds only the caller's
+wait. A blocking closure that has started continues after the timeout unless
+the closure cooperates with cancellation:
 
 ```rust
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
-fn expensive_cpu_computation() {}
+fn expensive_cpu_computation(cancel: &CancellationToken) {
+    while !cancel.is_cancelled() {
+        if do_one_bounded_work_unit() {
+            break;
+        }
+    }
+}
 
+fn do_one_bounded_work_unit() -> bool { todo!() }
+
+let cancel = CancellationToken::new();
+let worker_cancel = cancel.clone();
 let result = tokio::time::timeout(
     Duration::from_secs(1),
-    tokio::task::spawn_blocking(|| expensive_cpu_computation()),
+    tokio::task::spawn_blocking(move || expensive_cpu_computation(&worker_cancel)),
 ).await;
+if result.is_err() {
+    cancel.cancel();
+}
 ```
 
 Apply this to every CPU-heavy classification, parsing, compression,
-fingerprinting, or crypto path.
+fingerprinting, or crypto path. Choose a work-unit size that meets the written
+cancellation-latency budget. Do not describe the operation as time-bounded
+unless the blocking function checks the token.
 
 ## `JoinSet` drop cannot abort `spawn_blocking` threads — silent shutdown hang
 
