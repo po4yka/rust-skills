@@ -197,7 +197,7 @@ owns it.
 | --- | --- |
 | [cargo-workflows](skills/cargo-workflows/SKILL.md) | Workspace layout, `--locked` discipline, Cargo profiles and rustflags, cross-compilation, nextest, cargo-deny, and edition migration. |
 | [rust-crate-release](skills/rust-crate-release/SKILL.md) | SemVer and MSRV classification, registry publishing, deterministic binary archives, checksums, SBOMs, provenance, signing, consumer verification, and release recovery. |
-| [rust-native-linking](skills/rust-native-linking/SKILL.md) | Cargo native integration: deterministic build scripts, one `links`/`*-sys` owner, native build helper selection, bindings, cross-target linking, loader paths, and symbol or ABI triage. |
+| [rust-native-linking](skills/rust-native-linking/SKILL.md) | Cargo native integration, deterministic build scripts, bindings, cross-target linking, and Windows MSVC/GNU ABI, CRT, import-library, DLL-loader, PDB, and PE/COFF verification. |
 | [rust-serde](skills/rust-serde/SKILL.md) | `deny_unknown_fields` and the `rename_all` migration trap, the four enum representations and their wire forms, `flatten` constraints, boundary validation with `try_from`, and the `default` plus `alias` pair for version compatibility. |
 | [rust-security](skills/rust-security/SKILL.md) | cargo-audit, cargo-deny policy, RUSTSEC advisory triage, new-crate vetting against typosquat risk, and untrusted-input parser hardening. |
 | [rust-android-build](skills/rust-android-build/SKILL.md) | Android cdylib builds: NDK linkers, per-ABI rustflags, 16 KiB page alignment, the exported ELF symbol allowlist, and `.so` size gates. |

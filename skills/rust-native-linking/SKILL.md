@@ -1,6 +1,6 @@
 ---
 name: rust-native-linking
-description: Use when a Rust crate must discover, compile, generate bindings for, link, package, or diagnose a native C or C++ library across host and cross targets. Triggers on build.rs, rustc-link-lib, links, *-sys, cc, pkg-config, vcpkg, CMake, bindgen, cbindgen, rpath, install name, undefined reference, library not loaded, or DLL not found.
+description: Use when a Rust crate must discover, compile, generate bindings for, link, package, or diagnose a native C or C++ library across host and cross targets. Triggers on build.rs, rustc-link-lib, links, *-sys, cc, pkg-config, vcpkg, CMake, bindgen, cbindgen, rpath, install name, windows-msvc, windows-gnu, MSVC, MinGW, CRT, import library, PDB, PE/COFF, LNK2019, ERROR_BAD_EXE_FORMAT, undefined reference, library not loaded, or DLL not found.
 license: BSD-3-Clause
 ---
 
@@ -342,13 +342,12 @@ architecture slice with `lipo -info`.
 
 ### Windows PE/COFF
 
-Package required DLLs in the application package or another intended search
-location. Do not rely on a developer machine's global `PATH`. Keep safe DLL
-search behavior. For explicit runtime loading, use an absolute path or the
-`LOAD_LIBRARY_SEARCH_*` flags instead of the current directory.
+Read [references/windows.md](references/windows.md) for Windows targets. It
+covers MSVC and GNU toolchains, CRT selection, import libraries, vcpkg
+triplets, DLL loading, PDB files, and final PE/COFF inspection.
 
-Use `dumpbin /DEPENDENTS` for DLL names, `/IMPORTS` for imported symbols,
-`/EXPORTS` for exports, and `/HEADERS` for the machine type.
+Package the required DLLs in an intended application location. Do not rely on
+a developer machine's global `PATH`. Keep safe DLL search behavior.
 
 ## Diagnose the first failing layer
 
@@ -428,3 +427,5 @@ dependency can load and still fail because one of its dependencies is absent.
 - [Linux dynamic loader](https://man7.org/linux/man-pages/man8/ld.so.8.html)
 - [Apple run-path dependent libraries](https://developer.apple.com/library/archive/documentation/DeveloperTools/Conceptual/DynamicLibraries/100-Articles/RunpathDependentLibraries.html)
 - [Windows DLL search order](https://learn.microsoft.com/windows/win32/dlls/dynamic-link-library-search-order)
+- [Rust Windows MSVC targets](https://doc.rust-lang.org/rustc/platform-support/windows-msvc.html)
+- [Rust Windows GNU targets](https://doc.rust-lang.org/rustc/platform-support/windows-gnu.html)
