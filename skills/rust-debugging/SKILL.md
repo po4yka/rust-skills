@@ -174,13 +174,14 @@ See [rust-observability](../rust-observability/) for the full subscriber setup.
 **Rule: a Rust panic must never unwind across an `extern` boundary.** Unwinding
 into non-Rust frames is undefined behavior. On `extern "C"` and `extern "system"`
 functions the compiler inserts an abort, so the process dies with SIGABRT and you
-lose the panic message unless you logged it first.
+lose the Rust panic site unless the hook records it first.
 
 Two protections, and you need both:
 
 1. Catch the unwind at every export.
-2. Install a panic hook that logs the message and a backtrace before the unwind
-   starts.
+2. Install a panic hook that emits a bounded site code and numeric location
+   before the unwind starts. Get the backtrace from a local repro or crash
+   artifact, not from shipped platform telemetry.
 
 ### Catch the unwind at raw JNI exports
 
@@ -243,23 +244,54 @@ Consequences for triage:
   See [uniffi-boundary](../uniffi-boundary/) and
   [ffi-error-progress-cancel](../ffi-error-progress-cancel/).
 
-### Panic hook that works without RUST_BACKTRACE
+### Privacy-safe panic record for platform logs
 
 ```rust
-use std::backtrace::Backtrace;
+#[derive(Clone, Copy)]
+enum PanicSite {
+    Boundary,
+    Engine,
+    Unknown,
+}
+
+fn classify_site(file: &str) -> PanicSite {
+    if file.starts_with("src/boundary/") {
+        PanicSite::Boundary
+    } else if file.starts_with("src/engine/") {
+        PanicSite::Engine
+    } else {
+        PanicSite::Unknown
+    }
+}
 
 pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
-        let backtrace = Backtrace::force_capture();
-        log::error!("PANIC: {info}\n{backtrace}");
+        let (site, line, column) = info
+            .location()
+            .map(|location| {
+                (
+                    classify_site(location.file()),
+                    location.line(),
+                    location.column(),
+                )
+            })
+            .unwrap_or((PanicSite::Unknown, 0, 0));
+
+        write_platform_panic("rust_panic", site, line, column);
     }));
 }
 ```
 
-`Backtrace::force_capture()` captures unconditionally and ignores
-`RUST_BACKTRACE`. This is the only way to get a backtrace inside an app process
-that you cannot pass environment variables to. Call the hook from your library
-init, and route `log` or `tracing` output to the platform log (below).
+The event name and site are closed vocabulary values. The line and column are
+bounded integers. Unknown paths collapse to `Unknown`. Never format
+`PanicHookInfo`, inspect its payload, emit its file path, or capture a backtrace
+into a shipped platform log. Panic text can contain input data, paths,
+identifiers, or secrets.
+
+Call the hook from library init after the platform writer is ready. Keep the
+default stderr hook in a local host repro and set `RUST_BACKTRACE=full` there.
+For an app process, symbolicate its tombstone or crash report offline against
+the exact unstripped binary.
 
 ### SIGPIPE
 
@@ -285,8 +317,8 @@ Reach for the device only after the host attempt fails. The order that works:
 1. **Wire a log tag first.** A library that configures none prints nothing to logcat. The
    crash channels (`DEBUG:*`, `libc:*`, `AndroidRuntime:E`) still fire, but they give a signal
    and an address, not a panic message.
-2. **Read the panic, not the signal.** `adb logcat | grep -E "PANIC:|backtrace|SIGABRT|SIGSEGV"`.
-3. **Symbolicate.** A tombstone or a raw backtrace is addresses until `ndk-stack` or
+2. **Read the bounded record and the signal.** `adb logcat | grep -E "rust_panic|SIGABRT|SIGSEGV"`.
+3. **Symbolicate.** A tombstone or crash report is addresses until `ndk-stack` or
    `addr2line` maps them against the unstripped `.so` from the same build.
 4. **Attach LLDB** only when the log and the tombstone both fall short.
 
@@ -407,7 +439,8 @@ a debugger. See [rust-test-tools](../rust-test-tools/).
 
 - [ ] You tried a host repro with `RUST_BACKTRACE=full`.
 - [ ] The build under test has `debug = true` and is not stripped.
-- [ ] A panic hook with `Backtrace::force_capture()` is installed in the library init.
+- [ ] A panic hook emits only a closed site code plus numeric line and column.
+- [ ] No shipped platform log contains a panic payload, file path, or backtrace.
 - [ ] Logging is initialized before the code path you suspect runs.
 - [ ] You symbolicated against the exact binary that crashed, not a rebuild.
 - [ ] You checked the tombstone or crash report signal, not only the app-level message.
