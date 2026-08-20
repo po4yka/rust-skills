@@ -19,8 +19,10 @@ Terminology is the same as in `SKILL.md`:
 
 ### Job registry
 
-Cancellation needs somewhere to put the flag before the job starts, because the
-`job_id` is caller-supplied and a cancel can arrive first.
+Cancellation needs somewhere to put the flag before the worker starts. Reserve
+the caller-supplied `job_id` synchronously before the host can cancel it. Bound
+the reservation count so abandoned or hostile ids cannot grow the map without
+limit.
 
 ```rust
 use std::collections::HashMap;
@@ -33,19 +35,35 @@ pub struct JobRegistry {
 }
 
 impl JobRegistry {
-    /// Called by the worker when a job starts. Picks up any pre-cancel.
-    pub fn register(&self, job_id: &str) -> Arc<AtomicBool> {
+    /// Called before the worker is launched and before cancellation is visible.
+    pub fn reserve(&self, job_id: &str) -> Result<(), &'static str> {
         let mut flags = self.flags.lock().expect("job registry poisoned");
-        flags.entry(job_id.to_owned()).or_default().clone()
+        if flags.contains_key(job_id) {
+            return Err("duplicate job id");
+        }
+        const MAX_ACTIVE_JOBS: usize = 64;
+        if flags.len() >= MAX_ACTIVE_JOBS {
+            return Err("too many active jobs");
+        }
+        flags.insert(job_id.to_owned(), Arc::new(AtomicBool::new(false)));
+        Ok(())
+    }
+
+    /// Called by the worker when it starts. Picks up a cancel after reserve.
+    pub fn register(&self, job_id: &str) -> Option<Arc<AtomicBool>> {
+        let flags = self.flags.lock().expect("job registry poisoned");
+        flags.get(job_id).cloned()
     }
 
     /// Idempotent, non-blocking. Unknown or finished id is a no-op success.
     pub fn cancel(&self, job_id: &str) {
-        let mut flags = self.flags.lock().expect("job registry poisoned");
+        let flags = self.flags.lock().expect("job registry poisoned");
         // Release pairs with the Acquire load in the worker's poll, so every
         // write made before cancel is visible once the worker observes the flag.
         // See the memory-model skill.
-        flags.entry(job_id.to_owned()).or_default().store(true, Ordering::Release);
+        if let Some(flag) = flags.get(job_id) {
+            flag.store(true, Ordering::Release);
+        }
     }
 
     /// Called by the worker on every exit path, including the cancel path.
@@ -58,9 +76,11 @@ impl JobRegistry {
 
 Points that matter:
 
-- `cancel` uses `entry(...).or_default()`, so a cancel for a job that has not
-  started yet creates the flag already set. The worker's `register` then picks
-  up a flag that is `true` and aborts at its first checkpoint.
+- `reserve` runs before the worker is launched. A later `cancel` sets the
+  reserved flag, and `register` picks it up when the worker starts.
+- `cancel` uses `get`, not `entry`. An unknown or finished id never allocates.
+- The active-job limit bounds reservations that never reach `finish`. Set the
+  limit from the product's real concurrency budget.
 - `finish` runs on every exit path. Without it the map grows for the process
   lifetime. Use a guard type with `Drop` so a `?` early return cannot skip it.
 - Hold the mutex only for the map operation. Never hold it across engine work.
@@ -131,6 +151,7 @@ class EngineClient(
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     fun export(request: ExportRequest): Flow<ExportProgress> = callbackFlow {
+        engine.reserveJob(request.jobId)
         val listener = object : ProgressListener {
             override fun onProgress(event: ProgressEvent) {
                 trySend(event.toDomain())            // never blocks the worker
@@ -218,6 +239,12 @@ actor EngineClient {
         request: ExportRequest
     ) -> AsyncThrowingStream<ExportProgress, Error> {
         AsyncThrowingStream { continuation in
+            do {
+                try ffi.reserveJob(jobId: request.jobId)
+            } catch {
+                continuation.finish(throwing: EngineClient.map(error))
+                return
+            }
             let listener = ProgressListenerImpl { event in
                 continuation.yield(event.toDomain())
             }
@@ -297,10 +324,11 @@ single-protocol test suite misses.
 | No listener | Same job with a no-op listener. | Output bytes are identical to the happy path. This is the determinism guard. |
 | Slow consumer | Consumer sleeps between events. | Job completes in the same wall time as the happy path within tolerance. Dropped progress events are acceptable; a stalled engine is not. |
 | Explicit cancel mid-job | Cancel during a long stage. | `Cancelled` within the stated latency budget; no partial output on disk; no error dialog path taken. |
-| Pre-cancel | Call `cancel_job` before the job starts. | Job aborts at the first checkpoint and never does real work. |
+| Pre-cancel | Reserve the id, then call `cancel_job` before the worker starts. | Job aborts at the first checkpoint and never does real work. |
 | Cancel after completion | Cancel an id that already finished. | No-op success. Finished output still present and intact. |
 | Double cancel | Cancel the same id twice. | Second call is a no-op success. |
-| Unknown id cancel | Cancel an id that never existed. | No-op success, no error, no map growth after `finish`. |
+| Unknown id cancel | Cancel many ids that were never reserved. | No-op success, no error, and no map growth. |
+| Reservation limit | Reserve more than the configured active-job limit. | The excess reservation fails and memory stays bounded. |
 | Consumer drops the stream | Collector goes out of scope without cancelling. | `awaitClose` / `onTermination` fires, `cancel_job` is called, no worker thread survives. |
 | Engine error mid-job | Force a recoverable failure. | Stream throws the mapped domain error; partial output removed; `job_id` in the log lines matches the request. |
 | Unknown error code | Feed the mapper a code it does not know. | Programmer-error bucket, not a crash and not a raw string in the UI. |
