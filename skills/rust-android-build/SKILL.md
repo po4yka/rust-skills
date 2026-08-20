@@ -182,26 +182,35 @@ ZIP boundary.
 # Check every uncompressed native library entry in the final APK.
 "$ANDROID_SDK_ROOT/build-tools/<version>/zipalign" -c -P 16 -v 4 app-release.apk
 
-# An AAB records the page-alignment policy used when bundletool builds APKs.
+# Prove the policy that the AAB requests for Play-generated APK variants.
 bundletool dump config --bundle=app-release.aab | grep PAGE_ALIGNMENT_16K
 
-# Build the release APK set from the AAB. Extract it, then run the same
-# zipalign command on every generated APK that contains a native library.
+# Build the DEFAULT APK set for all supported device configurations. Do not pass
+# --mode=universal here. Extract the set and check every split and standalone APK.
 bundletool build-apks \
   --bundle=app-release.aab \
-  --output=app-release.apks \
+  --output=app-release-default.apks \
+  --overwrite
+unzip -q app-release-default.apks -d <default-apks-dir>
+find <default-apks-dir> -name '*.apk' -print0 \
+  | xargs -0 -n1 "$ANDROID_SDK_ROOT/build-tools/<version>/zipalign" -c -P 16 -v 4
+
+# Optional local smoke artifact. This is one broad APK, not release proof for
+# the split and standalone variants that Play can serve.
+bundletool build-apks \
+  --bundle=app-release.aab \
+  --output=app-release-universal.apks \
   --mode=universal \
   --overwrite
-unzip -q app-release.apks -d <apks-dir>
-find <apks-dir> -name '*.apk' -print0 \
-  | xargs -0 -n1 "$ANDROID_SDK_ROOT/build-tools/<version>/zipalign" -c -P 16 -v 4
 ```
 
 Gate the release path on both layers. Fail when any shipped ELF LOAD segment is
 not `0x4000`, when `zipalign` rejects a final APK, or when an AAB does not declare
-`PAGE_ALIGNMENT_16K`. Do not treat a check of the merged JNI tree as proof about
-the archive that ships. See `references/elf-verification.md` for the full gate
-design.
+`PAGE_ALIGNMENT_16K`. Check the DEFAULT APK set when CI must inspect the actual
+split and standalone APK entries. A universal APK is only a local smoke artifact.
+It does not cover those Play delivery variants. Do not treat a check of the
+merged JNI tree as proof about the archive that ships. See
+`references/elf-verification.md` for the full gate design.
 
 ### Common traps
 
@@ -406,6 +415,7 @@ NDK r29 changed these items:
 | Missing `crate-type = ["cdylib"]` | Add it. An `rlib` produces no `.so`. |
 | Missing 16 KiB alignment flags | Add `-Wl,-z,max-page-size=16384` to every Android target block. |
 | ELF alignment passes but the packaged app fails the 16 KiB check | Run `zipalign -c -P 16 -v 4` on the final APK and inspect the AAB page-alignment policy. |
+| Only a universal APK passes `zipalign` | Check `PAGE_ALIGNMENT_16K` in the AAB and build the DEFAULT APK set to inspect split and standalone variants. |
 | Alignment flags on 64-bit targets only | Apply the same block to all four ABIs. |
 | `panic = "abort"` in an Android profile | Use `panic = "unwind"`. The JNI boundary needs `catch_unwind`. |
 | Wrong triple for `armeabi-v7a` | Use `armv7-linux-androideabi` as the Cargo target. |
