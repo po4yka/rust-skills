@@ -123,14 +123,26 @@ boundary. `register_sink` only mutates the installed subscriber's fan-out
 registry. Reject a duplicate sink ID, and report a missing or failed dispatcher
 separately from a duplicate registration.
 
+Keep callsite interest valid when the sink set can change. Make the fan-out
+subscriber's `register_callsite` return `Interest::sometimes()` for every
+callsite. Do not return `Interest::never()` only because the registry is empty.
+The callsite caches that result, so a sink registered later cannot receive that
+callsite. If the subscriber instead caches interest from the current sinks,
+release the registry lock and call
+`tracing_core::callsite::rebuild_interest_cache()` after every sink, level, or
+filter mutation. Rebuild after a change to `max_level_hint` too.
+
 Logging remains optional for application start-up. Return installation and
 registration status to the host, but do not panic or turn a diagnostic failure
 into a domain-operation failure.
 
-Cover this with one process-level test. Install once, register both boundary
-sinks, emit through both boundaries, and assert that both sinks receive their
-records. Also assert that a duplicate ID is rejected without replacing the
-original sink.
+Cover this with one process-level test. Install once with no sinks. Call one
+`emit_probe` helper and assert that no record arrives. Register a sink. Call the
+same helper again and assert that exactly one record arrives. This sequence uses
+the same static callsite and catches a stale cached `Interest::never()` result.
+Then register the other boundary sink, emit through both boundaries, and assert
+that both sinks receive their records. Also assert that a duplicate ID is
+rejected without replacing the original sink.
 
 ## Host and embedded sink see different things
 
@@ -303,6 +315,7 @@ Work down this list before you suspect the instrumentation.
 | Check | Symptom when it is the cause |
 |-------|------------------------------|
 | Is a sink registered at all? | With no sink the dispatcher's level ceiling is off, and `enabled` rejects every callsite by design. |
+| Was this callsite emitted before the first sink was registered? | The subscriber cached `Interest::never()` from the empty registry. Return `Interest::sometimes()` for a mutable registry, or rebuild the interest cache after each mutation. |
 | Did the one-time dispatcher install fail? | Another global subscriber won. Report the bootstrap error; do not retry from each boundary. |
 | Did sink registration fail? | The dispatcher is unavailable or the sink ID is already registered. Inspect the distinct registration status. |
 | Is the sink's level above the emission's level? | Higher-severity events still arrive; the quiet ones do not. |
@@ -360,6 +373,10 @@ host-side tools only. Use `allow-print-in-tests` for test code that lives inside
 - [ ] No log macro on a per-item or per-byte path.
 - [ ] Only one bootstrap path installs the dispatcher. Boundary initializers
       only register sinks in its fan-out registry.
+- [ ] A mutable fan-out returns `Interest::sometimes()`, or every mutation
+      rebuilds the callsite interest cache after it releases the registry lock.
+- [ ] The same callsite emits before registration and reaches the new sink after
+      registration in a process-level test.
 - [ ] No library crate depends on `tracing-subscriber`.
 - [ ] Counters use `Relaxed`. The drop counter is exposed.
 - [ ] The queue is bounded, drops the oldest, and counts the drop.
