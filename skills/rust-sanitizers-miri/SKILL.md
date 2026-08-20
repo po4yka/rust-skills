@@ -103,17 +103,18 @@ Triage order:
 
 ## 4. On-device sanitizers: Android and iOS
 
-Use HWASan or MTE on Android, and ASan or TSan on iOS, to validate a Rust
-library that you cross-compile into a mobile app.
+Use HWASan or MTE on Android. Use Xcode ASan or TSan for code that Xcode
+compiles. Run a host sanitizer build to instrument the Rust library itself.
 
 | Platform | Tool | Requirement |
 |---|---|---|
-| Android ARM64 | HWASan | Android 10 and later; `-Z sanitizer=hwaddress` |
-| Android ARM64 | MTE | Android 14 and later, supporting SoC; manifest setting only |
-| Android ARM or x86 emulator | ASan | `-Z sanitizer=address` |
-| iOS device or Simulator | ASan, TSan | Xcode scheme Diagnostics, or `-enableAddressSanitizer` |
+| Android ARM64 | HWASan | Android 14 and later with `wrap.sh`; Android 10 through 13 need a HWASan system image |
+| Android ARM64 | MTE heap checks | Android 13 and later on a device that reports the `mte` CPU feature; set `android:memtagMode` |
+| iOS device or Simulator | Xcode ASan | Xcode scheme Diagnostics, or `-enableAddressSanitizer YES` |
+| iOS Simulator | Xcode TSan | Xcode scheme Diagnostics, or `-enableThreadSanitizer YES` |
 
-MTE needs no Rust code change and no rebuild. It is a manifest setting. A tag
+Manifest activation checks native heap allocations without a Rust rebuild.
+Stack MTE needs Android 14 QPR3 or later and an instrumented rebuild. A tag
 mismatch raises `SIGSEGV` with `si_code = SEGV_MTEAERR` in async mode or
 `SEGV_MTESERR` in sync mode.
 

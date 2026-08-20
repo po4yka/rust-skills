@@ -216,8 +216,8 @@ now skips needs an ASan or HWASan run instead.
 |---|---|---|---|
 | Miri | UB in safe and unsafe Rust, per the language rules | nightly; pure Rust only | about 100x |
 | ASan | Heap and stack memory errors at runtime | nightly for the Rust build | about 2x |
-| HWASan | Same class as ASan, tag-based | nightly; ARM64, Android 10+ | about 15% RAM, about 5% CPU |
-| MTE | Same class as HWASan, hardware tags | arm64 Android 14+, supporting SoC | about 3% in async mode |
+| HWASan | Heap and stack memory errors, tag-based | nightly; ARM64; Android 14+ with `wrap.sh`, or Android 10-13 with a HWASan system image | about 2x CPU, 10% to 35% RAM |
+| MTE | Tagged native heap errors; stack errors with a separate instrumented build | arm64 Android 13+ on a device that reports the `mte` feature | lower overhead in async mode; measure the app |
 | TSan | Data races at runtime | nightly for the Rust build | 5x to 15x |
 | MSan | Reads of uninitialized memory | nightly; every object instrumented | about 3x |
 | UBSan | Integer UB, null dereference and similar, inside C or C++ code | clang or gcc `-fsanitize=undefined` on the C or C++ dependency; rustc has no UBSan option | under 2x |
