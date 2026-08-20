@@ -178,7 +178,11 @@ Correct patterns:
 - `Box::into_raw` transfers ownership. Never touch the original `Box` again.
   Recover it with `Box::from_raw` exactly once, and only when the foreign side
   has released it.
-- `Pin<Box<T>>` when the foreign side only borrows the pointer.
+- For a synchronous foreign borrow, do not access or reborrow the value until
+  the call returns. If foreign code stores the pointer, use `Box::into_raw` and
+  recover it only after unregistering the pointer and stopping all foreign use.
+- `Pin<Box<T>>` guarantees a stable address only. It does not relax aliasing
+  rules or make concurrent foreign access valid.
 
 ## MIRIFLAGS quick reference
 

@@ -294,9 +294,11 @@ Correct patterns:
 
 - Use `Box::into_raw` to transfer ownership to the foreign side. Never use the
   original `Box` again. Recover it with `Box::from_raw` exactly once.
-- If the foreign side must only borrow the pointer, hold the value in
-  `Pin<Box<T>>`. The address is then stable and the code does not rely on the
-  `noalias` assumption being false.
+- For a synchronous foreign borrow, do not access or reborrow the value until
+  the call returns. If foreign code stores the pointer, use `Box::into_raw` and
+  recover it only after unregistering the pointer and stopping all foreign use.
+- Use `Pin` only when `T` has a pinning invariant. `Pin<Box<T>>` keeps the
+  address stable, but it does not permit aliasing or concurrent foreign access.
 - Run `MIRIFLAGS="-Zmiri-tree-borrows"` on this code. The tree model reports
   this aliasing violation.
 
