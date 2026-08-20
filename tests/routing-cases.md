@@ -75,6 +75,11 @@ wrong skill, and put the phrase in the right description in the same change.
 | callbackFlow | ffi-error-progress-cancel |
 | AsyncThrowingStream | ffi-error-progress-cancel |
 | cancel_job | ffi-error-progress-cancel |
+| Activity lifecycle | ffi-error-progress-cancel |
+| ViewModel.onCleared | ffi-error-progress-cancel |
+| Dispatchers.Main | ffi-error-progress-cancel |
+| process death | ffi-error-progress-cancel |
+| callback release race | ffi-error-progress-cancel |
 | Ordering::Relaxed | memory-model |
 | happens-before | memory-model |
 | compare-exchange | memory-model |

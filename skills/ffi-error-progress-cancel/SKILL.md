@@ -1,6 +1,6 @@
 ---
 name: ffi-error-progress-cancel
-description: Use when you design or review an FFI boundary for a long-running Rust operation that must report typed errors, stream progress, and cancel cooperatively - import, indexing, preview, render, export, or any job longer than one frame. Covers a closed versioned boundary error taxonomy, UniFFI flat error enums, mapping stable error codes to native UX buckets, redaction so no backtrace or filesystem path crosses the boundary, callback-interface progress listeners carrying job id plus stage and fraction, bridges to Kotlin Flow with callbackFlow and awaitClose and to Swift AsyncThrowingStream with onTermination, and wiring coroutine cancel and Task cancel down to an idempotent non-blocking cancel_job. Triggers on flat_error, callback interface, callbackFlow, awaitClose, trySend, AsyncThrowingStream, CancellationException, CancellationError, cancel_job, job_id, progress event, or "the UI must not show stack traces".
+description: Use when a long-running Rust FFI operation must report typed errors, stream progress, cancel cooperatively, or follow a mobile UI owner lifecycle. Covers flat errors, redaction, callbackFlow, AsyncThrowingStream, idempotent cancel_job, main-thread delivery, owner teardown, callback release races, background deadlines, process death, and low-memory caches. Triggers on flat_error, callback interface, callbackFlow, awaitClose, trySend, AsyncThrowingStream, CancellationException, CancellationError, cancel_job, job_id, progress event, Activity lifecycle, ViewModel.onCleared, Dispatchers.Main, process death, callback release race, or "the UI must not show stack traces".
 license: BSD-3-Clause
 ---
 
@@ -36,6 +36,10 @@ This skill covers the boundary UX. Related skills cover the parts underneath:
   `AsyncThrowingStream`.
 - You wire coroutine cancellation or `Task` cancellation down to a Rust job
   cancel.
+- You bind a job or callback to an Android `Activity` or `ViewModel`, or to a
+  Swift controller, model, or task.
+- You define foreground, background, process-restart, or low-memory behavior
+  for a mobile Rust engine.
 - You decide what the UI shows against what the diagnostic log keeps.
 
 ## Pipeline
@@ -439,6 +443,20 @@ client's FFI work off the main actor - an actor-isolated client with
 
 ---
 
+## 4. Mobile lifecycle
+
+Treat a screen owner as a consumer of process-scoped Rust work, not as the
+owner of a Rust thread or runtime.
+
+Read [`references/mobile-lifecycle.md`](references/mobile-lifecycle.md) when a
+job or callback follows an Android or iOS owner lifecycle. Choose no Rust
+runtime or one process-scoped runtime. Keep teardown non-blocking, deliver UI
+state on `Dispatchers.Main` or `@MainActor`, make restart initialization
+idempotent, and write a callback release-race policy. The reference contains
+the complete contract and required lifecycle tests.
+
+---
+
 ## Review checklist
 
 - [ ] The boundary error enum is flat, closed, and versioned. No `anyhow`
@@ -467,6 +485,12 @@ client's FFI work off the main actor - an actor-isolated client with
       `awaitClose` and `onTermination`. `Cancelled` maps to
       `CancellationException` and `CancellationError`.
 - [ ] Cancellation is observed within a written-down stage or iteration budget.
+- [ ] Mobile teardown only signals cancellation and callback release. It never
+      blocks `onCleared`, `deinit`, or the main thread.
+- [ ] UI delivery hops through `Dispatchers.Main` or `@MainActor`, and released
+      registrations reject queued callbacks through a written race policy.
+- [ ] Initialization survives process restart without a prior shutdown, and a
+      low-memory signal clears only bounded, recoverable caches.
 
 ## Canonical sources
 

@@ -1,6 +1,6 @@
 ---
 name: uniffi-boundary
-description: Use when you author, change, or review a UniFFI cross-language boundary crate that generates Kotlin and Swift bindings from Rust. Covers proc-macro-first scaffolding versus UDL, the Record/Object/Enum/Error derives, the Record-versus-Object decision, Send + Sync requirements on exported interfaces, Arc-based ownership and object identity across the boundary, callback interfaces and foreign traits, custom types and newtype converters, versioned payloads that cross as JSON strings, coarse-boundary and large-data rules, built-in type mapping to Kotlin and Swift, async export rules, codegen failure triage, and a review checklist. Triggers on uniffi, uniffi::export, uniffi::constructor, derive Record/Object/Enum/Error, setup_scaffolding, uniffi-bindgen, UDL, callback_interface, with_foreign, custom_newtype, foreign trait, or any question about what may cross an FFI boundary.
+description: Use when you author, change, or review a UniFFI boundary that generates Kotlin and Swift bindings from Rust. Covers proc-macro scaffolding versus UDL, Record/Object/Enum/Error derives, Send + Sync, Arc ownership, callback_interface and foreign traits, custom_newtype converters, versioned JSON payloads, coarse APIs, async exports, and mobile engine and callback ownership shape. Triggers on uniffi, uniffi::export, uniffi::constructor, setup_scaffolding, uniffi-bindgen, UDL, callback_interface, with_foreign, custom_newtype, foreign trait, or what may cross an FFI boundary.
 license: BSD-3-Clause
 ---
 
@@ -158,6 +158,23 @@ not at the call site. Read the error against the struct, not against the method.
 - **Reference cycles cross the boundary.** A foreign object that holds the Rust Object, and
   a Rust Object that holds the foreign callback, form a cycle that no runtime collects. Break
   it: hold the callback for the duration of one call or one job, then release it.
+
+### Mobile ownership shape
+
+- Export engine Objects whose lifetimes are independent of UI owners. Multiple
+  engine Objects can hold isolated state and share one process execution provider. Do not
+  model an Android `Activity`, a `ViewModel`, a Swift view controller, or a Swift task as a
+  Rust Object.
+- Choose one execution model. Either export synchronous methods that the host runs on its
+  worker scheduler, or use one shared runtime or executor provider for the process. Never
+  create a runtime for each engine, call, screen, or job.
+- Make process runtime or provider initialization idempotent. Keep engine construction
+  instance-scoped. Mobile process death can skip every shutdown and destructor path.
+- Give a stored callback registration a unique token or generation. Release it with an
+  idempotent, non-blocking method. Do not expose a blocking `shutdown` or `join` method for a
+  UI owner to call from `onCleared` or `deinit`.
+- Keep UI-thread delivery, owner teardown, background deadlines, low-memory handling, and
+  callback release races in `ffi-error-progress-cancel`.
 
 ## Foreign callbacks and listeners
 
@@ -394,6 +411,12 @@ Answer every item before you merge a change to the boundary crate.
 20. Does a new `async fn` return a `Send` future, and does the pinned UniFFI version support
     the export form used?
 21. Does any new custom type round trip losslessly in both directions?
+22. Do all engine Objects use the host scheduler or one shared process runtime or provider,
+    rather than a runtime per engine, call, or UI owner?
+23. Is runtime or provider initialization idempotent after process death without forcing all
+    product state into one engine singleton?
+24. Can a UI owner release every stored callback without blocking its main thread or
+    destructor?
 
 If the answer to any item is wrong, revise the change before you merge it.
 
