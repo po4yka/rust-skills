@@ -112,7 +112,7 @@ version as sharing every node with the old one.
 Pin the property with `fn assert_send_sync<T: Send + Sync>() {}` called on your alias in a
 test. The bound then fails at build time, not at the first `tokio::spawn`.
 
-## Do not depend on `im`
+## Check the complete dependency tree
 
 `im` is `Arc`-backed and `Send + Sync`, and it carries two open advisories with no fixed
 release:
@@ -125,26 +125,31 @@ release:
 RUSTSEC-2020-0096 is patched in `>= 15.1.0` and does not apply to a current pin. The other two
 apply to every version.
 
-Depend on `imbl` instead. It is the maintained fork named in RUSTSEC-2026-0248, it has the same
-API, it is `Send + Sync`, and the advisory database holds no directory for it. It holds none
-for `rpds` either.
+Do not turn these findings into an unconditional `imbl` recommendation. `imbl` is the
+maintained fork named in RUSTSEC-2026-0248, but its dependency tree can still match an
+advisory. For example, `imbl` 7.0.1 accepts `bitmaps` 3.x. A lockfile can resolve that
+requirement to `bitmaps` 3.2.1, which matches these advisories:
 
-Query the directory through the contents API, not through `raw.githubusercontent.com`. The raw
-host serves files only, so it answers 404 for every directory path, including the `im`
-directory that holds three advisories:
+| Advisory | Kind | Detail |
+| --- | --- | --- |
+| RUSTSEC-2025-0167 | `unsound`, `memory-corruption` | `bitmaps >= 3.2.0` exposes safe APIs that can create an invalid `bool`. `patched = []` |
+| RUSTSEC-2026-0247 | `unmaintained` | The `bitmaps` repository is archived. `patched = []` |
+
+This match proves that the affected crate is in the resolved dependency tree. It does not
+prove that `imbl` calls an affected API. Do not claim reachability or exploitability without a
+call-path audit. The absence of a direct `imbl` advisory directory also says nothing about its
+transitive dependencies.
+
+Inspect the resolved reverse dependency path and run the advisory policy against the lockfile:
 
 ```bash
-# 200 means the crate has an advisory directory; 404 means it has none.
-# im -> 200, imbl -> 404, rpds -> 404.
-curl -s -o /dev/null -w '%{http_code}\n' https://api.github.com/repos/rustsec/advisory-db/contents/crates/imbl
-curl -s -o /dev/null -w '%{http_code}\n' https://api.github.com/repos/rustsec/advisory-db/contents/crates/rpds
-```
-
-Make the gate mechanical, not a review habit. Run it against a synced database:
-
-```bash
+cargo tree --locked -i bitmaps
 cargo deny check advisories
 ```
+
+If policy rejects the tree and no clean upgrade exists, keep `Vec`, select a dependency with a
+clean resolved tree, or record a narrow temporary exception with an owner and an expiry. Do not
+waive the advisory only because the direct dependency is maintained.
 
 `rust-security` covers the `deny.toml` policy that turns an `unmaintained` advisory into a
 failed build.

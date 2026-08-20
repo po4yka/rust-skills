@@ -377,7 +377,7 @@ iteration rather than by index. Otherwise keep `Vec` and clone it.
 
 `references/persistent-collections.md` holds the full cost table, the 585x write-cost split
 between the `&mut self` and the `&self -> Self` APIs, the `rpds::Vector::new()` `!Send` trap,
-and the `im` advisories that make `imbl` the crate to depend on.
+and the direct and transitive advisories that affect the `im` and `imbl` choices.
 
 ## When to use none of this
 
@@ -410,7 +410,9 @@ and the `im` advisories that make `imbl` the crate to depend on.
 10. Does the write path use `&self -> Self` when only the newest version survives? Use the
     `&mut self` shape.
 11. Does the value cross a thread? `rpds::Vector::new()` does not. Use `new_sync()`.
-12. Is `im` in the dependency tree? Replace it with `imbl` and add the advisory gate.
+12. Is `im` or `imbl` in the dependency tree? Run the advisory gate on the lockfile and inspect
+    transitive dependencies. A maintained fork or no direct advisory does not prove that the
+    resolved tree has no advisory.
 
 ## Related skills
 
@@ -419,5 +421,5 @@ and the `im` advisories that make `imbl` the crate to depend on.
 | `rust-hot-path` | This skill decides whether to copy. `rust-hot-path` reduces the cost of a copy a profile already named: capacity, `clone_from`, buffer reuse, `SmallVec`, `Arc::make_mut` |
 | `rust-performance` | This skill supplies the counting allocator. `rust-performance` supplies the profiler, DHAT, and Criterion that produce the input to the hit-rate rule |
 | `rust-discipline` | This skill covers the `Cow` field case. `rust-discipline` covers lifetime infection in general, and the API-design rules that apply to every signature |
-| `rust-security` | This skill names the `im` advisories. `rust-security` supplies the `deny.toml` policy and the cargo-deny gate that enforces them |
+| `rust-security` | This skill names the direct and transitive collection advisories. `rust-security` supplies the `deny.toml` policy and the cargo-deny gate that enforces them |
 | `memory-model` | This skill stops at `Send` and `Sync` bounds. `memory-model` covers atomics, orderings, and `loom` |
