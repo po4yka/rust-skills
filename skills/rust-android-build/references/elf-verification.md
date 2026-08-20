@@ -102,10 +102,25 @@ Allowed:
 The ` DF ` filter selects dynamic function symbols. Any line that survives the
 filter is an exported Rust function that no caller on the Java side needs.
 
-Fix at the source, not at the linker. Find the `#[unsafe(no_mangle)]` item and
-remove the attribute, or rename it into the `Java_*` surface if it really is a
-JNI method. A linker version script hides the symptom while the item keeps
-being generated.
+Fix an unintended `#[unsafe(no_mangle)]` at the source first. Then enforce the
+public ABI with a checked-in linker version script:
+
+```text
+{
+  global:
+    JNI_OnLoad;
+    JNI_OnUnload;
+    Java_*;
+  local:
+    *;
+};
+```
+
+Pass it in the Android linker arguments with
+`-Wl,--version-script=<path>`. If the library uses `RegisterNatives`, omit
+`Java_*` and keep only the lifecycle symbols that the JVM resolves by name.
+Treat the script as defense in depth, not evidence. Run the dynamic-symbol
+allowlist against every final `.so` to prove that the link used it.
 
 ## 6. Build ID
 

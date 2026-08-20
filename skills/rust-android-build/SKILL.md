@@ -318,8 +318,12 @@ it pins the signature: you cannot change it later without breaking whoever
 bound to it.
 
 Enforce the allowlist in the same CI script that checks alignment. Do not rely
-on a linker version script that is not actually in the build; the check must
-assert what the artifact contains.
+on source visibility alone. Use a checked-in linker version script as a
+defense-in-depth allowlist, wire it into the actual Android link command, and
+keep the artifact check. The script prevents accidental dependency exports;
+the check proves that the final `.so` used it. With `RegisterNatives`, export
+only `JNI_OnLoad` and any other lifecycle entry point that the JVM resolves by
+name.
 
 ## `.so` size budgets
 
