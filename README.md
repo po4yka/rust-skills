@@ -2,8 +2,8 @@
 
 # rust-skills
 
-**Thirty-three agent skills for production Rust:**
-unsafe review · atomics · FFI boundaries · sanitizers · profiling · lint policy · supply chain
+**Thirty-four agent skills for production Rust:**
+unsafe review · atomics · FFI boundaries · sanitizers · profiling · crate releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
 [![Rust 1.97 · edition 2024](https://img.shields.io/badge/rust-1.97%20%C2%B7%20edition%202024-000000?style=flat-square&logo=rust)](checks/rust-toolchain.toml)
@@ -93,6 +93,7 @@ Enter by the symptom, not by the skill name.
 | A `HashMap<TypeId, _>` whose values borrow, `dyn Any`, `downcast_ref` | [rust-type-erasure](skills/rust-type-erasure/SKILL.md) |
 | Every handler in an event loop needs `&mut` to one shared state | [rust-event-loop-state](skills/rust-event-loop-state/SKILL.md) |
 | 16 KiB page alignment, NDK linkers, per-ABI rustflags, `.so` size gates | [rust-android-build](skills/rust-android-build/SKILL.md) |
+| A SemVer bump, `cargo package`, `cargo publish`, or crates.io recovery | [rust-crate-release](skills/rust-crate-release/SKILL.md) |
 
 The full phrase-to-skill list lives in [tests/routing-cases.md](tests/routing-cases.md), and CI
 checks every row against the skill descriptions.
@@ -146,11 +147,12 @@ flowchart LR
     F --> F3[rust-security]
     F --> F4[rust-serde]
     F --> F5[uniffi-packaging-versioning]
+    F --> F6[rust-crate-release]
 ```
 
 ## Catalog
 
-Thirty-three skills in six groups. Deep material sits in `references/*.md` next to the skill that
+Thirty-four skills in six groups. Deep material sits in `references/*.md` next to the skill that
 owns it.
 
 <details open>
@@ -174,13 +176,14 @@ owns it.
 </details>
 
 <details>
-<summary><b>Build, dependencies, and supply chain</b> — four skills</summary>
+<summary><b>Build, dependencies, and supply chain</b> — five skills</summary>
 
 <br>
 
 | Skill | What it covers |
 | --- | --- |
 | [cargo-workflows](skills/cargo-workflows/SKILL.md) | Workspace layout, `--locked` discipline, Cargo profiles and rustflags, cross-compilation, nextest, cargo-deny, and edition migration. |
+| [rust-crate-release](skills/rust-crate-release/SKILL.md) | SemVer and MSRV classification, public API and feature compatibility, package and docs gates, dry-run publishing, tags, owners, and safe yank recovery. |
 | [rust-serde](skills/rust-serde/SKILL.md) | `deny_unknown_fields` and the `rename_all` migration trap, the four enum representations and their wire forms, `flatten` constraints, boundary validation with `try_from`, and the `default` plus `alias` pair for version compatibility. |
 | [rust-security](skills/rust-security/SKILL.md) | cargo-audit, cargo-deny policy, RUSTSEC advisory triage, new-crate vetting against typosquat risk, and untrusted-input parser hardening. |
 | [rust-android-build](skills/rust-android-build/SKILL.md) | Android cdylib builds: NDK linkers, per-ABI rustflags, 16 KiB page alignment, the exported ELF symbol allowlist, and `.so` size gates. |

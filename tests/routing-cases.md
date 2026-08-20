@@ -17,6 +17,12 @@ wrong skill, and put the phrase in the right description in the same change.
 | Cargo.lock | cargo-workflows |
 | cargo nextest | cargo-workflows |
 | feature-unification | cargo-workflows |
+| publish a Rust crate | rust-crate-release |
+| cargo publish | rust-crate-release |
+| cargo package | rust-crate-release |
+| SemVer bump | rust-crate-release |
+| MSRV change | rust-crate-release |
+| yank a crate version | rust-crate-release |
 | callbackFlow | ffi-error-progress-cancel |
 | AsyncThrowingStream | ffi-error-progress-cancel |
 | cancel_job | ffi-error-progress-cancel |
