@@ -101,12 +101,31 @@ def split_frontmatter(text: str, where: str) -> dict[str, str] | None:
         if not sep:
             fail(where, f"frontmatter line is not 'key: value': {line!r}")
             continue
-        fields[key.strip()] = value.strip()
+        key = key.strip()
+        if key in fields:
+            fail(where, f"duplicate frontmatter key: {key!r}")
+            continue
+        fields[key] = value.strip()
 
     body = text[end + 5 :]
     if not body.strip():
         fail(where, "skill has frontmatter but no body")
     return fields
+
+
+def check_rust_fences(text: str, where: str) -> None:
+    """Reject a Rust fence that reaches the end of a Markdown file."""
+    opened_at: int | None = None
+    for lineno, line in enumerate(text.splitlines(), 1):
+        fence = line.strip()
+        if opened_at is not None:
+            if fence == "```":
+                opened_at = None
+            continue
+        if fence.startswith("```rust"):
+            opened_at = lineno
+    if opened_at is not None:
+        fail(f"{where}:{opened_at}", "Rust code fence is not closed")
 
 
 def check_skill(skill_dir: Path) -> None:
@@ -171,6 +190,7 @@ def check_skill(skill_dir: Path) -> None:
     for markdown in skill_dir.rglob("*.md"):
         rel = str(markdown.relative_to(ROOT))
         text = markdown.read_text(encoding="utf-8")
+        check_rust_fences(text, rel)
         targets = set(re.findall(r"\]\((references/[^)#]+)\)", text))
         targets |= set(re.findall(r"`(references/[^`]+\.md)`", text))
         for target in sorted(targets):
@@ -243,11 +263,31 @@ def check_routing_cases(descriptions: dict[str, str]) -> None:
 
 
 def check_readme_catalog(skill_names: set[str]) -> None:
-    linked = set(re.findall(r"skills/([a-z0-9-]+)/SKILL\.md", README.read_text(encoding="utf-8")))
+    text = README.read_text(encoding="utf-8")
+    catalog = re.search(r"(?ms)^## Catalog\s*$\n(.*?)(?=^##\s|\Z)", text)
+    if catalog is None:
+        fail("README.md", "Catalog section is missing")
+        return
+
+    rows = re.findall(
+        r"^\|\s*\[([a-z0-9-]+)\]\(skills/([a-z0-9-]+)/SKILL\.md\)\s*\|",
+        catalog.group(1),
+        re.M,
+    )
+    counts: dict[str, int] = {}
+    for label, target in rows:
+        if label != target:
+            fail("README.md", f"catalog row label {label!r} links to skill {target!r}")
+        counts[target] = counts.get(target, 0) + 1
+
+    linked = set(counts)
     for name in sorted(skill_names - linked):
         fail("README.md", f"skill {name!r} is missing from the catalog table")
     for name in sorted(linked - skill_names):
         fail("README.md", f"catalog links {name!r}, which is not in skills/")
+    for name, count in sorted(counts.items()):
+        if count != 1:
+            fail("README.md", f"skill {name!r} appears {count} times in the catalog tables")
 
 
 def main() -> int:

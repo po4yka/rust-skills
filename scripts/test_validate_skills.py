@@ -82,6 +82,61 @@ class TestCatalog(unittest.TestCase):
                     self.assertIsNone(problem(value.strip()))
 
 
+class TestStructuralValidation(unittest.TestCase):
+    def setUp(self):
+        validate_skills.failures.clear()
+
+    def test_duplicate_frontmatter_key_fails(self):
+        text = """---
+name: rust-example
+description: Use when you need a complete example description for structural tests.
+name: rust-other
+license: BSD-3-Clause
+---
+# Example
+"""
+        validate_skills.split_frontmatter(text, "SKILL.md")
+        self.assertEqual(len(validate_skills.failures), 1)
+        self.assertIn("duplicate frontmatter key", validate_skills.failures[0])
+
+    def test_unclosed_rust_fence_fails(self):
+        validate_skills.check_rust_fences("# Example\n\n```rust\nfn main() {}\n", "example.md")
+        self.assertEqual(len(validate_skills.failures), 1)
+        self.assertIn("Rust code fence is not closed", validate_skills.failures[0])
+
+    def run_catalog(self, readme: str, skills: set[str]) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "README.md"
+            path.write_text(readme, encoding="utf-8")
+            original = validate_skills.README
+            try:
+                validate_skills.README = path
+                validate_skills.failures.clear()
+                validate_skills.check_readme_catalog(skills)
+                return list(validate_skills.failures)
+            finally:
+                validate_skills.README = original
+
+    def test_link_outside_catalog_does_not_satisfy_catalog(self):
+        readme = """[rust-a](skills/rust-a/SKILL.md)
+
+## Catalog
+
+| Skill | What it covers |
+| --- | --- |
+"""
+        found = self.run_catalog(readme, {"rust-a"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("missing from the catalog table", found[0])
+
+    def test_duplicate_catalog_row_fails(self):
+        row = "| [rust-a](skills/rust-a/SKILL.md) | Description |\n"
+        readme = "## Catalog\n\n| Skill | What it covers |\n| --- | --- |\n" + row + row
+        found = self.run_catalog(readme, {"rust-a"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("appears 2 times", found[0])
+
+
 class TestRoutingGuard(unittest.TestCase):
     """A three-column row records a decision between two skills that both fit."""
 
