@@ -97,13 +97,17 @@ fn main() {
 
     // Vector::new_sync() gives the Arc archetype: the only Send + Sync one.
     let shared: rpds::VectorSync<i32> = rpds::Vector::new_sync().push_back(1);
-    let fork = shared.push_back(2);   // O(1): shares every node with `shared`
+    let fork = shared.push_back(2);   // Theta(log n): reuses nodes outside the changed path
     std::thread::spawn(move || assert_eq!(fork.len(), 2)).join().expect("thread joins");
 
     assert_eq!(local.len(), 1);
     assert_eq!(shared.len(), 1);      // the fork did not touch it
 }
 ```
+
+`rpds::Vector::clone` is O(1). `push_back` is O(log n), because it creates the
+changed trie path and shares the untouched nodes. Do not describe the new
+version as sharing every node with the old one.
 
 Pin the property with `fn assert_send_sync<T: Send + Sync>() {}` called on your alias in a
 test. The bound then fails at build time, not at the first `tokio::spawn`.
