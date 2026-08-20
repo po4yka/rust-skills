@@ -236,14 +236,14 @@ does the same work and cannot be misapplied to the wrong pair of types: `f32::fr
 `u32::from_ne_bytes`, `Box::into_raw`, `zerocopy::FromBytes`. The full sound-and-unsound table is
 in [references/unsafe-patterns.md](references/unsafe-patterns.md).
 
-## `mem::zeroed` for plain C structs
+## `mem::zeroed` and `MaybeUninit`
 
-`mem::zeroed()` is sound only when all-zero bytes is a valid value of the type. A plain
-`repr(C)` struct that the kernel or a C library fills in qualifies, such as `libc::ifreq`. The
-SAFETY comment must say that the type has no Rust-level invariant and that the zero value is
-overwritten before it is read. Never use it for a type that has such an invariant: `bool`, an
+`mem::zeroed()` is sound only when the documented contract of the exact type proves that
+all-zero bytes is a valid value. `repr(C)` and an output-only C API do not prove this. The SAFETY
+comment must cite the value contract for that concrete type. Never use `zeroed()` for `bool`, an
 `enum`, `NonNull`, a reference, `Box`, or any type with a non-trivial `Drop`. Use
-`MaybeUninit<T>` there, and do not read it until it is fully initialized.
+`MaybeUninit<T>` when this proof is absent. Call `assume_init` only after the API reports that it
+wrote a complete, valid `T`.
 
 ## Syscall and ioctl wrappers
 
@@ -251,7 +251,7 @@ Every syscall wrapper must:
 
 1. Carry a `# Safety` rustdoc block on the `unsafe fn` that lists the descriptor-validity and
    layout-match invariants.
-2. Use `zeroed()` only for plain C structs, per the rule above.
+2. Use `zeroed()` only when the exact type has a proven all-zero value, per the rule above.
 3. Cast with `.cast()` rather than `as *mut _`. The method preserves pointer provenance, which
    matters to Miri's Tree Borrows model.
 4. Check the return value and convert `io::Error::last_os_error()`. Never discard `errno`.

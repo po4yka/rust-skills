@@ -290,6 +290,8 @@ ifr.ifr_name = make_ifr_name();
 ```
 
 ```rust
+use std::io;
+
 /// # Safety
 /// `fd` must be a live socket descriptor. `T` must match the layout the kernel
 /// writes for the given `level` and `name` pair. On success, the option must
