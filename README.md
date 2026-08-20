@@ -51,6 +51,12 @@ npx skills add po4yka/rust-skills
 | Update after a new release | `npx skills update` |
 | Remove one skill | `npx skills remove --skill rust-unsafe` |
 
+> **Checkout data-loss warning:** Never run `skills remove` from this
+> repository's checkout. The CLI can treat the source `skills/` directory as
+> an install location and delete the selected source directory. An uncommitted
+> skill cannot be recovered from Git. Run removal from the project that owns
+> the installation or from a scratch directory outside this checkout.
+
 The `skills` CLI installs into Claude Code, Codex, Cursor, OpenCode, and more than seventy other
 agents. Run `npx skills --help` for the full flag list. The CLI is open source at
 [vercel-labs/skills](https://github.com/vercel-labs/skills).
