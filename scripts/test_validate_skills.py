@@ -140,6 +140,44 @@ metadata: author"""
         self.assertEqual(len(found), 1)
         self.assertIn("metadata must be a mapping", found[0])
 
+    def test_quoted_metadata_strings_pass(self):
+        frontmatter = """name: rust-example
+description: Use when you need a sufficiently detailed example for quoted metadata validation.
+license: BSD-3-Clause
+metadata:
+  version: "1.0"
+  published: 'true'"""
+        self.assertEqual(self.run_skill(frontmatter), [])
+
+    def test_non_string_metadata_scalars_fail(self):
+        for value in ("1.0", "42", "true", "false", "null", "~"):
+            with self.subTest(value=value):
+                frontmatter = f"""name: rust-example
+description: Use when you need a sufficiently detailed example for typed metadata validation.
+license: BSD-3-Clause
+metadata:
+  value: {value}"""
+                found = self.run_skill(frontmatter)
+                self.assertEqual(len(found), 1)
+                self.assertIn("metadata.value must be a YAML string", found[0])
+
+    def test_metadata_keys_must_be_yaml_strings(self):
+        quoted = """name: rust-example
+description: Use when you need a sufficiently detailed example for quoted metadata key validation.
+license: BSD-3-Clause
+metadata:
+  "1": value"""
+        self.assertEqual(self.run_skill(quoted), [])
+
+        unquoted = """name: rust-example
+description: Use when you need a sufficiently detailed example for typed metadata key validation.
+license: BSD-3-Clause
+metadata:
+  true: value"""
+        found = self.run_skill(unquoted)
+        self.assertEqual(len(found), 1)
+        self.assertIn("metadata key must be a YAML string", found[0])
+
     def test_compatibility_length_is_limited(self):
         frontmatter = """name: rust-example
 description: Use when you need a sufficiently detailed example for optional compatibility validation.

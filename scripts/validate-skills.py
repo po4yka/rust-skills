@@ -12,6 +12,7 @@ Exit status is 0 when every check passes, 1 otherwise.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -35,6 +36,15 @@ REQUIRED_KEYS = {"name", "description", "license"}
 # without a warning. Neither is visible to a parser that splits on the first
 # colon, so the rule lives here.
 YAML_INDICATORS = "-?:,[]{}#&*!|>'\"%@`"
+YAML_NULL_OR_BOOL = re.compile(r"^(?:~|null|true|false)$", re.IGNORECASE)
+YAML_NUMBER = re.compile(
+    r"^[+-]?(?:"
+    r"0o[0-7_]+|0x[0-9a-f_]+|"
+    r"(?:[0-9][0-9_]*)(?:\.[0-9_]*)?(?:e[+-]?[0-9]+)?|"
+    r"\.[0-9_]+(?:e[+-]?[0-9]+)?|\.inf|\.nan"
+    r")$",
+    re.IGNORECASE,
+)
 
 
 def plain_scalar_problem(value: str) -> str | None:
@@ -52,6 +62,40 @@ def plain_scalar_problem(value: str) -> str | None:
     if value != value.strip():
         return "has leading or trailing whitespace, which YAML drops"
     return None
+
+
+def metadata_string(raw: str, where: str, label: str) -> str | None:
+    """Decode one supported YAML string scalar and reject typed scalars."""
+    if raw.startswith('"'):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            fail(where, f"{label} is not a valid double-quoted YAML string")
+            return None
+        if not isinstance(value, str):
+            fail(where, f"{label} must be a YAML string")
+            return None
+        return value
+
+    if raw.startswith("'"):
+        if len(raw) < 2 or not raw.endswith("'"):
+            fail(where, f"{label} is not a valid single-quoted YAML string")
+            return None
+        inner = raw[1:-1]
+        if "'" in inner.replace("''", ""):
+            fail(where, f"{label} is not a valid single-quoted YAML string")
+            return None
+        return inner.replace("''", "'")
+
+    if YAML_NULL_OR_BOOL.fullmatch(raw) or YAML_NUMBER.fullmatch(raw):
+        fail(where, f"{label} must be a YAML string; quote {raw!r}")
+        return None
+
+    problem = plain_scalar_problem(raw)
+    if problem:
+        fail(where, f"{label} {problem}")
+        return None
+    return raw
 
 
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -103,15 +147,21 @@ def split_frontmatter(text: str, where: str) -> dict[str, object] | None:
                     f"only metadata can contain an indented mapping, found: {line.strip()!r}",
                 )
                 continue
-            key, sep, value = line.strip().partition(":")
-            key = key.strip()
-            if not sep or not key or not value.strip():
+            raw_key, sep, raw_value = line.strip().partition(":")
+            raw_key = raw_key.strip()
+            raw_value = raw_value.strip()
+            if not sep or not raw_key or not raw_value:
                 fail(where, f"metadata line is not 'key: value': {line.strip()!r}")
+                continue
+            key = metadata_string(raw_key, where, "metadata key")
+            if key is None:
                 continue
             if key in metadata:
                 fail(where, f"duplicate metadata key: {key!r}")
                 continue
-            metadata[key] = value.strip()
+            value = metadata_string(raw_value, where, f"metadata.{key}")
+            if value is not None:
+                metadata[key] = value
             continue
         key, sep, value = line.partition(":")
         if not sep:
@@ -185,13 +235,7 @@ def check_skill(skill_dir: Path) -> None:
             if problem:
                 fail(where, f"{key} {problem}. Rewrite the line so it needs no quoting.")
         elif key == "metadata" and isinstance(value, dict):
-            for metadata_key, metadata_value in sorted(value.items()):
-                key_problem = plain_scalar_problem(metadata_key)
-                value_problem = plain_scalar_problem(metadata_value)
-                if key_problem:
-                    fail(where, f"metadata key {metadata_key!r} {key_problem}")
-                if value_problem:
-                    fail(where, f"metadata.{metadata_key} {value_problem}")
+            pass
         else:
             fail(where, f"{key} must be a string")
 
