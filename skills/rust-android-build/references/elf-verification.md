@@ -76,7 +76,11 @@ requirement gives you one assertion to write and one result to read.
 
 Use this list to find the C dependency that broke alignment. A crypto backend
 with C sources is the usual offender. Rebuild that dependency with an explicit
-`CFLAGS=-Wl,-z,max-page-size=16384`.
+linker option. Use the linker channel that its build system provides, for
+example `LDFLAGS=-Wl,-z,max-page-size=16384` or CMake
+`target_link_options(... PRIVATE "-Wl,-z,max-page-size=16384")`. Do not put the
+option in `CFLAGS`; a compile-only invocation does not apply it to the final
+shared object.
 
 An entry that is not provided by the NDK or bundled in the same `jniLibs`
 directory fails at load time on a device, not on your machine.
