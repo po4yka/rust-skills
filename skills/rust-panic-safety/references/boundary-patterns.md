@@ -244,26 +244,36 @@ pub extern "system" fn Java_com_example_app_NativeBridge_nativeStart(
     handle: jlong,
 ) -> jint {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: `handle` came from the constructor and is still owned by the caller.
-        let session = unsafe { &*(handle as *const Session) };
+        let session = SESSION_REGISTRY.lookup(handle)?;
         session.start()
     }));
     match outcome {
         Ok(Ok(())) => 0,
-        Ok(Err(err)) => {
-            let _ = env.throw_new("java/lang/RuntimeException", err.to_string());
+        Ok(Err(SessionError::InvalidHandle)) => {
+            let _ = env.throw_new(
+                "java/lang/IllegalStateException",
+                "invalid native session handle",
+            );
             -1
         }
-        Err(payload) => {
-            let _ = env.throw_new(
-                "java/lang/RuntimeException",
-                format!("native panic: {}", panic_message(&payload)),
-            );
+        Ok(Err(_)) => {
+            let _ = env.throw_new("java/lang/RuntimeException", "native operation failed");
+            -1
+        }
+        Err(_) => {
+            let _ = env.throw_new("java/lang/RuntimeException", "native operation panicked");
             -1
         }
     }
 }
 ```
+
+`SESSION_REGISTRY.lookup` treats the `jlong` as an opaque generational ID. It
+decodes a non-zero slot and generation, locks the registry, checks both values,
+and clones an `Arc<Session>` only after they match. It releases the lock before
+`start`. `nativeDestroy` removes the entry and increments its generation before
+the slot can be reused. A forged, zero, destroyed, or stale ID returns
+`SessionError::InvalidHandle`; it is never cast to a pointer.
 
 ### Rules that hold for both variants
 
@@ -273,8 +283,10 @@ pub extern "system" fn Java_com_example_app_NativeBridge_nativeStart(
   invalid while an exception is pending.
 - Do not invent a new Java exception class per panic class. One type keeps one catch site on
   the managed side.
-- Keep the panic text as the payload string. The hook already wrote the location and the
-  backtrace to the platform log, so the exception message can stay short.
+- Keep the panic exception message fixed. Never copy the panic payload into it. The privacy-safe
+  hook records only a closed site code plus bounded numeric location.
+- Resolve every `jlong` session ID through a generational registry before use. Never cast a
+  caller-provided integer to a pointer.
 - A panic on a thread that Rust attached to the JVM must be caught on that thread. The
   attaching code is an entry point too.
 
