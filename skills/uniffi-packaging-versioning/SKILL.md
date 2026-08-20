@@ -1,6 +1,6 @@
 ---
 name: uniffi-packaging-versioning
-description: Use when you package a Rust UniFFI core as native artifacts for mobile consumers - per-ABI Android cdylib .so files, an iOS XCFramework assembled from staticlib slices, and generated Kotlin and Swift bindings - or when you version the FFI surface - pin the uniffi runtime against uniffi-bindgen, classify an exported API change as additive or breaking, keep checked-in bindings in step with the library, or debug a load-time checksum mismatch, a RustBuffer deserialization panic, or a missing native library.
+description: Use when you package a Rust UniFFI core as native artifacts for mobile consumers - per-ABI Android cdylib .so files, an iOS XCFramework assembled from staticlib slices, and generated Kotlin and Swift bindings - or when you version the FFI surface - pin the uniffi runtime against uniffi-bindgen, classify an exported API change as additive or breaking, keep checked-in bindings in step with the library, debug a load-time checksum mismatch, a RustBuffer deserialization panic, or a missing native library, define a mobile support matrix, run final-artifact device release proof, or record an immutable release closure.
 license: BSD-3-Clause
 ---
 
@@ -28,6 +28,8 @@ compatibility rules between them.
 - You add, rename, or remove any `#[uniffi::export]` function, record, enum, or
   error variant.
 - You ship a new version of the Rust core to an Android or iOS consumer.
+- You define the supported mobile toolchain matrix or prove a release candidate
+  on its final consumer artifacts.
 - You investigate a `RustBuffer` deserialization panic, a "wrong number of
   fields" error, or a checksum error at library load after a native update.
 - You set up a fresh developer machine or CI runner to build native artifacts.
@@ -337,6 +339,10 @@ or a failing test, never a silent mismatch.
   the checksum.
 - Run the integration tests that link against the rebuilt XCFramework.
 
+For ordinary compile lanes and release proof on final Android and Apple
+consumer artifacts, read `references/release-proof.md`. Do not replace those
+lanes with tests against intermediate `.so`, `.a`, or generated source files.
+
 ---
 
 ## Failure triage
@@ -399,3 +405,6 @@ or a failing test, never a silent mismatch.
   staging, SPM binaryTarget wiring.
 - `references/binding-compat.md` - checksum mechanics, the regeneration script
   contract, the CI gate, and a review checklist for FFI changes.
+- `references/release-proof.md` - the project-owned support matrix, minimal
+  pairwise compile lanes, final-artifact device proof, and immutable release
+  closure.

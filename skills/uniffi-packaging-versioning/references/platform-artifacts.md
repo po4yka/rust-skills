@@ -185,7 +185,7 @@ Reference the XCFramework as a `binaryTarget`:
 // Local path target: no checksum, rebuilt in place.
 .binaryTarget(
     name: "<Name>FFI",
-    path: "../../<relative>/<Name>.xcframework"
+    path: "Artifacts/<Name>.xcframework"
 )
 
 // Remote target: checksum is mandatory and changes on every rebuild.
@@ -202,13 +202,19 @@ and it makes a local Rust change visible to the app after one rebuild. Move to
 the remote `url:` form only when consumers are in other repositories, and then
 automate the checksum update in the release job.
 
+Keep a local binary target inside the package root and use a package-relative
+path. Swift Package Manager does not accept a local binary target outside that
+root. Do not use `../` to escape it.
+
 ### Swift package layering
 
 Split the Swift side into two packages or two targets:
 
-1. **Generated package** - holds the generated Swift file, the `*FFI` system
-   target that wraps the C header and modulemap, the `binaryTarget`, and a thin
-   adapter that maps generated types onto your own protocol.
+1. **Generated package** - holds the XCFramework `binaryTarget` and a Swift
+   source target with the generated Swift file. Make the source target depend
+   on the binary target. The XCFramework already contains the C header and
+   modulemap. Do not add a duplicate system target with the same module name.
+   Add a thin adapter that maps generated types onto your own protocol.
 2. **Public package** - holds the actor or client type the app uses, and the
    protocol it conforms to. It depends on the port protocol, never on the
    generated types.

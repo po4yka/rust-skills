@@ -172,6 +172,9 @@ wrong skill, and put the phrase in the right description in the same change.
 | XCFramework | uniffi-packaging-versioning |
 | RustBuffer | uniffi-packaging-versioning |
 | checksum mismatch | uniffi-packaging-versioning |
+| mobile support matrix | uniffi-packaging-versioning |
+| final-artifact device release proof | uniffi-packaging-versioning |
+| immutable release closure | uniffi-packaging-versioning |
 | reduce allocations | rust-hot-path |
 | too many allocations | rust-hot-path |
 | this type is too big | rust-hot-path |

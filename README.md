@@ -82,7 +82,7 @@ Enter by the symptom, not by the skill name.
 | A tombstone, a stripped backtrace, `addr2line` symbolication | [rust-debugging](skills/rust-debugging/SKILL.md) |
 | `UnsatisfiedLinkError`, `AttachCurrentThread`, `FindClass`, or an Android ClassLoader failure | [rust-jni](skills/rust-jni/SKILL.md) |
 | Swift calls Rust through a C ABI, an opaque handle, or an `@MainActor` callback | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) |
-| UniFFI checksum mismatch, XCFramework or jniLibs packaging | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
+| UniFFI packaging, checksum mismatch, mobile support matrix, or final-artifact release proof | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
 | `Activity` lifecycle, `ViewModel.onCleared`, process death, or a callback release race | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) |
 | A `RUSTSEC` advisory, or a new dependency nobody vetted | [rust-security](skills/rust-security/SKILL.md) |
 | `deny_unknown_fields` or `rename_all` broke the wire format | [rust-serde](skills/rust-serde/SKILL.md) |
@@ -267,7 +267,7 @@ owns it.
 | [rust-jni](skills/rust-jni/SKILL.md) | JNI symbols and panic containment, thread attachment, local references, Android ClassLoader-safe caches, R8 lookup tests, and native crash triage. |
 | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) | A hand-written Rust C ABI for Swift with opaque handles, allocator symmetry, callback lifetime, Swift concurrency isolation, cancellation, and real consumer tests. |
 | [uniffi-boundary](skills/uniffi-boundary/SKILL.md) | Record-versus-Object shape, `Arc` ownership, callbacks, type mapping, async exports, and mobile engine ownership across Kotlin and Swift. |
-| [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) | Artifact packaging for jniLibs and XCFramework, binding and runtime version pinning, and checksum-mismatch debugging. |
+| [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) | jniLibs and XCFramework packaging, binding/runtime pinning, mobile support matrices, exact consumer-artifact device proof, and immutable release closures. |
 | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) | Versioned errors, progress and cooperative cancellation, plus mobile owner teardown, UI delivery, process restart, memory pressure, and callback-release races. |
 
 </details>
