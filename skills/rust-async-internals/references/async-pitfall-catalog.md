@@ -280,25 +280,28 @@ moment the pool recycles it. The hazard is the silence: the failed commit
 leaves the transaction open, the rollback is deferred to an unrelated call
 site, and no error surfaces at either point.
 
-Rule: never let a sqlx `Transaction` drop after a failed `commit().await`.
-Convert to an explicit rollback:
+`Transaction::commit(self)` consumes the transaction. After it returns `Err`,
+there is no `tx` value on which to call `rollback`; an example that tries does
+not compile. Roll back explicitly only while you still own the transaction,
+such as after the work step fails:
 
 ```rust
-match work(&mut tx).await {
-    Ok(v) => match tx.commit().await {
-        Ok(()) => Ok(v),
-        Err(e) => {
-            // commit failed; Drop would defer a silent rollback. Pre-empt it.
-            let _ = tx.rollback().await;
-            Err(e.into())
-        }
-    },
+let value = match work(&mut tx).await {
+    Ok(value) => value,
     Err(e) => {
         let _ = tx.rollback().await;
-        Err(e)
+        return Err(e);
     }
-}
+};
+
+// `commit` consumes `tx`. Propagate failure; do not attempt a second rollback.
+tx.commit().await?;
+Ok(value)
 ```
+
+A commit transport error can also leave the database outcome unknown. Do not
+retry the transaction blindly. Make the operation idempotent or reconcile its
+durable state with a new connection.
 
 ### deadpool connections
 
