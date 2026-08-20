@@ -236,8 +236,16 @@ explicit, because the blocking behaviour of each call is part of it:
 
 Additional rules:
 
-- A `jlong` handle is a `Box::into_raw` pointer or an index into a registry.
-  Validate it before you dereference. Never dereference a handle of `0`.
+- A `jlong` handle is an opaque generational registry key. Never expose a
+  `Box::into_raw` pointer as a handle. A caller can forge any integer, and Rust
+  cannot validate whether an arbitrary address is live before dereferencing it.
+- Encode a non-zero slot index and generation in the key. On each call, check
+  the slot bounds and generation under the registry lock before you access the
+  session. Return a Java exception or the documented invalid-handle status when
+  either check fails.
+- On `nativeDestroy`, remove the session and increment the slot generation
+  before you reuse that slot. This rejects stale handles even when a later
+  session occupies the same slot. Never issue `0`; keep it as the failure value.
 - If a JNI string payload carries a structured document (JSON), that document
   is a compatibility boundary: field removal and field rename are breaking
   changes. Keep contract tests on both sides and update both in one patch.
