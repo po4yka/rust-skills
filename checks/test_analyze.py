@@ -65,6 +65,11 @@ class TestExcuses(unittest.TestCase):
     def test_required_external_crates_are_declared(self):
         self.assertLessEqual(analyze.REQUIRED_EXTERNAL_CRATES, analyze.HARNESS_CRATES)
 
+    def test_libfuzzer_runtime_is_not_built_for_type_checking(self):
+        dependency = analyze.HARNESS_DEPENDENCIES["libfuzzer-sys"]
+        self.assertIsInstance(dependency, dict)
+        self.assertFalse(dependency.get("default-features", True))
+
     def test_disabled_feature_on_harness_crate_is_a_suspect(self):
         _, _, _, suspects = analyze.classify(
             {"ex": [error("E0432", "unresolved import `nix::sys::socket`")]}

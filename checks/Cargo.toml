@@ -33,7 +33,8 @@ futures = "0.3"
 imbl = "=7.0.1"
 jni = "0.22"
 libc = "0.2"
-libfuzzer-sys = "0.4"
+# Type-check `fuzz_target!`, but do not build or link the C++ fuzzing runtime.
+libfuzzer-sys = { version = "0.4", default-features = false }
 log = "0.4"
 loom = "0.7"
 nix = { version = "0.29", features = ["fs", "process", "socket", "uio"] }

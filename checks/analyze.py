@@ -46,13 +46,14 @@ import tomllib
 HERE = pathlib.Path(__file__).resolve().parent
 
 
-def harness_crates() -> set[str]:
-    """Return import names for dependencies that the example harness declares."""
+def harness_dependencies() -> dict[str, object]:
+    """Return dependencies that the example harness declares."""
     manifest = tomllib.loads((HERE / "Cargo.toml").read_text(encoding="utf-8"))
-    return {name.replace("-", "_") for name in manifest.get("dependencies", {})}
+    return manifest.get("dependencies", {})
 
 
-HARNESS_CRATES = harness_crates()
+HARNESS_DEPENDENCIES = harness_dependencies()
+HARNESS_CRATES = {name.replace("-", "_") for name in HARNESS_DEPENDENCIES}
 REQUIRED_EXTERNAL_CRATES = {"criterion", "libfuzzer_sys", "nix", "rayon"}
 
 # Errors that mean "this name is defined in the prose, not in the block".
