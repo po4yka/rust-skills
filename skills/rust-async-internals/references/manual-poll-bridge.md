@@ -55,17 +55,18 @@ signals.
    the waker for the duration of the poll call.
 3. **Cancellation is cooperative, not waker-driven.** The loop checks a
    `CancellationToken` between polling rounds. A read after the peer closes
-   surfaces `Poll::Ready(Ok(()))` with zero filled bytes: EOF. A write to a
-   closed peer can surface `BrokenPipe`. Handle the read and write signals
-   separately.
+   surfaces `Poll::Ready(Ok(()))` with no growth in `ReadBuf::filled()`: EOF.
+   `poll_read` does not return a byte count. A write to a closed peer can
+   surface `BrokenPipe`. Handle the read and write signals separately.
 
 ## Extend the bridge
 
 - A new stream type must implement `AsyncRead + AsyncWrite + Unpin`.
-- A read wrapper translates `Poll::Ready(Ok(0))` into EOF or `UnexpectedEof`,
-  according to its contract. A write wrapper translates `Ok(0)` into
-  `WriteZero` and handles `BrokenPipe` as peer closure. Do not report a
-  zero-length operation as ordinary progress.
+- A read wrapper records `ReadBuf::filled().len()` before the poll. On
+  `Poll::Ready(Ok(()))`, no increase means EOF. Translate EOF to
+  `UnexpectedEof` only when the protocol requires more bytes. A write wrapper
+  translates `Poll::Ready(Ok(0))` into `WriteZero` and handles `BrokenPipe` as
+  peer closure.
 - Do not add an `async fn` wrapper around these helpers. It stalls under the
   no-op waker.
 

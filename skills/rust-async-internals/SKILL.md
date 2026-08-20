@@ -312,9 +312,10 @@ Three rules govern the bridge:
    stalls permanently.
 2. Never add an `async fn` wrapper around such a helper. It stalls for the
    same reason.
-3. On read, treat `Poll::Ready(Ok(0))` as EOF or `UnexpectedEof`. On write,
-   treat `Ok(0)` as `WriteZero`; a dropped peer can also surface `BrokenPipe`.
-   Do not let a zero-length result pass as ordinary progress.
+3. `AsyncRead::poll_read` returns `Poll<Result<()>>`. A ready success with no
+   growth in `ReadBuf::filled()` is EOF; map it to `UnexpectedEof` only when the
+   protocol requires more bytes. `AsyncWrite::poll_write` returns a byte count:
+   treat `Ok(0)` as `WriteZero`; a closed peer can also return `BrokenPipe`.
 
 Read [references/manual-poll-bridge.md](references/manual-poll-bridge.md) for
 the `NoopWaker` implementation, the full invariants, and the io_uring
