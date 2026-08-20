@@ -237,6 +237,13 @@ stable address until completion. Transfer ownership to the driver when its API
 supports that model. Apply the chip's cache clean and invalidate rules. See
 `rust-unsafe` before adding a raw DMA buffer API.
 
+Treat DMA cancellation as a separate state transition. A timeout, a `select`
+branch, or a dropped future does not prove that the transfer stopped. Do not
+reuse or drop the buffer until the driver confirms that DMA stopped, clears the
+pending interrupt, and completes the required cache maintenance. If the driver
+cannot prove that state, keep ownership quarantined and reset the peripheral
+through its documented recovery path.
+
 ## Select the hardware and task model
 
 Use `embedded-hal` traits at reusable driver boundaries. Keep board pin choices,
@@ -261,6 +268,16 @@ With Embassy, prove that every spawned task has a static slot and that no task
 waits synchronously inside the executor. With RTIC, prove resource ceilings,
 priority ordering, and maximum lock duration. For both, bound channel capacity
 and define overflow policy at the sender.
+
+When Embassy uses time, select exactly one compatible time driver in the final
+binary. Use its fixed tick rate, or select a rate only when the driver supports
+that choice. Verify that the clock and interrupt-latency budget support the
+rate. Bind each interrupt that an asynchronous driver requires through the
+documented HAL or runtime mechanism. With RTIC, reserve each declared
+dispatcher for software tasks. Bind and start each selected monotonic. Reject
+an interrupt vector that a HAL, executor, dispatcher, or monotonic owns twice.
+Verify timer progress and every asynchronous interrupt wake-up on the real
+device.
 
 ## Budget every finite resource
 
