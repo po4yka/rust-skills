@@ -227,12 +227,14 @@ timestamp on the same relaxed atomic pattern.
 Everything in the snapshot crosses a boundary and often ends up in a bug report.
 Apply the same floor as for events:
 
-- No raw device or network identifiers. Contribute them to a salted hash and
-  emit the hash.
+- No device or network identifiers, raw or hashed. A salted hash remains a
+  stable correlation value and can permit dictionary attacks. Emit aggregate
+  counts or a local non-identifying category instead.
 - No hardware or subscriber identifiers under any encoding.
 - No addresses that identify a user's device or its location.
 - No secrets, key material, or handshake payload bytes.
-- No payload bytes. Sizes, counts, and opaque flow identifiers are allowed.
+- No payload bytes. Sizes and counts are allowed. Opaque flow identifiers must
+  be random, short-lived, session-scoped, and unrelated to forbidden values.
 
 Audit before every release, and remember that the grep is a floor, not a proof.
 

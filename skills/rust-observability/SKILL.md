@@ -291,12 +291,15 @@ that file. Do not restate the list anywhere else.
 
 Diagnostic emission must not carry:
 
-- Raw device or network identifiers. Emit a salted hash contribution instead.
+- Device or network identifiers, raw or hashed. A salted hash still supports
+  correlation and dictionary attacks. Emit only aggregate counts or a local
+  non-identifying category.
 - Hardware and subscriber identifiers under any encoding.
 - Addresses that identify a user's device or its location.
 - Secrets, key material, or handshake payload bytes.
-- Message or packet payloads. Counters, sizes, and opaque flow identifiers are
-  allowed. Bytes are not.
+- Message or packet payloads. Counters and sizes are allowed. An opaque flow
+  identifier must be random, short-lived, and scoped to one process or session.
+  Never derive it from a forbidden value. Bytes are not allowed.
 
 Audit before every release.
 
