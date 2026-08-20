@@ -137,14 +137,14 @@ fn main() {
     f();
     z();
     g();
-    assert_eq!(size_of::<Box<dyn Fn()>>(), 16);
+    assert_eq!(size_of::<Box<dyn Fn()>>(), 2 * size_of::<usize>());
 }
 ```
 
 The concrete closure size decides whether `Box` allocates. Capturing a non-ZST
 usually makes the closure non-zero-sized, but capture presence alone does not.
-The residual cost of a boxed ZST callback is 16 bytes inline and one indirect
-call.
+The residual cost of a boxed ZST callback is two machine words inline and one
+indirect call.
 
 ## By-value `impl Trait` plus a delegating impl is a monomorphization bomb
 

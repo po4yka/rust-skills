@@ -351,22 +351,24 @@ Three shapes, and the choice is not stylistic.
 | Field type | Size | Captures | Different expressions in one `Vec` | Caller can name the type | Allocates |
 | --- | --- | --- | --- | --- | --- |
 | `F` on `struct S<F: Fn(u32)>` | Size of `F`. 0 for a non-capturing closure | Yes | No, `E0308` | No, `E0747` / `E0562` | No |
-| `Box<dyn Fn(u32)>` | 16, fat pointer | Yes | Yes | Yes | Only if the closure value is not zero-sized |
-| `fn(u32)` | 8 | **No** | Yes | Yes | No |
+| `Box<dyn Fn(u32)>` | Two machine words, fat pointer | Yes | Yes | Yes | Only if the closure value is not zero-sized |
+| `fn(u32)` | One machine word | **No** | Yes | Yes | No |
 | `B` on `struct S<B: MyTrait>` with a blanket impl | Size of `B`. 0 for a user unit struct | Yes | No | Yes, if the user declares a named type | No |
 
 The sizes are measurable, and the coercion to `fn(u32)` is silent — no warning, no lint:
 
 ```rust
+use std::mem::{size_of, size_of_val};
+
 fn h(_: u64) {}
 
 fn main() {
     let f = h;
     assert_eq!(size_of_val(&f), 0);              // fn item: its own ZST
     let g: fn(u64) = h;
-    assert_eq!(size_of_val(&g), 8);              // coerced: a real code pointer
-    assert_eq!(size_of::<Box<dyn Fn()>>(), 16);  // fat pointer
-    assert_eq!(size_of::<&dyn Fn()>(), 16);
+    assert_eq!(size_of_val(&g), size_of::<usize>()); // one machine word
+    assert_eq!(size_of::<Box<dyn Fn()>>(), 2 * size_of::<usize>()); // fat pointer
+    assert_eq!(size_of::<&dyn Fn()>>(), 2 * size_of::<usize>());
 }
 ```
 
@@ -375,7 +377,7 @@ fn main() {
 but a closure that captures only a zero-sized value can also stay zero-sized.
 Most closures that capture data are non-zero-sized and allocate. Measure the
 closure value; capture presence alone is not the rule. The residual cost of a
-boxed ZST callback is 16 bytes inline and one indirect call. See
+boxed ZST callback is two machine words inline and one indirect call. See
 `references/storing-callables.md`.
 
 ### The generic field blocks naming, not `dyn`
@@ -455,8 +457,8 @@ impl DropBehavior<u32> for ReportNotUsed {
 }
 
 fn main() {
-    assert_eq!(size_of::<DropGuard<u32, ReportNotUsed>>(), 4);
-    assert_eq!(size_of::<DropGuard<u32, fn(u32)>>(), 16);
+    assert_eq!(size_of::<DropGuard<u32, ReportNotUsed>>(), size_of::<u32>());
+    assert_eq!(size_of::<DropGuard<u32, fn(u32)>>(), 2 * size_of::<usize>());
     ReportNotUsed.on_drop(7u32);
     (|v: u32| assert_eq!(v, 7)).on_drop(7u32);
 }
@@ -465,7 +467,7 @@ fn main() {
 Coherence accepts the second impl, here and across a crate boundary, because `ReportNotUsed` does
 not satisfy `FnOnce(u32)` and rustc knows every impl a local type has. The `fn_traits` gate keeps
 this true: no crate can add the `FnOnce` impl that would create the overlap. The payoff is in the
-two `size_of` lines: 4 bytes against 16.
+two `size_of` lines: one `u32` against two machine words.
 
 There is no stable shortcut. `type OnDrop = impl FnOnce(u32);` in an associated type is
 `error[E0658]`, issue #63063. Write the trait.
