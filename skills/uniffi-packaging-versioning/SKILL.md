@@ -255,7 +255,8 @@ reviewer attention.
 
 | Change | Compatibility class | Required action |
 |--------|--------------------|-----------------|
-| Add a field to an exported record | **Source-compatible only**, checksum-blind | Regenerate bindings and rebuild the library in the same commit |
+| Add a required field to an exported record | **Source-breaking** and checksum-blind | Major bump; regenerate bindings, rebuild the library, and update every constructor call in the same change |
+| Add a record field with a supported generated default | Source-additive but checksum-blind | Verify the default in every target language; regenerate bindings and rebuild the library in the same commit |
 | Add a new exported function or method | Additive | Regenerate bindings |
 | Remove or rename a function, method, or field | **Breaking** | Major bump; coordinate with every consumer |
 | Change an argument or return type | **Breaking** | Major bump |
@@ -265,6 +266,10 @@ reviewer attention.
 
 Treat "binary-compatible" as a claim you must justify, not a default. When in
 doubt, classify the change as breaking and ship bindings and library together.
+Generated Kotlin and Swift constructors expose record fields as parameters. A
+new required parameter breaks existing source calls. Classify it as additive
+only when the selected UniFFI version generates a supported default for every
+target and an old constructor call still compiles in each binding language.
 
 ---
 

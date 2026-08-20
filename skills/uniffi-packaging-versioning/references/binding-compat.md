@@ -103,7 +103,10 @@ Work through this list on any diff that touches the FFI crate:
 2. **Classify the change** against the semver table in `SKILL.md`. State the
    class in the review, do not assume it.
 3. **Record fields**: did any exported record gain or lose a field? That is the
-   checksum-blind case. Confirm the library and bindings ship together.
+   checksum-blind case. A new required field is source-breaking because it adds
+   a generated constructor parameter. Accept an additive classification only
+   when every target generates a supported default and an old call compiles.
+   Confirm the library and bindings ship together.
 4. **Error variants**: a new, removed, or renamed variant is breaking. Check
    that every consumer's exhaustive match or switch was updated.
 5. **Adapter arms**: confirm the consumer-side adapter still handles every
