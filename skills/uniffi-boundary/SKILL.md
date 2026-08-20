@@ -382,16 +382,18 @@ Answer every item before you merge a change to the boundary crate.
     UniFFI error type, and stay coarse enough to not dominate the work it
     reports?
 13. Is the callback handle released when the job ends? Is there a cycle across the boundary?
-14. Does the change add real computation to the boundary crate instead of an inner crate?
-15. Does an inner crate now depend on the boundary crate? Reverse it.
-16. Does the change reshape an existing exported signature? Can it be an added method or a
+14. Does a job registry reject duplicate IDs without replacing an active entry,
+    and does an RAII guard remove the entry on success, error, and unwind?
+15. Does the change add real computation to the boundary crate instead of an inner crate?
+16. Does an inner crate now depend on the boundary crate? Reverse it.
+17. Does the change reshape an existing exported signature? Can it be an added method or a
     widened JSON contract instead?
-17. Are enum and error variant changes additive?
-18. Were both the Kotlin and the Swift bindings regenerated from the same build in this
+18. Are enum and error variant changes additive?
+19. Were both the Kotlin and the Swift bindings regenerated from the same build in this
     change?
-19. Does a new `async fn` return a `Send` future, and does the pinned UniFFI version support
+20. Does a new `async fn` return a `Send` future, and does the pinned UniFFI version support
     the export form used?
-20. Does any new custom type round trip losslessly in both directions?
+21. Does any new custom type round trip losslessly in both directions?
 
 If the answer to any item is wrong, revise the change before you merge it.
 

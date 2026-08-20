@@ -93,6 +93,21 @@ pub trait ProgressListener: Send + Sync {
     fn on_progress(&self, event: ProgressEvent) -> Result<(), ProgressCallbackError>;
 }
 
+struct JobRegistration<'a> {
+    jobs: &'a Mutex<HashMap<String, Arc<AtomicBool>>>,
+    job_id: String,
+}
+
+impl Drop for JobRegistration<'_> {
+    fn drop(&mut self) {
+        let mut jobs = self
+            .jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        jobs.remove(&self.job_id);
+    }
+}
+
 #[uniffi::export]
 impl Engine {
     pub fn run_job(
@@ -101,22 +116,37 @@ impl Engine {
         listener: Box<dyn ProgressListener>,
     ) -> Result<JobResult, EngineError> {
         let flag = Arc::new(AtomicBool::new(false));
-        self.jobs
-            .lock()
-            .expect("jobs registry poisoned")
-            .insert(request.job_id.clone(), Arc::clone(&flag));
+        let job_id = request.job_id.clone();
+        let registration_id = job_id.clone();
 
-        let outcome = self.execute(&request, &*listener, &flag);
-
-        self.jobs
+        let mut jobs = self
+            .jobs
             .lock()
-            .expect("jobs registry poisoned")
-            .remove(&request.job_id);
-        outcome
+            .map_err(|_| EngineError::JobRegistryUnavailable)?;
+        match jobs.entry(job_id) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                return Err(EngineError::DuplicateJobId);
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(Arc::clone(&flag));
+            }
+        }
+        drop(jobs);
+
+        let _registration = JobRegistration {
+            jobs: &self.jobs,
+            job_id: registration_id,
+        };
+
+        self.execute(&request, &*listener, &flag)
     }
 
     pub fn cancel_job(&self, job_id: String) {
-        if let Some(flag) = self.jobs.lock().expect("jobs registry poisoned").get(&job_id) {
+        let jobs = self
+            .jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(flag) = jobs.get(&job_id) {
             flag.store(true, Ordering::Relaxed);
         }
     }
@@ -125,16 +155,20 @@ impl Engine {
 
 Points that matter in that shape:
 
-- The registry entry is removed on **every** exit path, including the error path. A leaked
-  entry keeps an `Arc` alive and grows the map for the life of the process.
+- Reject a duplicate `job_id` while the registry lock is held. Never replace an
+  active job's cancel flag.
+- The RAII registration removes the entry on **every** normal and error return,
+  and during panic unwind. A leaked entry keeps an `Arc` alive and grows the map
+  for the life of the process.
 - `cancel_job` is separate from `run_job`, so the platform can cancel from a different thread
   while `run_job` is still blocked.
 - The cancel flag is an `AtomicBool`, not a `Mutex<bool>`. The read is on the hot loop. See
   `memory-model` for the ordering argument; `Relaxed` is correct only when the flag alone
   decides, with no other data published through it.
-- The two `expect` calls on a poisoned lock are panics inside an exported function. Decide the
-  policy deliberately: either make the registry poison-proof, or catch at the boundary. See
-  `rust-panic-safety`. Do not leave the decision implicit.
+- Registration maps lock poison to a typed boundary error. Cleanup and cancel
+  recover the guard with `PoisonError::into_inner`, so `Drop` cannot start a
+  second panic while another panic unwinds. Document this poison policy next to
+  the registry type.
 
 ## Callback lifetime
 
