@@ -1,6 +1,6 @@
 ---
 name: rust-crate-release
-description: Use when you prepare, verify, publish, or recover a public Rust crate release, including SemVer classification, public API review, MSRV and feature compatibility, package contents, docs.rs settings, changelog and tag checks, dry runs, crates.io ownership, and yanks. Triggers on "publish a Rust crate", "cargo publish", "cargo package", "crate release", "SemVer bump", "MSRV change", "yank a crate version", or crates.io ownership.
+description: Use when you prepare, verify, publish, distribute, or recover a public Rust release, including Cargo registry publishing and downloadable binary artifacts. Triggers on "publish a Rust crate", "cargo publish", "cargo package", "crate release", "SemVer bump", "MSRV change", "yank a crate version", "Rust binary release", "release archive", "release checksum", "release SBOM", or "sign release artifact".
 license: BSD-3-Clause
 ---
 
@@ -8,12 +8,14 @@ license: BSD-3-Clause
 
 ## Purpose
 
-Use this skill to release one or more public Rust crates to a Cargo registry.
+Use this skill to release public Rust crates to a Cargo registry or distribute Rust binaries.
 Classify compatibility before you change a version.
 Verify the exact package that users receive.
 Stop before each external write until the user authorizes that exact action.
 
-This skill owns the release decision and the registry transaction.
+This skill owns the release decision, registry transaction, and binary artifact transaction.
+Treat registry publishing and binary distribution as separate release modes.
+An authorization for one mode does not authorize the other mode.
 It does not own general workspace layout, lint policy, dependency audits, or API design.
 Use the related skills for those concerns.
 
@@ -29,6 +31,10 @@ Use the related skills for those concerns.
 - Never change owners without explicit authorization for the exact account or team.
 - Never yank or unyank a version without explicit authorization for the exact version and registry.
 - Never push a release commit or tag without explicit authorization.
+- Never create, finalize, or update a hosted release or upload an asset without explicit
+  authorization.
+- Never sign an artifact or publish an attestation without explicit authorization.
+- Never replace a named release asset with different bytes.
 
 Local inspection, tests, `cargo package`, and `cargo publish --dry-run` do not upload a crate.
 Run them before you ask for publish authorization.
@@ -47,7 +53,8 @@ Collect these values first:
 | MSRV | Effective `package.rust-version` and project support policy |
 | Features | Default set and every supported non-default combination |
 | Targets | Supported target and operating-system policy |
-| Authority | Who can approve publish, tags, yanks, and owner changes |
+| Mode | Registry package, binary distribution, or both |
+| Authority | Who can approve publish, tags, releases, uploads, signing, yanks, and owner changes |
 
 Run these read-only checks:
 
@@ -291,7 +298,30 @@ tar -xzf "target/package/<package>-<version>.crate" -C "$release_tmp"
 Keep the temporary directory until you finish diagnosis.
 The operating system can remove it later.
 
-## 8. Handle workspace release order
+## 8. Distribute binary artifacts
+
+Use this mode only when users download prebuilt executables, libraries, installers, or firmware.
+Read [references/binary-distribution.md](references/binary-distribution.md) before you build or
+upload these artifacts.
+
+Define the target matrix and immutable asset names before the build.
+Build every asset from the approved commit and locked dependency graph.
+Create archives from an explicit allowlist.
+Generate checksums, an SBOM, and provenance with the repository's existing tools and policy.
+Use the existing signing system when one is configured.
+Do not add a signing or SBOM dependency only to complete a release.
+
+Verify the final local files before any external write.
+Request separate authorization for the tag push, hosted draft creation, asset upload, signing or
+attestation, and draft finalization unless the user explicitly authorizes the complete named
+sequence.
+After upload, download every artifact into a fresh directory and verify it as a consumer.
+
+Registry publication does not prove that a binary release is correct.
+A hosted binary release does not prove that a registry package is correct.
+Report each mode separately.
+
+## 9. Handle workspace release order
 
 Release one package at a time.
 Publish workspace dependencies before their dependents.
@@ -309,7 +339,7 @@ resolve the new registry dependency even when the workspace path build passes.
 Request publish authorization with the complete ordered list.
 Stop after the first failed or uncertain publish.
 
-## 9. Request authorization and publish
+## 10. Request authorization and publish
 
 Choose exactly one release channel before any external write:
 
@@ -348,7 +378,7 @@ If it returns an uncertain timeout, never publish that version again. Recheck
 the registry and index until the result is known, then stop the release chain.
 An immediate negative `cargo info` result does not prove that the upload failed.
 
-## 10. Verify the registry and tag the source
+## 11. Verify the registry and tag the source
 
 Verify the exact published version:
 
@@ -378,7 +408,7 @@ If the remote tag exists at another commit, stop and report the conflict.
 Complete the release only after the registry version and remote tag both point to the approved
 source state.
 
-## 11. Manage owners separately
+## 12. Manage owners separately
 
 List current owners before any change:
 
@@ -400,7 +430,7 @@ cargo owner --remove <account-or-team> <package> --registry <registry>
 Run only the approved add or remove command.
 List owners again and report the observed final set.
 
-## 12. Recover from a bad release
+## 13. Recover from a bad release
 
 Do not treat yank as the normal fix for a defect.
 When possible, publish a compatible fixed version before you yank the broken version.
@@ -438,6 +468,11 @@ Use `rust-security` for that response.
 | docs.rs build fails | Feature, target, native dependency, or sandbox assumption differs | Fix metadata or build behavior, then release a new version if required |
 | Wrong version contains a defect | Published archives are permanent | Publish a compatible fix, then consider an authorized yank |
 | Archive contains a secret | Yank does not remove downloads | Revoke the secret and contact the registry immediately |
+| Two clean binary builds have different digests | Build input, path, timestamp, linker, or packaging metadata differs | Find the source of variation or remove the reproducibility claim |
+| Release archive contains an unsafe path or link | Packaging copied an uncontrolled tree | Rebuild from an explicit allowlist and do not upload it |
+| Binary upload times out | The host can have accepted the asset | Download and hash the remote bytes; follow the bounded retry decision in the binary reference |
+| Signature verifies for an unexpected identity | The cryptographic signature is valid but the trust policy is wrong | Stop and verify the expected key or certificate identity and issuer |
+| One uploaded asset fails verification | The hosted release is incomplete or inconsistent | Keep it non-final when possible and stop before later release actions |
 
 ## Completion report
 
@@ -448,6 +483,8 @@ Report these facts:
 - SemVer and MSRV decision;
 - exact checks and observed results;
 - package contents and archive size review;
+- binary target matrix, asset names, checksums, SBOM, provenance, and signature status;
+- downloaded artifact verification for every published binary target;
 - registry and docs verification;
 - every external action performed;
 - any remaining risk or blocked check.
@@ -478,3 +515,9 @@ Do not say that publish failed only because the client timed out.
 - [`cargo yank`](https://doc.rust-lang.org/cargo/commands/cargo-yank.html)
 - [docs.rs build metadata](https://docs.rs/about/metadata)
 - [docs.rs build environment](https://docs.rs/about/builds)
+- [rustc source path remapping](https://doc.rust-lang.org/rustc/remap-source-paths.html)
+- [Sigstore blob signing](https://docs.sigstore.dev/cosign/signing/signing_with_blobs/)
+- [Sigstore signature verification](https://docs.sigstore.dev/cosign/verifying/verify/)
+- [SLSA provenance](https://slsa.dev/spec/v1.2/provenance)
+- [CycloneDX specification](https://cyclonedx.org/specification/overview/)
+- [SPDX specification](https://spdx.dev/use/specifications/)

@@ -23,6 +23,11 @@ wrong skill, and put the phrase in the right description in the same change.
 | SemVer bump | rust-crate-release |
 | MSRV change | rust-crate-release |
 | yank a crate version | rust-crate-release |
+| Rust binary release | rust-crate-release |
+| release archive | rust-crate-release |
+| release checksum | rust-crate-release |
+| release SBOM | rust-crate-release |
+| sign release artifact | rust-crate-release |
 | build.rs | rust-native-linking |
 | rustc-link-lib | rust-native-linking |
 | pkg-config | rust-native-linking |
