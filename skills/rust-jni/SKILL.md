@@ -92,12 +92,24 @@ skill for the full generated-boundary contract.
 ```text
 Java_com_example_app_NativeBindings_nativeCreate
      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^
-     package with dots replaced     method name
-     by underscores, then class
+     mangled binary class name       mangled method name
 ```
 
-The name must match the declaring class exactly. A mismatch of one character
-is `UnsatisfiedLinkError` at the first call, never a build failure.
+Do not derive this name with dot-to-underscore replacement alone. JNI mangles
+`/` as `_`, `_` as `_1`, `;` as `_2`, `[` as `_3`, and each other UTF-16 code
+unit as lowercase `_0xxxx`. For overloaded native methods, append `__` and the
+mangled parameter descriptor. The JVM tries the short name first and then the
+long overload name.
+
+Prefer `RegisterNatives` in `JNI_OnLoad` when class or method names contain
+underscores or Unicode, or when native methods are overloaded. It binds the
+Java name and descriptor explicitly and avoids hand-written linker-name
+mangling. Check every registration result and return `JNI_ERR` from
+`JNI_OnLoad` on failure. If you use exported `Java_*` names, generate them from
+the JNI mangling rules and compare them with `javac -h` output.
+
+A name or descriptor mismatch is `UnsatisfiedLinkError` at the first call,
+never a Rust build failure.
 
 ### Attributes
 
@@ -206,9 +218,11 @@ Do these steps in one patch. A half-applied patch is a run-time linkage error,
 not a build failure.
 
 1. Declare the `external fun` on the binding class. Keep it `private`.
-2. Implement the exact JNI symbol in the `cdylib` crate with
+2. Register the method name and descriptor with `RegisterNatives`, or implement
+   the exact JNI symbol in the `cdylib` crate with
    `#[unsafe(no_mangle)] pub extern "system" fn Java_<package>_<Class>_<method>`.
-   Derive the name from the declaring class, character for character.
+   For an overloaded native method, include the mangled parameter descriptor.
+   Generate the name with `javac -h`; do not replace punctuation by hand.
 3. Wrap the body in the panic guard. Add nothing else to the extern body.
 4. Keep the session semantics of the surrounding class: blocking calls stay
    blocking, non-blocking calls stay non-blocking, and setup failures surface
