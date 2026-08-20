@@ -128,6 +128,20 @@ a disabled feature on a required crate is never an allowed fragment. Add each
 dependency-backed import to `REQUIRED_EXTERNAL_CRATES` in `analyze.py` so a
 later manifest edit cannot silently reduce its coverage.
 
+### Bounded `imbl` advisory exception
+
+The harness pins `imbl` 7.0.1 only to type-check the complete persistent-vector
+example. That crate pulls `bitmaps` 3.2.1. The version matches
+RUSTSEC-2025-0167 (unsoundness) and RUSTSEC-2026-0247 (unmaintained), and no
+patched `bitmaps` release exists. Removing `imbl` would turn the example's
+first import into a fragment and hide its API checks.
+
+This exception is limited to the compile harness. `cargo check` does not run
+the example, and `checks/` is not installed with the skills. Keep the direct
+version exact. Re-run `cargo tree --locked -i bitmaps` on every harness
+dependency update. Remove the dependency as soon as `imbl` no longer pulls
+`bitmaps`, or replace the example and record the intentional coverage change.
+
 ## Changing the toolchain
 
 `rust-toolchain.toml` pins the channel and the target. CI installs nothing else;

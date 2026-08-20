@@ -26,7 +26,11 @@ bytes = "1"
 criterion = { version = "0.7", features = ["html_reports"] }
 flume = "0.11"
 futures = "0.3"
-imbl = "7"
+# Harness-only exception. The complete imbl example must reach type checking.
+# imbl 7.0.1 pulls bitmaps 3.2.1, which has RUSTSEC-2025-0167 and
+# RUSTSEC-2026-0247 with no patched release. The harness never runs this example
+# and is not installed with the skills. Remove this pin when imbl drops bitmaps.
+imbl = "=7.0.1"
 jni = "0.22"
 libc = "0.2"
 libfuzzer-sys = "0.4"
