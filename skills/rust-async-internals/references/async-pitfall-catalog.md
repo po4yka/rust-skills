@@ -84,6 +84,29 @@ let (a, b) = tokio::join!(fetch_a(), fetch_b());
 Without `biased`, `select!` polls the arms in a random order. A saturated data
 arm can starve the shutdown arm.
 
+Tokio evaluates every branch precondition first. It then evaluates every async expression,
+including expressions for disabled branches. A disabled future is not polled. This distinction
+matters when future construction has synchronous work:
+
+```rust
+let branch = false;
+tokio::select! {
+    _ = async {
+        // Put side effects here. This body runs only when the future is polled.
+        prepare_then_wait().await;
+    }, if branch => {}
+    _ = ready() => {}
+}
+```
+
+Do not write `make_future_with_side_effect()` as the disabled branch expression. Its call runs
+before Tokio decides which futures to poll.
+
+Dropping a `tokio::task::JoinHandle` detaches the task. The task continues and its result or
+panic can be lost. A task owner must keep the handle, request cooperative cancellation, and
+await the handle. Use `abort()` only when abrupt cancellation is valid, then await the handle so
+shutdown observes the task exit.
+
 ## CancellationToken: child tokens, DropGuard, run_until_cancelled
 
 **Severity: WARNING**
@@ -376,6 +399,12 @@ Rules, once the crate MSRV is at 1.85 or above:
    another reason. Premature churn obscures `git blame`.
 3. The non-async half of the HRTB rules lives in `rust-callback-bounds`. Read
    it before you write any `for<'a>` bound on a plain `Fn` callback.
+
+An async closure always captures its input arguments because the returned future can use them.
+This differs from an ordinary closure that does not capture an unused input. An async closure is
+also lending when the future borrows a capture or when a by-value capture is read without a
+dereference. A lending async closure does not implement `Fn` or `FnMut`; it can implement only
+`FnOnce`. Do not add clones until a type probe proves which call trait the exact closure needs.
 
 ### A single `Fut` parameter rejects every borrowing `async fn`
 

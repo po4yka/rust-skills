@@ -34,6 +34,7 @@ cd "$ROOT/checks"
 echo "==> unit tests: frontmatter, check locking, and the failure classifier"
 python3 "$ROOT/scripts/test_validate_skills.py" 2>&1 | tail -3
 python3 test_with_lock.py 2>&1 | tail -3
+python3 test_gen.py 2>&1 | tail -3
 python3 test_analyze.py 2>&1 | tail -3
 
 echo "==> extracting rust examples from skills/"
@@ -54,6 +55,21 @@ cargo check --locked --examples --target "$TARGET" --keep-going --message-format
 
 echo "==> gating: coverage, compile_fail, and the suspect baseline"
 python3 analyze.py check.json --check-baseline baseline.txt
+
+echo "==> running behavior probes on the native host"
+RUN_DIR="$(mktemp -d)"
+trap 'rm -rf "$RUN_DIR"' EXIT
+run_count=0
+while IFS= read -r example; do
+    [ -n "$example" ] || continue
+    rustc --edition=2024 "examples/${example}.rs" -o "$RUN_DIR/$example"
+    python3 -c 'import subprocess, sys; subprocess.run([sys.argv[1]], check=True, timeout=10)' \
+        "$RUN_DIR/$example"
+    run_count=$((run_count + 1))
+done < <(
+    python3 -c 'import json; print("\n".join(k for k, v in json.load(open("manifest.json", encoding="utf-8")).items() if v["mode"] == "run"))'
+)
+echo "  ${run_count} behavior probe(s) passed"
 
 echo "==> skills CLI discovers every skill"
 if command -v npx > /dev/null 2>&1; then

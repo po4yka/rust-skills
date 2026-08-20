@@ -1,8 +1,34 @@
 # Feature Resolution Pitfalls
 
-Deep material for `cargo-workflows`: the two resolver behaviours that silently
-change what a workspace crate compiles. Both are WARNING-severity. Both are
-invisible until a shipped artifact grows code it must not contain.
+Deep material for `cargo-workflows`: resolver and feature behaviours that
+silently change what a workspace crate compiles.
+
+## Test supported feature products
+
+Features are additive and unify for each package in the resolved graph. They
+are not exclusive runtime switches. Define the combinations the project
+supports, then test those combinations directly:
+
+```bash
+cargo test --locked --workspace
+cargo test --locked -p <crate> --no-default-features
+cargo test --locked -p <crate> --no-default-features --features <feature>
+# Run only when the complete combination is supported.
+cargo test --locked -p <crate> --all-features
+```
+
+Do not use `--all-features` as a universal quality gate when two backends are
+intentionally exclusive. Either make the features additive, or test each
+supported backend as a separate lane and reject the invalid combination with a
+clear `compile_error!`.
+
+`[target.'cfg(feature = "...")'.dependencies]` does not select dependencies by
+feature. Cargo resolves features after it selects target dependency tables.
+Use optional dependencies plus `[features]`, then put target selection in a
+real target table.
+
+Reference: [Cargo features](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification),
+[platform-specific dependencies](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#platform-specific-dependencies).
 
 ## Pitfall: feature unification silently enables features in `no_std` crates
 
@@ -36,8 +62,7 @@ and verify with `cargo check --locked --no-default-features`. If a workspace tes
 binary needs a `std` feature, gate it behind a dev-dependency instead of a normal
 dependency.
 
-Reference: [cargo feature unification pitfall - nickb.dev](https://nickb.dev/blog/cargo-workspace-and-the-feature-unification-pitfall/),
-Cargo resolver documentation.
+Reference: [Cargo feature resolution](https://doc.rust-lang.org/cargo/reference/resolver.html#features).
 
 ## Pitfall: workspace inheritance breaks target-specific features
 

@@ -365,6 +365,21 @@ def check_readme_catalog(skill_names: set[str]) -> None:
             fail("README.md", f"skill {name!r} appears {count} times in the catalog tables")
 
 
+def check_readme_graph(skill_names: set[str]) -> None:
+    """Keep the routing overview in sync with the catalog."""
+    text = README.read_text(encoding="utf-8")
+    blocks = re.findall(r"```mermaid\s*\n(.*?)```", text, re.S)
+    if not blocks:
+        fail("README.md", "Mermaid routing graph is missing")
+        return
+
+    graph = "\n".join(blocks)
+    for name in sorted(skill_names):
+        count = len(re.findall(rf"(?<![a-z0-9-]){re.escape(name)}(?![a-z0-9-])", graph))
+        if count != 1:
+            fail("README.md", f"skill {name!r} appears {count} times in the Mermaid routing graph")
+
+
 def main() -> int:
     if not SKILLS_DIR.is_dir():
         print("no skills/ directory", file=sys.stderr)
@@ -374,7 +389,9 @@ def main() -> int:
     for skill_dir in skill_dirs:
         check_skill(skill_dir)
     check_routing_cases(descriptions)
-    check_readme_catalog({d.name for d in skill_dirs})
+    skill_names = {d.name for d in skill_dirs}
+    check_readme_catalog(skill_names)
+    check_readme_graph(skill_names)
 
     if failures:
         print(f"FAIL: {len(failures)} problem(s) in {len(skill_dirs)} skill(s)\n")

@@ -94,6 +94,9 @@ wrong skill, and put the phrase in the right description in the same change.
 | dSYM UUID checks | rust-ios-build |
 | PrivacyInfo.xcprivacy | rust-ios-build |
 | tokio::select! | rust-async-internals |
+| disabled select branch | rust-async-internals |
+| JoinHandle | rust-async-internals |
+| async closure | rust-async-internals |
 | block_on | rust-async-internals |
 | CancellationToken | rust-async-internals |
 | shutdown hang | rust-async-internals |
@@ -101,9 +104,18 @@ wrong skill, and put the phrase in the right description in the same change.
 | import grouping | rust-code-style |
 | E0382 | rust-compiler-errors |
 | E0499 | rust-compiler-errors |
+| E0282 | rust-compiler-errors |
+| E0283 | rust-compiler-errors |
+| E0284 | rust-compiler-errors |
 | borrow checker | rust-compiler-errors |
 | does not live long enough | rust-compiler-errors |
 | missing lifetime specifier | rust-compiler-errors |
+| temporary lifetime | rust-borrow-semantics |
+| drop scope | rust-borrow-semantics |
+| two-phase borrow | rust-borrow-semantics |
+| match guard | rust-pattern-semantics |
+| partial move | rust-pattern-semantics |
+| match ergonomics | rust-pattern-semantics |
 | dependency cycle | rust-crate-architecture |
 | layering violation | rust-crate-architecture |
 | tombstone | rust-debugging |
@@ -111,6 +123,11 @@ wrong skill, and put the phrase in the right description in the same change.
 | addr2line | rust-debugging |
 | tokio-console | rust-debugging |
 | RAII | rust-discipline |
+| method ambiguity | rust-discipline |
+| autoderef | rust-discipline |
+| UFCS | rust-discipline |
+| E0034 | rust-discipline |
+| trait coherence | rust-discipline |
 | UnsatisfiedLinkError | rust-jni |
 | AttachCurrentThread | rust-jni |
 | JNIEnv | rust-jni |
@@ -136,6 +153,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | exporter shutdown | rust-observability |
 | catch_unwind | rust-panic-safety |
 | panic hook | rust-panic-safety |
+| panic payload | rust-panic-safety |
 | flamegraph | rust-performance |
 | simpleperf | rust-performance |
 | cargo-bloat | rust-performance |
@@ -151,6 +169,9 @@ wrong skill, and put the phrase in the right description in the same change.
 | serde(flatten) | rust-serde |
 | skip_serializing_if | rust-serde |
 | serde(try_from) | rust-serde |
+| DeserializeOwned | rust-serde |
+| JSON map key | rust-serde |
+| large integer | rust-serde |
 | typosquat | rust-security |
 | cargo-audit | rust-security |
 | red-green-refactor | rust-tdd |
@@ -165,6 +186,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | OwnedFd | rust-unsafe |
 | mem::zeroed | rust-unsafe |
 | E0793 | rust-unsafe |
+| Strict Provenance | rust-unsafe |
+| MaybeUninit | rust-unsafe |
 | uniffi::export | uniffi-boundary |
 | callback_interface | uniffi-boundary |
 | custom_newtype | uniffi-boundary |

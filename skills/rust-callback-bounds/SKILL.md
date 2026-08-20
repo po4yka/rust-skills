@@ -37,6 +37,7 @@ aarch64-apple-darwin.
 | `error[E0562]: impl Trait is not allowed in field types` | [Store a callable in a field](#store-a-callable-in-a-field) |
 | `Fn()` is not implemented for `Arc<dyn Fn()>` | `references/storing-callables.md` |
 | `error: reached the recursion limit while instantiating` | `references/storing-callables.md` |
+| A `move` closure unexpectedly implements `Fn`, captures a whole owner, or changes drop timing | `references/closure-capture-semantics.md` |
 | The callback is `async` | `rust-async-internals` |
 
 ## Pick the bound from the return type
@@ -488,6 +489,10 @@ There is no stable shortcut. `type OnDrop = impl FnOnce(u32);` in an associated 
   bytes silently.
 - A public generic type that stores behaviour declares its own trait with a blanket `FnOnce` impl.
 - No `Arc<dyn Fn()>` or `Rc<dyn Fn()>` is passed to an `F: Fn()` bound.
+- No call trait is inferred from the `move` keyword. The closure body decides `Fn`, `FnMut`, or
+  `FnOnce`.
+- Capture precision and capture drop timing are tested when they affect ownership, `Send`, or
+  resource cleanup.
 - No trait method takes a writer or visitor as `impl Trait` **by value** while a delegating
   `impl<T: Trait + ?Sized> Trait for &mut T` is in scope.
 
@@ -501,3 +506,4 @@ There is no stable shortcut. `type OnDrop = impl FnOnce(u32);` in an associated 
 | `rust-iterator-impl` | The producing side, when the answer is a lending iterator rather than a callback |
 | `rust-performance` | Build-time cost of a by-value `impl Trait` parameter, measured with `cargo --timings` and `llvm-lines` |
 | `rust-lints` | The `refining_impl_trait` lint and the workspace lint tables that gate it |
+| [`references/closure-capture-semantics.md`](references/closure-capture-semantics.md) | `move` call traits, capture precision, and capture drop order |

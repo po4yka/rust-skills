@@ -1,6 +1,6 @@
 ---
 name: rust-serde
-description: Use when you derive Serialize or Deserialize on a type whose encoded form is a contract - a config file, an on-disk record, a cached payload, a message another process or an older build reads. Covers deny_unknown_fields and the rename_all migration trap, the four enum representations and what each puts on the wire, why untagged destroys error messages, flatten and its interaction with deny_unknown_fields and non-self-describing formats, validation at the boundary with try_from, and the default plus alias pair that keeps old and new payloads both readable. Triggers on serde, Serialize, Deserialize, serde_json, deny_unknown_fields, rename_all, serde(tag), untagged, serde(flatten), skip_serializing_if, serde(default), serde(alias), serde(try_from), "unknown field", "did not match any variant", or any wire-compatibility question.
+description: Use when you derive Serialize or Deserialize on a type whose encoded form is a contract - a config file, an on-disk record, a cached payload, a message another process or an older build reads. Covers deny_unknown_fields and the rename_all migration trap, the four enum representations and what each puts on the wire, why untagged destroys error messages, flatten and its interaction with deny_unknown_fields and non-self-describing formats, validation at the boundary with try_from, and the default plus alias pair that keeps old and new payloads both readable. Triggers on serde, Serialize, Deserialize, DeserializeOwned, serde_json, JSON map key, large integer, deny_unknown_fields, rename_all, serde(tag), untagged, serde(flatten), skip_serializing_if, serde(default), serde(alias), serde(try_from), "unknown field", "did not match any variant", or any wire-compatibility question.
 license: BSD-3-Clause
 ---
 
@@ -237,6 +237,16 @@ Rules for an evolving type:
 4. Carry an explicit version field when the format may need a real migration, and write the
    migration before you need it.
 
+## Prove the data model and ownership bound
+
+Read [references/data-model-and-lifetimes.md](references/data-model-and-lifetimes.md) when a
+generic parser needs a `Deserialize` bound, a JSON map has non-string Rust keys, or an integer
+can exceed `u64` or `i64`. Derive success proves only that Serde can describe the Rust type. It
+does not prove that the selected format can represent every value.
+
+Run boundary round trips for the exact format. Include empty values, maximum integers, legacy
+aliases, unknown fields, and every map-key shape that the contract permits.
+
 ## Triage
 
 | Symptom | Cause | Fix |
@@ -248,6 +258,9 @@ Rules for an evolving type:
 | `invalid type: map, expected ...` on an enum | Internal tagging on a newtype variant that is not a map | Use adjacent tagging |
 | An older build cannot read a new payload | A field was added without `default` | Add `default`; ship the reader before the writer |
 | A binary format rejects a type that JSON accepts | `flatten` needs field names | Remove `flatten`, or keep the format self-describing |
+| A generic parser rejects borrowed output | It requires `DeserializeOwned` or `Deserialize<'static>` | Use `T: Deserialize<'de>` while the input lives; keep `DeserializeOwned` only for owned input |
+| JSON rejects a derived map at runtime | The key type is outside JSON's supported scalar key model | Encode keys as strings or use a sequence of key-value records |
+| A large integer fails only through `serde_json::Value` | The default `Number` representation cannot hold it | Define the numeric range or enable and test an explicit arbitrary-precision policy |
 | A parsed value is structurally valid and semantically wrong | Validation lives after deserialization | `#[serde(try_from = "..")]` |
 
 ## Related skills

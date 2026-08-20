@@ -19,9 +19,10 @@ the prose, not in the block". Every other code, and every code this file does
 not know, is a suspect. A wider excuse list is how a real defect passes as a
 harmless fragment; test_analyze.py holds the regression cases.
 
-Three gates run before the buckets:
+Four gates run before the buckets:
 
   every example cargo was asked to build appears in its output,
+  every run example compiles without any diagnostic,
   every compile_fail example does fail,
   every error code a compile_fail fence names does occur.
 
@@ -261,6 +262,20 @@ def classify(errors: dict[str, list[dict]]):
     return fragment, artifact, low, suspects
 
 
+def run_failures(manifest: dict, errors: dict[str, list[dict]]) -> list[str]:
+    """A behavior probe must compile cleanly before check.sh executes it."""
+    problems = []
+    for name, info in manifest.items():
+        if info.get("mode") != "run" or name not in errors:
+            continue
+        codes = sorted({code_of(d) or "uncoded error" for d in errors[name]})
+        problems.append(
+            f"{info.get('file', '?')}:{info.get('line', 0)}: "
+            f"rust,run does not compile ({', '.join(codes)})"
+        )
+    return problems
+
+
 def main() -> int:
     manifest_path = HERE / "manifest.json"
     if not manifest_path.is_file():
@@ -292,6 +307,14 @@ def main() -> int:
             " longer supports.\nFix the block, retag it, or correct the expected"
             " code in the fence."
         )
+        return 1
+
+    broken_runs = run_failures(manifest, errors)
+    if broken_runs:
+        print(f"FAIL: {len(broken_runs)} rust,run block(s) do not compile cleanly:\n")
+        for problem in broken_runs:
+            print(f"  {problem}")
+        print("\nA behavior probe cannot fall back to a fragment or a baseline entry.")
         return 1
 
     # Only the compile-mode examples take part in the buckets below. A
@@ -351,6 +374,7 @@ def main() -> int:
         weak = weak_compile_fail(manifest, errors)
         print(
             f"OK: {clean}/{checked} compile blocks build clean,"
+            f" {modes['run']} run blocks compile clean,"
             f" {modes['compile_fail']} compile_fail blocks fail as tagged,"
             f" {modes['ignore']} not checked"
         )
@@ -366,6 +390,7 @@ def main() -> int:
     print("== catalog coverage ==")
     print(f"rust blocks                 : {total}")
     print(f"  must compile              : {checked}")
+    print(f"  must compile and run      : {modes['run']}")
     print(f"  must not compile          : {modes['compile_fail']}")
     print(f"  not checked (ignore)      : {modes['ignore']}")
     print()

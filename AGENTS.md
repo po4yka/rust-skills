@@ -19,8 +19,10 @@ scripts/validate-skills.py      catalog structure checks
 scripts/test_validate_skills.py tests for the frontmatter rules themselves
 tests/routing-cases.md          phrase -> skill, checked against every description
 checks/                         compile-check harness for the rust examples
+checks/test_gen.py              tests for executable-fence extraction
 checks/test_analyze.py          tests for the failure classifier itself
 checks/check.sh                 one command that reproduces CI
+research/                       primary-source findings and skill-gap decisions
 LICENSE                         BSD-3-Clause
 ```
 
@@ -77,6 +79,9 @@ The body starts at an `# Title` heading directly after the frontmatter.
 - Tag a fence that must not compile: ```` ```rust,compile_fail ```` for a deliberate error
   demonstration, and name the code when you know it: ```` ```rust,compile_fail,E0499 ````. The
   gate then requires that code, so the block proves what the prose says it proves.
+- Tag a portable behavior probe ```` ```rust,run ```` and define `fn main()`. CI first requires
+  clean compilation, then builds and runs it on the native host. Keep it on the standard library.
+  A run block cannot contain `TODO`, `FIXME`, `todo!()`, or `unimplemented!()`.
 - Tag ```` ```rust,ignore ```` only for code no `cargo check` can judge: a build-script
   `include!`, a nightly-only feature, a failure that arrives at monomorphization. It is the one
   way out of the gate, and nothing else removes a block from it. Prefer fixing the example.
@@ -94,7 +99,8 @@ The body starts at an `# Title` heading directly after the frontmatter.
    fit in the 400-line budget.
 
 3. Add one row to the catalog table in `README.md`, in the section that matches the subject.
-   Link the name to `skills/<name>/SKILL.md`. Every skill appears exactly once.
+   Link the name to `skills/<name>/SKILL.md`. Add one node to the routing diagram. Every skill
+   appears exactly once in both places.
 
 4. Add at least one row to `tests/routing-cases.md`: a phrase a user is likely to type, and the
    new skill. The phrase must appear in the new `description`. A skill with no routing case
@@ -130,9 +136,10 @@ It checks, for every skill:
   a bare code span;
 - every phrase in `tests/routing-cases.md` still appears in the description it routes to, and
   every skill has at least one routing case;
-- the README catalog lists exactly the skills that exist on disk.
+- the README catalog lists exactly the skills that exist on disk;
+- the README Mermaid routing graph names every skill exactly once.
 
-### 2. Compile-check the examples
+### 2. Compile and behavior-check the examples
 
 ```bash
 python3 checks/gen.py
@@ -143,10 +150,11 @@ python3 analyze.py check.json --check-baseline baseline.txt   # the gate
 
 Every ` ```rust ` block in `skills/` is read, and its fence decides what happens to it. An
 untagged block is type-checked; most are fragments that name types the prose defines, and the
-analyzer buckets those and ignores them. The gate fails on three things: an example that never
-reached the compiler, a `compile_fail` block that compiled or missed the code its fence names,
-and a compile error the analyzer cannot attribute to an undefined symbol or to the extraction
-wrapper.
+analyzer buckets those and ignores them. A `rust,run` block must compile cleanly and then execute
+successfully on the native host within ten seconds. The gate fails on an example that never
+reached the compiler, a run block with any compile error, timeout, panic, or non-zero exit, a
+`compile_fail` block that compiled or missed the code its fence names, or a compile error the
+analyzer cannot attribute to an undefined symbol or to the extraction wrapper.
 
 `checks/baseline.txt` is empty and should stay empty. When the gate reports a new suspect, fix
 the example. Add a baseline line only for a failure no fence tag can express, with a comment

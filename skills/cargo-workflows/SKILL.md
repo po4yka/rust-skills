@@ -65,7 +65,10 @@ components = ["rustfmt", "clippy"]
 
 Set `rust-version` in `[workspace.package]` to declare the MSRV, and mirror it
 in `clippy.toml` as `msrv = "..."` so clippy does not suggest APIs that are
-newer than the MSRV.
+newer than the MSRV. This declaration is not proof that the resolved dependency
+graph supports the MSRV. Resolver 3 prefers compatible versions but can select
+an incompatible version when no compatible version satisfies the requirement.
+Run the real build and tests with the minimum toolchain.
 
 ## Cross-compilation
 
@@ -321,6 +324,10 @@ Rules:
 - If a dependency's default features change the output bit-for-bit, pin the
   feature set and write down why. Enabling a GPU or SIMD backend on a crate that
   must produce byte-identical output breaks reproducibility.
+- Test the project-owned matrix: default features, `--no-default-features`, and
+  each supported feature family. Run `--all-features` only when that combination
+  is a supported product; additive features do not make exclusive backends
+  compatible.
 
 ## Testing
 
@@ -433,6 +440,7 @@ and the next run should reuse them.
 
 ```bash
 cargo check --locked --workspace                  # Type-check everything
+cargo build --locked --workspace                  # Codegen and link; check is not enough
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo fmt --check                                 # Format check
 cargo build --locked -p <crate>                   # Build one crate
@@ -456,9 +464,11 @@ examples, and those files then fail in CI on a lint you never saw locally.
 
 Edition 2024 stabilized in Rust 1.85.0 (February 2025).
 
-- Set `edition = "2024"` once, in `[workspace.package]`.
-- Every crate inherits it with `edition.workspace = true`. Never pin an older
-  edition in an individual crate.
+- Keep the steady state at one edition in `[workspace.package]`, inherited with
+  `edition.workspace = true`.
+- During a staged migration, give the crate being migrated an explicit edition.
+  Crates on different editions interoperate. Remove the overrides when the last
+  crate migrates.
 - Treat an edition bump as a workspace-wide contract change. Do it in a
   dedicated change with `cargo fix --edition`, formatting, clippy, and test
   evidence.

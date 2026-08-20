@@ -232,6 +232,41 @@ license: BSD-3-Clause"""
         self.assertEqual(len(found), 1)
         self.assertIn("appears 2 times", found[0])
 
+    def run_graph(self, readme: str, skills: set[str]) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "README.md"
+            path.write_text(readme, encoding="utf-8")
+            original = validate_skills.README
+            try:
+                validate_skills.README = path
+                validate_skills.failures.clear()
+                validate_skills.check_readme_graph(skills)
+                return list(validate_skills.failures)
+            finally:
+                validate_skills.README = original
+
+    def test_graph_requires_every_skill_once(self):
+        readme = """```mermaid
+flowchart LR
+    A[rust-a]
+```
+"""
+        found = self.run_graph(readme, {"rust-a", "rust-b"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("rust-b", found[0])
+        self.assertIn("appears 0 times", found[0])
+
+    def test_duplicate_graph_skill_fails(self):
+        readme = """```mermaid
+flowchart LR
+    A[rust-a]
+    B[rust-a]
+```
+"""
+        found = self.run_graph(readme, {"rust-a"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("appears 2 times", found[0])
+
 
 class TestRoutingGuard(unittest.TestCase):
     """A three-column row records a decision between two skills that both fit."""

@@ -1,6 +1,6 @@
 ---
 name: rust-compiler-errors
-description: Use when rustc or cargo reports a numbered error and you need the cause rather than the first fix that compiles. Covers ownership and move errors (E0382, E0505, E0507, E0509), borrow conflicts (E0499, E0502, E0596), lifetime errors (E0597, E0716, E0515, E0521, E0106), trait and type errors (E0038, E0277, E0271, E0308, E0599, E0631, E0275), Drop impl errors (E0184, E0367, E0740), the unnumbered Send error on a future, resolution errors (E0433, E0425, E0603), and layout errors (E0072, E0793). States which reflexive fix hides the bug and which one resolves it. Triggers on any "E0" code that no topic skill owns (E0207 is rust-iterator-impl, E0793 is rust-unsafe, Send and Sync go to rust-send-sync), "borrow checker", "value moved", "does not live long enough", "cannot borrow", "missing lifetime specifier", "trait bound not satisfied", "not dyn compatible", "dyn compatibility", "object safety", "overflow evaluating the requirement", or a paste of a cargo build failure.
+description: Use when rustc or cargo reports a numbered error and you need the cause rather than the first fix that compiles. Covers ownership and move errors (E0382, E0505, E0507, E0509), borrow conflicts (E0499, E0502, E0596), lifetime errors (E0597, E0716, E0515, E0521, E0106), trait and type errors (E0038, E0277, E0271, E0282, E0283, E0284, E0308, E0599, E0631, E0275), Drop impl errors (E0184, E0367, E0740), the unnumbered Send error on a future, resolution errors (E0433, E0425, E0603), and layout errors (E0072, E0793). States which reflexive fix hides the bug and which one resolves it. Triggers on any "E0" code that no topic skill owns (E0207 is rust-iterator-impl, E0793 is rust-unsafe, Send and Sync go to rust-send-sync), "borrow checker", "value moved", "does not live long enough", "cannot borrow", "missing lifetime specifier", "trait bound not satisfied", "not dyn compatible", "dyn compatibility", "object safety", "overflow evaluating the requirement", or a paste of a cargo build failure.
 license: BSD-3-Clause
 ---
 
@@ -44,7 +44,7 @@ downstream, and most of them disappear on their own.
 | E0502 | cannot borrow as mutable because it is also borrowed as immutable | A read borrow is live across a write | Copy the value out, then mutate |
 | E0596 | cannot borrow as mutable, as it is behind a `&` reference | The parameter is `&T`, not `&mut T` | Change the signature; do not reach for interior mutability first |
 | E0597 | `x` does not live long enough | A named local is dropped while borrowed | Move the binding to the outer scope |
-| E0716 | temporary value dropped while borrowed | An unnamed temporary died at the end of the statement | Bind the temporary to a `let` |
+| E0716 | temporary value dropped while borrowed | A temporary ended before its borrow | Name the owner, then verify the syntax-sensitive temporary scope |
 | E0515 | cannot return reference to local variable | The callee owns the data the caller wants | Return owned, or accept a buffer parameter |
 | E0521 | borrowed data escapes outside of function | A borrow crossed a `'static` boundary such as `thread::spawn` | Clone, or pass an `Arc` |
 | E0106 | missing lifetime specifier | A struct or return type holds a reference with no stated source | Name the lifetime, or store owned data |
@@ -160,8 +160,37 @@ let p = bar(&tmp);
 let q = *p;
 ```
 
-The rule to remember: a temporary lives to the end of the *statement*, a `let` binding lives to
-the end of the *block*. Almost every E0716 is fixed by one extra `let`.
+Do not turn this example into the false rule that every temporary dies at the semicolon. Rust
+extends some temporaries from an extending `let` pattern or expression to the end of the block:
+
+```rust,run
+fn make() -> String { String::from("extended") }
+
+fn main() {
+    let borrowed = &make();
+    assert_eq!(borrowed, "extended");
+}
+```
+
+A function argument such as `bar(&foo())` does not get that extension. Match the exact syntax,
+then name the temporary when the consumer needs a longer lifetime. Use `rust-borrow-semantics`
+for temporary-scope, place-expression, and two-phase-borrow analysis.
+
+## E0282, E0283, and E0284 need a type anchor
+
+These errors mean the available constraints do not select one type. Rust does not infer every
+method or operator input backward from the final result type. Add the smallest local anchor:
+
+```rust
+let parsed: u64 = "42".parse()?;
+let bytes = Vec::<u8>::new();
+let converted = u64::from(7_u8);
+```
+
+Prefer a typed local, a turbofish on the constructor or method that owns the unknown type, or a
+fully qualified call. Do not change a public return type, add `'static`, or add a broad trait
+bound only to silence inference. Rebuild after the one anchor; later diagnostics can be a
+cascade from the first unknown type.
 
 ## E0507: you hold a reference and you need the value
 

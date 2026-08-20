@@ -1,6 +1,6 @@
 ---
 name: rust-unsafe
-description: Use when you add or review any unsafe Rust block, FFI boundary (JNI, UniFFI, or hand-rolled extern "C"), raw-pointer arithmetic, transmute, ManuallyDrop, mem::zeroed, ioctl or syscall wrapper, union access, manual unsafe impl Send/Sync, Box::leak, zero-copy buffer or mmap handoff, or any change that removes the crate-level forbid(unsafe_code) attribute from a previously safe crate. Covers the lint floor for unsafe crates, SAFETY comment discipline, panic safety at FFI boundaries, unaligned reads from untrusted bytes, Drop and double-panic hazards, symbol collision in cdylib crates, Miri and Tree Borrows verification, and a review checklist. Triggers on "unsafe", "FFI", "extern", "raw pointer", "transmute", "*mut/*const", "SAFETY comment", "undefined behavior", "no_mangle", "zero-copy", "mmap", "repr(packed)", "alignment", "E0793", "improper_ctypes", "opaque handle", "OwnedFd", or any soundness question.
+description: Use when you add or review any unsafe Rust block, FFI boundary (JNI, UniFFI, or hand-rolled extern "C"), raw-pointer arithmetic, transmute, ManuallyDrop, mem::zeroed, ioctl or syscall wrapper, union access, manual unsafe impl Send/Sync, Box::leak, zero-copy buffer or mmap handoff, or any change that removes the crate-level forbid(unsafe_code) attribute from a previously safe crate. Covers the lint floor for unsafe crates, SAFETY comment discipline, panic safety at FFI boundaries, unaligned reads from untrusted bytes, Drop and double-panic hazards, symbol collision in cdylib crates, Miri and Tree Borrows verification, and a review checklist. Triggers on "unsafe", "FFI", "extern", "raw pointer", "transmute", "*mut/*const", "SAFETY comment", "undefined behavior", "Strict Provenance", "MaybeUninit", "no_mangle", "zero-copy", "mmap", "repr(packed)", "alignment", "E0793", "improper_ctypes", "opaque handle", "OwnedFd", or any soundness question.
 license: BSD-3-Clause
 ---
 
@@ -245,6 +245,12 @@ comment must cite the value contract for that concrete type. Never use `zeroed()
 `MaybeUninit<T>` when this proof is absent. Call `assume_init` only after the API reports that it
 wrote a complete, valid `T`.
 
+Creating an invalid typed value is immediate undefined behavior. The value does not become safe
+because code never reads it. Read
+[references/validity-and-provenance.md](references/validity-and-provenance.md) before you create
+a reference from a raw pointer, initialize a type from bytes, or convert a pointer through an
+address.
+
 ## Syscall and ioctl wrappers
 
 Every syscall wrapper must:
@@ -468,6 +474,9 @@ Use this when you review an unsafe block:
 - [ ] For a slice over a foreign buffer: is exclusive access guaranteed for the whole call?
 - [ ] For a mapping: does the mapping outlive every slice built over it?
 - [ ] For `mem::zeroed()`: is the type a plain C struct with no Rust-level invariant?
+- [ ] Does every `assume_init` prove that all bytes form a valid value of the exact type?
+- [ ] Does integer-address manipulation preserve provenance with `addr`, `with_addr`, or
+      `map_addr`, or document why exposed provenance is required?
 - [ ] For a union field: was the field written before it was read?
 - [ ] For `unsafe impl Send` or `Sync`: is thread safety actually guaranteed by every field?
 - [ ] Does any reference point into a `#[repr(packed)]` struct, or into unaligned bytes?

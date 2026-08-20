@@ -1,9 +1,10 @@
-# checks — compile-verify the examples in the skills
+# checks — verify the Rust examples in the skills
 
 The catalog ships no Rust crate, so nothing in it is exercised by a build. This
 harness closes that gap for the part that matters most: the code an agent is
-told to copy. It reads every ` ```rust ` block in `../skills/**/*.md`, does what
-the fence tag says, and fails CI on any result the tag did not promise.
+told to copy. It reads every ` ```rust ` block in `../skills/**/*.md`, compiles
+it as the fence requires, runs portable behavior probes, and fails CI on any
+result the fence did not promise.
 
 There is no heuristic skip. A block is checked, is proved to fail, or carries
 `ignore` on its fence, and the counts are printed on every run.
@@ -28,9 +29,10 @@ commands below do not hold this lock. Do not run those commands concurrently in
 one checkout.
 
 ```bash
-python3 scripts/validate-skills.py            # catalog structure; no toolchain needed
+python3 scripts/validate-skills.py            # frontmatter, references, routing, README; no toolchain
 python3 scripts/test_validate_skills.py       # the frontmatter rules themselves
 python3 checks/test_with_lock.py               # parallel-run serialization
+python3 checks/test_gen.py                     # executable-fence rules
 python3 checks/test_analyze.py                # the failure classifier itself
 python3 checks/gen.py                         # blocks -> checks/examples/
 cd checks
@@ -51,12 +53,19 @@ tag is enforced:
 | Fence | Meaning |
 | --- | --- |
 | ` ```rust ` | Extracted and type-checked. It must compile, or fail only on a name the prose defines |
+| ` ```rust,run ` | Must compile cleanly, then its `fn main()` runs on the native host |
 | ` ```rust,compile_fail ` | Extracted and type-checked. It must **not** compile |
 | ` ```rust,compile_fail,E0499 ` | The same, and that error code must appear |
 | ` ```rust,ignore ` | Not checked. The only way out of the gate |
 
 An unknown tag is a failure, not a quiet pass: a typo in a fence would
 otherwise take a block out of the check with nobody the wiser.
+
+Use `rust,run` only for small, portable standard-library probes. It is stricter
+than an ordinary block: it cannot degrade into a fragment, must define
+`fn main()`, and cannot contain `TODO`, `FIXME`, `todo!()`, or
+`unimplemented!()`. The target compile gate still checks it first. `check.sh`
+then compiles it with the pinned toolchain for the native host and executes it.
 
 Name the expected code whenever you know it. Without it, a `compile_fail` block
 that fails only because a name is undefined still counts as failing, and the
@@ -81,16 +90,21 @@ method that the crate does not have — all look like they need a tag and do not
 
 ## The gates
 
-Three checks run before the buckets, and each one fails the build:
+Four checks run before the buckets, and each one fails the build:
 
 1. **Coverage.** Every example `gen.py` wrote has to appear in cargo's output.
    A block that silently stopped being compiled is a coverage drop, and a
    coverage drop reads exactly like a clean catalog unless something counts.
-2. **compile_fail.** Every block tagged `compile_fail` has to fail, and has to
+2. **Run compilation.** Every block tagged `run` must compile cleanly. It cannot
+   use the undefined-name or baseline exceptions.
+3. **compile_fail.** Every block tagged `compile_fail` has to fail, and has to
    produce the error codes its fence names. A demonstration that starts
    compiling after a language change is a claim the catalog can no longer make.
-3. **Suspects.** Every remaining failure is bucketed, and a bucket outside the
+4. **Suspects.** Every remaining failure is bucketed, and a bucket outside the
    baseline fails the run.
+
+After these gates, `check.sh` compiles and executes each run block on the native
+host. A panic, non-zero exit, or ten-second timeout fails the run.
 
 `analyze.py` also refuses to report success unless `check.json` carries a
 `build-finished` record and names at least one target. When cargo cannot start

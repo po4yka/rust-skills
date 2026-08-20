@@ -4,6 +4,42 @@ Every pattern here answers the same question: where does the panic stop, and wha
 foreign caller see instead. Pick the shape that matches the boundary, then keep it identical
 across all entry points of the crate.
 
+Every `Err(payload)` branch below calls this helper. Dropping a caught payload can panic:
+
+```rust,run
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        std::mem::forget(payload);
+    }
+}
+
+struct PanicOnDrop;
+
+impl Drop for PanicOnDrop {
+    fn drop(&mut self) {
+        panic!("panic payload destructor");
+    }
+}
+
+fn main() {
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(|| {
+        std::panic::panic_any(PanicOnDrop);
+    });
+    let payload = match result {
+        Err(payload) => payload,
+        Ok(()) => unreachable!(),
+    };
+    discard_panic_payload(payload);
+    std::panic::set_hook(hook);
+}
+```
+
+Do not format or inspect the payload. The `forget` is a bounded fallback for the double-panic
+path, where safe destruction is no longer available.
+
 ## Pattern selection
 
 | Boundary shape | Guard | Panic result the caller sees |
@@ -82,7 +118,8 @@ pub extern "C" fn lib_session_new(config: *const std::os::raw::c_char) -> *mut S
             set_last_error(LastError::Domain);
             std::ptr::null_mut()
         }
-        Err(_) => {
+        Err(payload) => {
+            discard_panic_payload(payload);
             set_last_error(LastError::Panic);
             std::ptr::null_mut()
         }
@@ -101,10 +138,13 @@ pub unsafe extern "C" fn lib_session_free(ptr: *mut Session) {
     if ptr.is_null() {
         return;
     }
-    let _ = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(|| {
         // SAFETY: the caller guarantees single ownership of a pointer from the constructor.
         drop(unsafe { Box::from_raw(ptr) });
     });
+    if let Err(payload) = result {
+        discard_panic_payload(payload);
+    }
 }
 ```
 
@@ -133,7 +173,10 @@ pub unsafe extern "C" fn lib_measure(input: *const u8, len: usize, out_len: *mut
             0
         }
         Ok(Err(_)) => -1,
-        Err(_) => -99,
+        Err(payload) => {
+            discard_panic_payload(payload);
+            -99
+        }
     }
 }
 ```
@@ -161,7 +204,8 @@ extern "C" fn on_event(ctx: *mut std::ffi::c_void, code: i32) -> i32 {
     match result {
         Ok(Ok(())) => 0,
         Ok(Err(_)) => -1,
-        Err(_) => {
+        Err(payload) => {
+            discard_panic_payload(payload);
             // Latch the stable category so the next owning call can report it.
             CALLBACK_FAILURE.store(
                 Status::Panic as i32,
@@ -195,7 +239,10 @@ macro_rules! ffi_entry {
         pub extern "C" fn $name($($arg: $arg_ty),*) -> $ret {
             match std::panic::catch_unwind(move || $entry($($arg),*)) {
                 Ok(value) => value,
-                Err(_) => $on_panic,
+                Err(payload) => {
+                    discard_panic_payload(payload);
+                    $on_panic
+                },
             }
         }
     };
@@ -230,7 +277,10 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) 
         JNI_VERSION
     }) {
         Ok(version) => version,
-        Err(_) => jni::sys::JNI_ERR,
+        Err(payload) => {
+            discard_panic_payload(payload);
+            jni::sys::JNI_ERR
+        }
     }
 }
 ```
@@ -266,7 +316,8 @@ pub extern "system" fn Java_com_example_app_NativeBridge_nativeStart(
             let _ = env.throw_new("java/lang/RuntimeException", "native operation failed");
             -1
         }
-        Err(_) => {
+        Err(payload) => {
+            discard_panic_payload(payload);
             let _ = env.throw_new("java/lang/RuntimeException", "native operation panicked");
             -1
         }
@@ -324,7 +375,10 @@ pub extern "C" fn lib_run_blocking(handle: *mut Session) -> i32 {
     match result {
         Ok(Ok(())) => 0,
         Ok(Err(_)) => -1,
-        Err(_) => -99,
+        Err(payload) => {
+            discard_panic_payload(payload);
+            -99
+        }
     }
 }
 ```

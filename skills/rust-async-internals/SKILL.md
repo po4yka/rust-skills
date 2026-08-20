@@ -1,6 +1,6 @@
 ---
 name: rust-async-internals
-description: Use when you author or review async Rust that can be polled inside tokio::select!, tokio::time::timeout, JoinSet, or FuturesUnordered; when you bridge a foreign thread into a runtime with block_on; when you configure a tokio runtime for a constrained target; when you design CancellationToken parent/child shutdown trees; when you choose between spawn_blocking, block_in_place, and std::thread::spawn; when you poll a future by hand from a synchronous event loop; or when you audit for std::sync::Mutex-across-await deadlocks, broadcast Lagged data loss, !Send futures, and cancel-safety bugs. Triggers on "select", "join", "spawn", "cancellation", "tokio runtime", "block_on", "async fn in traits", "task stall", "shutdown hang", or "async hang".
+description: Use when you author or review async Rust that can be polled inside tokio::select!, tokio::time::timeout, JoinSet, or FuturesUnordered; when you bridge a foreign thread into a runtime with block_on; when you configure a tokio runtime for a constrained target; when you design CancellationToken parent/child shutdown trees; when you choose between spawn_blocking, block_in_place, and std::thread::spawn; when you poll a future by hand from a synchronous event loop; or when you audit for std::sync::Mutex-across-await deadlocks, broadcast Lagged data loss, !Send futures, and cancel-safety bugs. Triggers on "select", "disabled select branch", "JoinHandle", "async closure", "join", "spawn", "cancellation", "tokio runtime", "block_on", "async fn in traits", "task stall", "shutdown hang", or "async hang".
 license: BSD-3-Clause
 ---
 
@@ -168,6 +168,10 @@ the cancel-safety rules and the library method table in
 
 `join!` waits for all branches. It has no cancellation surprise.
 
+A disabled branch still evaluates its async expression. Tokio does not poll the resulting
+future, but synchronous setup in the expression can allocate, lock, mutate state, or panic.
+Move side effects into the async body, or compute the branch only after its precondition.
+
 ### Put shutdown first with `biased`
 
 ```rust
@@ -213,6 +217,10 @@ and `run_until_cancelled(fut)` for "race against shutdown, keep the value".
   future that you remove from the set is dropped, so the same cancel-safety
   rule as `select!` applies to every future you put in it.
 - `stream::iter(items).buffer_unordered(K)` bounds concurrency to K.
+
+Dropping a bare `JoinHandle` detaches its task. It does not cancel the task. Keep the handle,
+signal cooperative cancellation, and await it. Use `abort()` only when abrupt cancellation is
+part of the task contract, and still await the handle to observe completion.
 
 Rule: any `for x in xs { tokio::spawn(work(x)); }` loop with N > 1 is a
 refactor candidate. Replace it with `JoinSet::spawn` + `join_next`, with
@@ -355,6 +363,8 @@ Check each item before you approve async code.
       annotated `cancel-safe:` or `NOT cancel-safe:` with a reason.
 - [ ] Every long-lived `select!` loop has a `cancelled()` arm, and uses
       `biased;` when shutdown must win.
+- [ ] A disabled `select!` branch has no synchronous side effect in its async expression.
+- [ ] Every spawned task has an owner that cancels or aborts and then joins it.
 - [ ] No `std::sync::Mutex` guard lives across an `.await`.
 - [ ] No blocking syscall or CPU-heavy loop runs on a runtime worker thread.
 - [ ] `spawn_blocking` is used only for bounded work; indefinite work uses

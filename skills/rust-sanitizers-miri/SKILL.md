@@ -315,6 +315,7 @@ See the pointer provenance and Stacked Borrows sections of
 | `-Zmiri-symbolic-alignment-check` | Check alignment symbolically, not only on the concrete address |
 | `-Zmiri-num-cpus=N` | Report N CPUs to the program |
 | `-Zmiri-seed=N` | Seed the randomized thread scheduler |
+| `-Zmiri-many-seeds=A..B` | Run the test once for each seed in the bounded half-open range |
 | `-Zmiri-ignore-leaks` | Do not report memory that is still allocated at exit |
 | `-Zmiri-tree-borrows` | Use Tree Borrows instead of Stacked Borrows |
 
@@ -327,8 +328,8 @@ MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --locked
 # CI: strict.
 MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test --locked
 
-# Concurrency: randomized schedule. Change the seed on each run.
-MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-seed=42 -Zmiri-num-cpus=4" \
+# Concurrency CI: exercise a bounded set of randomized schedules.
+MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-many-seeds=0..16 -Zmiri-num-cpus=4" \
     cargo +nightly miri test --locked
 
 # Code with intentional leaks, for example a process-lifetime global.

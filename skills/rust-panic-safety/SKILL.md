@@ -1,6 +1,6 @@
 ---
 name: rust-panic-safety
-description: Use when you add or review an extern "C", extern "system", JNI, or UniFFI entry point, set a Cargo panic strategy, install a panic hook, replace unwrap or expect, debug an abort, or handle a panic in an async task, spawned thread, or Drop implementation. Covers Rust panic policy, unwind versus abort, catch_unwind at FFI boundaries, typed errors, foreign status mapping, and invariant preservation.
+description: Use when you add or review an extern "C", extern "system", JNI, or UniFFI entry point, set a Cargo panic strategy, install a panic hook, replace unwrap or expect, debug an abort, or handle a panic in an async task, spawned thread, or Drop implementation. Covers Rust panic policy, unwind versus abort, catch_unwind at FFI boundaries, panic payload disposal, typed errors, foreign status mapping, and invariant preservation.
 license: BSD-3-Clause
 ---
 
@@ -120,6 +120,14 @@ pub const ERR_INVALID_INPUT: i32 = -1;
 pub const ERR_IO: i32 = -2;
 pub const ERR_PANIC: i32 = -99;
 
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        // The destructor of the first payload panicked. Do not drop the second payload here.
+        std::mem::forget(payload);
+    }
+}
+
 /// # Safety
 /// `ptr` must be non-null, aligned, writable for `len` bytes, and unaliased for this call.
 #[unsafe(no_mangle)]
@@ -133,7 +141,10 @@ pub unsafe extern "C" fn lib_render(ptr: *mut u8, len: usize) -> i32 {
         Ok(Ok(())) => OK,
         Ok(Err(Error::InvalidInput)) => ERR_INVALID_INPUT,
         Ok(Err(Error::Io(_))) => ERR_IO,
-        Err(_) => ERR_PANIC,
+        Err(payload) => {
+            discard_panic_payload(payload);
+            ERR_PANIC
+        }
     }
 }
 ```
@@ -141,6 +152,11 @@ pub unsafe extern "C" fn lib_render(ptr: *mut u8, len: usize) -> i32 {
 Keep the `extern` body to a guard plus a delegation call. Put the logic in a plain Rust
 function that the tests can call directly. See `references/boundary-patterns.md` for opaque
 handles, out-parameters, string transfer, and Rust callbacks that a foreign runtime invokes.
+
+The payload from `catch_unwind` is not harmless. Its destructor can panic. Dispose of it inside
+a second guard, as above, and forget the second payload if that destructor also panics. This
+bounded leak occurs only on the double-panic path and prevents an unwind from leaving the
+boundary. Do not inspect or format either payload.
 
 ## Worked example: a JNI boundary
 
@@ -444,6 +460,7 @@ See the `rust-async-internals` skill for runtime-level panic handling and cancel
 | `catch_unwind` returns `Ok`, work silently missing | The panic happened on another thread or in a spawned task | Join the handle and inspect `JoinError` |
 | `fatal runtime error: Rust cannot catch foreign exceptions` | A C++ or foreign unwind entered Rust frames | Catch it on the foreign side; never let it enter Rust |
 | Abort during unwinding, second panic in the log | A `Drop` implementation panicked while a panic was in flight | Make the `Drop` infallible |
+| The boundary catches a panic and then aborts | Dropping the caught payload panicked | Dispose of the payload inside a second guard and forget a second panic payload |
 | `memory allocation of N bytes failed`, then abort | Allocation failure, which is not a catchable panic | Bound the size; use `Vec::try_reserve` for large or input-driven buffers |
 | The bounded panic record has no message or backtrace | This is the shipped privacy contract | Reproduce on the host with `RUST_BACKTRACE=full`, or symbolicate the crash artifact offline |
 | Every later call fails with a poison error | An earlier panic poisoned a shared lock | Decide the poison policy; report the original panic, not the poison |
@@ -459,6 +476,7 @@ See the `rust-async-internals` skill for runtime-level panic handling and cancel
 - [ ] The panic exit path has a status code, an exception, or an error object distinct from
       every domain error.
 - [ ] The panic boundary discards the raw payload and returns a distinct panic result.
+- [ ] Discarding a caught payload cannot let a second panic leave the boundary.
 - [ ] The panic hook is installed once and emits only a closed site code plus numeric location.
 - [ ] No shipped platform log contains a panic payload, file path, or backtrace.
 - [ ] Every `AssertUnwindSafe` carries a comment that names the invariant.

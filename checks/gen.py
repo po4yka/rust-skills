@@ -4,6 +4,7 @@
 The fence tag decides what happens to a block, and nothing else:
 
     ```rust                the block must compile
+    ```rust,run            the block must compile and its main function must run
     ```rust,compile_fail   the block must not compile
     ```rust,ignore         the block is not checked
 
@@ -29,6 +30,7 @@ OUT = HERE / "examples"
 # A compile_fail example carries this prefix so analyze.py can tell the two
 # populations apart from the target name alone.
 XFAIL = "xfail__"
+RUN = "run__"
 
 HEADER = (
     "#![allow(unused, dead_code, unreachable_code, unused_imports, "
@@ -46,6 +48,7 @@ WRAPPER_OPEN = "async fn __ex() -> std::result::Result<(), Box<dyn std::error::E
 WRAPPER_CLOSE = "\n;\nstd::result::Result::Ok(())\n}\nfn main() {}\n"
 
 CODE_RE = re.compile(r"^E\d{4}$")
+INCOMPLETE_RE = re.compile(r"\b(?:todo|unimplemented)!\s*\(|\b(?:TODO|FIXME)\b")
 
 
 def parse_fence(fence: str) -> tuple[str, list[str]] | None:
@@ -60,12 +63,23 @@ def parse_fence(fence: str) -> tuple[str, list[str]] | None:
     tags = parts[1:]
     if not tags:
         return "compile", []
+    if tags[0] == "run":
+        return ("run", []) if len(tags) == 1 else None
     if tags[0] == "ignore":
         return ("ignore", []) if len(tags) == 1 else None
     if tags[0] == "compile_fail":
         codes = tags[1:]
         if all(CODE_RE.match(c) for c in codes):
             return "compile_fail", codes
+    return None
+
+
+def run_problem(block: str) -> str | None:
+    """Return why a behavior probe cannot run, or None when it is complete."""
+    if re.search(r"\bfn\s+main\s*\(", block) is None:
+        return "a rust,run block must define fn main()"
+    if INCOMPLETE_RE.search(block):
+        return "a rust,run block cannot contain TODO, FIXME, todo!(), or unimplemented!()"
     return None
 
 
@@ -128,7 +142,7 @@ def main() -> int:
         stale.unlink()
 
     manifest: dict[str, dict[str, object]] = {}
-    counts = {"compile": 0, "compile_fail": 0, "ignore": 0}
+    counts = {"compile": 0, "run": 0, "compile_fail": 0, "ignore": 0}
     bad_fences: list[str] = []
     total = 0
 
@@ -143,8 +157,12 @@ def main() -> int:
                 bad_fences.append(f"{rel}:{line}: unknown fence {fence!r}")
                 continue
             mode, codes = parsed
+            if mode == "run" and (problem := run_problem(block)):
+                bad_fences.append(f"{rel}:{line}: {problem}")
+                continue
             counts[mode] += 1
-            name = f"{'' if mode == 'compile' else XFAIL}{stem}__{total}"
+            prefix = XFAIL if mode == "compile_fail" else RUN if mode == "run" else ""
+            name = f"{prefix}{stem}__{total}"
             entry: dict[str, object] = {
                 "file": rel,
                 "line": line,
@@ -165,13 +183,17 @@ def main() -> int:
     (HERE / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     print(
         f"rust blocks {total}: {counts['compile']} compile, "
+        f"{counts['run']} run, "
         f"{counts['compile_fail']} compile_fail, {counts['ignore']} ignore"
     )
     if bad_fences:
         print("\nFAIL: a fence tag decides whether a block is checked, and these are unknown:\n")
         for problem in bad_fences:
             print(f"  {problem}")
-        print("\nUse ```rust, ```rust,compile_fail[,E0000...], or ```rust,ignore.")
+        print(
+            "\nUse ```rust, ```rust,run, ```rust,compile_fail[,E0000...],"
+            " or ```rust,ignore."
+        )
         return 1
     return 0
 

@@ -4,6 +4,18 @@ Deep material for `cargo-workflows`: target rustflags, the manual linker setup
 that replaces `cargo-ndk`, XCFramework packaging, and the rules for driving
 cargo from a host build system such as Gradle or Xcode.
 
+## Put shared config at the invocation root
+
+Cargo searches `.cargo/config.toml` from the current directory through its
+ancestors. It does not start again from each workspace member. A config under
+`crates/member/.cargo/` works when Cargo runs from that member and disappears
+when CI runs from the workspace root.
+
+Put shared target configuration at `<workspace>/.cargo/config.toml`. Run the
+same command from the same directory in local development, CI, Gradle, and
+Xcode tasks. If a member needs private config, pass `--config` explicitly and
+record it as a task input.
+
 ## rustflags in `.cargo/config.toml`
 
 Put target-wide codegen flags here. Do not put linker paths here - the host
@@ -45,6 +57,21 @@ The `CC_*`, `CXX_*`, and `AR_*` variables use the triple with underscores. The
 `CARGO_TARGET_*_LINKER` variable uses the triple upper-cased with underscores.
 Set both forms: `cc`-based build scripts read the first, cargo reads the second.
 
+## Separate cross-compilation from test execution
+
+`cargo test --target <triple>` builds a target test binary, then tries to run
+it. Configure `target.<triple>.runner` when an emulator, device bridge, or
+remote executor can run that binary:
+
+```toml
+[target.aarch64-unknown-linux-gnu]
+runner = ["qemu-aarch64", "-L", "/usr/aarch64-linux-gnu"]
+```
+
+If no runner exists, report the lane as compile-only. Do not call it a test
+pass. Keep target execution in a separate device or emulator lane and record
+the exact artifact digest that it runs.
+
 ## iOS XCFramework packaging
 
 1. Build the static library for `aarch64-apple-ios`, `aarch64-apple-ios-sim`,
@@ -81,4 +108,3 @@ Follow these rules when a Gradle or Xcode build drives cargo:
    trigger a cargo build.
 7. Keep gates on the release path: the native library must exist, be a valid ELF
    file for its ABI, and stay under a size budget.
-

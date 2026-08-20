@@ -140,6 +140,24 @@ class TestCoverage(unittest.TestCase):
         manifest = {"x": entry("compile_fail")}
         self.assertEqual(analyze.unbuilt(manifest, set()), ["x"])
 
+    def test_run_example_must_reach_the_compiler(self):
+        manifest = {"x": entry("run")}
+        self.assertEqual(analyze.unbuilt(manifest, set()), ["x"])
+
+
+class TestRun(unittest.TestCase):
+    """A behavior probe cannot use the fragment excuse list."""
+
+    def test_clean_run_block_passes(self):
+        self.assertEqual(analyze.run_failures({"x": entry("run")}, {}), [])
+
+    def test_any_run_compile_error_fails(self):
+        manifest = {"x": entry("run")}
+        errors = {"x": [error("E0425", "cannot find value `x`")]}
+        problems = analyze.run_failures(manifest, errors)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("E0425", problems[0])
+
 
 class TestCompileFail(unittest.TestCase):
     """A compile_fail block that compiles is a claim the language dropped."""

@@ -148,6 +148,27 @@ scans the package and can run the script after any package file changes.
 Use `cargo::KEY=VALUE` on Rust 1.77 or newer. Use the legacy
 `cargo:KEY=VALUE` spelling only when the declared MSRV is older than 1.77.
 
+### Forward flags to the correct compiler
+
+Cargo removes `RUSTFLAGS` from the build-script environment. A nested `rustc` command must read
+`CARGO_ENCODED_RUSTFLAGS`, whose arguments use the unit-separator character, and pass those Rust
+flags deliberately. Do not split it on spaces.
+
+Do not pass Rust flags to a C or C++ compiler. Configure the selected native builder with its
+target compiler and target-specific `CC_<target>` or `CFLAGS_<target>` inputs. Prefer the
+builder crate's target-aware API. Record the resolved native compiler and flags in verbose build
+evidence without printing secrets.
+
+The two channels are separate:
+
+| Child command | Flag source |
+| --- | --- |
+| Nested `rustc` | Decoded `CARGO_ENCODED_RUSTFLAGS` plus explicit child-only flags |
+| C or C++ compiler | Target-specific `CC` and `CFLAGS`, or the helper's configuration API |
+
+Add `cargo::rerun-if-env-changed` for external native compiler variables when the helper does not
+already track them. Do not add it for Cargo-provided Rust flag variables.
+
 ## Emit linker instructions in dependency order
 
 Prefer structured instructions over raw linker arguments:
@@ -407,6 +428,7 @@ dependency can load and still fail because one of its dependencies is absent.
 - [ ] Link instructions follow consumer-before-provider order.
 - [ ] The selected helper owns only the job it is designed to do.
 - [ ] `HOST` tools and `TARGET` libraries stay separate.
+- [ ] Nested `rustc` and native compilers receive flags from separate channels.
 - [ ] Static or dynamic selection is explicit.
 - [ ] Generated bindings match the same target headers as the native build.
 - [ ] The final artifact has the expected architecture and symbols.
