@@ -279,9 +279,8 @@ memcpy and removes the entire class of lifetime error above.
 
 ## Syscall, ioctl, union, and descriptor wrappers
 
-`mem::zeroed()` is sound here because a plain `repr(C)` struct has no Rust-level invariant. Cast
-with `.cast()`, not `as *mut _`: the method preserves pointer provenance, which matters to
-Miri's Tree Borrows model.
+Use `mem::zeroed()` only when the exact type documents that all-zero bytes are a
+valid value. `repr(C)` controls layout. It does not remove Rust value invariants.
 
 ```rust
 // SAFETY: `ifreq` is a plain C struct with no Rust-level invariants, and
@@ -293,19 +292,26 @@ ifr.ifr_name = make_ifr_name();
 ```rust
 /// # Safety
 /// `fd` must be a live socket descriptor. `T` must match the layout the kernel
-/// writes for the given `level` and `name` pair.
+/// writes for the given `level` and `name` pair. On success, the option must
+/// initialize exactly `size_of::<T>()` bytes with a valid value of `T`.
 unsafe fn getsockopt_raw<T>(
     fd: libc::c_int,
     level: libc::c_int,
     name: libc::c_int,
 ) -> io::Result<(T, libc::socklen_t)> {
-    // SAFETY: `T` is a plain C struct chosen by the caller to match the option.
-    let mut val: T = unsafe { std::mem::zeroed() };
+    let mut val = std::mem::MaybeUninit::<T>::uninit();
     let mut len = std::mem::size_of::<T>() as libc::socklen_t;
     // SAFETY: `fd` is live per the caller contract; `val` and `len` are valid
     // for writes of the sizes passed.
-    let rc = unsafe { libc::getsockopt(fd, level, name, (&mut val as *mut T).cast(), &mut len) };
-    if rc == 0 { Ok((val, len)) } else { Err(io::Error::last_os_error()) }
+    let rc = unsafe { libc::getsockopt(fd, level, name, val.as_mut_ptr().cast(), &mut len) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if len as usize != std::mem::size_of::<T>() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "short socket option"));
+    }
+    // SAFETY: the caller contract requires a fully initialized, valid `T`.
+    Ok((unsafe { val.assume_init() }, len))
 }
 ```
 
