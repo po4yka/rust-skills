@@ -384,8 +384,9 @@ See also: `rust-unsafe`, `rust-sanitizers-miri`.
 
 **Severity: CRITICAL**
 
-A panic that unwinds across an FFI boundary is undefined behavior. Depending on the
-generator, it either aborts the process or corrupts the host runtime.
+A Rust panic that reaches a non-unwind ABI aborts the process on Rust 1.81 and later;
+before 1.81 it is undefined behavior. Either way the host runtime reports a native crash
+and the panic message is lost. See `rust-panic-safety` for the rules.
 
 - **Do not panic inside an FFI entry point.** Return `Result<T, BoundaryError>` for all
   fallible work, and let the binding layer translate it.

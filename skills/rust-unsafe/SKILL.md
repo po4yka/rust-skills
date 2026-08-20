@@ -138,22 +138,22 @@ table and a worked `unsafe trait`.
 
 Severity: CRITICAL.
 
-An unwind across an FFI boundary is undefined behavior. Every entry point that a foreign caller
-can reach must contain the panic.
+A Rust panic that reaches a non-unwind ABI aborts the process on Rust 1.81 and later; before
+1.81 it is undefined behavior, and an unwind that enters a foreign frame still is. Every entry
+point a foreign caller can reach must contain the panic.
 
 - Hand-rolled `extern "C"`: wrap the whole body in `std::panic::catch_unwind` and map the
-  outcome to an integer status. Never write a bare `extern "C"` body. A bare body propagates the
-  panic.
-- JNI on `jni` 0.22: use `EnvUnowned::with_env` plus `into_outcome`. The tri-state result keeps a
-  caught panic separate from a normal error. On `jni` 0.21 and earlier, and inside `JNI_OnLoad`
-  and `JNI_OnUnload`, use `catch_unwind(AssertUnwindSafe(|| { ... }))` and throw a Java
-  exception in the `Err` arm.
+  outcome to an integer status. Never write a bare `extern "C"` body. A bare body aborts at the
+  first panic and leaves the caller no status.
+- JNI on `jni` 0.22: use `EnvUnowned::with_env` and exit through `resolve`, which applies an
+  `ErrorPolicy` to the error and to the caught panic. On `jni` 0.21 and earlier, and inside
+  `JNI_OnLoad` and `JNI_OnUnload`, use `catch_unwind(AssertUnwindSafe(|| { ... }))` and throw a
+  Java exception in the `Err` arm.
 - UniFFI: `uniffi::setup_scaffolding!` plus `#[uniffi::export]` generates the guard. Do not
   hand-write one. Add a hand-rolled `extern "C"` beside UniFFI only for a measured reason, such
   as a zero-copy buffer handoff, and apply the `catch_unwind` rule to it.
 
-[references/unsafe-patterns.md](references/unsafe-patterns.md) has the worked `extern "C"` and
-JNI entry points.
+[references/unsafe-patterns.md](references/unsafe-patterns.md) has both worked entry points.
 
 ### `catch_unwind` catches nothing under `panic = "abort"`
 
@@ -202,11 +202,13 @@ Severity: CRITICAL. This is silent on x86-64 and fatal on ARM64.
 
 `std::ptr::read(buf.as_ptr() as *const T)` requires `buf.as_ptr()` to be aligned for `T`. Bytes
 that arrive from a network socket, a file, a memory mapping, or an FFI caller carry arbitrary
-alignment.
+alignment. A misaligned `ptr::read` is undefined behavior on every target.
 
-On x86-64 a misaligned read is slower, and nothing else. On ARM64 the same read is either a
-`SIGBUS` trap or garbage data, depending on kernel configuration. A test suite on an x86-64
-development host passes; the device run corrupts data or crashes on the same input.
+x86-64 hardware absorbs most misaligned loads, so the read usually returns the right bytes and
+the defect stays invisible; the compiler still acts on the alignment the call promised, and an
+autovectorized loop can select an alignment-sensitive instruction. On ARM64 the same read is a
+`SIGBUS` trap or garbage data, depending on kernel configuration. The x86-64 test suite passes;
+the device run corrupts data or crashes on the same input.
 
 Rules:
 
@@ -215,9 +217,8 @@ Rules:
 2. Prefer `zerocopy::FromBytes` or `bytes::Buf` over raw pointer arithmetic on byte buffers.
    They remove the unsafe block and make endianness explicit.
 3. Add a Miri test under `MIRIFLAGS="-Zmiri-tree-borrows"` for every new unsafe byte-buffer
-   parser. Unaligned and provenance UB in this code is silent: it passes normal tests, clippy,
-   and human review, because the wrong pointer operation usually still returns the right bytes
-   on x86-64. Miri is the only check in the toolchain that sees it.
+   parser. Miri is the only check in the toolchain that sees unaligned and provenance UB; the
+   normal tests, clippy, and human review all pass it.
 
 Grep audit:
 
@@ -226,8 +227,7 @@ rg 'ptr::read\(\s*[a-z_][a-z_0-9]*\.as_ptr\(\)\s*as\s*\*const' --type rust -n
 rg 'transmute::<\s*&\[u8\]' --type rust -n
 ```
 
-[references/unsafe-patterns.md](references/unsafe-patterns.md) has the bad, the correct, and the
-two safe forms side by side.
+[references/unsafe-patterns.md](references/unsafe-patterns.md) has all four forms side by side.
 
 ## Transmute
 
