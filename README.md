@@ -16,8 +16,12 @@ from two private production codebases — an Android application with a Rust net
 cross-platform Rust map engine — so each one carries concrete commands, flags, thresholds, and
 triage tables instead of general advice.
 
-Every ` ```rust ` block in the catalog is extracted and type-checked in CI against the toolchain
-that `checks/rust-toolchain.toml` pins.
+Every ` ```rust ` block in the catalog declares what CI must do with it, and CI does it on the
+toolchain that `checks/rust-toolchain.toml` pins. An untagged block is extracted and
+type-checked; a `rust,compile_fail` block has to fail, and its fence can name the error code it
+must produce; `rust,ignore` is the only way a block leaves the gate. Nothing is skipped in
+silence: the run prints the split and fails when a block it generated never reached the
+compiler.
 
 ## Install
 

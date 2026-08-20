@@ -16,8 +16,10 @@ skills/<name>/SKILL.md          the skill itself, always present
 skills/<name>/references/*.md   optional deep material, loaded on demand
 README.md                       the catalog table
 scripts/validate-skills.py      catalog structure checks
+scripts/test_validate_skills.py tests for the frontmatter rules themselves
 tests/routing-cases.md          phrase -> skill, checked against every description
 checks/                         compile-check harness for the rust examples
+checks/test_analyze.py          tests for the failure classifier itself
 checks/check.sh                 one command that reproduces CI
 LICENSE                         BSD-3-Clause
 ```
@@ -72,9 +74,12 @@ The body starts at an `# Title` heading directly after the frontmatter.
   the compile check finds.
 - Never define one name twice in a single code block to show a before and an after. Use two
   blocks. One block cannot hold both, and a reader cannot tell which definition is live.
-- Tag a fence that must not be compiled: ```` ```rust,compile_fail ```` for a deliberate error
-  demonstration, ```` ```rust,ignore ```` for code that cannot compile standalone by design.
-  Prefer fixing the example over tagging it.
+- Tag a fence that must not compile: ```` ```rust,compile_fail ```` for a deliberate error
+  demonstration, and name the code when you know it: ```` ```rust,compile_fail,E0499 ````. The
+  gate then requires that code, so the block proves what the prose says it proves.
+- Tag ```` ```rust,ignore ```` only for code no `cargo check` can judge: a build-script
+  `include!`, a nightly-only feature, a failure that arrives at monomorphization. It is the one
+  way out of the gate, and nothing else removes a block from it. Prefer fixing the example.
 
 ## How to add a skill
 
@@ -103,7 +108,9 @@ One command runs every gate CI runs, on the toolchain `checks/rust-toolchain.tom
 bash checks/check.sh
 ```
 
-A green run locally means a green run in CI. It does two things.
+A green run locally means a green run in CI. The one gate that can be missing is the skills-CLI
+discovery step, which needs `npx`; `check.sh` says so out loud when it has to skip it, and CI
+always runs it.
 
 ### 1. Catalog structure
 
@@ -117,6 +124,8 @@ It checks, for every skill:
 - `name` equals the directory name and uses the allowed character set;
 - `description` is one plain line, long enough to state what and when, and under 1024
   characters;
+- every frontmatter value survives a real YAML parser unchanged: no `: `, no ` #`, no leading
+  indicator character, because the skills CLI and the agent runtimes read the file with one;
 - every `references/*.md` a skill points at exists, whether the pointer is a Markdown link or
   a bare code span;
 - no term from the private source codebases survives anywhere in `skills/` or `README.md`;
@@ -131,25 +140,36 @@ after publication.
 
 ```bash
 python3 checks/gen.py
-cd checks && cargo check --examples --keep-going --message-format=json > check.json
-python3 analyze.py check.json                                 # summary and detail
+cd checks && cargo check --locked --examples --keep-going --message-format=json > check.json
+python3 analyze.py check.json                                 # coverage and detail
 python3 analyze.py check.json --check-baseline baseline.txt   # the gate
 ```
 
-Every ` ```rust ` block in `skills/` is extracted and type-checked. Most are fragments that name
-types the prose defines; the analyzer buckets those and ignores them. It fails on a compile
-error it cannot attribute to an undefined symbol or to the extraction wrapper.
+Every ` ```rust ` block in `skills/` is read, and its fence decides what happens to it. An
+untagged block is type-checked; most are fragments that name types the prose defines, and the
+analyzer buckets those and ignores them. The gate fails on three things: an example that never
+reached the compiler, a `compile_fail` block that compiled or missed the code its fence names,
+and a compile error the analyzer cannot attribute to an undefined symbol or to the extraction
+wrapper.
 
 `checks/baseline.txt` is empty and should stay empty. When the gate reports a new suspect, fix
 the example. Add a baseline line only for a failure no fence tag can express, with a comment
 saying why. Add a crate to `checks/Cargo.toml` when a skill starts using it, or every block that
 imports it silently degrades to a fragment. `checks/README.md` has the full description.
 
-Then confirm the CLI still discovers the catalog. This lists the skills and installs nothing:
+`check.sh` then confirms the CLI still discovers the catalog. This lists the skills and installs
+nothing:
 
 ```bash
 npx skills add ./ --list
 ```
+
+Run it after any frontmatter edit. The repository validator splits a frontmatter line on the
+first colon; the CLI and the agent runtimes use a real YAML parser, and the two disagree on a
+value that needs quoting. A `: ` in a description has made a whole skill invisible to the CLI,
+and a ` #` has cut a description in half without a warning. `plain_scalar_problem` in
+`scripts/validate-skills.py` now rejects both, and `scripts/test_validate_skills.py` holds the
+rule in place, but the CLI is the only end-to-end proof.
 
 ### Do not run `skills remove` inside this repository
 
