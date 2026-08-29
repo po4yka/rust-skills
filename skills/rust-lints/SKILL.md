@@ -365,7 +365,7 @@ cargo clippy --locked --workspace -- -W clippy::missing_asserts_for_indexing
 Chain the three gates when you want one exit code:
 
 ```bash
-cargo clippy --locked --workspace --all-targets -- -D warnings \
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings \
   && cargo fmt --all -- --check \
   && cargo deny --locked check
 ```

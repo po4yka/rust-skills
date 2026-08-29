@@ -15,9 +15,12 @@ sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'                   # t
 echo 'kernel.perf_event_paranoid = 1' | sudo tee -a /etc/sysctl.d/perf.conf  # permanent
 sudo sysctl -p /etc/sysctl.d/perf.conf
 
-# Allow kernel symbols
-sudo sh -c 'echo 0 > /proc/sys/kernel/kptr_restrict'
 ```
+
+Do not change the process-global `kernel.kptr_restrict` setting as a routine
+prerequisite. User-space Rust stacks do not require kernel symbols. When a
+specific kernel profile needs them, follow the host security policy and restore
+the setting after the bounded diagnostic session.
 
 Rust 1.90 and later use `lld` by default on supported Linux hosts. `perf` needs
 load segments instead of one read-only segment for accurate stack traces. Add

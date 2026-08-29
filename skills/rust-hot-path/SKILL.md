@@ -1,6 +1,6 @@
 ---
 name: rust-hot-path
-description: Use when a profiler names a hotspot and you must decide what to change in the code rather than which tool to run. Covers allocation rate (Vec growth, with_capacity, reserve_exact, clone_from, workhorse buffers, format! in a loop), type size (print-type-sizes, the memcpy boundary, boxing a large enum variant, Box<[T]> and ThinVec, repr(C) padding), hasher choice with the HashDoS gate, iterators and size_hint, bounds check removal, inline attributes and cold paths, and buffered I/O. Also covers pinning the win with a const size assert and a dhat allocation test. Triggers on "reduce allocations", "too many allocations", "this type is too big", "large_enum_variant", "which hasher", "FxHashMap", "bounds check", "inline always", "cold path", "BufWriter", "clone_from", "SmallVec", "swap_remove", or any question about what to change once a hot path is known.
+description: Use when a profiler names a hotspot and you must decide what to change in the code rather than which tool to run. Covers allocation rate (Vec growth, with_capacity, reserve_exact, clone_from, workhorse buffers, format! in a loop), type size (print-type-sizes, the memcpy boundary, boxing a large enum variant, boxed slices and ThinVec, repr(C) padding), hasher choice with the HashDoS gate, iterators and size_hint, bounds check removal, inline attributes and cold paths, and buffered I/O. Also covers pinning the win with a const size assert and a dhat allocation test. Triggers on "reduce allocations", "too many allocations", "this type is too big", "large_enum_variant", "which hasher", "FxHashMap", "bounds check", "inline always", "cold path", "BufWriter", "clone_from", "SmallVec", "swap_remove", or any question about what to change once a hot path is known.
 license: BSD-3-Clause
 ---
 
@@ -178,7 +178,7 @@ enum Message {
     Seq(i32),
     Body(i32, Payload),
 }
-const _: () = assert!(size_of::<Message>() == 108);
+const _: () = assert!(std::mem::size_of::<Message>() == 108);
 ```
 
 ```rust
@@ -189,7 +189,7 @@ enum Message {
     Seq(i32),
     Body(Box<(i32, Payload)>),
 }
-const _: () = assert!(size_of::<Message>() == 16);
+const _: () = assert!(std::mem::size_of::<Message>() == 16);
 ```
 
 The trade is one heap allocation whenever the boxed variant is built. It wins when that
@@ -225,8 +225,8 @@ struct Native { a: u8, b: u64, c: u8 }
 #[repr(C)]
 struct Abi { a: u8, b: u64, c: u8 }
 
-const _: () = assert!(size_of::<Native>() == 16);
-const _: () = assert!(size_of::<Abi>() == 24);      // 50% larger
+const _: () = assert!(std::mem::size_of::<Native>() == 16);
+const _: () = assert!(std::mem::size_of::<Abi>() == 24);      // 50% larger
 ```
 
 Apply `#[repr(C)]` to types that cross an FFI boundary and to nothing else. See
@@ -417,15 +417,15 @@ single record costs several syscalls.
 
 An optimization that nothing guards is removed by the next refactor.
 
-**A type size, at compile time, with no dependency.** `size_of` has been in the prelude
-since Rust 1.80, on every edition, so this needs no import. A mismatch fails the build with
-E0080. Gate it on one architecture, because sizes differ per target.
+**A type size, at compile time, with no dependency.** Qualify
+`std::mem::size_of` or import it; it is not in the prelude. A mismatch fails the
+build with E0080. Gate it on one architecture, because sizes differ per target.
 
 ```rust
 pub struct Header { id: u64, flags: u32 }
 
 #[cfg(target_arch = "aarch64")]
-const _: () = assert!(size_of::<Header>() == 16);
+const _: () = assert!(std::mem::size_of::<Header>() == 16);
 ```
 
 **An allocation count, at test time.** The `dhat` crate runs on stable. `dhat::assert_eq!`

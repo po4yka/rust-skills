@@ -52,9 +52,9 @@ request.
     tracking issue and no expiry?
 
 **Trait and type-system traps** (details in
-[`references/type-and-trait-traps.md`](references/type-and-trait-traps.md),
-[`references/trait-resolution.md`](references/trait-resolution.md), and
-[`references/data-shape-traps.md`](references/data-shape-traps.md))
+[`type-and-trait-traps.md`](type-and-trait-traps.md),
+[`trait-resolution.md`](trait-resolution.md), and
+[`data-shape-traps.md`](data-shape-traps.md))
 
 18. Any `impl Drop` on a struct where a field must be consumed? Use a dedicated guard type
     with `ManuallyDrop`.

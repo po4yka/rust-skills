@@ -66,7 +66,12 @@ Work through this list each time.
 | `warn` | Recoverable degradation. The operation continues. |
 | `info` | A boundary event: start, stop, configuration applied. |
 | `debug` | Detail for one operation. |
-| `trace` | Per-item work inside a loop. Off in release. |
+| `trace` | Per-item work inside a loop. Emit only for targeted diagnostics. |
+
+No tracing level is automatically off in a release build. The installed host
+subscriber and its filter decide which events are enabled. Configure and test
+the release filter explicitly; do not rely on `cfg(debug_assertions)` unless the
+product contract deliberately removes those callsites.
 
 Cancellation is `debug`. A cancelled operation is the caller getting what it
 asked for. Reporting it as an error teaches readers to ignore the severity that

@@ -179,9 +179,10 @@ lose the Rust panic site unless the hook records it first.
 Two protections, and you need both:
 
 1. Catch the unwind at every export.
-2. Install a panic hook that emits a bounded site code and numeric location
-   before the unwind starts. Get the backtrace from a local repro or crash
-   artifact, not from shipped platform telemetry.
+2. Have the application-owned outermost Rust FFI bootstrap install one composed
+   panic hook that calls each component's redacted handler before the unwind
+   starts. A JVM or Swift host cannot call `set_hook` itself. Get the backtrace
+   from a local repro or crash artifact, not from shipped platform telemetry.
 
 ### Catch the unwind at raw JNI exports
 
@@ -195,11 +196,16 @@ pub extern "system" fn JNI_OnLoad(_vm: JavaVM, _reserved: *mut c_void) -> jint {
     match catch_unwind(|| {
         ignore_sigpipe();
         init_android_logging("my-native-tag");
-        install_panic_hook();
+        // This cdylib is the application-owned outermost Rust bootstrap. It
+        // statically composes the handlers exported by its Rust components.
+        install_bootstrap_panic_hook();
         jni::sys::JNI_VERSION_1_6
     }) {
         Ok(version) => version,
-        Err(_) => jni::sys::JNI_ERR,
+        Err(payload) => {
+            discard_panic_payload(payload);
+            jni::sys::JNI_ERR
+        }
     }
 }
 ```
@@ -264,23 +270,26 @@ fn classify_site(file: &str) -> PanicSite {
     }
 }
 
-pub fn install_panic_hook() {
-    std::panic::set_hook(Box::new(|info| {
-        let (site, line, column) = info
-            .location()
-            .map(|location| {
-                (
-                    classify_site(location.file()),
-                    location.line(),
-                    location.column(),
-                )
-            })
-            .unwrap_or((PanicSite::Unknown, 0, 0));
+pub fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
+    let (site, line, column) = info
+        .location()
+        .map(|location| {
+            (
+                classify_site(location.file()),
+                location.line(),
+                location.column(),
+            )
+        })
+        .unwrap_or((PanicSite::Unknown, 0, 0));
 
-        write_platform_panic("rust_panic", site, line, column);
-    }));
+    write_platform_panic("rust_panic", site, line, column);
 }
 ```
+
+An embedded component exposes this handler. The application-owned outermost
+Rust FFI bootstrap depends on the components, composes their handlers, and
+installs the one process-global hook from its `JNI_OnLoad` or explicit init
+entry. A component must not call `set_hook` on its own.
 
 The event name and site are closed vocabulary values. The line and column are
 bounded integers. Unknown paths collapse to `Unknown`. Never format
@@ -425,7 +434,7 @@ a debugger. See [rust-test-tools](../rust-test-tools/).
 | `index out of bounds: the len is N but the index is M` | Slice or `Vec` out of range | Check the index math against a length that came from untrusted input. |
 | `attempt to subtract with overflow` | Integer underflow, debug build | Use `checked_sub` or `saturating_sub`. The release build wraps silently, so this is a real bug either way. |
 | `attempt to multiply with overflow` | Integer overflow in size math | Use `checked_mul` before you allocate. |
-| Signal 6 (SIGABRT), no Rust frames | Abort: double panic, explicit `abort()`, `panic = "abort"` profile, or a panic that crossed an `extern` boundary | Install the panic hook, then reproduce. See section 2. |
+| Signal 6 (SIGABRT), no Rust frames | Abort: double panic, explicit `abort()`, `panic = "abort"` profile, or a panic that crossed an `extern` boundary | Verify the Rust bootstrap installed its composed hook, then reproduce. See section 2. |
 | Signal 11 (SIGSEGV) | Null or dangling pointer, use-after-free in `unsafe` or in a C dependency | Symbolicate, then run the host repro under ASan. See [rust-sanitizers-miri](../rust-sanitizers-miri/). |
 | Signal 7 (SIGBUS) | Misaligned or invalid memory access, often a bad pointer cast | Audit the `unsafe` cast. See [rust-unsafe](../rust-unsafe/). |
 | Process killed silently while writing to a socket | `SIGPIPE` | Call `ignore_sigpipe()` during init. See section 2. |

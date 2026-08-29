@@ -288,10 +288,30 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest,cargo-mutants
-      - run: cargo mutants --test-tool nextest --output target/
+      - name: Run selected mutation scope
+        shell: bash
+        env:
+          PACKAGES: ${{ inputs.packages }}
+          IN_DIFF: ${{ inputs.in_diff }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          args=(--test-tool nextest --output target/)
+          for package in $PACKAGES; do
+            [[ "$package" =~ ^[A-Za-z0-9_-]+$ ]] || exit 2
+            args+=(--package "$package")
+          done
+          if [[ "$IN_DIFF" == "true" ]]; then
+            diff_file="$RUNNER_TEMP/mutants.diff"
+            git diff --no-ext-diff --binary \
+              "origin/$DEFAULT_BRANCH...HEAD" > "$diff_file"
+            args+=(--in-diff "$diff_file")
+          fi
+          cargo mutants "${args[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

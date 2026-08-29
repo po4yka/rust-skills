@@ -158,8 +158,9 @@ update mixed into a feature commit hides the growth from review.
    ignored until a store review rejects the release.
 3. Print the offending file, ABI, and measured value on failure. A gate that
    prints only "failed" costs an extra debugging round trip.
-4. Run the full ABI set on the release path. A pull-request job may verify one
-   ABI to save runner time, but the release path must verify all of them.
+4. Run the complete declared shipping ABI matrix on the release path. A
+   pull-request job may verify one ABI to save runner time, but the release path
+   must verify all declared entries.
 5. Keep the gate script in the repository, not in the CI configuration. You
    need to run it locally with the same logic that CI uses.
 

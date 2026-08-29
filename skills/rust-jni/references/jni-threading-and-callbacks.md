@@ -71,7 +71,11 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) 
 
     match init {
         Ok(Ok(())) => JNI_VERSION_1_6,
-        Ok(Err(())) | Err(_) => JNI_ERR,
+        Ok(Err(())) => JNI_ERR,
+        Err(payload) => {
+            discard_panic_payload(payload);
+            JNI_ERR
+        }
     }
 }
 ```

@@ -103,8 +103,10 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 The `armeabi-v7a` clang prefix is `armv7a-`, but the Rust triple is `armv7-`.
 This mismatch breaks naive string substitution. Map the two names explicitly.
 
-The clang driver name also carries the API level: `<clang-prefix><minSdk>-clang`.
-Read `minSdk` from one place and pass it into the toolchain lookup.
+The clang driver name also carries the API level. First require the application
+`minSdk` to meet the pinned NDK floor. Then compute it per ABI as the maximum of
+the application floor and the ABI floor: `<clang-prefix><api>-clang`. Never
+silently raise only the native library above devices admitted by the manifest.
 
 ### iOS targets
 

@@ -9,7 +9,7 @@ export returns `Result`.
 
 ```text
 your-ffi-crate/
-  Cargo.toml        # crate-type = ["cdylib", "staticlib", "lib"]
+  Cargo.toml        # keep the default lib; packaging selects cdylib/staticlib
   src/
     lib.rs          # uniffi::setup_scaffolding!() — exactly once
     engine.rs       # the exported Object
@@ -74,6 +74,10 @@ Combine three pieces: a coarse method, a callback trait, and a cancel token that
 can reach without holding a lock on the job.
 
 ```rust
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
 #[derive(uniffi::Record)]
 pub struct JobRequest {
     pub job_id: String,
@@ -88,7 +92,7 @@ pub struct JobResult {
     pub duration_ms: u64,
 }
 
-#[uniffi::export(callback_interface)]
+#[uniffi::export(foreign)]
 pub trait ProgressListener: Send + Sync {
     fn on_progress(&self, event: ProgressEvent) -> Result<(), ProgressCallbackError>;
 }
@@ -113,7 +117,7 @@ impl Engine {
     pub fn run_job(
         &self,
         request: JobRequest,
-        listener: Box<dyn ProgressListener>,
+        listener: Arc<dyn ProgressListener>,
     ) -> Result<JobResult, EngineError> {
         let flag = Arc::new(AtomicBool::new(false));
         let job_id = request.job_id.clone();
@@ -172,7 +176,8 @@ Points that matter in that shape:
 
 ## Callback lifetime
 
-A `Box<dyn ProgressListener>` keeps the foreign object alive for as long as Rust holds it.
+An `Arc<dyn ProgressListener>` keeps the foreign object alive for as long as
+Rust holds it.
 
 - Hold it for one call or one job. Release it when the operation returns.
 - Do not store the listener inside the Object for the life of the process. That is a leak the
@@ -217,8 +222,8 @@ Two ways exist to hand the foreign side something callable:
 |----------|-----|
 | A concrete Rust type with methods | `#[derive(uniffi::Object)]` |
 | A Rust trait with more than one Rust implementation, selected at runtime | An exported trait interface |
-| A trait the foreign side implements and Rust calls | `#[uniffi::export(callback_interface)]`, taken as `Box<dyn Trait>` |
-| A trait either side may implement, or that must be shared | `#[uniffi::export(with_foreign)]`, taken as `Arc<dyn Trait>` |
+| A trait the foreign side implements and Rust calls | `#[uniffi::export(foreign)]`, taken as `Arc<dyn Trait>` |
+| A trait either side may implement, or that must be shared | `#[uniffi::export(rust, foreign)]`, taken as `Arc<dyn Trait>` |
 
 Do not reach for a trait interface when there is one implementation. An Object is simpler to
 generate, simpler to read, and simpler to version. See `rust-discipline`.

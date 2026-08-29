@@ -371,8 +371,9 @@ so they do not interact with the aliasing model the way a reference does. That i
 they are the right tool for partially initialized or externally owned memory.
 
 ```rust
-// ptr::read copies `T` out without binding a lifetime.
-// SAFETY: `ptr` is valid, aligned, and points at an initialized value.
+// ptr::read performs a bitwise copy and leaves the source bytes in place.
+// SAFETY: `ptr` is valid, aligned, and initialized. The source is now treated
+// as moved-from and will not be read or dropped again unless `T: Copy`.
 let val: u32 = unsafe { std::ptr::read(ptr) };
 
 // ptr::write stores `T` without dropping whatever was there before.
@@ -382,6 +383,8 @@ unsafe { std::ptr::write(dst, new_val) };
 
 // ptr::copy_nonoverlapping is memcpy. Overlap is UB; use ptr::copy for memmove.
 // SAFETY: `src` and `dst` are valid for `count` elements and do not overlap.
+// For non-Copy `T`, ownership accounting guarantees that exactly one copy of
+// each value is later dropped.
 unsafe { std::ptr::copy_nonoverlapping(src, dst, count) };
 ```
 

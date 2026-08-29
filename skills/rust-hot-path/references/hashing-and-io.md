@@ -197,9 +197,9 @@ struct LargeFirst { b: u32, a: u8 }      // the same 3 bytes, now at the tail
 #[repr(C, packed)]
 struct NoPadding { a: u8, b: u32 }
 
-const _: () = assert!(size_of::<SmallFirst>() == 8);
-const _: () = assert!(size_of::<LargeFirst>() == 8);
-const _: () = assert!(size_of::<NoPadding>() == 5);
+const _: () = assert!(std::mem::size_of::<SmallFirst>() == 8);
+const _: () = assert!(std::mem::size_of::<LargeFirst>() == 8);
+const _: () = assert!(std::mem::size_of::<NoPadding>() == 5);
 ```
 
 Only two shapes build: `#[repr(C, packed)]`, or an explicit filler field that the

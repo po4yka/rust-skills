@@ -182,10 +182,12 @@ not at the call site. Read the error against the struct, not against the method.
 
 ## Foreign callbacks and listeners
 
-Deliver progress and events through a **callback interface** that the platform implements and
-Rust calls. Declare the trait once and take it as a parameter.
+Deliver progress and events through a **foreign trait** that the platform
+implements and Rust calls. Declare the trait once and take it as a parameter.
 
 ```rust
+use std::sync::Arc;
+
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ProgressCallbackError {
     #[error("foreign progress callback failed")]
@@ -198,7 +200,7 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for ProgressCallbackError {
     }
 }
 
-#[uniffi::export(callback_interface)]
+#[uniffi::export(foreign)]
 pub trait ProgressListener: Send + Sync {
     fn on_progress(&self, event: ProgressEvent) -> Result<(), ProgressCallbackError>;
 }
@@ -208,7 +210,7 @@ impl Engine {
     pub fn run_job(
         &self,
         request: JobRequest,
-        listener: Box<dyn ProgressListener>,
+        listener: Arc<dyn ProgressListener>,
     ) -> Result<JobResult, EngineError> {
         listener
             .on_progress(ProgressEvent::started(&request))
@@ -226,12 +228,16 @@ method translates a declared platform error into that `Result` channel, and
 `run_job` decides whether to stop, retry, or degrade. Do not use a unit-return
 callback and assume that a Kotlin or Swift implementation cannot throw.
 
-Two forms exist. Choose one and use it consistently:
+Use the current trait export forms and choose one consistently:
 
 | Form | Rust parameter type | Use it when |
 |------|--------------------|-------------|
-| `#[uniffi::export(callback_interface)]` | `Box<dyn Trait>` | The implementation is always foreign |
-| `#[uniffi::export(with_foreign)]` | `Arc<dyn Trait>` | The implementation may be Rust **or** foreign, or you must share it |
+| `#[uniffi::export(foreign)]` | `Arc<dyn Trait>` | Only foreign implementations cross the boundary |
+| `#[uniffi::export(rust, foreign)]` | `Arc<dyn Trait>` | Both Rust and foreign implementations cross the boundary |
+
+`callback_interface` is the older `Box<dyn Trait>` form and is soft-deprecated.
+`with_foreign` is a deprecated alias for `rust, foreign`. Keep either only while
+migrating an existing surface pinned to an older UniFFI version.
 
 Rules for callback traits:
 
@@ -360,7 +366,7 @@ in a debug build.
 |---------|--------------|-----|
 | Trait-bound error naming `Send` or `Sync` at an `#[uniffi::export]` site | The Object holds a `!Send` or `!Sync` field | Move the field behind `Arc<Mutex<…>>`, or keep the type out of the boundary crate |
 | "not supported" or unknown-type error on a Record field | The field type has no UniFFI mapping | Convert it to a UniFFI type in an explicit `From` impl; do not leak inner-crate types |
-| Lifetime or borrow error on an exported signature | You tried to export `&T`, `&mut T`, or a lifetime parameter | Return an owned Record or an `Arc` handle |
+| Lifetime or borrow error on an exported signature | The borrow is a return, nested reference, async input, mutable reference, or unsupported `LiftRef` input | Use a supported call-scoped shared input, or return an owned Record or `Arc` handle |
 | Undefined or duplicate scaffolding symbols at link time | `setup_scaffolding!()` missing, or called more than once | Call it exactly once, in the crate root |
 | Generated Kotlin and Swift disagree, or one is stale | Two generator runs at different crate versions, or a leftover `.udl` | Regenerate both from the same build; delete the `.udl`; see `uniffi-packaging-versioning` |
 | Callback method never fires on the foreign side | The handle was dropped, or the call happens after the job returned | Hold the callback for the job duration; release it deterministically |
@@ -374,8 +380,10 @@ in the same commit. Before you change a signature:
 
 - Prefer **adding** a new coarse method over changing the arity of an existing one.
 - Prefer **widening the JSON contract**, validated in Rust, over adding a parameter.
-- Keep enum variants additive. Removing or reordering a variant is a breaking change for both
-  generated bindings.
+- Treat an added enum variant as a source-compatibility change. An existing
+  exhaustive Kotlin `when` or Swift `switch` stops compiling after bindings are
+  regenerated. Coordinate consumer updates even when the serialized or FFI
+  representation is additive. Removing or changing a variant remains breaking.
 - Use one UniFFI version for both platforms. The `uniffi` crate, the runtime, and the bindgen
   must match. Skew ownership is `uniffi-packaging-versioning`, but a boundary review must flag
   any per-platform divergence it sees.

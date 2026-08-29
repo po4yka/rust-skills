@@ -47,9 +47,12 @@ In GitHub Actions:
 
 ```yaml
 - uses: mozilla-actions/sccache-action@v0.0.9
-  env:
-    RUSTC_WRAPPER: sccache
+- run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 ```
+
+An `env` block on the setup action applies only to that action step. Write the
+variable to `GITHUB_ENV` or set it on every Cargo step so later builds use the
+wrapper.
 
 The target triple and code-generation options are part of the cache key.
 Compilations for Android, iOS, and the host do not share one cached object merely
@@ -62,7 +65,8 @@ cross-target reuse.
 
 ## 3. Cross-compilation target matrix
 
-A full Android matrix is four targets:
+Android has four common target mappings. A product builds the subset in its
+declared shipping ABI matrix:
 
 ```text
 aarch64-linux-android
@@ -232,8 +236,14 @@ fn ser(&self, out: &mut dyn io::Write)  -> io::Result<()>;   // behind &mut dyn
 
 ```bash
 # One timed run. Repeat it three times per variant and take the median.
-rm -rf "$TARGET"
-RUSTC_WRAPPER= CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$TARGET" cargo build --release -q
+MEASURE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rust-build-shape.XXXXXX")"
+case "$MEASURE_DIR" in
+  "${TMPDIR:-/tmp}"/rust-build-shape.*) ;;
+  *) echo "unexpected measurement path: $MEASURE_DIR" >&2; exit 2 ;;
+esac
+trap 'rm -rf -- "$MEASURE_DIR"' EXIT
+RUSTC_WRAPPER= CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$MEASURE_DIR" \
+  cargo build --release -q
 ```
 
 | Signature | `cargo check` | `cargo build` | `cargo build --release` | `ser` symbols in the rlib | rlib bytes |

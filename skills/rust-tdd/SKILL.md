@@ -347,7 +347,7 @@ fn assert_golden(name: &str, actual: &str) {
     // working directory of the test process.
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(name);
 
-    if std::env::var_os("BLESS_GOLDENS").is_some() {
+    if std::env::var("BLESS_GOLDENS").as_deref() == Ok("1") {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, actual).unwrap();
         return;

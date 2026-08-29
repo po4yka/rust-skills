@@ -38,7 +38,8 @@ Initialize once, from `JNI_OnLoad` or the UniFFI init export:
 1. Call `android_logger::init_once` with your tag and a default level.
 2. Call `LogTracer::init()` so dependencies that use the `log` crate are captured.
 3. Build the `tracing_subscriber` registry with your layers and set it global.
-4. Install the panic hook, so panics reach the same sink.
+4. Register the library's redacted panic handler with the one hook that the host
+   executable owns and composes.
 
 Use `Debug` as the default level in debug builds and `Info` in release. Export
 your own runtime override from the library, so you can raise one scope without a
@@ -59,8 +60,9 @@ your shell, in Gradle, or in the run configuration does nothing.
 
 Options, in order of preference:
 
-1. Install the panic hook with `Backtrace::force_capture()` (above). This is the
-   only option that works inside the app process.
+1. Use the outermost Rust FFI bootstrap's composed panic hook for the bounded
+   shipped record. Capture a full backtrace only in an explicit local diagnostic
+   build whose output does not enter telemetry.
 2. For a standalone test binary pushed to the device, the environment does work:
 
    ```bash
@@ -127,4 +129,3 @@ If breakpoints stay unresolved, the symbol path is wrong or the packaged `.so`
 does not match the one in the symbol path. Rebuild both from the same commit.
 
 ---
-

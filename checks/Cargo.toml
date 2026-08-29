@@ -54,7 +54,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uniffi = "0.29"
+uniffi = "0.32"
 zerocopy = { version = "0.8", features = ["derive"] }
 
 [profile.dev]

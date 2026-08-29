@@ -66,19 +66,35 @@ You do not need `cargo-ndk`. Call cargo directly and give it the NDK linker
 through the environment:
 
 ```bash
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android<minSdk>-clang"
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android<api>-clang"
 cargo build --locked --target aarch64-linux-android --profile android-jni
 ```
 
-The linker binary name embeds your `minSdk`. The `CARGO_TARGET_*_LINKER`
-variable uses the target triple upper-cased with underscores:
+First require the application `minSdk` to meet the pinned NDK minimum. Reject
+the build or raise the application's declared floor when it does not; do not
+silently build native code for devices that the manifest still admits. Then
+choose `<api>` separately for each ABI:
+
+```text
+require application minSdk >= pinned NDK minimum API
+api = max(application minSdk, ABI minimum API)
+```
+
+Read the NDK floor from its metadata and fail if the exact driver does not
+exist. A 64-bit ABI has a minimum API of 21 even when the application also
+ships a supported 32-bit ABI below 21. The `CARGO_TARGET_*_LINKER` variable uses
+the target triple upper-cased with underscores:
 
 | Rust target | Environment variable | Linker binary in `$NDK_BIN` |
 |-------------|----------------------|-----------------------------|
-| `aarch64-linux-android` | `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` | `aarch64-linux-android<minSdk>-clang` |
-| `armv7-linux-androideabi` | `CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER` | `armv7a-linux-androideabi<minSdk>-clang` |
-| `x86_64-linux-android` | `CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER` | `x86_64-linux-android<minSdk>-clang` |
-| `i686-linux-android` | `CARGO_TARGET_I686_LINUX_ANDROID_LINKER` | `i686-linux-android<minSdk>-clang` |
+| `aarch64-linux-android` | `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` | `aarch64-linux-android<api>-clang` |
+| `armv7-linux-androideabi` | `CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER` | `armv7a-linux-androideabi<api>-clang` |
+| `x86_64-linux-android` | `CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER` | `x86_64-linux-android<api>-clang` |
+| `i686-linux-android` | `CARGO_TARGET_I686_LINUX_ANDROID_LINKER` | `i686-linux-android<api>-clang` |
+
+These are available mappings, not a universal product requirement. Store one
+project-owned shipping ABI matrix. Local builds can select a declared subset;
+CI and release builds must contain the complete declared matrix.
 
 Only `armeabi-v7a` breaks the pattern: the Rust triple starts with `armv7-` and
 the NDK wrapper starts with `armv7a-`. List `$NDK_BIN` once and confirm the
@@ -93,14 +109,22 @@ config file holds codegen flags only.
 
 ## Crate setup
 
+The final Android build must emit a `cdylib` `.so`; the manifest does not need
+to emit one for every ordinary workspace build. Prefer the default Rust
+library in `Cargo.toml` and select the packaging type per invocation:
+
 ```toml
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["lib"]
 ```
 
-`crate-type = ["cdylib"]` is mandatory. Android loads the library through
-`System.loadLibrary()`, which needs a `.so`. An `rlib` is a Rust-only artifact
-and produces no loadable library.
+```bash
+cargo rustc --locked --target <android-target> --profile android-jni \
+  --crate-type cdylib -p <ffi-crate> --lib
+```
+
+Declare `crate-type = ["cdylib"]` in the manifest only when every supported
+build of that package must link the Android artifact.
 
 ## Per-ABI rustflags
 
@@ -143,9 +167,9 @@ rustflags = [
 | `-Wl,--build-id=sha1` | Emits a build ID, so a stripped `.so` correlates with its unstripped symbol sidecar. |
 | `-C force-frame-pointers=yes` | Keeps frame pointers for profilers and crash symbolication. |
 
-Apply the alignment, build-id, and frame-pointer flags to all four targets, not
-only to the 64-bit ones. A uniform block removes a whole class of "it works on
-arm64 only" bugs.
+Apply the alignment, build-id, and frame-pointer flags to every ABI in the
+project's declared shipping matrix, not only to the 64-bit ones. A uniform
+block removes a whole class of "it works on arm64 only" bugs.
 
 ## 16 KiB page-size alignment
 
@@ -277,25 +301,11 @@ if you also verify their effect; do not document a flag that is absent from
 | `-Wl,--gc-sections` | Dead-code elimination at link time. About 5-10% smaller. |
 | `-Wl,--icf=all` | Identical code folding. Duplicate function bodies, common after generic monomorphization, collapse into one. About 5% smaller. |
 
-For a further 20-40% reduction, build the standard library with immediate
-abort. This costs you all panic messages. `-Z build-std` needs the standard
-library source, so install it first:
-
-```bash
-rustup component add rust-src --toolchain nightly
-cargo +nightly build --locked \
-  --target aarch64-linux-android \
-  --profile android-jni \
-  -Z build-std=std,panic_abort \
-  -Z build-std-features=panic_immediate_abort
-```
-
-`panic_immediate_abort` strips the `core::fmt::Arguments` machinery and the
-unwind tables. It also breaks `catch_unwind`, so it is not compatible with a
-JNI boundary that translates panics into Java exceptions. If you adopt it, keep
-a second profile that inherits `release` with `panic = "unwind"` and full debug
-info, and build it on a nightly soak job, so a crash report has a reproducible
-binary behind it.
+Do not use `panic_immediate_abort` or `panic = "abort"` in a JNI or UniFFI
+artifact whose contract contains panics. A separate unwind soak binary cannot
+contain a panic in the shipped aborting library. Use an aborting profile only
+for an artifact whose explicit production contract permits process termination;
+do not describe it as panic containment.
 
 ## ELF symbol allowlist
 
@@ -443,14 +453,14 @@ NDK r29 changed these items:
 
 | Mistake | Fix |
 |---------|-----|
-| Missing `crate-type = ["cdylib"]` | Add it. An `rlib` produces no `.so`. |
+| Final Android build produced no `.so` | Select `--crate-type cdylib` on the packaging `cargo rustc` command, or declare it in the manifest when every build needs it. |
 | Missing 16 KiB alignment flags | Add `-Wl,-z,max-page-size=16384` to every Android target block. |
 | ELF alignment passes but the packaged app fails the 16 KiB check | Run `zipalign -c -P 16 -v 4` on the final APK and inspect the AAB page-alignment policy. |
 | Only a universal APK passes `zipalign` | Check `PAGE_ALIGNMENT_16K` in the AAB and build the DEFAULT APK set to inspect split and standalone variants. |
-| Alignment flags on 64-bit targets only | Apply the same block to all four ABIs. |
+| Alignment flags on 64-bit targets only | Apply the same block to every ABI in the declared shipping matrix. |
 | `panic = "abort"` in an Android profile | Use `panic = "unwind"`. The JNI boundary needs `catch_unwind`. |
 | Wrong triple for `armeabi-v7a` | Use `armv7-linux-androideabi` as the Cargo target. |
-| Linker not found for `armeabi-v7a` | The NDK wrapper is `armv7a-linux-androideabi<minSdk>-clang`, with the `a`. |
+| Linker not found for `armeabi-v7a` | The NDK wrapper is `armv7a-linux-androideabi<api>-clang`, with the `a`; validate the app against the NDK floor, then apply the ABI floor. |
 | NDK path in `.cargo/config.toml` | Set the linker from the build system environment instead. |
 | Cargo profile hardcoded in a local command | Drive the build through the Gradle task that selects the profile. |
 | Shared `CARGO_TARGET_DIR` across ABIs | Give every ABI its own target directory. |

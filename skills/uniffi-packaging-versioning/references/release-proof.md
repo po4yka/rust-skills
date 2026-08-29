@@ -101,12 +101,13 @@ producer build. Reject `project(...)`, composite-build substitution, or a
 direct dependency on the source module or its `jniLibs` directory. Inspect the
 resolved dependency and require the recorded AAR digest.
 
-Use the declared `minSdk` as the runtime floor. Require the support-matrix
-floor, the release Gradle `minSdk`, and the API level encoded in the NDK linker
-driver to match. Confirm that this floor is not below the minimum supported by
-the pinned NDK. A successful call below the declared floor does not create a
-support claim. Treat an incompatible `minSdk`, a wrong ABI selection, or a
-missing packaged library as `Fail`, not `Blocked`.
+Use the declared Gradle `minSdk` as the application runtime floor. Require it to
+meet the pinned NDK floor before any native build. Then compute each driver API
+as the maximum of the application floor and the ABI floor; the encoded API can
+therefore be higher for an ABI that cannot run on older devices. Record both
+values instead of requiring them to match. A successful call below the
+application floor does not create a support claim. Treat an incompatible floor,
+a wrong ABI selection, or a missing packaged library as `Fail`, not `Blocked`.
 
 Use `rust-android-build` for APK or AAB contents, ELF alignment, export
 allowlists, stripping, build IDs, and native symbol evidence. Reference that

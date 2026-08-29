@@ -52,8 +52,11 @@ Notes:
   is meaningful, return `Vec<(K, V)>` as a `Vec` of a two-field Record.
 - Nested containers work — `Option<Vec<HashMap<String, i64>>>` — but a deeply nested generic
   signature is a sign that the payload should be a Record, or a JSON string contract.
-- Use owned types in an exported signature. `&[T]` has no mapping; take `Vec<T>`. Take
-  `String`, not a borrowed string type.
+- Use owned types for records, returns, and stored values. A top-level shared
+  input with `LiftRef`, such as `&str` or `&[u8]` on supported bindings, is
+  borrowed only for the call. Verify support in the pinned UniFFI version. Use
+  `Vec<T>` or `String` for unsupported element types, nested references, async
+  exports, and any value that must outlive the call.
 - Fixed-size arrays `[T; N]` have no mapping. Use `Vec<T>` and validate the length in Rust.
 - Tuples have no mapping. Use a Record with named fields; the generated API is also clearer.
 
@@ -141,7 +144,7 @@ Common custom-type candidates: `PathBuf` transported as `String`, a UUID transpo
 | Raw pointers | No safety story across the boundary | Wrap in an Object and expose methods |
 | Generic `T` | No monomorphization across the boundary | Concrete types, one per payload |
 | Closures | No mapping | A callback interface trait |
-| `Box<dyn Trait>` for an undeclared trait | Only declared callback traits map | Declare the trait with `#[uniffi::export(callback_interface)]` |
+| `Arc<dyn Trait>` for an undeclared trait | Only exported traits map | Declare the trait with `#[uniffi::export(foreign)]` or `#[uniffi::export(rust, foreign)]` |
 | `std::io::Error`, `anyhow::Error` | Not a UniFFI error type | Map to a `#[derive(uniffi::Error)]` enum at the boundary |
 | Large `Vec<u8>` buffers | Copied on every crossing, doubles peak memory | Write the file in Rust, return the path |
 

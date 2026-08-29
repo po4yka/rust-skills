@@ -157,10 +157,11 @@ Keep the `extern` body to a guard plus a delegation call. Put the logic in a pla
 function that the tests can call directly. See `references/boundary-patterns.md` for opaque
 handles, out-parameters, string transfer, and Rust callbacks that a foreign runtime invokes.
 
-The payload from `catch_unwind` is not harmless. Its destructor can panic. Dispose of it inside
-a second guard, as above, and forget the second payload if that destructor also panics. This
-bounded leak occurs only on the double-panic path and prevents an unwind from leaving the
-boundary. Do not inspect or format either payload.
+The payload from `catch_unwind` is not harmless. Its destructor can panic.
+Dispose of it inside a second guard, as above, and keep the second payload in
+`ManuallyDrop` if that destructor also panics. This bounded leak occurs only on
+the double-panic path and prevents an unwind from leaving the boundary. Do not
+inspect or format either payload.
 
 ## Worked example: a JNI boundary
 
@@ -172,7 +173,8 @@ exception instead of a status code.
 `JNI_OnLoad` receives the VM, not an env handle, so raw `catch_unwind` is the only guard
 available. Store the VM handle before the guard, and keep the whole initialization inside it
 so a failed init returns `JNI_ERR` instead of unwinding into the JVM. A panic that fires
-before `install_panic_hook()` runs is still contained, but the custom hook cannot report it;
+before the application-owned Rust FFI bootstrap installs the composed panic
+hook is still contained, but the custom handler cannot report it;
 do not claim otherwise in a review. The code is in
 [references/boundary-patterns.md](references/boundary-patterns.md).
 
@@ -270,9 +272,9 @@ pub fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
     write_platform_panic("rust_panic", site, line, column);
 }
 
-// The host binary owns the process-global hook and composes every library
-// handler once during process startup.
-pub fn install_host_panic_hook() {
+// The application-owned outermost Rust FFI bootstrap owns the process-global
+// hook and statically composes every component handler once during startup.
+pub fn install_bootstrap_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         report_panic(info);
         report_other_library_panics(info);
@@ -282,9 +284,10 @@ pub fn install_host_panic_hook() {
 
 Rules:
 
-- Let the host executable own `set_hook`. An embedded library exposes a redacted
-  handler and never replaces an unknown process-global hook. Install the composed
-  host hook once during process startup.
+- Let the application-owned outermost Rust FFI bootstrap own `set_hook`. An
+  embedded component exposes a redacted handler and never replaces an unknown
+  process-global hook. The bootstrap can install from its `JNI_OnLoad` or one
+  explicit init export after it statically composes the component handlers.
 - Do not chain the default hook in a shipped embedded process. It formats the payload and file
   path. Keep it only in a local host binary whose stderr is not forwarded to telemetry.
 - The hook runs before unwinding starts. Map the file path to a closed site code. Emit only

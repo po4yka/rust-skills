@@ -118,7 +118,15 @@ dependency entry pulls loom into every release build:
 # Cargo.toml
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 ```
+
+Put the lint entry in `[workspace.lints.rust]` instead when member crates use
+`[lints] workspace = true`. Cargo 1.80 and later checks custom cfg names even
+when they are inactive; registration keeps the ordinary `-D warnings` gate
+green.
 
 Gate the primitive so that the same code compiles against `loom` types and `std` types:
 

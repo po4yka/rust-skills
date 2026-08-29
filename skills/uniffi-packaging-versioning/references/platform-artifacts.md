@@ -37,17 +37,21 @@ NDK driver uses `armv7a-linux-androideabi<api>-clang`. Use an explicit mapping:
 | `x86_64-linux-android` | `x86_64-linux-android` |
 | `i686-linux-android` | `i686-linux-android` |
 
-Choose the API suffix separately for each ABI:
+First require the application `minSdk` to meet the pinned NDK minimum. Reject
+the build or raise the application floor if it does not. Then choose the API
+suffix separately for each ABI:
 
 ```text
-api = max(application minSdk, ABI minimum API, NDK minimum API)
+require application minSdk >= pinned NDK minimum API
+api = max(application minSdk, ABI minimum API)
 ```
 
 Read the NDK floor from its metadata instead of copying it into the build
 script. A 64-bit Android ABI has a minimum API of 21 even when the application
-also ships a 32-bit ABI below 21. Append the computed API and `-clang` or
-`-clang++` to the driver prefix, and fail if that exact driver does not exist. A
-lower or guessed suffix can fail to link or silently raise the runtime floor.
+also ships a supported 32-bit ABI below 21. Append the computed API and `-clang`
+or `-clang++` to the driver prefix, and fail if that exact driver does not
+exist. A lower or guessed suffix can fail to link or raise the native runtime
+floor above the application contract.
 
 ### Environment variable naming rules
 
@@ -108,10 +112,10 @@ Whatever build system you use, hold these properties:
 - **Separate the per-ABI build from the merge.** Build tasks produce one `.so`
   each; one ABI-aware merge task assembles the `jniLibs` tree. The merge stays
   cacheable and cheap.
-- **Different ABI policy per build type.** Debug and developer builds default to
-  the single host or emulator ABI and accept an override property for a wider
-  set. Release rejects a subset and builds all four. Encode this as a hard
-  failure, not a warning.
+- **Different ABI policy per build type.** Store one project-owned shipping ABI
+  matrix. Debug and developer builds default to one declared device or emulator
+  ABI and accept an override for a wider set. Release rejects a subset of the
+  declared matrix. Encode this as a hard failure, not a warning.
 - **Pass `--locked`.** A packaging build that silently updates `Cargo.lock`
   produces an artifact that does not match the committed revision.
 

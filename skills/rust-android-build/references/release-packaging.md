@@ -179,7 +179,7 @@ level coverage in the Android application test policy.
 
 Use an Android library module when another application consumes the Rust
 library. Put Kotlin or Java bindings and `jni/<abi>/*.so` in the AAR. Inspect
-the final archive and require the complete shipping ABI set:
+the final archive and require the complete declared shipping ABI matrix:
 
 ```bash
 unzip -Z1 <sdk-release.aar> | grep '^jni/[^/]*/libnative\.so$'

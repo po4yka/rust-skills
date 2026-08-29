@@ -55,7 +55,13 @@ impl EventRing {
     }
 
     pub fn drain(&self) -> Vec<Record> {
-        std::iter::from_fn(|| self.queue.pop()).collect()
+        // Bound one batch to the queue length observed at entry. Producers can
+        // refill the queue while this call runs, but they cannot extend this
+        // call beyond the entry budget.
+        let available = self.queue.len();
+        (0..available)
+            .map_while(|_| self.queue.pop())
+            .collect()
     }
 
     pub fn dropped(&self) -> u64 {
@@ -140,11 +146,13 @@ Keep the readiness path separate from the snapshot path:
 
 ## Panic reporting
 
-Install a hook when the library loads — in `JNI_OnLoad` on Android, or in your
-init entry point elsewhere. Emit one bounded structured record. Do not format
-`PanicHookInfo`, inspect its payload, or emit a backtrace. A panic payload is
-arbitrary application text and can contain input data, paths, identifiers, or
-secrets.
+An embedded component must not replace the process-global panic hook. Expose a
+redacted handler. Let the application-owned outermost Rust FFI bootstrap
+statically compose every component handler and install one hook from its
+`JNI_OnLoad` or explicit init entry. Emit one bounded structured record.
+Do not format `PanicHookInfo`, inspect its payload, or emit a backtrace. A panic
+payload is arbitrary application text and can contain input data, paths,
+identifiers, or secrets.
 
 ```rust
 #[derive(Clone, Copy)]
@@ -164,7 +172,7 @@ fn classify_site(file: &str) -> PanicSite {
     }
 }
 
-std::panic::set_hook(Box::new(|info| {
+pub fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
     let (site, line, column) = info
         .location()
         .map(|location| {
@@ -177,7 +185,7 @@ std::panic::set_hook(Box::new(|info| {
         .unwrap_or((PanicSite::Unknown, 0, 0));
 
     write_platform_panic("rust_panic", site, line, column);
-}));
+}
 ```
 
 The event name and site code come from closed vocabularies. The line and column

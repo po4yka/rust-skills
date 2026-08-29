@@ -9,7 +9,7 @@ Deep reference for Rust `cdylib` and `staticlib` targets running on Android devi
 | `-C force-frame-pointers=yes` for every Android target | `simpleperf` cannot walk ARM64 stacks reliably without it; flamegraphs come out empty or truncated | Per-target `rustflags` in `.cargo/config.toml` |
 | Debug symbols kept in the debug APK | Otherwise the profiler and the debugger see raw addresses | Android Gradle `keepDebugSymbols` packaging option for your `.so` |
 | An unstripped `.so` kept on the host | Needed for offline symbolication of release crashes | The copy under `target/<triple>/<profile>/`, before Gradle packages a stripped one |
-| A global panic hook with a bounded site record | Native panics otherwise reach logcat with no Rust site | Installed at library init, after logging init |
+| One Rust-bootstrap-owned panic hook with a bounded site record | Native panics otherwise reach logcat with no Rust site | Outermost Rust FFI bootstrap composes component handlers once |
 
 The frame pointer cost is negligible. One general-purpose register (`x29` on ARM64) is reserved.
 
@@ -122,8 +122,10 @@ $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-addr2line \
 
 ### Privacy-safe panic records
 
-Install a global panic hook at library init. Emit a bounded structured record
-because the default panic output does not reliably reach logcat.
+Expose a redacted handler and let the application-owned outermost Rust FFI
+bootstrap install one composed global panic hook from its `JNI_OnLoad` or init
+entry. Emit a bounded structured record because the default panic output does
+not reliably reach logcat.
 
 ```rust
 #[derive(Clone, Copy)]
@@ -143,23 +145,24 @@ fn classify_site(file: &str) -> PanicSite {
     }
 }
 
-pub fn install_panic_hook() {
-    std::panic::set_hook(Box::new(|info| {
-        let (site, line, column) = info
-            .location()
-            .map(|location| {
-                (
-                    classify_site(location.file()),
-                    location.line(),
-                    location.column(),
-                )
-            })
-            .unwrap_or((PanicSite::Unknown, 0, 0));
+pub fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
+    let (site, line, column) = info
+        .location()
+        .map(|location| {
+            (
+                classify_site(location.file()),
+                location.line(),
+                location.column(),
+            )
+        })
+        .unwrap_or((PanicSite::Unknown, 0, 0));
 
-        write_platform_panic("rust_panic", site, line, column);
-    }));
+    write_platform_panic("rust_panic", site, line, column);
 }
 ```
+
+The embedded component exposes the redacted handler. The application-owned
+outermost Rust FFI bootstrap owns and composes the process-global hook.
 
 Call it after the Android platform writer is initialized. The event name and
 site are closed vocabulary values. The line and column are bounded integers.
@@ -210,9 +213,13 @@ LD_HWASAN=1 exec "$@"
 - Use-after-free
 - Double-free
 - Stack use-after-return
-- Use of uninitialized memory (partial)
 
-HWASan finds memory errors, not slow code. Use it when a profiling session turns up a crash or corruption, and when reviewing `unsafe`. See `rust-sanitizers-miri` and `rust-unsafe`.
+HWASan finds addressability and memory-tag errors, not uninitialized reads or
+slow code. Android does not provide an MSan runtime. Reproduce the code with
+fully instrumented dependencies on an MSan-supported host, or use Miri for a
+supported pure-Rust path, when initialization is the question. Use HWASan when
+an Android profiling session turns up a crash or corruption, and when reviewing
+`unsafe`. See `rust-sanitizers-miri` and `rust-unsafe`.
 
 ---
 
@@ -246,7 +253,7 @@ Stack traces in the native profiler need unstripped symbols. Debug builds have t
 | Symbolication shows `<unknown>` | Use the unstripped `.so` from `target/<triple>/<profile>/`, not the packaged copy |
 | ASan build fails | ASan is unsupported since NDK r26; use HWASan |
 | HWASan reports nothing on an x86_64 emulator | HWASan is ARM64-only; use a physical device or an ARM64 emulator image |
-| Panic details are missing from logcat | Install the bounded panic-record hook after the platform writer is initialized; symbolicate the crash artifact offline |
+| Panic details are missing from logcat | Verify the Rust bootstrap hook includes this component's bounded handler; symbolicate the crash artifact offline |
 | `simpleperf record` gives permission denied | Target a debuggable app (`android:debuggable="true"`), or run `adb shell` as root |
 | Profiling a release build shows no symbols | Expected. The ship profile strips symbols. Profile the on-device debug profile instead |
 | Profile numbers differ wildly between runs | Thermal throttling. Cool the device, disable background sync, and repeat the run |

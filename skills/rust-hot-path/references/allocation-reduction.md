@@ -147,7 +147,7 @@ the two 32-byte rows above. Assert the width of the N you pick.
 ```rust
 use smallvec::SmallVec;
 
-const _: () = assert!(size_of::<SmallVec<[u32; 4]>>() == 32);
+const _: () = assert!(std::mem::size_of::<SmallVec<[u32; 4]>>() == 32);
 ```
 
 A spilled `SmallVec` does not grow from N. It rejoins the normal `Vec` ladder.

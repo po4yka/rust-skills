@@ -258,13 +258,25 @@ nothing for the UI to render by accident.
 
 ### Rust side - a callback interface
 
-Long-running engine methods take a listener. Declare it as a UniFFI **callback
-interface** in the `Box<dyn ...>` form, which the host implements.
+Long-running engine methods take a foreign trait in the `Arc<dyn ...>` form,
+which the host implements.
 
 ```rust
-#[uniffi::export(callback_interface)]
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum ProgressCallbackError {
+    #[error("foreign progress callback failed")]
+    Unexpected,
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for ProgressCallbackError {
+    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        Self::Unexpected
+    }
+}
+
+#[uniffi::export(foreign)]
 pub trait ProgressListener: Send + Sync {
-    fn on_progress(&self, event: ProgressEvent);
+    fn on_progress(&self, event: ProgressEvent) -> Result<(), ProgressCallbackError>;
 }
 
 #[derive(uniffi::Enum, Clone, Copy, PartialEq, Eq)]
@@ -500,8 +512,8 @@ the complete contract and required lifecycle tests.
 
 - UniFFI errors, flat against structured enums, `#[uniffi(flat_error)]`:
   https://mozilla.github.io/uniffi-rs/latest/types/errors.html
-- UniFFI callback interfaces and foreign traits:
-  https://mozilla.github.io/uniffi-rs/latest/types/callback_interfaces.html
+- UniFFI foreign traits:
+  https://mozilla.github.io/uniffi-rs/latest/foreign_traits.html
 - UniFFI async and futures, for the async export path and foreign executors:
   https://mozilla.github.io/uniffi-rs/next/futures.html
 - Kotlin `Flow`, `callbackFlow`, `awaitClose`, structured cancellation:

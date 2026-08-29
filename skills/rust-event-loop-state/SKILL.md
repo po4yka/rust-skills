@@ -1,6 +1,6 @@
 ---
 name: rust-event-loop-state
-description: Use when you design or review an event loop, tick loop, or handler registry whose handlers all need &mut to one shared mutable state - a game loop, a TUI loop, or any god object every handler writes to. Covers the decision table that picks the structure from the shape of the handler set, why the loop must own the handler set and the state separately (E0499, E0502), state as a trait generic parameter instead of an associated type (E0207), capability bounds plus one Vec<Box<dyn Handler<App>>>, the blanket-impl one-way door (E0119), why DerefMut on a context wrapper destroys disjoint-field borrows, when an ECS-shaped dynamic world earns its run-time conflict panic, and why async fn(&mut State) and nightly coroutine resume arguments cannot express a suspendable routine over shared state. Triggers on "event loop", "tick loop", "handler registry", "shared mutable state", "god object", "ECS", "system and world", "Rc<RefCell> between handlers", "E0499 in my dispatch loop", or "coroutine resume".
+description: Use when you design or review an event loop, tick loop, or handler registry whose handlers all need &mut to one shared mutable state - a game loop, a TUI loop, or any god object every handler writes to. Covers the decision table that picks the structure from the shape of the handler set, why the loop must own the handler set and the state separately (E0499, E0502), state as a trait generic parameter instead of an associated type (E0207), capability bounds plus boxed Handler trait objects, the blanket-impl one-way door (E0119), why DerefMut on a context wrapper destroys disjoint-field borrows, when an ECS-shaped dynamic world earns its run-time conflict panic, and why async fn with mutable state and nightly coroutine resume arguments cannot express a suspendable routine over shared state. Triggers on "event loop", "tick loop", "handler registry", "shared mutable state", "god object", "ECS", "system and world", "Rc RefCell between handlers", "E0499 in my dispatch loop", or "coroutine resume".
 license: BSD-3-Clause
 ---
 
@@ -337,12 +337,10 @@ impl Routine for Counting {
 fn main() {
     let mut st = State { counter: 0 };
     let mut routines: Vec<Box<dyn Routine>> = vec![Box::new(Counting { left: 5 })];
-    let mut alive = true;
-    while alive {
-        alive = false;
-        for r in routines.iter_mut() {
-            if let Step::Pending = r.resume(&mut st) { alive = true; }
-        }
+    while !routines.is_empty() {
+        routines.retain_mut(|routine| {
+            matches!(routine.resume(&mut st), Step::Pending)
+        });
     }
     assert_eq!(st.counter, 5);
     println!("counter={}", st.counter);   // counter=5

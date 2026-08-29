@@ -605,9 +605,11 @@ impl InputHandler<ConcreteState> for Standalone {
 The conflict is per `Self` type. `impl<S> InputHandler<S> for Standalone` and
 `impl<S: TimeState> InputHandler<S> for Timed` coexist without a complaint.
 
-Rule: write `impl<S> Trait<S> for X` only for an `X` that ignores `S` for ever. Otherwise bound
-the blanket impl (`impl<S: SomeCapability> Trait<S> for X`), which leaves a disjoint bound
-available for the concrete case later.
+Rule: write `impl<S> Trait<S> for X` only for an `X` that ignores `S` for ever.
+A positive bound such as `S: SomeCapability` narrows the blanket impl but does
+not reserve a disjoint concrete case: stable Rust has no negative bound that
+says the concrete type can never implement that capability. Use a distinct
+`Self` type or newtype when a later concrete implementation must coexist.
 
 ---
 

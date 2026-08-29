@@ -111,18 +111,25 @@ the full lint policy.
 6. Check that the new site fits a documented category in "When unsafe is legitimate" below. If
    it does not, add the category and say why it is acceptable.
 
-## The five unsafe superpowers
+## Unsafe operations and declarations
 
-An `unsafe` block unlocks exactly five operations. Nothing else about the code changes, and the
-borrow checker keeps running.
+An `unsafe` block permits five operation classes. Nothing else about the code
+changes, and the borrow checker keeps running.
 
 1. Dereference a raw pointer (`*const T`, `*mut T`).
-2. Call an unsafe function, including `extern "C"` and `extern "system"`.
-3. Read or write a mutable static.
-4. Implement an unsafe trait (`Send`, `Sync`).
-5. Read a field of a union.
+2. Call an unsafe function. This includes an FFI function declared unsafe and a
+   `#[target_feature]` function when the caller does not statically enable the
+   required feature.
+3. Access a mutable static.
+4. Read a field of a union.
+5. Execute inline assembly.
 
 If your `unsafe` block does none of these, delete the block.
+
+An `unsafe impl` is a separate proof category. It promises that a type upholds
+an unsafe trait such as `Send` or `Sync`; it is not an operation inside an
+unsafe block. Unsafe attributes and unsafe extern declarations also need their
+own review, but they do not add another block operation.
 
 ### `unsafe trait` and `unsafe fn` are separate axes
 
@@ -145,10 +152,12 @@ point a foreign caller can reach must contain the panic.
 - Hand-rolled `extern "C"`: wrap the whole body in `std::panic::catch_unwind` and map the
   outcome to an integer status. Never write a bare `extern "C"` body. A bare body aborts at the
   first panic and leaves the caller no status.
-- JNI on `jni` 0.22: use `EnvUnowned::with_env` and exit through `resolve`, which applies an
-  `ErrorPolicy` to the error and to the caught panic. On `jni` 0.21 and earlier, and inside
-  `JNI_OnLoad` and `JNI_OnUnload`, use `catch_unwind(AssertUnwindSafe(|| { ... }))` and throw a
-  Java exception in the `Err` arm.
+- JNI methods on `jni` 0.22: use `EnvUnowned::with_env` and exit through
+  `resolve`, which applies an `ErrorPolicy` to the error and to the caught
+  panic. On `jni` 0.21 and earlier, use `catch_unwind` and throw through the
+  method's `JNIEnv`. Lifecycle callbacks have no `JNIEnv`: `JNI_OnLoad` catches
+  and returns `JNI_ERR`; `JNI_OnUnload` catches, reports through the host-owned
+  panic handler, and returns without unwinding.
 - UniFFI: `uniffi::setup_scaffolding!` plus `#[uniffi::export]` generates the guard. Do not
   hand-write one. Add a hand-rolled `extern "C"` beside UniFFI only for a measured reason, such
   as a zero-copy buffer handoff, and apply the `catch_unwind` rule to it.
@@ -332,10 +341,11 @@ State the invariant in the `# Safety` section, and design the API so that forget
 is either impossible or harmless. The standard library shows both correct designs:
 
 - `thread::spawn` requires `'static`. No guard is needed; the lifetime carries the safety.
-- `thread::scope` captures the scope by reference inside the closure, so the borrow checker
-  prevents the scope from being forgotten while a thread still runs. Forgetting a returned
-  `ScopedJoinHandle` still costs you: `scope()` then blocks forever, because the counter it waits
-  on is decremented by that handle's destructor. std chose a deadlock over unsoundness.
+- `thread::scope` captures the scope by reference inside the closure, so the
+  borrow checker prevents the scope from being forgotten while a thread still
+  runs. Forgetting a returned `ScopedJoinHandle` loses direct access to its
+  result, but the scope still waits for every scoped thread. Thread completion,
+  not handle destruction, releases the scope's wait.
 
 A future polled inside `select!` can be dropped at any `.await`. Do not make a future's
 correctness depend on its `Drop` running.
@@ -413,8 +423,12 @@ Severity: CRITICAL. Never hand a caller a `&T` or a `&mut T` built from `RefCell
 of panicking, and safe code mutates behind a live shared reference. Yield `Ref<'a, T>` instead,
 so the caller holds the borrow. Treat the pattern as UB on inspection: Miri reports it only when
 a test interleaves the fabricated reference with a mutation, so a clean Miri run proves nothing
-here. Do not generalize the rule to `Cell::as_ptr` or `UnsafeCell::get`, which are the intended
-raw-access APIs. The defect is specific: a reference that outlives the call, from a shared cell.
+here. `Cell::as_ptr` and `UnsafeCell::get` are intended raw-pointer access APIs,
+but they do not make a derived reference sound. `UnsafeCell` permits mutation
+through shared access; it does not permit two live mutable references or
+mutation that violates a live inner shared reference. Prove those aliasing and
+lifetime rules before converting the returned pointer. The `RefCell` defect is
+specific: its raw pointer bypasses the dynamic borrow counter.
 
 The `ManuallyDrop<String>` plus `String::from_raw_parts` form is severity HIGH. It fabricates a
 `&String` from a `&str`, because the layouts happen to line up. The provenance is correct. What
@@ -486,15 +500,18 @@ Use this when you review an unsafe block:
 - [ ] Is the unsafe block as small as it can be?
 - [ ] Does any `Drop::drop` contain `.unwrap()`, `.expect()`, or another panicking call?
 - [ ] Does any unmangled symbol collide with one in another library loaded at the same time?
-- [ ] Can the code run under Miri with Tree Borrows?
+- [ ] Can the code run under default Miri, then under Tree Borrows when an
+      explicit second aliasing-model pass adds value?
 
 ```bash
+cargo +nightly miri test --locked
 MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked
 ```
 
-Tree Borrows is the aliasing model published at PLDI 2025 and is the recommended default. It
-accepts more valid unsafe patterns than Stacked Borrows, so code that the older model rejected
-may pass now. See the `rust-sanitizers-miri` skill for the full Miri and sanitizer workflow.
+Run the tool's default model first so the command follows the pinned nightly's
+supported defaults. Use the explicit Tree Borrows pass as additional evidence,
+not as a replacement that can hide a failure from the default model. See the
+`rust-sanitizers-miri` skill for the full Miri and sanitizer workflow.
 
 ## Related skills
 

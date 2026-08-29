@@ -72,8 +72,9 @@ Rules:
 
 - Keep the numbers stable. A binding layer hard-codes them.
 - Map the typed error to the code in one function, in one module.
-- Install the privacy-safe panic hook before you return `Panic`. It records a closed site code
-  plus numeric location. Never log or transfer the raw payload.
+- Require the outermost Rust FFI bootstrap's panic hook to include the
+  component's privacy-safe handler before you return `Panic`. It records a
+  closed site code plus numeric location. Never log or transfer the raw payload.
 
 ## Returning a pointer or an opaque handle
 
@@ -292,7 +293,9 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) 
     let _ = JVM.set(vm);
     match std::panic::catch_unwind(|| {
         init_logging("app-native");
-        install_panic_hook();
+        // This is the application-owned outermost Rust FFI bootstrap. It
+        // statically composes component handlers and installs the hook once.
+        install_bootstrap_panic_hook();
         JNI_VERSION
     }) {
         Ok(version) => version,
@@ -397,10 +400,22 @@ pub unsafe extern "C" fn lib_run_blocking(handle: *mut Session) -> i32 {
         let session = unsafe { &mut *handle };
         session.runtime.block_on(session.run())
     }));
+    let poison = || {
+        // SAFETY: the entry-point contract keeps `handle` live for this call.
+        // The independent atomic does not inspect potentially torn state.
+        unsafe { &*handle }
+            .poisoned
+            .store(true, std::sync::atomic::Ordering::Release);
+    };
     match result {
         Ok(Ok(())) => 0,
+        Ok(Err(SessionError::TaskPanicked)) => {
+            poison();
+            -99
+        }
         Ok(Err(_)) => -1,
         Err(payload) => {
+            poison();
             discard_panic_payload(payload);
             -99
         }
@@ -411,8 +426,15 @@ pub unsafe extern "C" fn lib_run_blocking(handle: *mut Session) -> i32 {
 Two distinct failure paths exist here:
 
 1. A panic in the future's own body unwinds through `block_on`, and `catch_unwind` sees it.
-2. A panic in a spawned task does not. It surfaces as a `JoinError` at the join point, so the
-   `run()` body must check every handle it keeps.
+2. A panic in a spawned task does not. It surfaces as a `JoinError` at the join
+   point. The `run()` body must check every handle it keeps, dispose of the
+   payload through the guarded helper, and return `SessionError::TaskPanicked`
+   so the entry point poisons the session.
+
+`AssertUnwindSafe` does not restore a mutated `Session`. Give the session an
+independent poison flag, check it at every entry point, and set it before you
+return the panic status. A handle registry can instead invalidate the handle.
+Do not let the caller reuse state whose invariants a panic may have torn.
 
 Both must reach the caller. A guard alone is not enough when the crate spawns.
 
@@ -424,7 +446,7 @@ Both must reach the caller. A guard alone is not enough when the crate spawns.
   process is still alive.
 - Run the guard tests under `panic = "unwind"`. Cargo ignores the `panic` key for the test
   profile by default, so this is the normal case.
-- Add a debug-build assertion that the panic hook is installed before the first entry point
-  does work.
+- Add a debug-build assertion that the Rust bootstrap's composed hook includes
+  this component's handler before the first entry point does work.
 - Fuzz the input decoder behind the boundary. A fuzz harness finds the panics that a guard
   would otherwise hide behind a status code. See the `rust-test-tools` skill.

@@ -37,8 +37,9 @@ rustflags = [
 | `-Wl,--build-id=sha1` | Emits a build ID so a stripped `.so` correlates with its unstripped symbol sidecar. |
 | `-C force-frame-pointers=yes` | Keeps frame pointers for profilers and crash symbolication. |
 
-Repeat the block for every shipping target. All four Android ABIs normally share
-the same flags.
+Repeat the block for every target in the project-owned shipping ABI matrix. The
+four available Android mappings normally share the same flags, but no catalog
+rule decides which ones the product ships.
 
 ## Do not depend on `cargo-ndk`
 
@@ -46,9 +47,9 @@ You do not need `cargo-ndk`. Call cargo directly and set the linker through the
 environment at build time:
 
 ```bash
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=<ndk>/bin/aarch64-linux-android<minSdk>-clang
-export CC_aarch64_linux_android=<ndk>/bin/aarch64-linux-android<minSdk>-clang
-export CXX_aarch64_linux_android=<ndk>/bin/aarch64-linux-android<minSdk>-clang++
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=<ndk>/bin/aarch64-linux-android<api>-clang
+export CC_aarch64_linux_android=<ndk>/bin/aarch64-linux-android<api>-clang
+export CXX_aarch64_linux_android=<ndk>/bin/aarch64-linux-android<api>-clang++
 export AR_aarch64_linux_android=<ndk>/bin/llvm-ar
 cargo build --locked --target aarch64-linux-android --profile <profile>
 ```
@@ -56,6 +57,9 @@ cargo build --locked --target aarch64-linux-android --profile <profile>
 The `CC_*`, `CXX_*`, and `AR_*` variables use the triple with underscores. The
 `CARGO_TARGET_*_LINKER` variable uses the triple upper-cased with underscores.
 Set both forms: `cc`-based build scripts read the first, cargo reads the second.
+Require the application `minSdk` to meet the pinned NDK floor. Then compute
+`<api>` per ABI as `max(application minSdk, ABI floor)` and reject a missing
+driver.
 
 ## Separate cross-compilation from test execution
 

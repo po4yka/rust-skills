@@ -103,8 +103,8 @@ gap is larger than the tail gap it creates. Measured on aarch64-apple-darwin:
 #[repr(C)] pub struct Packed { pub b: u64, pub a: u8, pub c: u8 }  // 0 interior + 6 tail
 #[repr(C)] pub struct Small  { pub a: u8, pub b: u32 }             // 3 interior
 #[repr(C)] pub struct Wide   { pub b: u32, pub a: u8 }             // the same 3, now at the tail
-const _: () = assert!(size_of::<Spread>() == 24 && size_of::<Packed>() == 16);
-const _: () = assert!(size_of::<Small>() == 8 && size_of::<Wide>() == 8);
+const _: () = assert!(std::mem::size_of::<Spread>() == 24 && std::mem::size_of::<Packed>() == 16);
+const _: () = assert!(std::mem::size_of::<Small>() == 8 && std::mem::size_of::<Wide>() == 8);
 ```
 
 The first pair saves 8 bytes. The second pair saves nothing. So a reorder is worth a try for the
@@ -270,7 +270,7 @@ pub enum Frame {
     Header([u8; 300]),
     Body([u8; 300]),
 }
-const _: () = assert!(size_of::<Frame>() == 301);
+const _: () = assert!(std::mem::size_of::<Frame>() == 301);
 ```
 
 Boxing one variant here wins nothing. Box both, or split `Frame` into two types and let the caller
@@ -299,12 +299,13 @@ pub struct Node {
 
 // 16 bytes measured on rustc 1.97.0, aarch64-apple-darwin.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<Node>() == 16);
+const _: () = assert!(std::mem::size_of::<Node>() == 16);
 ```
 
-- `size_of` is in the edition-2024 prelude. The assert needs no import and no dependency.
+- `size_of` is not in the prelude. Use `std::mem::size_of` or import it; no
+  external dependency is required.
 - A mismatch fails the build with
-  `error[E0080]: evaluation panicked: assertion failed: size_of::<Node>() == 16`.
+  `error[E0080]: evaluation panicked: assertion failed: std::mem::size_of::<Node>() == 16`.
 - Gate it. The same assertion without the `cfg` compiles on aarch64-apple-darwin and fails with
   E0080 when the identical file is cross-compiled to `i686-linux-android`, because the pointer is
   4 bytes there.

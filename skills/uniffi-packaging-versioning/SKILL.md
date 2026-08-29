@@ -83,10 +83,11 @@ and select the packaging type explicitly.
 
 ## Android: one cdylib per ABI
 
-Ship **all** release ABIs together. A release that omits an ABI silently
-degrades every device on it. A debug or developer build may build a single host
-or emulator ABI to keep the loop fast, but the release path must reject a
-subset.
+Store one project-owned shipping ABI matrix. A release must contain every ABI
+in that declared matrix and no undocumented substitute. A debug or developer
+build may select one declared device or emulator ABI to keep the loop fast.
+Do not turn the four available Rust mappings below into a universal product
+requirement.
 
 | Android ABI | Rust target triple |
 |-------------|--------------------|
@@ -95,7 +96,8 @@ subset.
 | `x86_64` | `x86_64-linux-android` |
 | `x86` | `i686-linux-android` |
 
-The ABI directory names must match the table exactly. `arm64-v8a` is correct;
+The table lists available mappings. The ABI directory names in the selected
+project matrix must match it exactly. `arm64-v8a` is correct;
 `aarch64` is not. The packager silently ignores a wrong directory name, and the
 library is then missing at run time.
 

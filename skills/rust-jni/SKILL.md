@@ -470,7 +470,7 @@ allowlist, and page alignment.
 | `JNI DETECTED ERROR IN APPLICATION` | Stale local reference, wrong method signature string, or a JNI call made with an exception pending | Re-check the signature; call `env.exception_check()` after every Java call |
 | Local reference table overflow abort | A loop created local refs without a frame | Wrap the loop body in `with_local_frame`. Create outliving objects in the outer frame |
 | `SIGABRT` right after a Rust panic message | The panic unwound into the JVM | Add the panic guard at that export |
-| Native crash with no Rust message in logcat | No Android logger installed | Initialize logging and the panic hook in `JNI_OnLoad` |
+| Native crash with no Rust message in logcat | Logger or composed panic handler is absent | Initialize logging and register the redacted handler with the outermost Rust FFI bootstrap |
 | Crash inside a callback long after the call returned | A local reference or an env handle was stored between calls | Store a global reference plus a `JavaVM` clone instead |
 | `ClassNotFoundException` only on a Rust-created thread | `FindClass` selected the system loader because no application frame exists | Use the global class cache populated in `JNI_OnLoad`, or pass the correct `Class` or `ClassLoader` from managed code |
 | Corruption after passing a DirectByteBuffer | The Java-side reference was collected while Rust held the slice | Hold a global reference for the buffer |

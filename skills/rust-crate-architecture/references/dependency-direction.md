@@ -38,12 +38,13 @@ Use these questions in order:
 For each crate, read its forward tree and compare against the table:
 
 ```bash
-cargo tree --locked -p <crate> -e normal
+cargo tree --locked -p <crate> -e normal,build
 ```
 
-`-e normal` hides dev-dependencies and build-dependencies. Use it for the
-direction check, because a dev-dependency on a higher-layer crate is legal and
-would otherwise create false findings.
+Include build-dependencies: build scripts can compile native code, read the
+environment, and introduce the same upward coupling as a normal dependency.
+Exclude dev-dependencies from the production direction check because a test can
+legitimately depend on a higher-layer harness.
 
 Then check the reverse direction for the crates that must stay shared:
 
