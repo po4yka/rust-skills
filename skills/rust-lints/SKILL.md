@@ -314,12 +314,14 @@ threshold step.
 | Lower `too-many-arguments-threshold` | Same. | Step towards `6`. Keep the higher value only in a bridge layer whose signatures are fixed by the foreign ABI. |
 | Unsafe-documentation lints `allow` to `warn` to `deny` | Every existing `unsafe` block carries a `// SAFETY:` comment. | Promote `undocumented_unsafe_blocks` and `multiple_unsafe_ops_per_block`. |
 
-Exempt test code from the panic lints with either the `clippy.toml` keys above
-or an attribute on the test module:
+Exempt test code from the panic lints with the `clippy.toml` keys above. If one
+test needs a narrower exception, use `expect` on that test instead of an
+`allow` attribute, so `allow_attributes` can continue to detect bypasses:
 
 ```rust
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, reason = "tests assert with unwrap"))]
-mod tests { /* ... */ }
+#[test]
+#[expect(clippy::unwrap_used, reason = "this test asserts the panic payload")]
+fn invalid_input_panics() { /* ... */ }
 ```
 
 ## Verification

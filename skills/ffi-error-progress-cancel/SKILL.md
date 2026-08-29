@@ -171,9 +171,11 @@ pub enum EngineError {
 
 Hard constraints on the wire type:
 
-- One variant per core kind. Keep the two enums in step with an exhaustive
-  `match` in the `From` conversion, so adding a kind fails the build until the
-  boundary is updated.
+- One variant per core kind. If the core and boundary enums live in the same
+  crate, keep them in step with an exhaustive `match` so adding a kind fails the
+  build. A downstream crate cannot exhaustively match a `#[non_exhaustive]`
+  enum. It must map the wildcard to `Unexpected` and use a contract test that
+  compares the declared stable codes with the boundary variants.
 - **No `diagnostic` field on the wire.** Do not put `Box<dyn Error>`,
   filesystem paths verbatim, or backtraces in the message. The message is the
   only string the UI is allowed to render, so treat it as user-visible text.
@@ -461,8 +463,10 @@ the complete contract and required lifecycle tests.
 
 - [ ] The boundary error enum is flat, closed, and versioned. No `anyhow`
       chain, backtrace, or verbatim path crosses the boundary.
-- [ ] Every core kind maps to exactly one boundary variant, through an
-      exhaustive `match` that fails the build when a kind is added.
+- [ ] Every core kind maps to exactly one boundary variant. Use an exhaustive
+      match inside the defining crate. Across a crate boundary, map the
+      `#[non_exhaustive]` wildcard to `Unexpected` and enforce parity with a
+      stable-code contract test.
 - [ ] Every kind is assigned one of the five native buckets. `Unexpected` is the
       forward-compatible fallback and `Cancelled` is first class.
 - [ ] Platform mappers key off the generated variant or the stable `code()`

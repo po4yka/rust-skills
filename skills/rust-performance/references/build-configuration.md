@@ -121,7 +121,7 @@ column moves 96 bytes of padding across the five levels; `__text` moves 1,928 by
 The whole spread is under 1 percent of the code section, and a size level can still cost throughput.
 Build the ship profile at `3`, at `"s"` and at `"z"`, then pick from your own numbers.
 
-### `s` and `z` turn off loop vectorization
+### `z` disables loop vectorization; measure `s`
 
 Count the vector operations in the emitted assembly. On aarch64 the vector operand suffixes are `.4s`,
 `.2d`, `.16b` and `.8h`:
@@ -143,8 +143,11 @@ A plain accumulate loop over `&[u32]`, `aarch64-apple-darwin`:
 | `s` | 0 |
 | `z` | 0 |
 
-`"s"` gave the same result as `"z"` here, so re-measure any claim that `"s"` keeps the vectorizer. This
-is the mechanism behind the warning in SKILL.md section 8: size levels can cost throughput outright.
+`"s"` gave the same result as `"z"` for this loop, but `"s"` does not
+categorically disable loop vectorization. Its size cost model can still choose
+not to vectorize a specific loop. `"z"` disables loop vectorization. This is
+the mechanism behind the warning in SKILL.md section 8: size levels can cost
+throughput outright, so measure the actual hot loop.
 
 ### The assembly check needs `#[inline(never)]`
 

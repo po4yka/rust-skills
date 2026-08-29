@@ -1,6 +1,6 @@
 ---
 name: rust-variance
-description: Use when a lifetime coercion is refused and you must decide whether a type constructor is covariant, contravariant, or invariant, or when you add a lifetime parameter to a public type. Covers the three one-line probes that settle any variance question in one rustc run, the variance of &T, &mut T, *const T, *mut T, Box, Vec, fn(T), fn() -> T, Cell, Mutex, dyn Trait and every PhantomData form, why traits match their parameters and associated types by equality so a fn item returning &'static str fails resize_with with E0597, the three fixes for a producer whose output lives too long, unbounded lifetimes from a raw-pointer deref, and why adding interior mutability to a published struct is a breaking change. Triggers on "variance", "covariant", "contravariant", "subtyping", "lifetime may not live long enough" on a coercion, "is invariant over the parameter", "borrowed for 'static", "resize_with", "unbounded lifetime", "phantomdata variance", "dyn fn lifetime", "&mut is invariant", or "sender is invariant".
+description: Use when a lifetime coercion is refused and you must decide whether a type constructor is covariant, contravariant, or invariant, or when you add a lifetime parameter to a public type. Covers three one-line probes that settle any variance question in one rustc run, the variance of &T, &mut T, *const T, *mut T, Box, Vec, function parameters, Cell, Mutex, dyn Trait and every PhantomData form, why traits match their parameters and associated types by equality so a fn item returning &'static str fails resize_with with E0597, the three fixes for a producer whose output lives too long, unbounded lifetimes from a raw-pointer deref, and why adding interior mutability to a published struct is a breaking change. Triggers on "variance", "covariant", "contravariant", "subtyping", "lifetime may not live long enough" on a coercion, "is invariant over the parameter", "borrowed for 'static", "resize_with", "unbounded lifetime", "phantomdata variance", "dyn fn lifetime", "&mut is invariant", or "sender is invariant".
 license: BSD-3-Clause
 ---
 
@@ -345,32 +345,29 @@ fn main() {
 }
 ```
 
-Tie the output to an input. The borrow of the pointer variable carries the lifetime:
+Borrowing the pointer variable is not enough. It proves that the pointer value
+is alive, not that its pointee is alive. Tie the output to the actual owner or
+to a guard that keeps the allocation alive. This exact-owner form needs no raw
+pointer dereference:
 
-```rust
-unsafe fn deref_tied<'a, T>(p: &'a *const T) -> &'a T { unsafe { &**p } }
-```
-
-The caller must change too. Store the pointer in a binding, then pass a borrow of that binding. A
-borrow of the cast expression is a temporary, and rustc answers `error[E0716]: temporary value
-dropped while borrowed`. This caller uses a binding, so the borrow checker sees the real lifetime:
-
-```rust,compile_fail
-unsafe fn deref_tied<'a, T>(p: &'a *const T) -> &'a T { unsafe { &**p } }
+```rust,run
+fn deref_tied<'a, T>(owner: &'a T, pointer: *const T) -> Option<&'a T> {
+    std::ptr::eq(owner, pointer).then_some(owner)
+}
 
 fn main() {
-    let escaped: &String;
-    {
-        let owned = String::from("gone");
-        let p = &owned as *const String;
-        escaped = unsafe { deref_tied(&p) };
-    }
-    println!("{escaped}");
+    let owner = String::from("live");
+    let pointer = &owner as *const String;
+    assert_eq!(deref_tied(&owner, pointer).map(String::as_str), Some("live"));
+
+    let other = String::from("other");
+    assert!(deref_tied(&owner, &other).is_none());
 }
 ```
 
-rustc now rejects the escape with ``error[E0597]: `p` does not live long enough``, and labels the
-`println!` line `borrow later used here`.
+For a pointer into a larger allocation, make the wrapper borrow the allocation
+owner or return a guard that holds it. An `unsafe` constructor must state and
+enforce the pointee-validity contract; a borrow of `*const T` cannot replace it.
 
 `<*const T>::as_ref` and `NonNull::as_ref` both hand out an unbounded lifetime the same way. When
 no input carries the lifetime, take `&self` on a wrapper that owns the pointer, or return a

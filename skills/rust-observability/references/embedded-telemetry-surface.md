@@ -21,45 +21,41 @@ game engine, a daemon plugin — and the host reads telemetry across a boundary.
 
 ## The bounded event ring
 
-One ring per domain. Each ring owns a bounded channel and a drop counter.
+One ring per domain. Each ring owns an atomic bounded queue and a drop counter.
 
 ```rust
 use core::sync::atomic::{AtomicU64, Ordering};
-use flume::TrySendError;
+use crossbeam_queue::ArrayQueue;
+
+pub struct Record;
 
 pub struct EventRing {
-    tx: flume::Sender<Record>,
-    rx: flume::Receiver<Record>,
+    queue: ArrayQueue<Record>,
     dropped: AtomicU64,
 }
 
 impl EventRing {
     pub fn with_capacity(capacity: usize) -> Self {
-        let (tx, rx) = flume::bounded(capacity);
-        Self { tx, rx, dropped: AtomicU64::new(0) }
+        assert!(capacity > 0, "event ring capacity must be non-zero");
+        Self {
+            queue: ArrayQueue::new(capacity),
+            dropped: AtomicU64::new(0),
+        }
     }
 
-    /// Never blocks. On a full ring the oldest record is evicted.
+    /// Takes no mutex and never sleeps. On a full ring the oldest record is
+    /// evicted. Call from task context, not an interrupt or signal handler.
     pub fn push(&self, record: Record) {
-        // `TrySendError::Full` hands the record back, so the fast path does not
-        // clone. The ring owns both ends, so `Disconnected` cannot happen.
-        let record = match self.tx.try_send(record) {
-            Ok(()) => return,
-            Err(TrySendError::Full(record)) => record,
-            Err(TrySendError::Disconnected(_)) => return,
-        };
-        // Full: drop the oldest, count it, retry once.
-        if self.rx.try_recv().is_ok() {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-        }
-        // Another producer can refill the slot first. Count that loss too.
-        if self.tx.try_send(record).is_err() {
+        // `force_push` atomically inserts the new record and returns the oldest
+        // record only when the queue was full. A concurrent drain cannot split
+        // eviction from insertion.
+        if self.queue.force_push(record).is_some() {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     pub fn drain(&self) -> Vec<Record> {
-        self.rx.try_iter().collect()
+        std::iter::from_fn(|| self.queue.pop()).collect()
     }
 
     pub fn dropped(&self) -> u64 {
@@ -74,7 +70,10 @@ Invariants to preserve if you change the implementation:
 2. Retained records keep FIFO order.
 3. A full ring drops the oldest, not the newest.
 4. Every drop increments a counter that the snapshot exposes.
-5. `push` never blocks and never allocates on the steady path.
+5. `push` takes no mutex, does not deliberately sleep, and never allocates on
+   the steady path. It can spin behind a preempted peer and has no formal
+   lock-free progress guarantee. Exclude interrupt, reentrant, and real-time
+   contexts.
 
 Normalize domain aliases at the boundary, so a caller that names a domain
 slightly differently lands in the right ring instead of creating a new one.
@@ -205,18 +204,17 @@ proxy is an async runtime that stops making progress.
 tokio::spawn(async move {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        HEARTBEAT.store(now, Ordering::Relaxed);
+        HEARTBEAT_TICK.fetch_add(1, Ordering::Relaxed);
     }
 });
 ```
 
-The host reads `HEARTBEAT` through the same snapshot it already polls. A value
-older than a threshold — ten seconds is a workable default — means the runtime
-is not scheduling. Raise the alert on the host side.
+The host reads `HEARTBEAT_TICK` through the same snapshot it already polls. It
+records the last observed value and the host's own monotonic time when that
+value changes. An unchanged value for a threshold — ten seconds is a workable
+default — means the runtime is not scheduling. Raise the alert on the host
+side. Do not compare wall-clock timestamps: clock corrections can create false
+stalls or hide real ones.
 
 This detects a stalled scheduler. It does not detect a blocked worker thread
 that still lets the timer task run. For that, add a per-worker last-progress

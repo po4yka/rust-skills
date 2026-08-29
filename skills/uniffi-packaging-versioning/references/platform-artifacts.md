@@ -26,10 +26,28 @@ directory:
 `darwin-x86_64`; the toolchain runs under Rosetta or ships universal binaries
 depending on the NDK release.
 
-The driver name encodes the target triple and the minimum API level, for example
-`aarch64-linux-android35-clang`. The API level in the driver name must match the
-`minSdk` you ship. A mismatch either fails to link or produces a library that
-loads only on newer devices.
+The driver name usually encodes the Rust target triple and the minimum API
+level. ARMv7 is the exception: Rust uses `armv7-linux-androideabi`, while the
+NDK driver uses `armv7a-linux-androideabi<api>-clang`. Use an explicit mapping:
+
+| Rust target | NDK Clang driver prefix |
+|-------------|-------------------------|
+| `aarch64-linux-android` | `aarch64-linux-android` |
+| `armv7-linux-androideabi` | `armv7a-linux-androideabi` |
+| `x86_64-linux-android` | `x86_64-linux-android` |
+| `i686-linux-android` | `i686-linux-android` |
+
+Choose the API suffix separately for each ABI:
+
+```text
+api = max(application minSdk, ABI minimum API, NDK minimum API)
+```
+
+Read the NDK floor from its metadata instead of copying it into the build
+script. A 64-bit Android ABI has a minimum API of 21 even when the application
+also ships a 32-bit ABI below 21. Append the computed API and `-clang` or
+`-clang++` to the driver prefix, and fail if that exact driver does not exist. A
+lower or guessed suffix can fail to link or silently raise the runtime floor.
 
 ### Environment variable naming rules
 
@@ -100,10 +118,10 @@ Whatever build system you use, hold these properties:
 ### Host library for bindgen
 
 The bindgen step needs a host `cdylib`, not an Android slice. Build it with the
-same `cargo rustc --crate-type cdylib` form and no `--target`. On macOS the
-output is `lib<crate_name>.dylib`; on Linux it is `lib<crate_name>.so`. Look up
-both extensions in the regeneration script rather than branching on the
-operating system.
+same `cargo rustc --crate-type cdylib` form and no `--target`. The output is
+`lib<crate_name>.dylib` on macOS, `lib<crate_name>.so` on Linux, and
+`<crate_name>.dll` on Windows. Try all three names and require exactly one
+match instead of branching on the operating system.
 
 ---
 

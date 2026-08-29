@@ -124,14 +124,18 @@ fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
     let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
     if let Err(payload) = second {
         // The destructor of the first payload panicked. Do not drop the second payload here.
-        std::mem::forget(payload);
+        let _leaked = std::mem::ManuallyDrop::new(payload);
     }
 }
 
 /// # Safety
-/// `ptr` must be non-null, aligned, writable for `len` bytes, and unaliased for this call.
+/// `ptr` must be non-null, aligned, writable for `len` bytes, and unaliased for
+/// this call. `len` must not exceed `isize::MAX`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lib_render(ptr: *mut u8, len: usize) -> i32 {
+    if ptr.is_null() || len > isize::MAX as usize {
+        return ERR_INVALID_INPUT;
+    }
     let result = std::panic::catch_unwind(|| {
         // SAFETY: the caller guarantees the contract above.
         let buf = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
@@ -234,10 +238,6 @@ that emits one bounded structured record. Do not inspect the panic payload in sh
 It can contain input data, paths, identifiers, or secrets.
 
 ```rust
-use std::sync::Once;
-
-static HOOK: Once = Once::new();
-
 #[derive(Clone, Copy)]
 enum PanicSite {
     Boundary,
@@ -255,30 +255,36 @@ fn classify_site(file: &str) -> PanicSite {
     }
 }
 
-pub fn install_panic_hook() {
-    HOOK.call_once(|| {
-        std::panic::set_hook(Box::new(|info| {
-            let (site, line, column) = info
-                .location()
-                .map(|location| {
-                    (
-                        classify_site(location.file()),
-                        location.line(),
-                        location.column(),
-                    )
-                })
-                .unwrap_or((PanicSite::Unknown, 0, 0));
+pub fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
+    let (site, line, column) = info
+        .location()
+        .map(|location| {
+            (
+                classify_site(location.file()),
+                location.line(),
+                location.column(),
+            )
+        })
+        .unwrap_or((PanicSite::Unknown, 0, 0));
 
-            write_platform_panic("rust_panic", site, line, column);
-        }));
-    });
+    write_platform_panic("rust_panic", site, line, column);
+}
+
+// The host binary owns the process-global hook and composes every library
+// handler once during process startup.
+pub fn install_host_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        report_panic(info);
+        report_other_library_panics(info);
+    }));
 }
 ```
 
 Rules:
 
-- Install the hook once, at the first entry point the host calls. `set_hook` replaces the
-  previous hook globally.
+- Let the host executable own `set_hook`. An embedded library exposes a redacted
+  handler and never replaces an unknown process-global hook. Install the composed
+  host hook once during process startup.
 - Do not chain the default hook in a shipped embedded process. It formats the payload and file
   path. Keep it only in a local host binary whose stderr is not forwarded to telemetry.
 - The hook runs before unwinding starts. Map the file path to a closed site code. Emit only
@@ -328,8 +334,8 @@ A bare `.unwrap()` with no proof fails review. Enforce it with lints rather than
 vigilance:
 
 ```toml
-# Cargo.toml of a crate on an FFI path
-[lints.clippy]
+# Root Cargo.toml. Members inherit this table with `[lints] workspace = true`.
+[workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "warn"
 panic = "deny"
@@ -338,6 +344,10 @@ unimplemented = "deny"
 indexing_slicing = "warn"
 panic_in_result_fn = "deny"
 missing_panics_doc = "warn"
+
+# Member Cargo.toml
+[lints]
+workspace = true
 ```
 
 ```toml
@@ -403,16 +413,20 @@ of data is a separate problem from panic safety of the boundary.
   half-complete, arm a bomb and disarm it on success.
 
   ```rust
-  struct AbortOnUnwind;
+  struct AbortOnUnwind {
+      armed: bool,
+  }
   impl Drop for AbortOnUnwind {
       fn drop(&mut self) {
-          std::process::abort();
+          if self.armed {
+              std::process::abort();
+          }
       }
   }
 
-  let bomb = AbortOnUnwind;
+  let mut bomb = AbortOnUnwind { armed: true };
   // ... section that must complete or kill the process ...
-  std::mem::forget(bomb);
+  bomb.armed = false;
   ```
 
 - **Do not leave a `&mut` in a torn state.** If you split a value into parts and panic in the
@@ -428,7 +442,7 @@ of data is a separate problem from panic safety of the boundary.
   match handle.await {
       Ok(value) => Ok(value),
       Err(err) if err.is_panic() => {
-          drop(err.into_panic());
+          discard_panic_payload(err.into_panic());
           Err(Error::TaskPanicked)
       }
       Err(_) => Err(Error::TaskCancelled),

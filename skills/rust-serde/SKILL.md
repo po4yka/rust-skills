@@ -32,7 +32,7 @@ rg -L 'deny_unknown_fields' -l --type rust $(rg -l 'Deserialize' --type rust)
 | --- | --- |
 | Internal to one process, one build, cache that may be discarded | Change it freely. Version the cache directory and drop it on mismatch |
 | Written by a human: config, manifest, fixture | `deny_unknown_fields`. A typo must be an error, not a default |
-| Read by an older build of your own code | Additive only. Every new field gets `default` |
+| An older payload is read by a newer build of your own code | Additive only. Every new field gets `default` |
 | Read by another team or another language | Additive only, plus an explicit version field and a written schema |
 
 The second and third rows conflict: `deny_unknown_fields` rejects a field a *newer* writer
@@ -174,23 +174,25 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 #[serde(try_from = "u16")]
-pub struct Port(u16);
+pub struct NonZeroPort(u16);
 
-impl TryFrom<u16> for Port {
+impl TryFrom<u16> for NonZeroPort {
     type Error = String;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         if value == 0 {
-            return Err("port 0 is not bindable".to_owned());
+            return Err("port must be non-zero for this contract".to_owned());
         }
-        Ok(Port(value))
+        Ok(NonZeroPort(value))
     }
 }
 ```
 
-`serde_json::from_str::<Port>("0")` now fails with `port 0 is not bindable`. Every later use of
-a `Port` can assume it is valid, and no code needs a second check. This is the serde form of
-parse, do not validate; see the `rust-discipline` skill.
+`serde_json::from_str::<NonZeroPort>("0")` now fails because this example's
+domain contract requires an explicit non-zero port. It does not prove that the
+OS assigned, bound, or still owns the value. Use a different configuration type
+when zero means "request an ephemeral port". This is the serde form of parse,
+do not validate; see the `rust-discipline` skill.
 
 Use `#[serde(into = "..")]` for the same treatment on the way out, and note that it requires
 `Clone`.
@@ -256,7 +258,8 @@ aliases, unknown fields, and every map-key shape that the contract permits.
 | `unknown field` on a key you meant to capture | `flatten` and `deny_unknown_fields` on one struct | Remove one of them |
 | `did not match any variant of untagged enum` | An `untagged` enum with no shape that fits | Move to `tag` or `tag` + `content` |
 | `invalid type: map, expected ...` on an enum | Internal tagging on a newtype variant that is not a map | Use adjacent tagging |
-| An older build cannot read a new payload | A field was added without `default` | Add `default`; ship the reader before the writer |
+| A newer build cannot read an older payload | A field was added without `default` | Add `default` to the new reader |
+| An older build cannot read a newer payload | The old reader rejects a field from the new writer | Keep the writer from emitting the field until tolerant or version-aware readers are deployed |
 | A binary format rejects a type that JSON accepts | `flatten` needs field names | Remove `flatten`, or keep the format self-describing |
 | A generic parser rejects borrowed output | It requires `DeserializeOwned` or `Deserialize<'static>` | Use `T: Deserialize<'de>` while the input lives; keep `DeserializeOwned` only for owned input |
 | JSON rejects a derived map at runtime | The key type is outside JSON's supported scalar key model | Encode keys as strings or use a sequence of key-value records |

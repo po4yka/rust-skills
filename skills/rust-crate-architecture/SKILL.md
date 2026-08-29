@@ -210,10 +210,14 @@ when a rule above becomes true.
    writes the `[workspace.dependencies]` entry. Add that entry by hand. Without
    it, a dependent that writes `workspace = true` fails to resolve.
 
-   Add a `version` field to the `[workspace.dependencies]` entry only when you
-   publish the crate, and set it to the version the member actually has. A
-   version requirement that does not match the member version makes every
-   cargo command fail with `failed to select a version for the requirement`.
+   Add a matching `version` field when you publish the crate or when the
+   consumer workspace requires versions on internal path dependencies. For
+   example, a workspace that denies wildcard dependency requirements can use
+   `{ path = "crates/<crate-name>", version = "<workspace-version>" }` even when
+   every member has `publish = false`. Read the local workspace policy before
+   you choose the path-only form. A version requirement that does not match the
+   member version makes every cargo command fail with `failed to select a
+   version for the requirement`.
 
 4. **Write the crate manifest.** Inherit everything the workspace defines, and
    take every dependency through `workspace = true`:

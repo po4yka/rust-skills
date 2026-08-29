@@ -19,16 +19,25 @@ sudo sysctl -p /etc/sysctl.d/perf.conf
 sudo sh -c 'echo 0 > /proc/sys/kernel/kptr_restrict'
 ```
 
+Rust 1.90 and later use `lld` by default on supported Linux hosts. `perf` needs
+load segments instead of one read-only segment for accurate stack traces. Add
+the linker flag for the profiled Linux target:
+
+```toml
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-Clink-arg=-Wl,--no-rosegment"]
+```
+
 ### macOS prerequisites
 
-macOS uses DTrace. It needs `sudo`, and System Integrity Protection can block it.
+Current `cargo-flamegraph` uses `xctrace` on macOS. Grant the requested
+profiling permission when macOS prompts. Do not weaken System Integrity
+Protection for profiling.
 
 ```bash
-# Check that DTrace works
-sudo dtrace -n 'BEGIN { exit(0); }'
-
-# If SIP blocks it, boot into recovery and run:
-# csrutil enable --without dtrace
+# Lower-friction alternative with no root requirement
+cargo install samply
+samply record ./target/release/myapp
 ```
 
 ### Installation

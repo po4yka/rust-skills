@@ -44,7 +44,7 @@ compatibility rules between them.
 |----------|-----------------|----------|----------------|
 | Android | `cdylib` | `lib<crate_name>.so`, one per ABI, under `jniLibs/<abi>/` | Kotlin file plus JNA at runtime |
 | Apple | `staticlib` | `<Name>.xcframework` with one slice per platform | Swift file plus a C header and a modulemap |
-| Host (bindgen only) | `cdylib` | `lib<crate_name>.{dylib,so}` for the build machine | none - this is the bindgen input |
+| Host (bindgen only) | `cdylib` | `lib<crate_name>.{dylib,so}` or `<crate_name>.dll` for the build machine | none - this is the bindgen input |
 
 Keep **one** FFI crate. Do not create a second `cdylib` crate for a second
 consumer. All platform-facing surface lives in the single crate, so there is one
@@ -164,21 +164,24 @@ staging, and the modulemap naming trap.
 
 ## Binding generation
 
-Generate bindings from the **built host library**, not from a UDL file and not
-from a device slice. The exported API and its checksums are
-platform-independent, so the host `cdylib` is the correct and fastest input.
+Generate bindings from the **built host library**, not from a UDL file. This is
+correct only when the exported UniFFI surface is target-independent. Reject
+`cfg` and `cfg_attr` on exported functions, methods, records, enums, errors, and
+objects with a source gate. If target-dependent exports are unavoidable,
+extract and compare metadata from every shipping target library. Fail on any
+difference, or generate and version separate bindings for the different APIs.
 
 ```bash
 # 1. build the host library (no --target: this is the build machine)
 cargo rustc --locked --profile release --crate-type cdylib -p <ffi-crate> --lib
 
-# 2. generate both languages from that one library
+# 2. after the target-independence gate, generate both languages from that library
 cargo run --locked -p <ffi-crate> --features cli --bin uniffi-bindgen -- \
-  generate --library <host lib<crate_name>.{dylib,so}> \
+  generate --library <host library> \
   --language kotlin --out-dir <tmp>
 
 cargo run --locked -p <ffi-crate> --features cli --bin uniffi-bindgen -- \
-  generate --library <host lib<crate_name>.{dylib,so}> \
+  generate --library <host library> \
   --language swift --out-dir <tmp>
 ```
 

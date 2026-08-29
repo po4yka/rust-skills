@@ -22,11 +22,11 @@ Profiling and optimization for Rust workloads on the host, on Android, and on iO
 | Target | CPU profile | Heap profile | Notes |
 |--------|-------------|--------------|-------|
 | Host (Linux) | `samply`, `cargo flamegraph`, `perf record` | `heaptrack`, DHAT | `perf_event_paranoid <= 1` required |
-| Host (macOS) | `samply`, `cargo flamegraph` (DTrace), Instruments | DHAT through the `dhat` crate, Instruments Allocations | DTrace needs `sudo` and SIP consideration; `samply` does not |
+| Host (macOS) | `samply`, `cargo flamegraph` (`xctrace`), Instruments | DHAT through the `dhat` crate, Instruments Allocations | Grant profiling permission when prompted; do not weaken SIP |
 | Android | `simpleperf`, Perfetto | Android Studio native allocations, HWASan for errors | `perf`, `heaptrack` and DHAT do not work here |
 | iOS | Instruments Time Profiler, `os_signpost` | Instruments Allocations and Leaks | No `simpleperf`; MetricKit for production data |
 
-`samply` 0.13.1 is the lowest-friction sampling profiler on the host. It runs on macOS and Linux, needs no DTrace, no `sudo` and no Instruments, and opens the result in the Firefox Profiler:
+`samply` 0.13.1 is the lowest-friction sampling profiler on the host. It runs on macOS and Linux, needs no root access or Instruments, and opens the result in the Firefox Profiler:
 
 ```bash
 cargo install samply
@@ -56,7 +56,7 @@ cargo flamegraph --locked --bench my_bench -p my-bench-crate -- --bench
 cargo flamegraph --locked --freq 997 --bin myapp
 ```
 
-On macOS `cargo flamegraph` uses DTrace and needs `sudo`. On Linux it uses `perf`.
+On macOS current `cargo flamegraph` uses `xctrace`. On Linux it uses `perf`.
 
 See [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) for the Linux and macOS prerequisites, and for the test, example, `--manifest-path` and output-file invocations.
 
@@ -101,7 +101,7 @@ dhat::assert_eq!(dhat::HeapStats::get().total_blocks, 1);
 
 `dhat::assert_eq!` is not a no-op outside testing mode. Under a non-testing profiler it panics with `dhat: asserting while not in testing mode`, and with no profiler running it panics with `dhat: asserting when no profiler is running`. For what to change in the code once DHAT names the allocation sites, see `rust-hot-path`.
 
-- DTrace on macOS — `cargo flamegraph` calls it for you.
+- `xctrace` on macOS — current `cargo flamegraph` calls it for you.
 - Instruments on macOS — Allocations and Leaks templates also work on host builds.
 
 ---
@@ -436,7 +436,7 @@ The full build-time playbook — sccache, the cross-compilation target matrix, w
 | Symbolication shows `<unknown>` | Stripped library | Use the unstripped `.so` from `target/<triple>/<profile>/`, not the packaged copy |
 | Profiling a release build shows no symbols | The ship profile strips symbols | Profile the on-device debug profile, or symbolicate offline |
 | `cargo flamegraph` fails on Linux | `perf_event_paranoid` too high | Set it to 1 or lower |
-| `cargo flamegraph` fails on macOS | DTrace blocked | Run with `sudo`; check SIP |
+| `cargo flamegraph` fails on macOS | `xctrace` permission or tool failure | Grant profiling permission, or use `samply`; do not weaken SIP |
 | Benchmark results swing by more than 10% between runs | Thermal or scheduler noise | Fix the power state, close background load, raise `sample_size` |
 | Binary grew after a dependency bump | New monomorphizations or new codegen | `cargo bloat --crates` then `cargo llvm-lines` on the top crate |
 | An Android profiling or symbolication step fails | Device, NDK or packaging setup | The common-mistakes table in [references/android-profiling.md](references/android-profiling.md) |
@@ -464,7 +464,7 @@ Before you claim a performance change:
 | Host flamegraph of a binary | `cargo flamegraph --locked --bin myapp -- <args>` |
 | Host flamegraph of a benchmark | `cargo flamegraph --locked --bench my_bench -p my-bench-crate -- --bench` |
 | Record an Android CPU profile | `adb shell simpleperf record -p $(adb shell pidof com.example.app) --call-graph dwarf --duration 30 -o /data/local/tmp/perf.data` |
-| Android flamegraph | `python3 $ANDROID_NDK_HOME/simpleperf/inferno.py -sc --record_file perf.data` |
+| Android flamegraph | `$ANDROID_NDK_HOME/simpleperf/inferno.sh -sc --record_file perf.data` |
 | Symbolicate a native crash | `adb logcat \| $ANDROID_NDK_HOME/ndk-stack -sym target/aarch64-linux-android/debug/` |
 | Per-crate binary size | `cargo bloat --locked --profile mobile-release --target aarch64-linux-android --crates` |
 | Monomorphization bloat | `cargo llvm-lines --locked --release -p my-crate \| head -30` |

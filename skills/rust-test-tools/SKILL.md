@@ -83,10 +83,10 @@ large subset of what Miri finds.
 cargo install cargo-careful
 
 # Run for crates that mix unsafe with FFI, where Miri is unavailable.
-cargo +nightly careful test -p <ffi-crate> --no-fail-fast
+cargo +nightly careful test --locked -p <ffi-crate> --no-fail-fast
 
 # Or the whole workspace.
-cargo +nightly careful test --workspace --no-fail-fast
+cargo +nightly careful test --locked --workspace --no-fail-fast
 ```
 
 Use cargo-careful when:
@@ -382,7 +382,7 @@ jobs:
     steps:
       - run: rustup default nightly
       - run: cargo install cargo-careful
-      - run: cargo +nightly careful test --workspace --no-fail-fast
+      - run: cargo +nightly careful test --locked --workspace --no-fail-fast
 
   loom:
     runs-on: ubuntu-latest

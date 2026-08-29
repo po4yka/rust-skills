@@ -581,8 +581,9 @@ impl<H: Handler + ?Sized> Handler for &mut H {
 
 The note names the reason: `downstream crates may implement trait 'Sink' for type '&mut _'`.
 Coherence reasons about what a downstream crate may do, not about what your crate did. So you
-choose once: either your trait derives itself from another trait, or callers may pass `&mut h`,
-`Box<h>`, and `Arc<h>`. You cannot have both.
+choose once: either your trait derives itself from another trait, or callers may pass `&mut h`
+and `Box<h>`. An `Arc<h>` cannot forward an `&mut self` receiver; use `Arc` only with an
+`&self` trait plus interior synchronization. You cannot have both blanket implementations.
 
 **A blanket impl over a parameter blocks every later concrete impl.** `impl<S> Handler<S> for X`
 is a one-way door for `X`:

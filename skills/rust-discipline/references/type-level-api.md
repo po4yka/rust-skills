@@ -12,12 +12,13 @@ they cover most cases, and the later ones are easy to over-apply.
 The cheapest technique, and the one that is nearly always right. A validated value gets its own
 type, the constructor is the only way in, and no later code repeats the check.
 
-```rust
+```rust,run
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Port(u16);
+pub struct NonZeroPort(u16);
 
-impl Port {
-    /// Returns `None` for port 0, which cannot be bound.
+impl NonZeroPort {
+    /// Returns `None` for port 0, which means "ask the OS for an ephemeral port"
+    /// and is outside this type's non-zero domain contract.
     pub fn new(value: u16) -> Option<Self> {
         (value != 0).then_some(Self(value))
     }
@@ -26,11 +27,21 @@ impl Port {
         self.0
     }
 }
+
+fn main() {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .expect("bind an ephemeral loopback port");
+    let assigned = listener.local_addr().expect("read assigned port").port();
+    assert_ne!(assigned, 0);
+    assert!(NonZeroPort::new(assigned).is_some());
+    assert!(NonZeroPort::new(0).is_none());
+}
 ```
 
-Keep the field private. A `pub struct Port(pub u16)` proves nothing: any code can build an
-invalid one, and the type is then only a comment. See the `rust-serde` skill for the
-`#[serde(try_from = "..")]` form that applies the same rule at a deserialization boundary.
+Keep the field private. A `pub struct NonZeroPort(pub u16)` proves nothing:
+any code can build an invalid one, and the type is then only a comment. See the
+`rust-serde` skill for the `#[serde(try_from = "..")]` form that applies the same
+rule at a deserialization boundary.
 
 ## `#[non_exhaustive]` on anything a downstream crate matches
 

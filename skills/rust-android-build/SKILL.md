@@ -265,7 +265,8 @@ Rules:
   units gives back most of the size it saves.
 - Measure `opt-level = "z"` against `"s"` and `3` on the real `.so` before you
   ship it. `"z"` is not automatically the smallest, and a compute-bound JNI path
-  can prefer `3`. See `skills/rust-performance/references/build-configuration.md`.
+  can prefer `3`. Use the `rust-performance` skill for the measurement workflow
+  when it is installed.
 
 Two link-time flags reduce size further. Add them to the `rustflags` block only
 if you also verify their effect; do not document a flag that is absent from
@@ -298,25 +299,34 @@ binary behind it.
 
 ## ELF symbol allowlist
 
-A shipped `.so` should export these symbols and nothing else:
+A shipped `.so` should export only the symbols that its selected boundary
+requires:
 
-- `JNI_OnLoad` and `JNI_OnUnload`.
-- `Java_*` methods that follow the JNI naming convention.
+- JNI: `JNI_OnLoad`, `JNI_OnUnload`, and `Java_*` methods that use name-based
+  registration.
+- `RegisterNatives`: lifecycle symbols only; registered methods do not need
+  exported `Java_*` names.
+- UniFFI: the generated component functions, checksum functions, RustBuffer
+  helpers, and other symbols declared by the generated C header.
 - Linker-generated system symbols: `_init`, `_fini`, `__cxa_finalize`.
 
-Verify:
+Derive the expected boundary symbols from the generated JNI registration table
+or UniFFI header, add the permitted system symbols, sort the file, and compare
+that set with the final ELF dynamic export table:
 
 ```bash
-"$NDK_BIN/llvm-objdump" -T <build-dir>/arm64-v8a/libnative.so \
-  | awk '/ DF / && !/Java_/ && !/JNI_On/ && !/__cxa/ && !/_init/ && !/_fini/ {print}'
-# Expected output: empty
+"$NDK_BIN/llvm-readelf" --dyn-syms --wide \
+  <build-dir>/arm64-v8a/libnative.so \
+  | awk '$5 ~ /^(GLOBAL|WEAK)$/ && $7 != "UND" && $4 ~ /^(FUNC|OBJECT)$/ {print $8}' \
+  | sort -u > actual-exports.txt
+comm -23 actual-exports.txt expected-exports.txt > unexpected-exports.txt
+test ! -s unexpected-exports.txt
 ```
 
-Any extra symbol is an ABI leak. It is almost always a `pub fn` somewhere in
-the workspace marked `#[unsafe(no_mangle)]` without the `Java_*` prefix. Such a
-symbol exposes your Rust ABI to any process that can `dlopen` the library, and
-it pins the signature: you cannot change it later without breaking whoever
-bound to it.
+Any symbol outside the boundary-specific allowlist is an ABI leak. It is often
+a `pub fn` marked `#[unsafe(no_mangle)]` that neither generated boundary owns.
+Such a symbol exposes your Rust ABI to any process that can `dlopen` the
+library, and it pins the signature.
 
 Enforce the allowlist in the same CI script that checks alignment. Do not rely
 on source visibility alone. Use a checked-in linker version script as a

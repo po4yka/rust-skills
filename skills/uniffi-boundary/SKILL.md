@@ -143,13 +143,17 @@ not at the call site. Read the error against the struct, not against the method.
 
 ## Ownership across the boundary
 
-- **`Arc` identity, not bytes.** Returning an Object hands the caller an `Arc` handle. The
-  Rust value never moves and is never copied. The foreign object holds one strong reference;
-  the Rust side keeps its own. The value drops when both sides release it.
-- **No borrows cross.** UniFFI has no borrow model. Do not put `&T`, `&mut T`, or a lifetime
-  parameter in an exported signature. Return an owned Record, or an `Arc` handle to an Object.
-  The one exception is the `&self` receiver of an exported method, which the generator turns
-  into a call on the foreign handle.
+- **`Arc` identity, not bytes.** Returning an Object transfers one strong
+  reference into the foreign handle. Rust keeps another owner only when the
+  application explicitly clones or stores one. The value drops after the last
+  foreign handle and explicit Rust owner release it.
+- **Shared input borrows are call-scoped.** Proc-macro UniFFI supports top-level
+  shared input references whose type implements `LiftRef`, such as `&str`,
+  `&[u8]`, and shared references to supported records or objects. Generated glue
+  lifts an owned temporary and borrows it only for the Rust call. Do not return
+  or store that borrow. Do not assume `&mut T`, `Option<&T>`, a reference alias,
+  or another nested borrowed form works; verify the pinned UniFFI version. The
+  `&self` receiver is a call-scoped borrow of the foreign object handle.
 - **Records are copied.** Every Record field is serialized on every call. A large `Vec<T>`
   field is a per-call cost, not a pointer handoff.
 - **Foreign objects are owned by the foreign side.** A callback object passed into Rust is

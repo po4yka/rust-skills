@@ -63,8 +63,10 @@ CI by accident and hides the very drift it exists to catch.
 ### Steps the script must perform
 
 1. Build the host library with `--locked`. Fail if `Cargo.lock` would change.
-2. Locate the host library by trying both `lib<crate_name>.dylib` and
-   `lib<crate_name>.so`. Do not branch on the operating system name.
+2. Locate the host library by trying `lib<crate_name>.dylib`,
+   `lib<crate_name>.so`, and `<crate_name>.dll`. Require exactly one match. Do
+   not branch on the operating system name or assume every library has a `lib`
+   prefix.
 3. Run the in-crate bindgen once per language, each into its own temporary
    directory.
 4. Normalize the output: strip trailing whitespace, enforce a single final

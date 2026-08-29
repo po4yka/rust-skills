@@ -177,14 +177,18 @@ queue, not into a log macro.
 Contract:
 
 - The queue is **bounded**. Pick the capacity per domain.
-- Emission is **non-blocking**. A producer never waits for a consumer.
-- On a full queue, **remove the oldest record and retry the push**.
+- Task-context emission takes no mutex and does not deliberately sleep. The
+  queue can spin while a preempted peer owns a slot, so it provides no bounded
+  latency or formal lock-free progress guarantee. Do not call it from an
+  interrupt, a reentrant signal handler, or another real-time context.
+- On a full queue, **atomically replace the oldest record**.
 - Increment a **dropped-event counter** on every eviction, and expose it.
 - Retained records keep **FIFO order**.
 - Use **one queue per domain**. A consumer drains one domain into a snapshot.
 
-Use a bounded MPMC channel, for example `flume` or `crossbeam-channel`, or a
-fixed-size ring behind a lock that is never held across a syscall.
+Use a queue with an atomic overwrite operation, for example
+`crossbeam_queue::ArrayQueue::force_push`. A receive-then-send sequence on an
+MPMC channel is not an atomic drop-oldest operation.
 
 Do not replace this with `tokio::sync::broadcast`, an unbounded queue, or a
 blocking mutex-backed buffer.

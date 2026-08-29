@@ -119,8 +119,11 @@ build the Rust type from that builtin, and how to lower the Rust type back to it
 constraints are the same in every version:
 
 - The conversion must be **total in the lowering direction**. Rust to builtin cannot fail.
-- The lifting direction — builtin to Rust — may fail, and that failure surfaces as an error to
-  the caller. Make the error message say which value was rejected.
+- The lifting direction — builtin to Rust — may fail. On a function with no
+  declared error, that failure becomes a runtime failure. On a function with a
+  declared error, UniFFI downcasts the `anyhow::Error` to that exact error type;
+  a failed downcast is also a runtime failure. Return the declared boundary
+  error when the caller must recover from rejected input.
 - The round trip must be **lossless**. If `lift(lower(x)) != x` for any valid `x`, the type is
   a bug waiting for a caller to find it. Add a property test for the round trip.
 - Custom types cost a conversion on every crossing. A custom type on a field inside a large
@@ -133,7 +136,7 @@ Common custom-type candidates: `PathBuf` transported as `String`, a UUID transpo
 
 | Type | Why | Do this instead |
 |------|-----|-----------------|
-| `&T`, `&mut T`, any lifetime (the `&self` receiver excepted) | UniFFI has no borrow model | Return an owned Record or an `Arc` handle |
+| Borrowed return, stored borrow, `&mut T`, or unsupported nested reference | No foreign lifetime can carry the borrow | Return an owned Record or an `Arc` handle; use supported top-level shared input references only for one call |
 | `Rc<T>`, `Cell<T>`, `RefCell<T>` | Not `Sync` | `Arc` plus `Mutex` or `RwLock` |
 | Raw pointers | No safety story across the boundary | Wrap in an Object and expose methods |
 | Generic `T` | No monomorphization across the boundary | Concrete types, one per payload |

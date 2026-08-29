@@ -10,7 +10,7 @@ Every `Err(payload)` branch below calls this helper. Dropping a caught payload c
 fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
     let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
     if let Err(payload) = second {
-        std::mem::forget(payload);
+        let _leaked = std::mem::ManuallyDrop::new(payload);
     }
 }
 
@@ -37,8 +37,8 @@ fn main() {
 }
 ```
 
-Do not format or inspect the payload. The `forget` is a bounded fallback for the double-panic
-path, where safe destruction is no longer available.
+Do not format or inspect the payload. `ManuallyDrop` is a bounded leak on the
+double-panic path, where safe destruction is no longer available.
 
 ## Pattern selection
 
@@ -103,10 +103,18 @@ pub extern "C" fn lib_last_error_code() -> i32 {
     LAST_ERROR.with(|slot| slot.get() as i32)
 }
 
+/// # Safety
+/// `config` must be non-null and point to a valid null-terminated C string for
+/// the duration of the call.
 #[unsafe(no_mangle)]
-pub extern "C" fn lib_session_new(config: *const std::os::raw::c_char) -> *mut Session {
+pub unsafe extern "C" fn lib_session_new(config: *const std::os::raw::c_char) -> *mut Session {
+    if config.is_null() {
+        set_last_error(LastError::Domain);
+        return std::ptr::null_mut();
+    }
     let result = std::panic::catch_unwind(|| {
-        // SAFETY: the caller guarantees `config` is a valid null-terminated C string.
+        // SAFETY: the contract above requires a valid C string, and the null
+        // check rejects the only pointer condition that this function can test.
         let config = unsafe { std::ffi::CStr::from_ptr(config) }
             .to_str()
             .map_err(|_| Error::InvalidInput)?;
@@ -158,9 +166,14 @@ able to trust that its buffer is unchanged.
 
 ```rust
 /// # Safety
-/// `out_len` must be non-null and writable for one `usize`.
+/// `input` must be non-null and valid for reads of `len` bytes, including when
+/// `len` is zero, and `len` must not exceed `isize::MAX`. `out_len` must be
+/// non-null and writable for one `usize`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lib_measure(input: *const u8, len: usize, out_len: *mut usize) -> i32 {
+    if input.is_null() || out_len.is_null() || len > isize::MAX as usize {
+        return Status::InvalidInput as i32;
+    }
     let result = std::panic::catch_unwind(|| {
         // SAFETY: the caller guarantees `input` is valid for `len` bytes.
         let bytes = unsafe { std::slice::from_raw_parts(input, len) };
@@ -195,7 +208,13 @@ A Rust function pointer handed to a C or platform runtime is an FFI entry point.
 same guard, and it usually cannot report an error, so it must record one.
 
 ```rust
-extern "C" fn on_event(ctx: *mut std::ffi::c_void, code: i32) -> i32 {
+/// # Safety
+/// `ctx` must be the live `State` pointer registered with this callback, and
+/// the owner must prevent concurrent mutation for the duration of the call.
+unsafe extern "C" fn on_event(ctx: *mut std::ffi::c_void, code: i32) -> i32 {
+    if ctx.is_null() {
+        return Status::InvalidInput as i32;
+    }
     let result = std::panic::catch_unwind(|| {
         // SAFETY: `ctx` is the pointer passed to the registration call and outlives it.
         let state = unsafe { &*(ctx as *const State) };
@@ -365,8 +384,14 @@ skill for the error, progress, and cancellation contract.
 ## Async work behind a synchronous boundary
 
 ```rust
+/// # Safety
+/// `handle` must be a non-null, live, exclusively borrowed `Session` pointer
+/// for the duration of the call.
 #[unsafe(no_mangle)]
-pub extern "C" fn lib_run_blocking(handle: *mut Session) -> i32 {
+pub unsafe extern "C" fn lib_run_blocking(handle: *mut Session) -> i32 {
+    if handle.is_null() {
+        return Status::InvalidInput as i32;
+    }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: the caller owns `handle` for the duration of this call.
         let session = unsafe { &mut *handle };

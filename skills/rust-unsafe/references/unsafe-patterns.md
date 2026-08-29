@@ -12,9 +12,12 @@ it.
 ```rust
 /// # Safety
 /// `ptr` must be non-null, aligned to `align_of::<T>()`, and point at `len`
-/// initialized values of type `T`. The memory must stay valid and must not be
-/// mutated for the lifetime `'a` of the returned slice.
+/// initialized values of type `T`. Their total byte size must not exceed
+/// `isize::MAX`. The memory must stay valid and must not be mutated for the
+/// lifetime `'a` of the returned slice.
 unsafe fn raw_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
+    let element_size = std::mem::size_of::<T>();
+    assert!(element_size == 0 || len <= isize::MAX as usize / element_size);
     // SAFETY: the caller guarantees `ptr` is non-null, aligned, and valid for
     // `len` initialized elements.
     unsafe { std::slice::from_raw_parts(ptr, len) }
@@ -168,12 +171,21 @@ pub unsafe extern "C" fn render_into_buffer(
     height: u32,
     spec: *const std::os::raw::c_char,
 ) -> i32 {
+    let Some(pixel_len) = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .filter(|length| *length <= isize::MAX as usize)
+    else {
+        return -1;
+    };
+    if pixel_ptr.is_null() || spec.is_null() {
+        return -1;
+    }
     let result = std::panic::catch_unwind(|| {
         // SAFETY: the caller guarantees `pixel_ptr` is valid for
-        // `width * height * 4` bytes, writable, and not aliased.
-        let pixels = unsafe {
-            std::slice::from_raw_parts_mut(pixel_ptr, (width * height * 4) as usize)
-        };
+        // `pixel_len` bytes, writable, and not aliased. The checks above reject
+        // null pointers and arithmetic overflow.
+        let pixels = unsafe { std::slice::from_raw_parts_mut(pixel_ptr, pixel_len) };
         // SAFETY: the caller guarantees `spec` is a valid null-terminated C string.
         let spec = unsafe { std::ffi::CStr::from_ptr(spec) }
             .to_str()
@@ -183,7 +195,10 @@ pub unsafe extern "C" fn render_into_buffer(
     match result {
         Ok(Ok(())) => 0,
         Ok(Err(_)) => -1,
-        Err(_) => -2, // panic caught; never unwind into the caller
+        Err(payload) => {
+            discard_panic_payload(payload);
+            -2
+        }
     }
 }
 ```
@@ -242,40 +257,41 @@ unsafe fn surface_from_buffer(
     width: i32,
     height: i32,
 ) -> Option<Surface> {
+    let width_usize = usize::try_from(width).ok()?;
+    let height_usize = usize::try_from(height).ok()?;
+    let row_bytes = width_usize.checked_mul(4)?;
+    let required_bytes = row_bytes.checked_mul(height_usize)?;
+    if width == 0 || height == 0 || pixels.len() < required_bytes {
+        return None;
+    }
     let info = ImageInfo::new(
         (width, height),
         ColorType::RGBA8888,
         AlphaType::Premul,
         ColorSpace::new_srgb(),
     );
-    let row_bytes = (width as usize) * 4;
-    // SAFETY: the caller guarantees `pixels` is valid for `width * height * 4`
-    // bytes and outlives the returned surface.
+    // SAFETY: the checked calculations prove that `pixels` holds the complete
+    // image, and the caller guarantees that it outlives the returned surface.
     unsafe { surfaces::wrap_pixels(&info, pixels, row_bytes, None) }
 }
 ```
 
-When the library hands back a raw pointer to its own pixels, copy out immediately. Do not store
-the pointer, and do not let it escape the scope where the owning object is known to be alive.
+When the library hands back a pixmap view, use its safe byte slice and copy out
+immediately. Do not reconstruct a slice from a caller-supplied height. Do not
+store the view or let it escape the scope where the owning object is alive.
 
 ```rust
-fn read_pixels(surface: &mut Surface, height: i32) -> Vec<u8> {
+fn read_pixels(surface: &mut Surface) -> Vec<u8> {
     let Some(pixmap) = surface.peek_pixels() else {
         return Vec::new();
     };
-    let row_bytes = pixmap.row_bytes();
-    let data = pixmap.addr() as *const u8;
-    // SAFETY: `peek_pixels` returned Some, so `addr()` is non-null and aligned,
-    // and it is valid for `height * row_bytes` bytes while `surface` is alive
-    // and no drawing operation is in progress. The copy happens before the
-    // borrow of `surface` ends.
-    let slice = unsafe { std::slice::from_raw_parts(data, (height as usize) * row_bytes) };
-    slice.to_vec()
+    pixmap.bytes().map_or_else(Vec::new, <[u8]>::to_vec)
 }
 ```
 
-Prefer the safe read-back API when the library offers one. A copy into an owned `Vec` costs one
-memcpy and removes the entire class of lifetime error above.
+The pixmap computes its byte extent from its own image information and row
+stride. A copy into an owned `Vec` costs one memcpy and removes the raw-pointer,
+length, and lifetime obligations.
 
 ## Syscall, ioctl, union, and descriptor wrappers
 

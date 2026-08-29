@@ -122,7 +122,13 @@ State all three guarantees in the SAFETY comment, and state them again at the fo
 //   1. Non-null, and aligned for `u32`.
 //   2. Exclusively writable: no concurrent read or write from the caller.
 //   3. Valid for the entire duration of this call.
-let pixels = unsafe { std::slice::from_raw_parts_mut(ptr.cast::<u32>(), (width * height) as usize) };
+let width = usize::try_from(width).map_err(|_| Error::DimensionsOverflow)?;
+let height = usize::try_from(height).map_err(|_| Error::DimensionsOverflow)?;
+let pixel_count = width
+    .checked_mul(height)
+    .filter(|count| *count <= isize::MAX as usize / std::mem::size_of::<u32>())
+    .ok_or(Error::DimensionsOverflow)?;
+let pixels = unsafe { std::slice::from_raw_parts_mut(ptr.cast::<u32>(), pixel_count) };
 ```
 
 The same rule covers a slice built over a memory-mapped region. The mapping must outlive the
@@ -130,10 +136,11 @@ slice, and the region must not be mutated while the slice is live:
 
 ```rust
 /// # Safety
-/// `base` must be the start of a valid mapping of at least `len` bytes. The
-/// mapping must stay alive for `'map`, and must not be written while the
-/// returned slice is live.
+/// `base` must be the start of a valid mapping of at least `len` bytes, and
+/// `len` must not exceed `isize::MAX`. The mapping must stay alive for `'map`,
+/// and must not be written while the returned slice is live.
 unsafe fn mmap_as_slice<'map>(base: *const u8, len: usize) -> &'map [u8] {
+    assert!(len <= isize::MAX as usize);
     // SAFETY: the caller guarantees the mapping is valid, read-only, and lives
     // for at least `'map`.
     unsafe { std::slice::from_raw_parts(base, len) }
@@ -251,8 +258,11 @@ unsafe extern "C" fn trampoline<F: FnMut(i32)>(value: i32, context: *mut c_void)
     // The C library returns it unchanged and calls back on the registering
     // thread only, so no other reference to it exists during this call.
     let callback = unsafe { &mut *(context as *mut F) };
-    // A panic must not unwind into C. See the panic-safety section in SKILL.md.
-    let _ = catch_unwind(AssertUnwindSafe(|| callback(value)));
+    // A panic must not unwind into C. The helper catches a second panic from a
+    // hostile payload destructor. See the rust-panic-safety skill.
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(|| callback(value))) {
+        discard_panic_payload(payload);
+    }
 }
 
 pub fn register<F: FnMut(i32) + 'static>(callback: F) -> *mut c_void {

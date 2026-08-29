@@ -46,7 +46,8 @@ request.
 
 15. Any internal `unsafe fn` with no `# Safety` rustdoc section? Any `unsafe` block with no
     `// SAFETY:` comment?
-16. Any FFI entry point that can panic instead of returning a `Result`?
+16. Any FFI entry point that can panic instead of mapping a typed Rust error to
+    an ABI-safe status, sentinel, out-parameter, or foreign exception?
 17. Any new `#[allow(clippy::correctness | suspicious)]`? Any new `deny.toml` ignore with no
     tracking issue and no expiry?
 

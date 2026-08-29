@@ -236,7 +236,8 @@ Apply this gate to every new crate in `Cargo.toml`:
    that package yet. Do not run `cargo deny --locked` before this step. The old
    lockfile does not contain the proposed dependency graph.
 5. **Run policy against the candidate graph.** Run `cargo deny --locked check
-   bans advisories sources`. Reject the dependency if the new graph fails.
+   bans advisories licenses sources`. Reject the dependency if the new graph
+   fails.
 6. **Justify the dependency.** Check whether the standard library or a crate
    already in the graph does the job. Every new crate widens the attack
    surface and adds a `multiple-versions` risk.

@@ -54,24 +54,17 @@ adb pull /data/local/tmp/perf.data .
 
 `-g` is the short form of `--call-graph dwarf`.
 
-Generate a flamegraph with Inferno, which the NDK bundles:
+Generate a flamegraph with the Inferno wrapper that the NDK bundles:
 
 ```bash
-python3 $ANDROID_NDK_HOME/simpleperf/inferno.py -sc --record_file perf.data
+"$ANDROID_NDK_HOME/simpleperf/inferno.sh" -sc --record_file perf.data
 # Opens flamegraph.html
-```
-
-Or with the standalone Rust `inferno` tool:
-
-```bash
-cargo install inferno
-simpleperf report-sample --show-callchain perf.data | inferno-flamegraph > flame.svg
 ```
 
 To convert the recording for other viewers:
 
 ```bash
-simpleperf report-sample --protobuf perf.data -o perf.trace
+simpleperf report-sample --protobuf --show-callchain -i perf.data -o perf.trace
 ```
 
 ---

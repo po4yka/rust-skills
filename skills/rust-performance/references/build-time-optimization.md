@@ -51,7 +51,12 @@ In GitHub Actions:
     RUSTC_WRAPPER: sccache
 ```
 
-Most crate compilations across mobile targets differ only by target triple, and sccache deduplicates them well for pure-Rust crates. Set `RUSTC_WRAPPER=sccache` for every target build, not only the host one.
+The target triple and code-generation options are part of the cache key.
+Compilations for Android, iOS, and the host do not share one cached object merely
+because a crate is pure Rust. `sccache` still helps when the same target and
+compiler inputs repeat across local or CI builds. Set `RUSTC_WRAPPER=sccache`
+for every target build, then measure the hit rate per target instead of assuming
+cross-target reuse.
 
 ---
 
