@@ -60,4 +60,3 @@ fn user_message(detail: &str, user_message: &str) -> String {
     }
 }
 ```
-

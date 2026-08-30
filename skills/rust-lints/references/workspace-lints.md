@@ -155,4 +155,3 @@ are still off and why. Then follow [Tighten a lint safely](../SKILL.md#tighten-a
 Write down the level that is actually deployed. A skill or a README that
 describes an aspirational level as if it were enforced is worse than no
 document: reviewers stop checking what the compiler is not checking either.
-
