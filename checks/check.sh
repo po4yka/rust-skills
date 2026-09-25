@@ -13,7 +13,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="x86_64-unknown-linux-gnu"
-SKILLS_CLI_VERSION="1.5.23"
+SKILLS_CLI_VERSION="1.7.0"
 
 # gen.py, cargo, and analyze.py share examples/, manifest.json, check.json, and
 # check.err. Hold one checkout-scoped process lock across the complete sequence
@@ -75,11 +75,11 @@ echo "==> skills CLI discovers every skill"
 if command -v npx > /dev/null 2>&1; then
     cd "$ROOT"
     npx -y "skills@${SKILLS_CLI_VERSION}" add ./ --list 2>&1 |
-        sed 's/\x1b\[[0-9;]*m//g' > /tmp/discovered.txt
+        sed 's/\x1b\[[0-9;]*m//g' > "$RUN_DIR/discovered.txt"
     failed=0
     for dir in skills/*/; do
         name="$(basename "$dir")"
-        if ! grep -qx "[^a-z0-9-]*${name}[^a-z0-9-]*" /tmp/discovered.txt; then
+        if ! grep -qx "[^a-z0-9-]*${name}[^a-z0-9-]*" "$RUN_DIR/discovered.txt"; then
             echo "  the skills CLI did not discover '${name}'"
             failed=1
         fi

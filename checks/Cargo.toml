@@ -22,32 +22,43 @@ path = "src/lib.rs"
 [dependencies]
 anyhow = "1"
 arrayvec = "0.7"
+axum = "0.8"
 bytes = "1"
+compact_str = "0.10"
+# Stays on 0.7. criterion 0.8 depends on `alloca`, whose build script needs a
+# Linux C compiler, so the Linux-target type check would stop working on other
+# hosts. The API the examples use is the same in 0.7 and 0.8.
 criterion = { version = "0.7", features = ["html_reports"] }
 crossbeam-queue = "0.3"
 futures = "0.3"
-# Harness-only exception. The complete imbl example must reach type checking.
-# imbl 7.0.1 pulls bitmaps 3.2.1, which has RUSTSEC-2025-0167 and
-# RUSTSEC-2026-0247 with no patched release. The harness never runs this example
-# and is not installed with the skills. Remove this pin when imbl drops bitmaps.
-imbl = "=7.0.1"
+hyper-util = { version = "0.1", features = ["full"] }
+# 7.0.2 drops bitmaps and moves to imbl-sized-chunks 0.2 (RUSTSEC-2026-0292).
+imbl = "7.0.2"
 jni = "0.22"
 libc = "0.2"
 # Type-check `fuzz_target!`, but do not build or link the C++ fuzzing runtime.
 libfuzzer-sys = { version = "0.4", default-features = false }
 log = "0.4"
 loom = "0.7"
-nix = { version = "0.29", features = ["fs", "process", "socket", "uio"] }
+nohash-hasher = "0.2"
+nix = { version = "0.31", features = ["fs", "process", "socket", "uio"] }
 once_cell = "1"
 parking_lot = "0.12"
+pin-project = "1"
 pin-project-lite = "0.2"
+proc-macro2 = "1"
 proptest = "1"
+quote = "1"
 rayon = "1"
+# No default features: the default TLS stack pulls aws-lc-rs, whose C build
+# breaks the cross-host Linux type check. The builder API is the same.
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 rpds = "1.2"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smallvec = "1"
+syn = { version = "3", features = ["full"] }
 thin-vec = "0.2"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
@@ -56,6 +67,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.32"
 zerocopy = { version = "0.8", features = ["derive"] }
+
+# Crates the harness does not hold, so their blocks keep rust,ignore:
+#   bevy_ecs          turns on the smallvec `union` feature, which changes the
+#                     SmallVec size that other examples assert (feature unification);
+#   tikv-jemallocator, mimalloc, aws-lc-rs, ring
+#                     C build scripts break the cross-host Linux type check.
 
 [profile.dev]
 debug = false
