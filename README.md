@@ -43,9 +43,9 @@ npx skills add po4yka/rust-skills
 | Read one skill as a prompt | `npx skills use po4yka/rust-skills@rust-unsafe` |
 | Install for every project, not just this one | `npx skills add po4yka/rust-skills --global` |
 | Target one agent | `npx skills add po4yka/rust-skills --agent claude-code` |
-| Target every detected agent, no prompts | `npx skills add po4yka/rust-skills --all` |
+| Every skill into every agent, no prompts | `npx skills add po4yka/rust-skills --all` |
 | Copy files instead of symlinking | `npx skills add po4yka/rust-skills --copy` |
-| Update after a new release | `npx skills update` |
+| Update installed skills to the latest catalog | `npx skills update` |
 | Remove one skill | `npx skills remove --skill rust-unsafe` |
 
 > **Checkout data-loss warning:** Never run `skills remove` from this
@@ -55,8 +55,8 @@ npx skills add po4yka/rust-skills
 > the installation or from a scratch directory outside this checkout.
 
 The `skills` CLI installs into Claude Code, Codex, Cursor, OpenCode, and other supported agents.
-Run `npx skills --help` for the current agent and flag list. The CLI is open source at
-[vercel-labs/skills](https://github.com/vercel-labs/skills).
+Run `npx skills --help` for the current flag list. The CLI is open source at
+[vercel-labs/skills](https://github.com/vercel-labs/skills); its README lists the supported agents.
 
 </details>
 
@@ -74,7 +74,7 @@ Enter by the symptom, not by the skill name.
 | `Ordering::Relaxed` versus `SeqCst`, a fence you cannot justify | [memory-model](skills/memory-model/SKILL.md) |
 | A global: `static mut`, `OnceLock`, `LazyLock`, `thread_local!` | [memory-model](skills/memory-model/SKILL.md) |
 | A macro to write or debug: `macro_rules!`, a derive, `cargo expand` | [rust-macros](skills/rust-macros/SKILL.md) |
-| You implement `Iterator` or `IntoIterator` for your own type | [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) |
+| A hand-written `Iterator` or `IntoIterator` for your own type | [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) |
 | Where a module file goes (`mod.rs` or `name.rs`), `unreachable_pub`, or a `lib.rs` re-export | [rust-code-style](skills/rust-code-style/SKILL.md) |
 | A red clippy, `cargo fmt`, or `cargo doc` gate, or `unfulfilled_lint_expectations` | [rust-lints](skills/rust-lints/SKILL.md) |
 | A `SAFETY` comment, `MaybeUninit`, Strict Provenance, `repr(packed)`, or `mem::zeroed` | [rust-unsafe](skills/rust-unsafe/SKILL.md) |
@@ -87,14 +87,16 @@ Enter by the symptom, not by the skill name.
 | `UnsatisfiedLinkError`, `AttachCurrentThread`, `FindClass`, or an Android ClassLoader failure | [rust-jni](skills/rust-jni/SKILL.md) |
 | Swift calls Rust through a C ABI, an opaque handle, or an `@MainActor` callback | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) |
 | A `uniffi::export` macro error, `UnexpectedUniFFICallbackError`, or a Record-versus-Object choice | [uniffi-boundary](skills/uniffi-boundary/SKILL.md) |
-| A UniFFI checksum mismatch, a `RustBuffer` error, binding version skew, a mobile support matrix, or final-artifact release proof | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
+| A UniFFI checksum mismatch, a `RustBuffer` error, binding version skew, a mobile support matrix, or a release proof from the shipped artifacts | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
 | `Activity` lifecycle, `ViewModel.onCleared`, process death, or a callback release race | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) |
 | A `RUSTSEC` advisory, or a new dependency nobody vetted | [rust-security](skills/rust-security/SKILL.md) |
 | `DeserializeOwned`, a JSON map key, a large integer, or `rename_all` broke the wire format | [rust-serde](skills/rust-serde/SKILL.md) |
 | Method ambiguity, autoderef, UFCS, E0034, or blanket-impl overlap | [rust-discipline](skills/rust-discipline/SKILL.md) |
 | A caught panic aborts while its payload is dropped | [rust-panic-safety](skills/rust-panic-safety/SKILL.md) |
+| A bug to reproduce as a failing test, or a refactor that must keep its behavior | [rust-tdd](skills/rust-tdd/SKILL.md) |
+| Hand-rolled atomics for loom, a parser for proptest or cargo-fuzz, or a survived mutant | [rust-test-tools](skills/rust-test-tools/SKILL.md) |
 | A lifetime coercion is refused: `is invariant over the parameter`, `borrowed for 'static` | [rust-variance](skills/rust-variance/SKILL.md) |
-| A callback bound rejects `|o| &o.field`, or a struct field holds a closure | [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) |
+| A callback bound rejects `\|o\| &o.field`, or a struct field holds a closure | [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) |
 | `self: Pin<&mut Self>`, `PhantomPinned`, or a `#[pin]` projection | [rust-pin-projection](skills/rust-pin-projection/SKILL.md) |
 | `cannot be sent between threads safely`, `MutexGuard` is not `Send` | [rust-send-sync](skills/rust-send-sync/SKILL.md) |
 | A `HashMap<TypeId, _>` whose values borrow, `dyn Any`, `downcast_ref` | [rust-type-erasure](skills/rust-type-erasure/SKILL.md) |
@@ -102,8 +104,9 @@ Enter by the symptom, not by the skill name.
 | 16 KiB page alignment, native debug symbols, or an Android AAR or Prefab package | [rust-android-build](skills/rust-android-build/SKILL.md) |
 | `Rust for iOS`, `IPHONEOS_DEPLOYMENT_TARGET`, XCFramework and SwiftPM packaging, UniFFI builds included | [rust-ios-build](skills/rust-ios-build/SKILL.md) |
 | `because --locked was passed to prevent this`, or a feature that another crate turned on | [cargo-workflows](skills/cargo-workflows/SKILL.md) |
-| A SemVer bump, `cargo package`, `cargo publish`, or crates.io recovery | [rust-crate-release](skills/rust-crate-release/SKILL.md) |
+| A SemVer bump, `cargo package`, `cargo publish`, crates.io trusted publishing, or a yank | [rust-crate-release](skills/rust-crate-release/SKILL.md) |
 | `build.rs`, `pkg-config`, an undefined symbol, or a packaged DLL failure | [rust-native-linking](skills/rust-native-linking/SKILL.md) |
+| A new workspace crate, a layering violation, or a dependency cycle between crates | [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) |
 | HTTP timeout, safe retries, TLS verification, body limits, or graceful shutdown | [rust-networking](skills/rust-networking/SKILL.md) |
 | Pool exhaustion, transaction rollback, migration ordering, or serialization failure | [rust-database](skills/rust-database/SKILL.md) |
 | `wasm32-unknown-unknown`, WASI, `wasm-bindgen`, or a WebAssembly size regression | [rust-wasm](skills/rust-wasm/SKILL.md) |
@@ -147,16 +150,17 @@ flowchart LR
     B --> B6[rust-panic-safety]
     B --> B7[rust-pin-projection]
     B --> B8[rust-send-sync]
+    B --> B9[rust-async-internals]
 
     C --> C1[rust-performance]
     C --> C2[rust-hot-path]
-    C --> C3[rust-async-internals]
-    C --> C4[rust-copy-on-write]
+    C --> C3[rust-copy-on-write]
 
     D --> D1[rust-debugging]
     D --> D2[rust-observability]
     D --> D3[rust-networking]
     D --> D4[rust-database]
+    D --> D5[rust-serde]
 
     E --> E1[rust-jni]
     E --> E2[rust-swift-ffi]
@@ -167,12 +171,11 @@ flowchart LR
     F --> F2[rust-android-build]
     F --> F3[rust-ios-build]
     F --> F4[rust-security]
-    F --> F5[rust-serde]
-    F --> F6[uniffi-packaging-versioning]
-    F --> F7[rust-crate-release]
-    F --> F8[rust-native-linking]
-    F --> F9[rust-wasm]
-    F --> F10[rust-embedded-no-std]
+    F --> F5[uniffi-packaging-versioning]
+    F --> F6[rust-crate-release]
+    F --> F7[rust-native-linking]
+    F --> F8[rust-wasm]
+    F --> F9[rust-embedded-no-std]
 
     G --> G1[rust-cli]
 ```
@@ -213,10 +216,10 @@ owns it.
 | Skill | What it covers |
 | --- | --- |
 | [cargo-workflows](skills/cargo-workflows/SKILL.md) | Workspace and lockfile discipline, resolver and MSRV lanes, feature unification and feature matrices, profiles, cross-target config and runners, cargo-nextest, pinned GitHub Actions, and staged edition migration. |
-| [rust-crate-release](skills/rust-crate-release/SKILL.md) | SemVer and MSRV classification, registry publishing, deterministic binary archives, checksums, SBOMs, provenance, signing, consumer verification, and release recovery. |
+| [rust-crate-release](skills/rust-crate-release/SKILL.md) | SemVer and MSRV classification, registry publishing with crates.io trusted publishing, deterministic binary archives, checksums, SBOMs, provenance, signing, consumer verification, and release recovery. |
 | [rust-native-linking](skills/rust-native-linking/SKILL.md) | Cargo native integration in one `*-sys` crate, deterministic build scripts, separate Rust and native compiler flags, bindings, cross-target and Windows MSVC/GNU linking, runtime loading, and link or load failure triage. |
 | [rust-serde](skills/rust-serde/SKILL.md) | Wire compatibility, owned versus borrowed deserialization, format-specific map keys, large-number policy, boundary validation, and exact-format round trips. |
-| [rust-security](skills/rust-security/SKILL.md) | cargo-audit, cargo-deny policy, RUSTSEC advisory triage, new-crate vetting against typosquat risk, and untrusted-input parser hardening. |
+| [rust-security](skills/rust-security/SKILL.md) | cargo-audit and cargo-deny policy, RUSTSEC advisory triage, vetting new or updated crates for typosquat, malicious-crate, and compromised-release risk, and untrusted-input parser hardening. |
 | [rust-android-build](skills/rust-android-build/SKILL.md) | Android cdylib builds, NDK and per-ABI flags, 16 KiB alignment, ELF and size gates, native debug symbols, installed release smoke tests, and reusable AAR or Prefab packages. |
 | [rust-ios-build](skills/rust-ios-build/SKILL.md) | iOS device and simulator static libraries, C headers and modulemaps, XCFramework and SwiftPM packaging (UniFFI builds included), deployment-target and symbol verification, signing, and simulator and device release smoke tests. |
 | [rust-wasm](skills/rust-wasm/SKILL.md) | Exact WebAssembly host and target selection, JavaScript boundary ownership, panic and async behavior, WASI capabilities, runtime tests, feature compatibility, and packaged size gates. |
@@ -261,7 +264,7 @@ owns it.
 
 | Skill | What it covers |
 | --- | --- |
-| [rust-performance](skills/rust-performance/SKILL.md) | Flamegraphs, simpleperf and Instruments, cargo-bloat and cargo-llvm-lines, Criterion baselines, LTO profiles, and build-time tuning. |
+| [rust-performance](skills/rust-performance/SKILL.md) | A profiling build profile, flamegraphs and samply, simpleperf and Instruments, cargo-bloat and cargo-llvm-lines, Criterion baselines and benchmark regression gates, LTO and PGO profiles, and build-time tuning. |
 | [rust-hot-path](skills/rust-hot-path/SKILL.md) | What to change once a profile names the hot spot: allocation rate, type size, hasher choice, bounds checks, inline attributes, and buffered I/O. |
 | [rust-copy-on-write](skills/rust-copy-on-write/SKILL.md) | The decision before the profile: `Cow` in return and argument position, the `to_mut` allocation trap, the lifetime a `Cow` field forces on callers, and measured persistent-collection costs. |
 | [rust-debugging](skills/rust-debugging/SKILL.md) | Host-first reproduction, logcat and tombstones, symbolication with addr2line and atos, JNI and UniFFI panic signatures, and a panic-to-cause triage table. |
@@ -281,18 +284,23 @@ owns it.
 | [rust-jni](skills/rust-jni/SKILL.md) | JNI symbols and panic containment, thread attachment, local references, Android ClassLoader-safe caches, R8 lookup tests, and native crash triage. |
 | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) | A hand-written Rust C ABI for Swift with opaque handles, allocator symmetry, callback lifetime, Swift concurrency isolation, cancellation, and real consumer tests. |
 | [uniffi-boundary](skills/uniffi-boundary/SKILL.md) | Record-versus-Object shape, `Arc` ownership, foreign callbacks, custom types, async exports, macro and bindgen error triage, and mobile engine ownership across Kotlin and Swift. |
-| [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) | jniLibs packaging, the UniFFI header and modulemap for an XCFramework, binding/runtime pinning, additive-versus-breaking FFI changes, checksum-mismatch triage, mobile support matrices, exact consumer-artifact device proof, and immutable release closures. |
+| [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) | jniLibs packaging, the UniFFI header and modulemap for an XCFramework, binding/runtime pinning, additive-versus-breaking FFI changes, checksum-mismatch triage, mobile support matrices, and release proof from the shipped artifacts. |
 | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) | Versioned errors, progress and cooperative cancellation, plus mobile owner teardown, UI delivery, process restart, memory pressure, and callback-release races. |
 
 </details>
 
 ## How the skills activate
 
-Each `SKILL.md` carries a `description` that states what the skill covers and when to reach for
-it. The agent reads those descriptions and loads the body only when the task matches, so the
-catalog costs little context until a skill is needed. The descriptions in this repository list
-their trigger terms explicitly, for example `unsafe`, `transmute`, `RUSTSEC`, `cargo deny`,
-`temporary lifetime`, `match guard`, `Strict Provenance`, `tokio::select!`, or `uniffi::export`.
+Each `SKILL.md` carries a `description` that says when to load the skill and what it covers.
+An agent reads only the descriptions until a task matches one, then loads that body. The body
+keeps the triage tables, gotchas, and verifier commands, and it links each `references/*.md`
+file with the condition under which to read it, so deep material costs context only when the
+task needs it.
+
+Each description starts with the task and its strongest trigger terms, such as an error code, a
+lint, a tool, or an API name: `E0034`, `large_enum_variant`, `transmute`, `RUSTSEC`, `cargo-deny`,
+`tokio::select!`, `UnsatisfiedLinkError`. Some runtimes keep only the start of each description
+when many skills are installed, so the first sentence carries the routing.
 
 You can also read any skill directly. Every `SKILL.md` is plain Markdown.
 
@@ -307,17 +315,21 @@ the file with a real YAML parser.
 
 ```text
 skills/<skill-name>/
-├── SKILL.md                  # frontmatter plus instructions
+├── SKILL.md                  # frontmatter plus instructions, at most 500 lines
 └── references/*.md           # optional deep material, linked from SKILL.md
 
-scripts/validate-skills.py    # catalog structure checks
+AGENTS.md                     # the SKILL.md contract and the authoring rules
+scripts/validate-skills.py    # frontmatter, size, link, routing, and README checks
 scripts/test_validate_skills.py # tests for the catalog rules
 tests/routing-cases.md        # phrase -> skill, checked against every description
+checks/check.sh               # one command that runs every CI gate
+checks/rust-toolchain.toml    # the pinned toolchain and compile target
+checks/Cargo.toml             # the crates that examples may use
 checks/gen.py                 # Rust fence extraction
 checks/analyze.py             # compile-result classifier and gates
-checks/test_gen.py            # executable-fence regression tests
-checks/check.sh               # compile, behavior, routing, and discovery gates
-research/                     # primary-source findings and skill-gap decisions
+checks/with_lock.py           # one gate run per checkout at a time
+checks/test_*.py              # tests for extraction, the classifier, and the lock
+research/                     # primary-source findings and catalog decisions
 ```
 
 Only `skills/` is published. The rest is tooling; `npx skills add` never sees it.
@@ -332,18 +344,24 @@ invocations, and failure triage that a codebase learns the hard way.
 ## Caveats
 
 > [!WARNING]
-> CI type-checks every Rust example and runs explicitly tagged portable probes. It does **not**
-> prove every prose claim, command line, flag, or version number. Verify those against the
-> consuming workspace and toolchain.
+> CI type-checks every Rust example that is not tagged `rust,ignore`, and runs explicitly tagged
+> portable probes. It does **not** prove every prose claim, command line, flag, or version number.
+> Verify those against the consuming workspace and toolchain.
 
-- Every ` ```rust ` block in the catalog is extracted and type-checked in CI against the
-  toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.98.1 on edition 2024. Blocks that
-  cannot compile standalone carry a fence tag saying so. Portable `rust,run` blocks are also
-  compiled and executed on the native CI host.
+- Every ` ```rust ` block without the `rust,ignore` tag is extracted and type-checked in CI
+  against the toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.98.1 on edition 2024.
+  An untagged block can fail only on a name that the surrounding prose defines; any other compile
+  error fails the gate. Portable `rust,run` blocks are also compiled and executed on the native
+  CI host.
 - Pinned versions age. Where a skill names a crate or tool version, treat it as the version the
   rule was written against, and confirm it against your `Cargo.lock`.
-- A few thresholds are conventions rather than measured limits, for example the mutation-score
-  target and the crate-size tiers. The skills say so at the point of use.
+- A few thresholds are defaults rather than measured limits, for example the Android `.so`
+  size-growth budget and the minimum age of a new crate in supply-chain vetting. The skills say
+  so at the point of use.
+- The routing check is static: it proves that each description still contains the phrases in
+  `tests/routing-cases.md`, not that an agent routes correctly. The blind routing evaluation of
+  the 2026-09 revision is in
+  [research/catalog-actualization-2026-09.md](research/catalog-actualization-2026-09.md).
 
 ## Contributing
 
