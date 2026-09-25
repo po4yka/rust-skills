@@ -1,25 +1,15 @@
 ---
 name: rust-copy-on-write
-description: Use when you decide between borrowed and owned data at an API boundary, or when clone cost drives a data-structure choice. Covers Cow in return and argument position and the hit-rate rule that decides it, the to_mut double-allocation trap and its permanent flip to Owned, the lifetime a Cow struct field forces on every caller (E0515, E0521) and the into_static exit, why a Cow-backed &self -> Self API is quadratic instead of persistent, measured build, clone and index costs for Vec against the im, imbl and rpds persistent collections, the rpds !Send default, and the im RustSec advisories. Not for a profile that already names an allocation site. Triggers on "Cow", "copy-on-write", "Cow<str>", "to_mut", "into_owned", "borrowed or owned", "borrow or clone", "clone cost", "persistent collection", "immutable data structure", "structural sharing", "the im crate", "imbl", "rpds", or "zero-copy string parse".
+description: Use when choosing between borrowed and owned data at an API boundary (Cow<str>, Cow<[T]>, to_mut, into_owned, a Cow struct field), or when clone cost drives a data-structure choice (Arc<str>, Arc<[T]>, the persistent collection crates im, imbl, rpds). Not for an allocation site that a profile already names; use `rust-hot-path`. Triggers on "Cow", "copy-on-write", "borrowed or owned", "borrow or clone", "clone cost", "persistent collection", "immutable data structure", "structural sharing", or "zero-copy string parse".
 license: BSD-3-Clause
 ---
 
 # Rust copy-on-write
 
-## Purpose
-
-Decide whether to copy at all. This skill covers the choice between a borrow and an owned
-value at an API boundary (`Cow`), and the choice of a data structure when clone cost drives
-the design (persistent collections, and the crates that supply them). It answers the question
-that comes before a profile: which shape do I give this signature.
-
-It stops where `rust-hot-path` starts. Once a profile names an allocation site, go there for
-capacity, buffer reuse, `SmallVec`, and `Arc::make_mut`. This skill also leaves atomics and
-shared-memory ordering to `memory-model`.
-
-Every number below was measured on rustc 1.97.0, edition 2024, aarch64-apple-darwin, release
-profile, with the counting allocator in the next section. Allocation counts repeat exactly
-across runs. Times do not; a range is the observed range. Re-measure on your target.
+Every number below was measured on rustc 1.98.1, edition 2024, aarch64-apple-darwin, release
+profile, with the counting allocator in [Measure before you decide](#measure-before-you-decide).
+Allocation counts repeat exactly across runs. Times do not; a range is the observed range.
+Re-measure on your target.
 
 ## Route the decision to a section
 
@@ -28,12 +18,22 @@ across runs. Times do not; a range is the observed range. Re-measure on your tar
 | Return `String` where most calls change nothing | [`Cow` in return position](#cow-in-return-position) |
 | Chain two or more string or slice transforms | [`Cow` in argument position](#cow-in-argument-position) |
 | Write `cow.to_mut()` in front of a method | [`to_mut()`](#to_mut-is-for-mut-self-methods-only) |
-| Put a `Cow` field in a struct | [A `Cow` field infects the struct](#a-cow-field-infects-the-struct-with-a-lifetime) |
-| Write `Cow<'_, String>`, or any `impl Borrow<..>` | [The `Cow` parameter is the borrowed half](#the-cow-parameter-is-the-borrowed-half) |
+| Put a `Cow` field in a struct, or share a value a cache or a task holds | [A `Cow` field infects the struct](#a-cow-field-infects-the-struct-with-a-lifetime) |
+| Write `Cow<'_, String>` or `Cow<'_, Vec<T>>` | [The `Cow` parameter is the borrowed half](#the-cow-parameter-is-the-borrowed-half) |
+| Write `impl Borrow<..>`, or debug a `HashMap::get` that misses a present key | [references/borrow-and-toowned.md](references/borrow-and-toowned.md) |
 | Write `fn with(&self) -> Self` for a version history | [`Cow` is not structural sharing](#cow-is-not-structural-sharing) |
 | Choose between `Vec` and a persistent collection | [Persistent collections](#persistent-collections) |
-| Add `im`, `imbl`, or `rpds` to `Cargo.toml` | `references/persistent-collections.md` |
-| Read a profile that already names `__rust_alloc` | `rust-hot-path` |
+| Read a profile that already names `__rust_alloc` | The `rust-hot-path` skill, when it is installed: capacity, buffer reuse, `SmallVec` |
+
+## Verify the decision
+
+| Claim | Check | A pass does not prove |
+| --- | --- | --- |
+| The `Cow` shape saves allocations | The counting allocator below, on real input, with the `Borrowed` path in the run | That callers keep the borrow. Read every call site for `.into_owned()` and `.to_string()` |
+| No `Cow` names an owned type | `cargo clippy` (`clippy::owned_cow`) plus the grep in [that section](#the-cow-parameter-is-the-borrowed-half) | Anything about custom `ToOwned` types. Anything about public items, unless `clippy.toml` sets `avoid-breaking-exported-api = false`; the grep covers them |
+| No `to_mut()` runs before a `&self` method | The grep in [that section](#to_mut-is-for-mut-self-methods-only), then a read of each hit | That each `to_mut()` sits inside the branch that writes |
+| A `Borrow<X>` key finds its entries | A test that compares `hash_one` of the key with `hash_one` of its borrowed form on one `RandomState`, for a key in each letter case that `eq` folds. Then a `get` through the borrowed form | A correct contract, from a `get` test alone: it passes about 1 run in 150 with a broken contract. A lookup through the owned key proves nothing |
+| The collection crate's resolved tree is clean | `cargo deny --config deny.toml --locked check advisories` with `unsound = "all"` in `deny.toml`, or `cargo audit --deny warnings`, on the lockfile | A clean tree, if you drop the setting: default cargo-deny misses the transitive `sized-chunks` unsound advisory in an `im` tree, and default `cargo audit` exits 0 on every informational advisory. A failure does not prove that your code reaches the flagged API |
 
 ## Measure before you decide
 
@@ -41,7 +41,7 @@ Every rule here is a hit-rate rule. A hit rate is a property of your workload, n
 type. Put this allocator in a bench binary, run your real input through both shapes, and
 compare the counts.
 
-```rust
+```rust,run
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -74,12 +74,13 @@ fn main() {
     let cap = std::hint::black_box(Vec::<u32>::with_capacity(1000)).capacity();
     let allocs = ALLOCS.load(Ordering::Relaxed) - a0;
     let bytes = BYTES.load(Ordering::Relaxed) - b0;
-    println!("allocs={allocs} bytes={bytes}");   // allocs=1 bytes=4000
-    assert_eq!(cap, 1000);
+    println!("allocs={allocs} bytes={bytes}");
+    assert_eq!((allocs, bytes, cap), (1, 4000, 1000));
 }
 ```
 
-Run it in release. `dhat` gives the same counts with a smaller diff; see `rust-performance`.
+Run it in release. `dhat` gives the same counts with less code; the `rust-performance` skill
+covers it, when it is installed.
 
 ## `Cow` in return position
 
@@ -98,7 +99,7 @@ The third row is the rule. `Cow` in return position wins **only when the caller 
 borrow**. The moment a call site writes `.into_owned()` or `.to_string()`, the count returns
 to the `String` figure, and the `Cow` is a branch plus a lifetime parameter for nothing.
 
-```rust
+```rust,run
 use std::borrow::Cow;
 
 fn normalize(path: &str) -> Cow<'_, str> {
@@ -121,7 +122,7 @@ fn main() {
 ```
 
 `into_owned()` costs 0 allocations on a `Cow::Owned` and 1 on a `Cow::Borrowed`. Call it once
-at the boundary where the source buffer dies, never inside the loop that produced the `Cow`.
+at the boundary where the source buffer dies, not inside the loop that produced the `Cow`.
 
 Two checks before you convert a signature:
 
@@ -130,9 +131,10 @@ Two checks before you convert a signature:
   100%. The 20x above comes from a 5% rate.
 - **Read the call sites.** One `.into_owned()` in the only caller cancels the whole change.
 
-`Cow` is free in size. Measured on 1.97.0 aarch64: `&str` 16 bytes, `String` 24,
-`Cow<'_, str>` 24, `Cow<'_, [u8]>` 24. Enum layout is an unspecified implementation detail;
-assert it with `const _: () = assert!(size_of::<Cow<'_, str>>() == 24);` if you depend on it.
+`Cow` is free in size. Measured on aarch64: `&str` 16 bytes, `String` 24, `Cow<'_, str>` 24,
+`Cow<'_, [u8]>` 24. Enum layout is an unspecified implementation detail, and Rust 1.97 changed
+the layout of some enums. If you depend on the size, assert it in a form that holds on every
+target: `const _: () = assert!(size_of::<Cow<'_, str>>() == size_of::<String>());`.
 
 ## `Cow` in argument position
 
@@ -150,7 +152,7 @@ Only `to_slashes` allocates on this input set. The other two stages pass their i
 through, so the chain costs what one stage costs. The `String` chain pays 7890 bytes per
 stage whether the stage changes anything or not.
 
-```rust
+```rust,run
 use std::borrow::Cow;
 
 // Reborrowing out of an Owned value does not compile, so re-own the tail.
@@ -173,8 +175,8 @@ fn main() {
 }
 ```
 
-Take `Cow<'a, str>` by value in a chain stage. Taking `&Cow<'a, str>` forces every stage to
-clone to return an owned value, which is the shape the chain exists to avoid.
+Take `Cow<'a, str>` by value in a chain stage. A stage that takes `&Cow<'a, str>` must clone
+an `Owned` input only to pass it through, which is the cost the chain exists to avoid.
 
 ## `to_mut()` is for `&mut self` methods only
 
@@ -183,7 +185,7 @@ clone to return an owned value, which is the shape the chain exists to avoid.
 
 This form allocates twice:
 
-```rust
+```rust,run
 use std::borrow::Cow;
 
 fn main() {
@@ -197,7 +199,7 @@ fn main() {
 
 This form allocates once. `Deref` reaches `str::replace` with no `to_mut()` at all:
 
-```rust
+```rust,run
 use std::borrow::Cow;
 
 fn main() {
@@ -214,12 +216,11 @@ fn main() {
 }
 ```
 
-Reach for `to_mut()` only for a method that genuinely takes `&mut self`: `push_str`,
-`Vec::push`, `sort`. `to_mut().push_str("!")` on a borrowed 13-byte string costs 2
-allocations and 39 bytes: `to_mut()` allocates 13, then `push_str` reallocates to 26. When
-you know the final length, `String::with_capacity(s.len() + 1)` followed by `push_str` and
-`push` costs 1 allocation and 14 bytes. Keep the call inside the branch that writes, never
-above it.
+Use `to_mut()` only for a method that takes `&mut self`: `push_str`, `Vec::push`, `sort`.
+`to_mut().push_str("!")` on a borrowed 13-byte string costs 2 allocations and 39 bytes:
+`to_mut()` allocates 13, then `push_str` reallocates to 26. When you know the final length,
+`String::with_capacity(s.len() + 1)` followed by `push_str` and `push` costs 1 allocation and
+14 bytes. Keep the call inside the branch that writes, not above it.
 
 `to_mut()` on an already-`Owned` value is free, so a benchmark that starts from `Cow::Owned`
 shows no difference and hides both defects. Benchmark the `Borrowed` path.
@@ -233,12 +234,12 @@ rg '\.to_mut\(\)\.' --type rust -n
 ## A `Cow` field infects the struct with a lifetime
 
 `struct Header<'a> { name: Cow<'a, str> }` is a borrowing struct. The lifetime spreads to
-every signature that mentions it, exactly like a `&'a mut T` field. See the lifetime
-infection rule in `rust-discipline`.
+every signature that mentions it, exactly like a `&'a mut T` field. The `rust-discipline`
+skill, when it is installed, covers lifetime infection in general.
 
 Two failures arrive together:
 
-```rust,compile_fail
+```rust,compile_fail,E0515,E0521
 use std::borrow::Cow;
 
 struct Header<'a> {
@@ -262,7 +263,7 @@ E0521 is the one that stops the design. Any cache, any `Vec` that outlives the p
 any value sent to another task needs `Header<'static>`, and a borrowing struct cannot supply
 it. The only exit is a hand-written conversion, at one allocation per still-borrowed field:
 
-```rust
+```rust,run
 use std::borrow::Cow;
 
 pub struct Header<'a> {
@@ -294,6 +295,14 @@ Add a `Cow` field only when both hold: a real zero-copy parse path exists, and t
 inside the borrow scope. Otherwise store `String`, or store `Arc<str>` when many owners share
 one immutable value. `Arc<str>` is 16 bytes and 1000 clones cost 0 allocations.
 
+When a shared `'static` value must change now and then without a length change, use
+`Arc::make_mut`. It accepts `Arc<str>` and `Arc<[T]>` since 1.81, and `Arc<Path>`, `Arc<OsStr>`,
+and `Arc<CStr>` since 1.82. Use `Arc<String>` or `Arc<Vec<T>>` when the length changes. A custom
+unsized newtype such as `CiStr` gets E0277, because `CloneToUninit` is unstable (an
+`impl CloneToUninit` gets E0658). Share its owned form, such as `Arc<CiString>`, and do not add
+a nightly feature gate. The `rust-hot-path` skill, when it is installed, has the table of
+`make_mut` cases and the `Weak` detach trap.
+
 ## The `Cow` parameter is the borrowed half
 
 `Cow<'a, B>` requires `B: ToOwned`. `String: Clone`, and `alloc` ships
@@ -304,17 +313,22 @@ on a `&String` resolves to `Cow<'_, str>` instead: `error[E0308]: mismatched typ
 allocate a `String` first. A caller that already holds a `String` can still write
 `Cow::Borrowed(&s)`, and that is the case where the `Cow` buys nothing at all.
 
-Write `Cow<'_, str>`, `Cow<'_, [T]>`, `Cow<'_, Path>`. Never `Cow<'_, String>`,
-`Cow<'_, Vec<T>>`, or `Cow<'_, PathBuf>`. Grep for the defect:
+Write `Cow<'_, str>`, `Cow<'_, [T]>`, `Cow<'_, Path>`. Do not write `Cow<'_, String>`,
+`Cow<'_, Vec<T>>`, or `Cow<'_, PathBuf>`.
+
+`clippy::owned_cow` is warn by default and names the borrowed half for `String`, `Vec<_>`,
+`CString`, `OsString`, and `PathBuf`. If `clippy.toml` sets
+`avoid-breaking-exported-api = false` (the `rust-lints` default for a crate with no external
+consumer), the lint also covers public items. Otherwise it skips them, so grep the public API:
 
 ```bash
 rg 'Cow<[^>]*(String|Vec<|PathBuf|OsString|CString)' --type rust -n
 ```
 
-`references/borrow-and-toowned.md` holds the layer under `Cow`: the `Borrow` contract that
-`HashMap::get` depends on and the silent lookup miss when a custom `Hash` breaks it, why
-`&String` does not satisfy `Borrow<str>`, the E0119 wall around `ToOwned` and the
-unsized-newtype pair that clears it, and the E0283 in every delegating `eq` and `hash`.
+A key whose `Hash` or `Eq` disagrees with its `Borrow` target makes `HashMap::get` miss a
+present key, with no error. Read [references/borrow-and-toowned.md](references/borrow-and-toowned.md)
+when you write `impl Borrow<..>` or `impl ToOwned`, when a `HashMap::get` misses a key the map
+holds, or when E0119 or E0283 appears around `ToOwned`, `borrow()`, `eq`, or `hash`.
 
 ## `Cow` is not structural sharing
 
@@ -323,7 +337,7 @@ A `fn with(&self) -> Self` built on `Cow` has the signature of a persistent coll
 the cost of a deep copy, because `Clone` on a `Cow::Owned<[String]>` clones the `Vec` and
 every `String` in it.
 
-```rust
+```rust,run
 use std::borrow::Cow;
 
 #[derive(Clone)]
@@ -348,78 +362,50 @@ fn main() {
 }
 ```
 
-Measured at 2000 chained `with` calls that start from `Log { lines: Cow::Owned(Vec::new()) }`,
-against a plain `Vec::push` loop over the same 2000 eight-byte `String` values:
-
-| Loop | Allocations | Bytes | Time |
-| --- | --- | --- | --- |
-| `with` on `Cow<'_, [String]>` x2000 | 2 004 999 | 159 936 144 | 31-41 ms |
-| `Vec::push` x2000 | 2 010 | 114 208 | 32-41 us |
-
-2 004 999 is 2000 * 1999 / 2 = 1 999 000 `String` clones, plus the 2000 new values, plus
-3 999 `Vec` allocations. The `Vec` term is one clone and one growth realloc per iteration,
-less the clone of the empty base, which allocates nothing. The cost is exactly quadratic.
-Never build a version history or an undo stack on `Cow`.
-
-The false negative that hides this: for `T: Copy` the clone is one `memcpy`. Cloning a
-`Cow<'_, [u32]>` of 1000 elements costs 1 allocation and 4000 bytes. The same clone on a
-`Cow<'_, [String]>` of 1000 elements costs 1001 allocations and 31 890 bytes. A `Vec<u32>`
-toy benchmark passes and the production `Vec<String>` workload does not.
+The cost is exactly quadratic: 2000 chained `with` calls cost 2 004 999 allocations, against
+2 010 for a `Vec::push` loop. Do not build a version history or an undo stack on `Cow`.
+Benchmark with the production element type: for `T: Copy` the clone is one `memcpy`, so a
+`Vec<u32>` toy benchmark passes and the production `Vec<String>` workload does not. Read
+[references/persistent-collections.md](references/persistent-collections.md) when you need the
+full measurement.
 
 ## Persistent collections
 
 A persistent collection makes `clone()` free by sharing trie nodes, and charges for it on every
 read. Measured at N = 100 000 `i32`: a clone drops from 1 allocation to 0, an indexed read pass
-costs 44x to 140x a `Vec` pass, and an iteration pass costs 27x to 37x.
+costs 45x to 89x a `Vec` pass, and an iteration pass costs 22x to 45x.
 
 Take one only when both hold: the clone-to-mutation ratio is high, and the collection is read by
 iteration rather than by index. Otherwise keep `Vec` and clone it.
 
-`references/persistent-collections.md` holds the full cost table, the 585x write-cost split
-between the `&mut self` and the `&self -> Self` APIs, the `rpds::Vector::new()` `!Send` trap,
-and the direct and transitive advisories that affect the `im` and `imbl` choices.
+Depend on `imbl = "7.0.2"` or later, not on `im`. `im` is archived and carries an unpatched
+soundness advisory. `imbl` 7.0.1 still resolved `imbl-sized-chunks` 0.1, which has a
+double-free advisory that 7.0.2 removes from the tree.
+
+Read [references/persistent-collections.md](references/persistent-collections.md) before you
+add `im`, `imbl`, or `rpds`, and when you review a change that uses one. It holds the full cost
+table, the 585x write-cost split between the `&mut self` and the `&self -> Self` APIs, the
+`rpds::Vector::new()` `!Send` trap, the resolved-tree advisory check, and the review checklist.
 
 ## When to use none of this
 
 | Situation | Use instead |
 | --- | --- |
 | The value never changes after construction, and many owners read it | `Arc<str>`, `Arc<[T]>`. Clone is 0 allocations, 16 bytes on the stack |
-| One owner mutates, others may hold a stale clone | `Arc::make_mut`. See `rust-hot-path` |
+| One owner mutates, others may hold a stale clone | `Arc::make_mut`, also on `Arc<str>` and `Arc<[T]>` when the length stays fixed |
 | The modification rate is above 50% | Plain `String` or `Vec<T>`. The `Cow` saves under half the allocations, and costs a branch and a lifetime parameter |
-| The value is indexed in a loop | `Vec<T>`, cloned. 44x to 140x cheaper per read |
-| A profile already names `__rust_alloc` in a known function | `rust-hot-path`: capacity, buffer reuse, `SmallVec` |
+| The value is indexed in a loop | `Vec<T>`, cloned. 45x to 89x cheaper per read |
 | The struct must be `'static` and cross a task boundary | Owned fields. A `Cow` field cannot be `'static` and borrowed at once |
 
-## Decision checklist
+## Review checklist
 
-1. Is there a measured branch split? No number, no `Cow`.
-2. Does any caller write `.into_owned()` or `.to_string()` on the result? Then return
-   `String`.
-3. Does a `.to_mut()` precede a `&self` method? Delete the `.to_mut()`.
-4. Does a `.to_mut()` run on a path that changes nothing? It still flips the value to
-   `Owned`. Move it inside the branch that writes.
-5. Does a new `Cow` field force a lifetime on a struct that a cache or a task must hold?
-   Store owned data, or add `into_static`.
-6. Does a `Cow` name an owned type as its parameter? `Cow<'_, String>` compiles, and every
-   caller that holds a `&str` must allocate to call it. Use the borrowed half.
-7. Does a key type implement `Borrow<X>`? Then its `Hash`, `Eq` and `Ord` must delegate to `X`,
-   or `HashMap::get` misses keys the map holds.
-8. Does a `fn with(&self) -> Self` clone a `Cow` of a non-`Copy` element type? That is
-   quadratic. Use a persistent collection: `references/persistent-collections.md`.
-9. Is the persistent collection read by index? Then it is the wrong structure.
-10. Does the write path use `&self -> Self` when only the newest version survives? Use the
-    `&mut self` shape.
-11. Does the value cross a thread? `rpds::Vector::new()` does not. Use `new_sync()`.
-12. Is `im` or `imbl` in the dependency tree? Run the advisory gate on the lockfile and inspect
-    transitive dependencies. A maintained fork or no direct advisory does not prove that the
-    resolved tree has no advisory.
+The [verify table](#verify-the-decision) covers the branch split, the call sites, `to_mut()`,
+owned `Cow` parameters, `Borrow` keys, and the advisory gate. Also check:
 
-## Related skills
-
-| Skill | Boundary |
-| --- | --- |
-| `rust-hot-path` | This skill decides whether to copy. `rust-hot-path` reduces the cost of a copy a profile already named: capacity, `clone_from`, buffer reuse, `SmallVec`, `Arc::make_mut` |
-| `rust-performance` | This skill supplies the counting allocator. `rust-performance` supplies the profiler, DHAT, and Criterion that produce the input to the hit-rate rule |
-| `rust-discipline` | This skill covers the `Cow` field case. `rust-discipline` covers lifetime infection in general, and the API-design rules that apply to every signature |
-| `rust-security` | This skill names the direct and transitive collection advisories. `rust-security` supplies the `deny.toml` policy and the cargo-deny gate that enforces them |
-| `memory-model` | This skill stops at `Send` and `Sync` bounds. `memory-model` covers atomics, orderings, and `loom` |
+1. Does a new `Cow` field force a lifetime on a struct that a cache or a task must hold?
+   Store owned data, add `into_static`, or share through `Arc`.
+2. Does a `fn with(&self) -> Self` clone a `Cow` of a non-`Copy` element type? That is
+   quadratic. Use a persistent collection.
+3. Is `im`, or an `imbl` older than 7.0.2, in the lockfile? Replace it.
+4. Does the change use a persistent collection? Run the checklist in
+   [references/persistent-collections.md](references/persistent-collections.md#review-checklist).

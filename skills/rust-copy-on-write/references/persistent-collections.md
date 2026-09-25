@@ -3,38 +3,71 @@
 Deep material for `rust-copy-on-write`. Read it when clone cost drives the choice of a
 collection, or before you add `im`, `imbl`, or `rpds` to `Cargo.toml`.
 
+Contents:
+
+- [A `Cow` version history is quadratic](#a-cow-version-history-is-quadratic)
+- [The cost table](#the-cost-table)
+- [The API shape decides the write cost](#the-api-shape-decides-the-write-cost)
+- [`rpds::Vector::new()` is not `Send`](#rpdsvectornew-is-not-send)
+- [Check the resolved dependency tree](#check-the-resolved-dependency-tree)
+- [Review checklist](#review-checklist)
+
 A persistent collection makes `clone()` free by sharing trie nodes. It charges for that on
 every read.
 
+## A `Cow` version history is quadratic
+
+This is the measurement behind the `Log::with` example in `SKILL.md`. Measured at 2000 chained
+`with` calls that start from `Log { lines: Cow::Owned(Vec::new()) }`, against a plain
+`Vec::push` loop over the same 2000 eight-byte `String` values. Times are the best and the
+worst of nine passes:
+
+| Loop | Allocations | Bytes | Time |
+| --- | --- | --- | --- |
+| `with` on `Cow<'_, [String]>` x2000 | 2 004 999 | 159 936 144 | 25-31 ms |
+| `Vec::push` x2000 | 2 010 | 114 208 | 16-33 us |
+
+2 004 999 is 2000 * 1999 / 2 = 1 999 000 `String` clones, plus the 2000 new values, plus
+3 999 `Vec` allocations. The `Vec` term is one clone and one growth realloc per iteration,
+less the clone of the empty base, which allocates nothing. The cost is exactly quadratic.
+
+The false negative that hides this: for `T: Copy` the clone is one `memcpy`. Cloning a
+`Cow<'_, [u32]>` of 1000 elements costs 1 allocation and 4000 bytes. The same clone on a
+`Cow<'_, [String]>` of 1000 elements costs 1001 allocations and 31 890 bytes. A `Vec<u32>`
+toy benchmark passes and the production `Vec<String>` workload does not.
+
 ## The cost table
 
-Measured at N = 100 000 `i32` on rustc 1.97.0, edition 2024, aarch64-apple-darwin, release
-profile, with the counting allocator in `SKILL.md`. Each time cell is the best and the worst of
-nine passes in one run. Allocation counts repeat exactly across runs. Times do not.
+Measured at N = 100 000 `i32` on rustc 1.98.1, edition 2024, aarch64-apple-darwin, release
+profile, with the counting allocator in `SKILL.md`. Build is a `push_back` loop from an empty
+collection. The index pass reads `v[i]` for every `i`; the iterate pass sums `v.iter()`. Each
+time cell is the best of nine passes, as the range over five runs. Allocation counts repeat
+exactly across runs. Times do not.
 
-| Operation | `Vec` | `im` 15.1.0 | `imbl` 7.0.1 | `rpds` 1.2.1 |
+| Operation | `Vec` | `im` 15.1.0 | `imbl` 7.0.2 | `rpds` 1.2.1 |
 | --- | --- | --- | --- | --- |
 | Build, allocations | 16 | 1 594 | 1 619 | 932 349 |
-| Build, time | 37-80 us | 0.47-0.53 ms | 0.55-0.64 ms | 23-27 ms |
+| Build, time | 33-34 us | 0.46-0.47 ms | 0.53-0.58 ms | 19-30 ms |
 | Clone, allocations | 1 | 0 | 0 | 0 |
-| Clone, time | 4.8-28 us | under 42 ns | under 42 ns | under 42 ns |
-| Index `[i]`, whole pass | 6.3-6.5 us | 0.84-1.2 ms | 0.84-1.0 ms | 331-494 us |
-| Iterate, whole pass | 6.5-8.5 us | 176-219 us | 192-220 us | 241-289 us |
+| Clone, time | 5.0-5.1 us | under 42 ns | under 42 ns | under 42 ns |
+| Index `[i]`, whole pass | 6.5-6.6 us | 555-564 us | 578-580 us | 299-301 us |
+| Iterate, whole pass | 6.6-6.7 us | 172-174 us | 147-152 us | 295-296 us |
 
-Three ratios decide the choice:
+42 ns is the timer resolution on that host. Three ratios decide the choice:
 
-- **Clone costs nothing.** 0 allocations against 1. Clone time stays under 42 ns for all three,
-  against 4.8-28 us for the `Vec`.
-- **Indexed reads cost 44x to 140x.** Across five runs `rpds` indexes at 44-52x `Vec`, `im` at
-  114-140x, and `imbl` at 133-138x. `rpds` is the cheapest indexer of the three; it is not the
-  crate this file tells you to depend on.
-- **Iteration costs 27x to 37x.** Iteration is four to five times cheaper than indexing on the
-  same collection. It is the only read shape a persistent collection serves well.
+- **Clone costs nothing.** 0 allocations against 1, and no measurable time against 5 us for
+  the `Vec`.
+- **Indexed reads cost 45x to 89x.** `rpds` indexes at 45-46x `Vec`, `im` at 84-87x, and `imbl`
+  at 87-89x. `rpds` is the cheapest indexer of the three, and its `&self -> Self` write path
+  is the most expensive (next section).
+- **Iteration costs 22x to 45x.** `im` and `imbl` iterate three to four times faster than they
+  index. `rpds` iterates no faster than it indexes. Iteration is the only read shape that `im`
+  and `imbl` serve well.
 
 Take a persistent collection only when both hold: the clone-to-mutation ratio is high, and the
 collection is read by iteration rather than by index. Otherwise keep `Vec` and clone it. A `Vec`
-clone is one allocation and one `memcpy`, and 4.8-28 us for 100 000 `i32` is cheaper than the
-read penalty on almost any workload.
+clone is one allocation and one `memcpy`, and 5 us for 100 000 `i32` is cheaper than the read
+penalty on almost any workload.
 
 ## The API shape decides the write cost
 
@@ -54,7 +87,7 @@ gives the same guarantee at 1/585 of the allocation count.
 Do not benchmark one crate and generalise the result to the other.
 
 ```rust
-// Cargo.toml: imbl = "7"
+// Cargo.toml: imbl = "7.0.2"
 fn main() {
     // push_back takes &mut self: it mutates in place until someone holds a clone.
     let mut base: imbl::Vector<i32> = imbl::Vector::new();
@@ -73,7 +106,8 @@ fn main() {
 
 ## `rpds::Vector::new()` is not `Send`
 
-`rpds::Vector<T>` defaults to the parameter `P = RcK`, an `Rc`-backed archetype. The failure
+`imbl::Vector<T>` is `Arc`-backed by default, so it is `Send + Sync`. `rpds::Vector<T>` is not:
+it defaults to the parameter `P = RcK`, an `Rc`-backed archetype. The failure
 appears only when the value first crosses a thread, and the error names a dependency's
 internals rather than your type:
 
@@ -112,44 +146,65 @@ version as sharing every node with the old one.
 Pin the property with `fn assert_send_sync<T: Send + Sync>() {}` called on your alias in a
 test. The bound then fails at build time, not at the first `tokio::spawn`.
 
-## Check the complete dependency tree
+## Check the resolved dependency tree
 
-`im` is `Arc`-backed and `Send + Sync`, and it carries two open advisories with no fixed
-release:
+Depend on `imbl = "7.0.2"` or later. Do not add `im`:
 
-| Advisory | Kind | Detail |
-| --- | --- | --- |
-| RUSTSEC-2026-0248 | `unmaintained` | Repository archived 2026-05-03. `patched = []` |
-| RUSTSEC-2023-0126 | `unsound`, `memory-corruption` | Insertion into `im::OrdSet` violates Rust aliasing rules. Undefined behavior, reachable from safe code. `patched = []` |
+- `im` 15.1.0, from 2022, is the last release. Its repository is archived, and `OrdSet`
+  insertion violates the aliasing rules from safe code. Both have advisories, and neither
+  advisory has a patched version. Its dependencies `sized-chunks` and `bitmaps` are
+  archived too, and `sized-chunks` carries its own unpatched soundness advisory.
+- `imbl` is the maintained fork, and a maintained direct dependency still does not prove a clean
+  tree. `imbl` 7.0.1 resolved `imbl-sized-chunks` 0.1 and `bitmaps` 3. `imbl` 7.0.2 requires
+  `imbl-sized-chunks` 0.2 and drops `bitmaps`. One example of what a 7.0.1 lockfile matches:
 
-RUSTSEC-2020-0096 is patched in `>= 15.1.0` and does not apply to a current pin. The other two
-apply to every version.
+| Advisory | Crate | Kind | Fixed in |
+| --- | --- | --- | --- |
+| RUSTSEC-2026-0292 | `imbl-sized-chunks` < 0.2.0 | memory corruption: double free or use-after-free when an element's `Drop` panics | `imbl-sized-chunks` 0.2.0, which `imbl` 7.0.2 requires |
 
-Do not turn these findings into an unconditional `imbl` recommendation. `imbl` is the
-maintained fork named in RUSTSEC-2026-0248, but its dependency tree can still match an
-advisory. For example, `imbl` 7.0.1 accepts `bitmaps` 3.x. A lockfile can resolve that
-requirement to `bitmaps` 3.2.1, which matches these advisories:
-
-| Advisory | Kind | Detail |
-| --- | --- | --- |
-| RUSTSEC-2025-0167 | `unsound`, `memory-corruption` | `bitmaps >= 3.2.0` exposes safe APIs that can create an invalid `bool`. `patched = []` |
-| RUSTSEC-2026-0247 | `unmaintained` | The `bitmaps` repository is archived. `patched = []` |
-
-This match proves that the affected crate is in the resolved dependency tree. It does not
-prove that `imbl` calls an affected API. Do not claim reachability or exploitability without a
-call-path audit. The absence of a direct `imbl` advisory directory also says nothing about its
-transitive dependencies.
-
-Inspect the resolved reverse dependency path and run the advisory policy against the lockfile:
+Do not copy advisory lists into code comments or docs; they go stale. Run the gate on the
+lockfile. Every `im`-tree advisory above is informational, and neither tool fails all of them
+by default. cargo-deny fails the unmaintained advisories. Its `unsound` scope defaults to
+`"workspace"`, which fails only on a direct dependency of a workspace crate. On an `im` 15.1.0
+tree it reports the `im` soundness advisory, but not the `sized-chunks` one that `im` pulls in.
+`cargo audit` prints informational advisories as warnings and exits 0. Set `unsound = "all"`
+under `[advisories]` in `deny.toml`, or pass `--deny warnings`:
 
 ```bash
-cargo tree --locked -i bitmaps
-cargo deny check advisories
+cargo deny --config deny.toml --locked check advisories   # [advisories] unsound = "all"
+cargo audit --deny warnings        # the same gate without cargo-deny
 ```
+
+Then trace each flagged crate back to the dependency that pulls it in. Name it as
+`name@version`; a partial version such as `@0.1` works. A plain name fails as ambiguous when the
+lockfile holds two versions, for example `bitmaps` 2 under `im` and `bitmaps` 3 under `imbl`
+7.0.1:
+
+```bash
+cargo tree --locked -i imbl-sized-chunks@0.1   # imbl 7.0.1
+cargo tree --locked -i sized-chunks            # im 15.1.0
+cargo tree --locked -i bitmaps@2               # im 15.1.0; bitmaps@3 is imbl 7.0.1
+```
+
+A match proves that the affected crate is in the resolved tree. It does not prove that your
+code reaches the affected API. Do not claim reachability or exploitability without a call-path
+audit.
 
 If policy rejects the tree and no clean upgrade exists, keep `Vec`, select a dependency with a
 clean resolved tree, or record a narrow temporary exception with an owner and an expiry. Do not
 waive the advisory only because the direct dependency is maintained.
 
-`rust-security` covers the `deny.toml` policy that turns an `unmaintained` advisory into a
-failed build.
+The `rust-security` skill, when it is installed, covers the `deny.toml` policy
+(`unsound = "all"`) that turns a transitive unsound advisory, such as the `sized-chunks` one
+under `im`, into a failed build.
+
+## Review checklist
+
+Check each change that adds or uses `im`, `imbl`, or `rpds`:
+
+1. Is the collection read by index? Then it is the wrong structure. Keep `Vec` and clone it.
+2. Does the write path use `&self -> Self` when only the newest version survives? Use the
+   `&mut self` shape.
+3. Does the value cross a thread? `rpds::Vector::new()` is not `Send`. Use `new_sync()`.
+4. Is `im`, or an `imbl` older than 7.0.2, in the lockfile? Replace it, then run the advisory
+   gate above.

@@ -4,11 +4,22 @@ Deep material for `rust-copy-on-write`. Read it before you write `impl Borrow<..
 before you give a type its own owned representation, and when a `HashMap::get` misses a key the
 map holds.
 
+Contents:
+
+- [`Borrow` is a promise. `AsRef` is not](#borrow-is-a-promise-asref-is-not)
+- [Break the contract and the lookup silently misses](#break-the-contract-and-the-lookup-silently-misses)
+- [Fix: put `Hash` and `Eq` on the borrowed half](#fix-put-hash-and-eq-on-the-borrowed-half)
+- [`self.borrow()` stops resolving: E0283](#selfborrow-stops-resolving-e0283)
+- [`&String` does not implement `Borrow<str>`](#string-does-not-implement-borrowstr)
+- [A `Clone` type cannot customise `ToOwned`](#a-clone-type-cannot-customise-toowned)
+- [When a dependency demands `&String`](#when-a-dependency-demands-string)
+- [Checklist](#checklist)
+
 `Cow<'a, B>` is declared over `B: ToOwned`, and `ToOwned` requires `Owned: Borrow<B>`. Both
 traits carry a contract that the compiler never checks. Break the `Borrow` one and you get a
 silent wrong answer, not a compile error.
 
-Every number below was measured on rustc 1.97.0, edition 2024, aarch64-apple-darwin, release
+Every number below was measured on rustc 1.98.1, edition 2024, aarch64-apple-darwin, release
 profile, with the counting allocator in `SKILL.md`.
 
 ## `Borrow` is a promise. `AsRef` is not
@@ -20,9 +31,10 @@ profile, with the counting allocator in `SKILL.md`.
 | std uses it for | argument conversion (`Path::new`, `File::open`) | `HashMap::get`, `BTreeMap::get`, `HashSet::contains`, `Cow` |
 | Break the contract | nothing happens | `get` returns `None` for a key the map contains |
 
-Take `impl AsRef<str>` for an argument you only read. Take `Borrow<str>` only when a collection
-must look the value up by its borrowed form. The bound is not a style choice: it is the point
-at which you accept the hash-equivalence obligation.
+Take `&str` for an argument you only read, or `impl AsRef<str>` when call-site convenience
+outweighs one body per argument type (the `rust-discipline` skill owns that choice). Take
+`Borrow<str>` only when a collection must look the value up by its borrowed form. The bound is
+not a style choice: it is the point at which you accept the hash-equivalence obligation.
 
 ## Break the contract and the lookup silently misses
 
@@ -59,10 +71,40 @@ fn main() {
 `get::<str>` hashes the query with `str::hash` and probes that bucket. The entry was placed with
 `CiKey::hash`. The probe lands in the wrong bucket, and the equality check never runs.
 
-Measured over 200 process runs of that binary: `get("Content-Type")` returned `Some` once and
-`None` 199 times. `RandomState` reseeds per process, so an occasional hash coincidence makes the
-lookup succeed. A unit test that runs it once passes about one time in 200. That is why this
-defect reaches production.
+Measured over 2000 process runs of that binary: `get("Content-Type")` returned `Some` 13 times
+and `None` 1987 times. `RandomState` reseeds per process, so an occasional hash coincidence makes
+the lookup succeed. A lookup through the owned key, such as the `contains_key` above, always
+succeeds. A test suite that looks up only through the owned key never sees the defect, and that
+is how it reaches production. Test every `get` path through the borrowed form.
+
+A `get` test alone still passes in about 1 run in 150 with the broken contract. Add a
+deterministic check with `BuildHasher::hash_one` (stable since 1.71). Hash the owned key and its
+borrowed form with one `RandomState`, and require equal results. Check a key in each letter case
+that `eq` folds. An all-lowercase `CiKey` hashes the same both ways and hides the defect:
+
+```rust,run
+use std::borrow::Borrow;
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
+
+struct CiKey(String);
+
+impl Hash for CiKey {
+    fn hash<H: Hasher>(&self, h: &mut H) { self.0.to_ascii_lowercase().hash(h) }
+}
+impl Borrow<str> for CiKey {
+    fn borrow(&self) -> &str { &self.0 }
+}
+
+fn hashes_agree(key: &CiKey) -> bool {
+    let s = RandomState::new();
+    s.hash_one(key) == s.hash_one(Borrow::<str>::borrow(key))
+}
+
+fn main() {
+    assert!(hashes_agree(&CiKey("content-type".into())));    // hides the defect
+    assert!(!hashes_agree(&CiKey("Content-Type".into())));   // finds it on every run
+}
+```
 
 No tool reports it. `cargo clippy -- -W clippy::all -W clippy::pedantic` on that file prints
 nothing, and there is no `debug_assert` inside `HashMap` for it.
@@ -72,7 +114,7 @@ nothing, and there is no `debug_assert` inside `HashMap` for it.
 The owned type delegates to the borrowed type, so the two cannot disagree. The borrowed half is
 an unsized `#[repr(transparent)]` newtype:
 
-```rust
+```rust,run
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -132,7 +174,8 @@ Two details that a hand-written `Hash` gets wrong:
   defect as above, one level down.
 
 Add `Ord` and `PartialOrd` to the pair as well when the key goes into a `BTreeMap`. `BTreeMap`
-uses `Ord`, not `Hash`, and the same equivalence rule applies.
+uses `Ord`, not `Hash`, and the same equivalence rule applies. Write `partial_cmp` as
+`Some(self.cmp(other))`, so the two orderings cannot disagree.
 
 ## `self.borrow()` stops resolving: E0283
 
@@ -165,7 +208,7 @@ This is an inference failure, not a coherence error. Write `Borrow::<CiStr>::bor
 `impl<T: ?Sized> Borrow<T> for &T`. The last one gives `&String: Borrow<String>`, never
 `&String: Borrow<str>`.
 
-```rust
+```rust,run
 use std::borrow::Borrow;
 use std::collections::HashMap;
 
@@ -221,7 +264,7 @@ An unsized type has no `Clone` impl, so the blanket impl cannot reach it. That i
 shape std uses for every real `Cow` target: `str`/`String`, `Path`/`PathBuf`, `[T]`/`Vec<T>`,
 `OsStr`/`OsString`, `CStr`/`CString`. Copy it:
 
-```rust
+```rust,run
 use std::borrow::{Borrow, Cow, ToOwned};
 
 #[repr(transparent)]
@@ -254,40 +297,13 @@ fn main() {
 ```
 
 The pair costs one `unsafe` transmute helper. Keep it in one `new` method with a `SAFETY:`
-comment, and never write the cast at a use site. See `rust-unsafe` for the `#[repr(transparent)]`
-rules that make the cast sound.
+comment, and never write the cast at a use site. `#[repr(transparent)]` gives `Ascii` the
+layout of `str`. The cast `s as *const str as *const Ascii` keeps the length metadata, so the
+reborrow is sound (Reference, type layout, `repr(transparent)`). The `rust-unsafe` skill, when
+it is installed, covers the `SAFETY:` comment and audit rules.
 
-## `Cow<'_, String>` compiles and cannot borrow a slice
-
-The blanket impl above is also why `Cow<'_, String>` type-checks: `String: Clone`, therefore
-`String: ToOwned<Owned = String>`. The type is legal and useless. `Cow::Borrowed` then takes
-`&'a String`, and no `&str` coerces into that position, so every caller that holds a slice must
-allocate first:
-
-```rust
-use std::borrow::Cow;
-
-fn good(_c: Cow<'_, str>) {}
-fn bad(_c: Cow<'_, String>) {}   // compiles; a caller that holds a `&str` must allocate first
-
-fn main() {
-    good(Cow::Borrowed("literal"));             // 0 allocations
-    // bad(Cow::Borrowed("literal"));           // error[E0308]: expected `&String`, found `&str`
-    bad(Cow::Owned(String::from("literal")));   // the slice caller pays 1 allocation
-
-    let owned = String::from("literal");
-    bad(Cow::Borrowed(&owned));                 // reachable, and the `Cow` buys nothing here
-}
-```
-
-Rule: the `Cow` parameter is always the borrowed, usually unsized, half. Write `Cow<'_, str>`,
-`Cow<'_, [T]>`, `Cow<'_, Path>`. Never `Cow<'_, String>`, `Cow<'_, Vec<T>>`, or `Cow<'_, PathBuf>`.
-
-Grep for the defect:
-
-```bash
-rg 'Cow<[^>]*(String|Vec<|PathBuf|OsString|CString)' --type rust -n
-```
+The same blanket impl is why `Cow<'_, String>` type-checks and is useless. `SKILL.md` holds that
+rule, the `owned_cow` lint, and the grep.
 
 ## When a dependency demands `&String`
 
@@ -299,7 +315,7 @@ mutates through the reference, and it buys almost nothing.
 Reuse one buffer instead. `String::clear` keeps the capacity, so `push_str` stops reallocating
 after the first few calls:
 
-```rust
+```rust,run
 fn legacy(s: &String) -> usize { s.len() }
 
 // 5000 allocations over 5000 calls.
@@ -346,11 +362,10 @@ threads, give each thread its own buffer with `thread_local!`, not a shared `Mut
 ## Checklist
 
 1. Does any type in the crate implement `Borrow<X>`? Then its `Hash`, `Eq` and `Ord` must
-   delegate to `X`. Check every one.
+   delegate to `X`. Check every one, and pin `Hash` with the `hash_one` test.
 2. Does a custom `Hash` skip a length or a terminator between fields? Add one.
 3. Does a public bound say `K: Borrow<str>` where `impl AsRef<str>` would do? `&String` fails
    the first and passes the second.
-4. Does a `Cow` name an owned type as its parameter? Replace it with the borrowed half.
-5. Does a delegating `eq` or `hash` call `self.borrow()`? Qualify it, or it is `E0283`.
-6. Does a call site build a `String` only to satisfy a `&String` parameter? Reuse one buffer.
-7. Does the fix reach for `ManuallyDrop` plus `String::from_raw_parts`? Reject it in review.
+4. Does a delegating `eq` or `hash` call `self.borrow()`? Qualify it, or it is `E0283`.
+5. Does a call site build a `String` only to satisfy a `&String` parameter? Reuse one buffer.
+6. Does the fix reach for `ManuallyDrop` plus `String::from_raw_parts`? Reject it in review.
