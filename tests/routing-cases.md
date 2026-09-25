@@ -127,6 +127,9 @@ wrong skill, and put the phrase in the right description in the same change.
 | match guard | rust-pattern-semantics |
 | partial move | rust-pattern-semantics |
 | match ergonomics | rust-pattern-semantics |
+| if let guard | rust-pattern-semantics |
+| let chains | rust-pattern-semantics |
+| E0510 | rust-pattern-semantics |
 | dependency cycle | rust-crate-architecture |
 | layering violation | rust-crate-architecture |
 | tombstone | rust-debugging |
