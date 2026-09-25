@@ -1,80 +1,27 @@
-# Platform artifacts: Android jniLibs and Apple XCFramework
+# Platform artifacts: Android jniLibs and the Apple C module
 
 Mechanics for the two packaging paths. The decision rules and the commands you
-run most often are in `SKILL.md`; this file holds the detail you need when the
-build breaks or when you wire it up the first time.
+run most often are in `SKILL.md`. This file holds the detail you need when you
+wire the build the first time or when it breaks.
+
+Contents:
+
+- Android: toolchain pointers, output layout, build-system wiring, the host
+  library for the generator
+- Apple: the UniFFI header and modulemap, `uniffi-bindgen-swift`
+- Consumer layering: the generated module, the adapter, JNA, SwiftPM targets,
+  Swift isolation, exhaustive arms
 
 ---
 
 ## Android
 
-### Resolve the NDK, do not guess it
+### Toolchain and environment
 
-The NDK installs under the Android SDK at `<sdk>/ndk/<version>`. Pin the version
-explicitly. A build system that accepts "whatever NDK is installed" produces a
-different binary on every machine.
-
-The clang drivers and the LLVM archiver live in one prebuilt toolchain
-directory:
-
-```text
-<sdk>/ndk/<version>/toolchains/llvm/prebuilt/<host-tag>/bin/
-```
-
-`<host-tag>` is the build machine, not the target: `darwin-x86_64`,
-`linux-x86_64`, or `windows-x86_64`. Apple Silicon hosts also use
-`darwin-x86_64`; the toolchain runs under Rosetta or ships universal binaries
-depending on the NDK release.
-
-The driver name usually encodes the Rust target triple and the minimum API
-level. ARMv7 is the exception: Rust uses `armv7-linux-androideabi`, while the
-NDK driver uses `armv7a-linux-androideabi<api>-clang`. Use an explicit mapping:
-
-| Rust target | NDK Clang driver prefix |
-|-------------|-------------------------|
-| `aarch64-linux-android` | `aarch64-linux-android` |
-| `armv7-linux-androideabi` | `armv7a-linux-androideabi` |
-| `x86_64-linux-android` | `x86_64-linux-android` |
-| `i686-linux-android` | `i686-linux-android` |
-
-First require the application `minSdk` to meet the pinned NDK minimum. Reject
-the build or raise the application floor if it does not. Then choose the API
-suffix separately for each ABI:
-
-```text
-require application minSdk >= pinned NDK minimum API
-api = max(application minSdk, ABI minimum API)
-```
-
-Read the NDK floor from its metadata instead of copying it into the build
-script. A 64-bit Android ABI has a minimum API of 21 even when the application
-also ships a supported 32-bit ABI below 21. Append the computed API and `-clang`
-or `-clang++` to the driver prefix, and fail if that exact driver does not
-exist. A lower or guessed suffix can fail to link or raise the native runtime
-floor above the application contract.
-
-### Environment variable naming rules
-
-Two different conventions apply at once. Get both right or the link silently
-uses the host linker.
-
-| Variable | Naming rule | Example for `aarch64-linux-android` |
-|----------|-------------|-------------------------------------|
-| `CARGO_TARGET_<TRIPLE>_LINKER` | Triple uppercased, hyphens to underscores | `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` |
-| `CC_<triple>` | Triple lowercased, hyphens to underscores | `CC_aarch64_linux_android` |
-| `CXX_<triple>` | Same as `CC_` | `CXX_aarch64_linux_android` |
-| `AR_<triple>` | Same as `CC_` | `AR_aarch64_linux_android` |
-
-Cargo reads the `CARGO_TARGET_*_LINKER` form. The `cc` crate, used by any
-dependency that compiles C or C++, reads the `CC_`/`CXX_`/`AR_` forms. Set all
-four. If you set only the Cargo linker, a crate with a C dependency compiles its
-C sources with the host compiler and the link fails with unresolved symbols or
-an architecture mismatch.
-
-Point `AR_*` at `llvm-ar` in the same prebuilt `bin` directory. Do not use the
-host `ar`.
-
-The full per-ABI command is in `SKILL.md`.
+The `rust-android-build` skill resolves the NDK, the linker driver, and the
+per-ABI API suffix from `meta/platforms.json` and `meta/abis.json`. The
+`cargo-workflows` skill has the `CC_<triple>`, `CXX_<triple>`, and
+`AR_<triple>` set.
 
 ### Output layout
 
@@ -88,41 +35,28 @@ The full per-ABI command is in `SKILL.md`.
 
 Rules:
 
-- The directory names come from the ABI table in `SKILL.md`. They are not the
-  Rust target triples and not the architecture names. `arm64-v8a`, not
-  `aarch64`, not `arm64`.
+- The directory names are the Android ABI names (the `rust-android-build`
+  skill has the table). They are not the Rust target triples and not the
+  architecture names. Write `arm64-v8a`, not
+  `aarch64` or `arm64`.
 - The file name is `lib` plus the package name with hyphens replaced by
-  underscores, plus `.so`. Do not set an explicit `[lib] name`; let it follow
-  the package name so the loader lookup, the artifact name, and the crate name
-  can never drift apart.
+  underscores, plus `.so`. Do not set an explicit `[lib] name`. Let it follow
+  the package name, so the loader lookup, the artifact name, and the crate name
+  cannot drift apart.
 - Write into a generated directory under the build output, not into source
   control. Register that directory with the build system as a generated source
-  directory of the variant, so packaging picks it up automatically.
+  directory of the variant, so packaging picks it up.
 
 ### Build-system wiring
 
-Whatever build system you use, hold these properties:
+Wire the per-ABI build tasks as the `rust-android-build` skill describes
+(Gradle and jniLibs integration): task inputs, the cargo environment, the
+working directory, and the ABI set per build type.
 
-- **One task per variant and ABI.** Each task has exactly one target triple, one
-  output file, and declared inputs. That gives you correct incremental builds
-  and a usable build cache.
-- **Declare the NDK path, the Rust sources, and the `Cargo.lock` as inputs.**
-  A task that declares only the sources reuses a stale cache entry after an NDK
-  or dependency bump.
-- **Separate the per-ABI build from the merge.** Build tasks produce one `.so`
-  each; one ABI-aware merge task assembles the `jniLibs` tree. The merge stays
-  cacheable and cheap.
-- **Different ABI policy per build type.** Store one project-owned shipping ABI
-  matrix. Debug and developer builds default to one declared device or emulator
-  ABI and accept an override for a wider set. Release rejects a subset of the
-  declared matrix. Encode this as a hard failure, not a warning.
-- **Pass `--locked`.** A packaging build that silently updates `Cargo.lock`
-  produces an artifact that does not match the committed revision.
+### Host library for the generator
 
-### Host library for bindgen
-
-The bindgen step needs a host `cdylib`, not an Android slice. Build it with the
-same `cargo rustc --crate-type cdylib` form and no `--target`. The output is
+The generator step needs a host `cdylib`, not an Android slice. Build it with
+the same `cargo rustc --crate-type cdylib` form and no `--target`. The output is
 `lib<crate_name>.dylib` on macOS, `lib<crate_name>.so` on Linux, and
 `<crate_name>.dll` on Windows. Try all three names and require exactly one
 match instead of branching on the operating system.
@@ -131,29 +65,14 @@ match instead of branching on the operating system.
 
 ## Apple
 
-### Build the slices
+The `rust-ios-build` skill owns the slice build environment (`SDKROOT`,
+`IPHONEOS_DEPLOYMENT_TARGET`), the simulator `lipo` merge, XCFramework assembly
+and inspection, SwiftPM `binaryTarget` wiring and checksums, and signing.
+Follow it for those steps. Write each XCFramework to a new output path; do not
+delete a path that the current build did not create. This section covers only
+the files that UniFFI generates.
 
-Build one `staticlib` per target with `cargo rustc --crate-type staticlib`. Use
-the same profile as the Android release build so that optimization and
-`panic` settings match across platforms. Keep unwinding enabled in that profile.
-UniFFI catches a panic at the exported call, and `panic = "abort"` disables
-`catch_unwind`, so the whole process aborts instead.
-
-Merge the two simulator architectures into one fat archive:
-
-```bash
-lipo -create \
-  target/aarch64-apple-ios-sim/release/lib<crate_name>.a \
-  target/x86_64-apple-ios/release/lib<crate_name>.a \
-  -output <staging>/simulator/lib<crate_name>.a
-```
-
-Do not `lipo` the device archive together with a simulator archive. Both hold
-the same `arm64` architecture, so `lipo` refuses the merge. Device and simulator
-are different platforms in the XCFramework, not different architectures of one
-slice. Pass them to `xcodebuild` as two separate `-library` arguments instead.
-
-### Stage the headers
+### Stage the header and the modulemap
 
 Each slice needs a headers directory that holds the generated C header and a
 modulemap:
@@ -167,79 +86,80 @@ modulemap:
   module.modulemap
 ```
 
-**Modulemap naming trap.** The generator emits the modulemap under a name that
-has changed between UniFFI releases - `<crate_name>FFI.modulemap` in some
-versions, `module.modulemap` in others. The Swift compiler discovers a modulemap
-inside a framework headers directory under the name `module.modulemap`. Handle
-both names in the regeneration script, normalize to one checked-in name, and
-stage that name into every slice. Do not leave this as a manual rename step in a
-runbook; it is forgotten exactly once and then costs an afternoon.
+`uniffi-bindgen generate --language swift` writes
+`<ffi_module_filename>.modulemap`. The default is `<crate_name>FFI.modulemap`,
+which declares `module <crate_name>FFI`. Clang looks for a modulemap in an
+XCFramework headers directory under the name `module.modulemap`, so the
+regeneration script renames the file. Stage the same two files into every
+slice.
 
-### Assemble
+The generated Swift file imports the C module behind
+`#if canImport(<crate_name>FFI)`. When that module fails to build or has
+another name, the import disappears without an error, and the Swift compiler
+reports hundreds of `cannot find type 'RustBuffer' in scope` errors. Read the
+first Clang error for the module, not the Swift errors.
+
+### Use `uniffi-bindgen-swift` when you need modulemap control
+
+`uniffi-bindgen-swift` generates Swift sources, headers, and modulemaps
+separately. It writes one modulemap for the whole library and sets the file
+name directly. Add it as a second binary behind the same feature:
+
+```toml
+[[bin]]
+name = "uniffi-bindgen-swift"   # src/bin/uniffi-bindgen-swift.rs calls uniffi::uniffi_bindgen_swift()
+required-features = ["cli"]
+```
 
 ```bash
-xcodebuild -create-xcframework \
-  -library <staging>/device/lib<crate_name>.a \
-  -headers <staging>/device/headers \
-  -library <staging>/simulator/lib<crate_name>.a \
-  -headers <staging>/simulator/headers \
-  -output <build>/<Name>.xcframework
+cargo run --locked -p <ffi-crate> --features cli --bin uniffi-bindgen-swift -- \
+  <library> <out-dir> --swift-sources --headers --modulemap \
+  --module-name <crate_name>FFI --modulemap-filename module.modulemap
 ```
 
-`xcodebuild` derives the slice directory names from the archives, producing
-`ios-arm64` for the device slice and `ios-arm64_x86_64-simulator` for the merged
-simulator slice. Delete any previous `<Name>.xcframework` before you run the
-command; `-create-xcframework` fails when the output already exists.
+Rules:
 
-### CI mode
+- Pass `--module-name` with the FFI module name that the generated Swift
+  imports (default `<crate_name>FFI`). Without it the tool names the module
+  after the library file stem, and the `canImport` guard hides the mismatch.
+- Do not pass `--xcframework` for an XCFramework made with `-library`. That
+  flag emits `framework module`, which fits only a `.framework` bundle
+  (uniffi-rs #2646). The UniFFI page calls this flag XCFramework-compatible;
+  that holds only for an XCFramework built from `.framework` bundles.
+- The tool reads a static archive directly, so you can generate from a
+  shipping `.a` slice.
 
-A pull-request lane usually needs only proof that the Apple side still compiles
-and links. Build the Apple Silicon simulator target alone and assemble a
-single-slice XCFramework. Put this behind an explicit mode flag, and make the
-release path fail if the flag is set. A release artifact with one slice installs
-cleanly and then fails on every device.
+---
 
-### Swift Package Manager wiring
+## Consumer layering
 
-Reference the XCFramework as a `binaryTarget`:
+Layer each consumer so that a regeneration touches as little code as possible:
 
-```swift
-// Local path target: no checksum, rebuilt in place.
-.binaryTarget(
-    name: "<Name>FFI",
-    path: "Artifacts/<Name>.xcframework"
-)
-
-// Remote target: checksum is mandatory and changes on every rebuild.
-.binaryTarget(
-    name: "<Name>FFI",
-    url: "https://<host>/<Name>-<version>.xcframework.zip",
-    checksum: "<sha256 from swift package compute-checksum>"
-)
+```text
+generated bindings module   <- overwritten by the generator, never edited
+        |  (internal dependency)
+adapter module              <- maps generated types onto your own port type
+        |  (public interface)
+feature modules             <- depend on the port only
 ```
 
-Choose the local `path:` form while the Rust core and the app live in one
-repository. It removes a whole class of "forgot to update the checksum" failures
-and it makes a local Rust change visible to the app after one rebuild. Move to
-the remote `url:` form only when consumers are in other repositories, and then
-automate the checksum update in the release job.
+- **Android.** Put the generated Kotlin file in its own module. Depend on it
+  with `implementation` scope from the adapter only. Declare
+  `net.java.dev.jna:jna:<version>@aar` (5.12.0 or later) where the code runs on
+  Android.
+- **Apple.** Put the generated Swift file in its own SwiftPM source target that
+  depends on the XCFramework binary target. Do not add a second C target for
+  the same module, because the XCFramework already carries the header and
+  modulemap. Do not export the generated target from the public package.
+- **Swift isolation.** Keep the generated target at the SwiftPM default
+  `nonisolated` isolation. Do not add `.defaultIsolation(MainActor.self)` to it,
+  and do not compile the generated file in an app target whose default actor
+  isolation is `MainActor`. The generated FFI code does not compile there
+  (uniffi-rs #2818).
+- **Adapter arms.** Make every `when` and `switch` over generated types
+  exhaustive, with no wildcard arm. A drifted binding is then a compile error,
+  not silent behavior.
 
-Keep a local binary target inside the package root and use a package-relative
-path. Swift Package Manager does not accept a local binary target outside that
-root. Do not use `../` to escape it.
-
-### Swift package layering
-
-Split the Swift side into two packages or two targets:
-
-1. **Generated package** - holds the XCFramework `binaryTarget` and a Swift
-   source target with the generated Swift file. Make the source target depend
-   on the binary target. The XCFramework already contains the C header and
-   modulemap. Do not add a duplicate system target with the same module name.
-   Add a thin adapter that maps generated types onto your own protocol.
-2. **Public package** - holds the actor or client type the app uses, and the
-   protocol it conforms to. It depends on the port protocol, never on the
-   generated types.
-
-Do not export the generated target from the public package. Generated types that
-reach SwiftUI views turn every regeneration into an app-wide refactor.
+On a binding bump, follow the upgrade procedure in `binding-compat.md`: it
+regenerates, fixes the adapter arms, rebuilds both native artifacts, and runs
+the generated-binding call on a device or emulator and on a simulator.

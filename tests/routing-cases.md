@@ -221,7 +221,6 @@ wrong skill, and put the phrase in the right description in the same change.
 | callback_interface | uniffi-boundary |
 | custom_newtype | uniffi-boundary |
 | UDL | uniffi-boundary |
-| XCFramework | uniffi-packaging-versioning |
 | UniFfiTag | uniffi-boundary |
 | export(foreign) | uniffi-boundary |
 | XCFramework | rust-ios-build |
@@ -229,8 +228,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | RustBuffer | uniffi-packaging-versioning |
 | checksum mismatch | uniffi-packaging-versioning |
 | mobile support matrix | uniffi-packaging-versioning |
-| final-artifact device release proof | uniffi-packaging-versioning |
-| immutable release closure | uniffi-packaging-versioning |
+| mobile release proof | uniffi-packaging-versioning |
+| UniFFI header and modulemap | uniffi-packaging-versioning |
 | reduce allocations | rust-hot-path |
 | too many allocations | rust-hot-path |
 | this type is too big | rust-hot-path |

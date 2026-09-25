@@ -4,6 +4,15 @@ Use this reference when a release must prove that generated Kotlin and Swift
 bindings work with the exact artifacts that consumers receive. Keep ordinary
 compatibility checks separate from release proof.
 
+Contents:
+
+- Declare the support matrix
+- Keep ordinary lanes small
+- Prove the Android consumer artifact
+- Prove the Apple consumer artifact
+- Record one immutable release closure
+- Report failures and blocked lanes
+
 ## Declare the support matrix
 
 Store one versioned support-matrix document in the consumer repository. Give
@@ -18,22 +27,35 @@ The project owns these versions. Do not copy a universal version table into
 this skill. Update the project matrix when product support changes or when a
 toolchain upgrade changes generated bindings.
 
-Pin the Android generation tuple as the `uniffi` runtime, the in-crate bindgen,
-and the complete `uniffi.toml`. Set `bindings.kotlin.kotlin_target_version` to
-the declared Kotlin floor and include it in that tuple. Record the Kotlin and
-Android build-tool versions that compile the generated file. Generated code
+Pin the generation tuple as the `uniffi` runtime (0.32.1 or later for a Kotlin
+consumer), the in-crate bindgen, the complete `uniffi.toml`, and the global
+`--config` file when you pass one. Set `bindings.kotlin.kotlin_target_version`
+to the declared Kotlin floor and include it in that tuple. Record the Kotlin
+and Android build-tool versions that compile the generated file. Generated code
 can change when any item in this tuple changes even when the Rust API does not.
-Set `bindings.kotlin.omit_checksums = false`. An Android lane cannot pass
-release proof when the generated binding omits UniFFI checksum checks.
+Set `bindings.kotlin.omit_checksums = false` and
+`bindings.swift.omit_checksums = false`. A lane cannot pass release proof when
+the generated binding omits UniFFI checksum checks. On Kotlin with UniFFI
+0.30.0–0.32.2, the setting is not enough: the checks run only inside
+`uniffiEnsureInitialized()`, so the consumer must call it before the proof
+call.
 
 Record Apple toolchain fields separately. Record `xcodebuild -version`,
-`swift --version`, the package `swift-tools-version`, and the configured Swift
-language mode. A Swift 6 compiler running Swift 5 language mode is not proof of
-Swift 6 language-mode compatibility. Claim Swift 6 strict-concurrency support
+`swift --version`, the package `swift-tools-version`, the configured Swift
+language mode, and the default actor isolation of the target that compiles the
+generated Swift. A Swift 6 compiler running Swift 5 language mode is not proof
+of Swift 6 language-mode compatibility. Claim Swift 6 strict-concurrency support
 only when that mode compiles the relevant generated API. Treat UniFFI async
 code that is not `Sendable` as an unsupported case until the configured lane
 proves it. UniFFI documents its partial Swift 6 support here:
 <https://mozilla.github.io/uniffi-rs/latest/swift/overview.html#swift-6-support>.
+
+An Apple floor tuple has a lower bound. The `rust-ios-build` skill records
+Apple's current App Store upload minimum for Xcode and the SDK. Xcode also
+limits the runtimes it can run: as of 2026-09, Xcode 27 runs and debugs apps on
+iOS 17 or later, and Xcode 26.x on iOS 15 or later
+(<https://developer.apple.com/xcode/system-requirements/>). A runtime floor
+below iOS 17 therefore needs an Xcode 26.x lane on a host that supports it.
 
 ## Keep ordinary lanes small
 
@@ -44,10 +66,11 @@ Use the smallest paired lanes that prove the declared contract:
    that floor tuple.
 2. Run Android at the declared floor and current API levels. Select ABI lanes
    from the shipping policy instead of creating a second ABI list. Give every
-   shipping ABI family that CI can execute at least one runtime lane. For each
-   remaining shipping ABI family, retain package and device-spec inspection and
-   record runtime proof as blocked or unverified. Do not report inspection as
-   runtime proof.
+   shipping ABI family that CI can execute at least one runtime lane. A host
+   JVM test is not a runtime lane: the Kotlin checksum defects in UniFFI
+   0.30.0–0.32.0 appeared only on ARM devices. For each remaining shipping ABI family, retain
+   package and device-spec inspection and record runtime proof as blocked or
+   unverified. Do not report inspection as runtime proof.
 3. Compile the Apple wrapper with the floor Swift/Xcode tuple and the current
    tuple. Use the same declared minimum deployment target in both lanes.
 4. Pair the floor Apple compiler lane with the floor runtime when available,
@@ -85,13 +108,16 @@ from another AAB for a later lane. Do not use a universal APK as release proof.
 Select the API and ABI lane from the project support matrix. Install the final
 APK set or APK on that emulator or device. Before the call, record the actual
 device API level and ABI list. Require them to match the declared lane and the
-selected payload. Start the consumer and call one stable generated Kotlin
-binding. Require a deterministic value that proves all of these steps:
+selected payload. Start the consumer, call `uniffiEnsureInitialized()` from the
+generated package, and then call one stable generated Kotlin binding. Record
+the `uniffiEnsureInitialized()` call in the lane result; without it, step 3 is
+not proven. Require a deterministic value that proves all of these steps:
 
 1. Android selected the expected ABI payload.
 2. The checked-in generated Kotlin binding used its pinned Android JNA
    dependency to load the packaged library.
-3. The generated binding passed its UniFFI checksum checks.
+3. The generated binding passed its UniFFI contract-version and checksum
+   checks in `uniffiEnsureInitialized()`.
 4. One generated API call crossed the boundary and returned the expected
    value.
 
@@ -101,17 +127,15 @@ producer build. Reject `project(...)`, composite-build substitution, or a
 direct dependency on the source module or its `jniLibs` directory. Inspect the
 resolved dependency and require the recorded AAR digest.
 
-Use the declared Gradle `minSdk` as the application runtime floor. Require it to
-meet the pinned NDK floor before any native build. Then compute each driver API
-as the maximum of the application floor and the ABI floor; the encoded API can
-therefore be higher for an ABI that cannot run on older devices. Record both
-values instead of requiring them to match. A successful call below the
-application floor does not create a support claim. Treat an incompatible floor,
-a wrong ABI selection, or a missing packaged library as `Fail`, not `Blocked`.
+Use the declared Gradle `minSdk` as the application runtime floor. Record the
+declared `minSdk` and the driver API per ABI; the `rust-android-build` skill
+computes that API. A successful call below the application floor does not
+create a support claim. Treat an incompatible floor, a wrong ABI selection, or
+a missing packaged library as `Fail`, not `Blocked`.
 
-Use `rust-android-build` for APK or AAB contents, ELF alignment, export
-allowlists, stripping, build IDs, and native symbol evidence. Reference that
-evidence from the release closure. Do not repeat those inspections here.
+Use the `rust-android-build` skill for APK or AAB contents, ELF alignment,
+export allowlists, stripping, build IDs, and native symbol evidence. Reference
+that evidence from the release closure. Do not repeat those inspections here.
 
 Android documents `bundletool` as the tool that converts an AAB into the APKs
 delivered to a device and installs the matching split APKs:
@@ -126,18 +150,20 @@ Use the exact Swift Package dependency selected for release:
   binary target has no Swift Package checksum. Create a sorted manifest of each
   relative file path and SHA-256 digest in the final XCFramework, then record
   the manifest digest.
-- For a remote `binaryTarget(url:checksum:)`, sign the XCFramework first when
-  the release policy requires signing and signing is authorized. Put that exact
-  XCFramework at the root of the final ZIP. Run `swift package
-  compute-checksum` on that ZIP. Publish the immutable archive URL and the
-  matching `Package.swift` checksum together. Then resolve and download the
+- For a remote `binaryTarget(url:checksum:)`, build, sign, zip, and checksum
+  the archive as the `rust-ios-build` skill describes. Then resolve the
   dependency through Swift Package Manager. Require the resolved checksum to
   match before consumer proof starts.
 
 Make a Swift source target hold the checked-in generated `.swift` file and
 depend on the XCFramework binary target. Make the test target depend on this
 wrapper target. Import the high-level UniFFI module in the test. Run one stable
-generated API call on a simulator lane from the support matrix. Run the same
+generated API call on a simulator lane from the support matrix. Name the
+runtime in the destination
+(`-destination 'platform=iOS Simulator,name=<device>,OS=<version>'`); without
+`OS=`, xcodebuild uses `OS=latest`, the newest iOS runtime that the selected
+Xcode supports, so the lane changes runtime when Xcode changes
+(`man xcodebuild`, destination specifiers). Run the same
 call on a physical device at the minimum supported iOS version before release
 when that device is available. A device on a newer iOS version does not replace
 this lane. Require the same deterministic result in both lanes. A raw C call
@@ -147,10 +173,10 @@ Build with the deployment target declared by the support matrix. Do not raise
 the target to match an available simulator. A successful build at a newer
 target does not prove the support floor.
 
-Use `rust-ios-build` for target slices, XCFramework assembly, deployment-target
-inspection, signing, dSYM UUIDs, and symbolication evidence. Reference that
-evidence from the release closure. Do not rebuild or re-sign the artifact in
-this proof step.
+Use the `rust-ios-build` skill for target slices, XCFramework assembly,
+deployment-target inspection, signing, dSYM UUIDs, and symbolication evidence.
+Reference that evidence from the release closure. Do not rebuild or re-sign the
+artifact in this proof step.
 
 Apple documents the XCFramework and Swift Package binary distribution
 contracts here:
@@ -163,7 +189,8 @@ contracts here:
 Create one release manifest after packaging and before consumer proof. Include:
 
 - the source revision and release identifier;
-- the exact `uniffi` runtime and in-crate bindgen version or revision;
+- the exact `uniffi` runtime and in-crate bindgen version or revision, and
+  digests of every `uniffi.toml` and the global `--config` file;
 - digests of generated Kotlin and Swift sources, the C header, and the
   modulemap;
 - digests of the final AAB, APK, AAR, XCFramework, or remote XCFramework
@@ -210,10 +237,10 @@ Do not report a blocked lane as a product failure. Do not report it as a pass.
 Record the missing resource and the last completed step. A mandatory blocked
 lane leaves the release candidate unverified.
 
-Use `Blocked` only when a transient infrastructure or provisioning failure
-prevents the declared toolchain from starting the lane. If the provisioned
-toolchain rejects the generated bindings, consumer build, or artifact, report
-`Fail`.
+Use `Blocked` when a required device, simulator runtime, toolchain lane (for
+example Xcode 26.x on macOS 26 for a floor below iOS 17), credential, or
+service is not available. Use `Fail` when the declared toolchain runs and
+rejects the generated bindings, the consumer build, or the artifact.
 
 If the physical device at the minimum supported iOS version is unavailable,
 keep that exact device proof blocked. A device on a newer iOS version does not
