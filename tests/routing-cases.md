@@ -309,7 +309,6 @@ wrong skill, and put the phrase in the right description in the same change.
 | MutexGuard is not Send | rust-send-sync |
 | auto trait | rust-send-sync |
 | Arc vs Rc | rust-send-sync |
-| thread::scope | rust-send-sync |
 | event loop | rust-event-loop-state |
 | tick loop | rust-event-loop-state |
 | handler registry | rust-event-loop-state |
