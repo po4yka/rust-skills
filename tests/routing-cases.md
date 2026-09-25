@@ -43,6 +43,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | ERROR_BAD_EXE_FORMAT | rust-native-linking |
 | import library | rust-native-linking |
 | PDB | rust-native-linking |
+| undefined symbol | rust-native-linking |
+| raw-dylib | rust-native-linking |
 | HTTP timeout | rust-networking |
 | Retry-After | rust-networking |
 | TLS verification | rust-networking |

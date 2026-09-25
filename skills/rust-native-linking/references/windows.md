@@ -5,6 +5,10 @@ installation, signing, and update policy in the application packaging
 workflow. This reference owns the native ABI, link inputs, DLL payload, and
 PE/COFF evidence.
 
+Contents: target contract, CRT policy, vcpkg triplets, archives and import
+libraries, exported names, DLL loading, debug symbols, final PE/COFF checks,
+and a failure triage table.
+
 ## Freeze the target contract
 
 Record the full Rust target before you select a compiler or library. Do not
@@ -13,7 +17,8 @@ route on `CARGO_CFG_TARGET_OS=windows` alone.
 | Cargo input | Decision |
 |---|---|
 | `TARGET` | Select the exact Rust target and native toolchain |
-| `CARGO_CFG_TARGET_ENV` | Select `msvc` or `gnu` ABI artifacts |
+| `CARGO_CFG_TARGET_ENV` | Select `msvc` or GNU-family artifacts; use `CARGO_CFG_TARGET_ABI` to split `gnu` from `gnullvm` |
+| `CARGO_CFG_TARGET_ABI` | `llvm` marks `-pc-windows-gnullvm`; empty marks `-pc-windows-gnu` and `-pc-windows-msvc` |
 | `CARGO_CFG_TARGET_ARCH` | Select `x86`, `x86_64`, `aarch64`, or another supported machine |
 | `CARGO_CFG_TARGET_FEATURE` | Detect the `crt-static` policy |
 | `HOST` | Select generators and other tools that must run during the build |
@@ -27,13 +32,21 @@ Choose one target environment for the complete native link:
 | Rust target suffix | Native contract | Typical library files |
 |---|---|---|
 | `-pc-windows-msvc` | Microsoft ABI and a `link.exe`-like linker | Static or import `.lib`, `.dll` |
-| `-pc-windows-gnu` | MinGW-w64 GNU toolchain | Static `.a`, import `.dll.a`, `.dll` |
+| `-pc-windows-gnu` | MinGW-w64 with GCC and Binutils; MSVCRT by default | Static `.a`, import `.dll.a`, `.dll` |
+| `-pc-windows-gnullvm` | MinGW-w64 with LLVM tools (llvm-mingw or an MSYS2 `CLANG*` environment); UCRT | Static `.a`, import `.dll.a`, `.dll` |
 
-Do not mix MSVC and GNU object files or C++ libraries because both produce PE
-files. Their compiler ABI, symbol decoration, runtime, and archive conventions
-can differ. Build every native input with the toolchain selected by `TARGET`.
+Do not mix MSVC and GNU object files or C++ libraries. Both produce PE files,
+but their compiler ABI, symbol decoration, runtime, and archive conventions
+can differ. Do not reuse `-gnu` archives for a `-gnullvm` target either: the
+C runtime (MSVCRT or UCRT), the C++ runtime (libstdc++ or libc++), and the
+unwinder (libgcc or libunwind) can all differ. Build every native input with
+the toolchain selected by `TARGET`.
 
-Both Rust target families use Windows calling conventions for `extern "C"`.
+For `-pc-windows-gnu`, Rust 1.98 documents GNU Binutils 2.44, GCC 14.2, and
+mingw-w64 12.0.0 as the oldest supported tools. Older tools, especially
+Binutils, may not work. Record the versions in build evidence.
+
+Every Windows Rust target uses Windows calling conventions for `extern "C"`.
 This does not make a C++ ABI portable. Put an `extern "C"` shim around a C++
 interface. Keep allocation, exceptions, standard library types, and ownership
 inside the toolchain boundary.
@@ -79,7 +92,7 @@ Common MSVC examples are:
 |---|---|
 | DLL library and DLL CRT | `x64-windows` |
 | Static library and static CRT | `x64-windows-static` |
-| Static library and DLL CRT | `x64-windows-static-md` |
+| Static library and DLL CRT | `x64-windows-static-md` (community triplet) |
 
 Use the corresponding `x86-` or `arm64-` triplet for another architecture.
 Set `VCPKGRS_TRIPLET` for the Rust `vcpkg` helper. If an upstream CMake build
@@ -109,6 +122,15 @@ which DLLs to package.
 For GNU artifacts, distinguish static `.a` files from `.dll.a` import
 libraries. Use the MinGW-w64 `objdump` and `nm` from the same target toolchain.
 Do not rename one format to imitate another.
+
+When no import library exists, or when a cross build cannot produce one, use
+`#[link(name = "foo", kind = "raw-dylib")]` on the `extern` block. rustc then
+generates the import library at link time. On `-pc-windows-gnu`, rustc runs
+Binutils `dlltool` for this step. Put the target `dlltool` on `PATH` or pass
+`-C dlltool=<path>`. MSVC and `-gnullvm` targets need no external tool. Other
+targets reject the kind with `error[E0455]`, so guard it with
+`cfg_attr(windows, ...)` in portable code.
+`foo.dll` is still a runtime dependency.
 
 When LINK builds a DLL with exports, it normally creates the MSVC import
 library. Preserve the DLL and import library as one versioned output set. Use
@@ -173,8 +195,8 @@ identity in the approved symbol archive.
 For MSVC native code, `/Z7` keeps compiler debug information in object files.
 `/Zi` writes compiler information to a PDB that must be available when LINK
 consumes the object or library. `/DEBUG:FULL` creates a final PDB that can be
-used without the original objects. Avoid `/DEBUG:FASTLINK` for distributable
-symbols because it depends on other build outputs and is deprecated.
+used without the original objects. Do not use `/DEBUG:FASTLINK`: its PDB
+depends on the original objects, and Visual Studio 2026 removed the option.
 
 Use `dumpbin /PDBPATH:VERBOSE <artifact>` to inspect the recorded PDB path.
 Verify that the archived PDB matches the shipped EXE or DLL. A file with the
@@ -226,6 +248,7 @@ Prove these properties:
 | `LNK1112` or `0xc000007b` | `/HEADERS` machine type for every input and DLL | Rebuild the wrong-architecture input for `TARGET` |
 | `ERROR_BAD_EXE_FORMAT` (`193` or `0xC1`) | `/HEADERS` or target `objdump -f` for the EXE and every DLL | Rebuild the non-PE, wrong-environment, or wrong-architecture input for the exact `TARGET` |
 | `LNK2019` | Exact decorated name and provider symbols | Correct the ABI, calling convention, import library, or export |
+| `LNK2019` for a registry or security API, such as `RegOpenKeyExW` | Which system library exports the symbol | Since Rust 1.87, `std` no longer links `advapi32`; emit `cargo::rustc-link-lib=advapi32` from the `*-sys` build script |
 | `LNK2038` with `RuntimeLibrary` | `/MD` or `/MT` policy for every native object | Rebuild all inputs with one compatible CRT mode |
 | Link succeeds but DLL is absent | `/IMPORTS` and `/DEPENDENTS` | Package the matching DLL and recurse through its dependencies |
 | Works in `cargo run` only | Clean `PATH` launch outside Cargo | Remove dependence on Cargo's loader environment |
@@ -236,6 +259,8 @@ Prove these properties:
 
 - [Rust Windows MSVC targets](https://doc.rust-lang.org/rustc/platform-support/windows-msvc.html)
 - [Rust Windows GNU targets](https://doc.rust-lang.org/rustc/platform-support/windows-gnu.html)
+- [Rust Windows GNU LLVM targets](https://doc.rust-lang.org/rustc/platform-support/windows-gnullvm.html)
+- [Rust `dylib` versus `raw-dylib`](https://doc.rust-lang.org/reference/items/external-blocks.html#dylib-versus-raw-dylib)
 - [Rust static and dynamic C runtimes](https://doc.rust-lang.org/reference/linkage.html#static-and-dynamic-c-runtimes)
 - [Cargo build-script environment](https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-sets-for-build-scripts)
 - [Microsoft CRT library features](https://learn.microsoft.com/cpp/c-runtime-library/crt-library-features)
