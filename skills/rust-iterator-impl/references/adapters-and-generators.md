@@ -1,7 +1,15 @@
 # Adapter bounds and stable generators
 
 Deep material for `rust-iterator-impl`. Every error text and number below comes from rustc
-1.97.0, edition 2024, on aarch64-apple-darwin.
+1.98.1, edition 2024, on aarch64-apple-darwin.
+
+Contents:
+
+- [Which adapter loses the exact length](#which-adapter-loses-the-exact-length)
+- [Three orderings, three results](#three-orderings-three-results)
+- [Old generator snippets](#old-generator-snippets)
+- [Two neighbours of from_fn](#two-neighbours-of-from_fn)
+- [What from_fn costs](#what-from_fn-costs)
 
 ## Which adapter loses the exact length
 
@@ -20,7 +28,10 @@ note: required by a bound in `rev`
 
 The caret sits on `.rev()`. The adapter that broke the bound is `.chars()`, two positions
 earlier. `filter` gives the same error in the same place: `the trait bound
-Filter<std::slice::Iter<'_, u32>, {closure@...}>: ExactSizeIterator is not satisfied`.
+Filter<std::slice::Iter<'_, u32>, {closure@...}>: ExactSizeIterator is not satisfied`. A second
+error follows on the next method call: `error[E0599]: the method collect exists for struct
+Rev<Enumerate<Chars<'_>>>, but its trait bounds were not satisfied`. Fix the E0277; the E0599
+goes with it.
 
 Do not learn this as "`enumerate` breaks `rev`". `v.iter().enumerate().rev()` compiles, because
 slice iterators are `ExactSizeIterator`. The adapter between the source and `enumerate` decides:
@@ -35,25 +46,35 @@ never `ExactSizeIterator`.
 
 ## Three orderings, three results
 
-```rust
-let v = ["a", "b", "c"];
+```rust,run
+fn main() {
+    let v = ["a", "b", "c"];
 
-// Keeps the forward index. Needs ExactSizeIterator.
-let keep: Vec<_> = v.iter().enumerate().rev().collect();
-assert_eq!(keep, vec![(2, &"c"), (1, &"b"), (0, &"a")]);
+    // Keeps the forward index. Needs ExactSizeIterator.
+    let keep: Vec<_> = v.iter().enumerate().rev().collect();
+    assert_eq!(keep, vec![(2, &"c"), (1, &"b"), (0, &"a")]);
 
-// Renumbers from 0 at the tail. Compiles on any DoubleEndedIterator.
-let renumber: Vec<_> = v.iter().rev().enumerate().collect();
-assert_eq!(renumber, vec![(0, &"c"), (1, &"b"), (2, &"a")]);
+    // Renumbers from 0 at the tail. Compiles on any DoubleEndedIterator.
+    let renumber: Vec<_> = v.iter().rev().enumerate().collect();
+    assert_eq!(renumber, vec![(0, &"c"), (1, &"b"), (2, &"a")]);
 
-// `filter` loses the exact length. Collect first, then enumerate.
-let kept: Vec<_> = v.iter().filter(|s| **s != "b").collect();
-let late: Vec<_> = kept.into_iter().enumerate().rev().collect();
-assert_eq!(late, vec![(1, &"c"), (0, &"a")]);
+    // `filter` loses the exact length. Collect first, then enumerate.
+    let kept: Vec<_> = v.iter().filter(|s| **s != "b").collect();
+    let late: Vec<_> = kept.into_iter().enumerate().rev().collect();
+    assert_eq!(late, vec![(1, &"c"), (0, &"a")]);
+}
 ```
 
 Both forms yield the same elements in the same order, so a test that checks only the elements
 passes with either. The indices are mirrored. Assert on the pair, not on the element.
+
+## Old generator snippets
+
+Old snippets add two traps. `std::ops::Generator` does not exist: `use std::ops::Generator;`
+gives `error[E0432]: unresolved import std::ops::Generator` on every channel. The trait is now
+`std::ops::Coroutine`, with `CoroutineState`, still behind `#![feature(coroutine_trait)]`
+(issue 43122). A nightly `gen` block is an `Iterator` only and takes no resume argument, so it
+buys no state-carrying routine that stable lacks.
 
 ## Two neighbours of from_fn
 
@@ -61,15 +82,17 @@ Both cover a common shape with less code than `std::iter::from_fn`. Use
 `std::iter::successors` when each item is a function of the previous one, and
 `std::iter::repeat_with` when the closure needs no seed:
 
-```rust
-let powers: Vec<u32> = std::iter::successors(Some(1u32), |n| n.checked_mul(2))
-    .take(5)
-    .collect();
-assert_eq!(powers, vec![1, 2, 4, 8, 16]);
+```rust,run
+fn main() {
+    let powers: Vec<u32> = std::iter::successors(Some(1u32), |n| n.checked_mul(2))
+        .take(5)
+        .collect();
+    assert_eq!(powers, vec![1, 2, 4, 8, 16]);
 
-let mut n = 0;
-let counted: Vec<u32> = std::iter::repeat_with(|| { n += 1; n }).take(3).collect();
-assert_eq!(counted, vec![1, 2, 3]);
+    let mut n = 0;
+    let counted: Vec<u32> = std::iter::repeat_with(|| { n += 1; n }).take(3).collect();
+    assert_eq!(counted, vec![1, 2, 3]);
+}
 ```
 
 ## What from_fn costs
