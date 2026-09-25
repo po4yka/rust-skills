@@ -51,6 +51,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | connection pool | rust-networking |
 | response body limit | rust-networking |
 | graceful shutdown | rust-networking |
+| reqwest | rust-networking |
 | database pool exhaustion | rust-database |
 | transaction rollback | rust-database |
 | database migration ordering | rust-database |

@@ -1,48 +1,30 @@
 ---
 name: rust-networking
-description: Use when you build or review production Rust network clients and servers; define end-to-end HTTP timeout budgets; retry idempotent and replayable requests with Retry-After and jitter; configure TLS verification, DNS, proxies, or connection pools; bound streaming bodies and overload; or implement graceful shutdown. Triggers on "HTTP timeout", "Retry-After", "TLS verification", "connection pool", "response body limit", or "graceful shutdown".
+description: Use when building or reviewing a production Rust network client or server with reqwest, hyper, axum, tower-http, tonic, or rustls; setting an HTTP timeout or deadline budget; retrying safely with Retry-After and jitter; keeping TLS verification on; configuring a connection pool, proxy, or DNS; enforcing a response body limit or overload bound; or adding graceful shutdown. Not for select! or task cancel safety; use `rust-async-internals`.
 license: BSD-3-Clause
 ---
 
 # Rust Networking
 
-Use this skill for the policy around a Rust network client or server. Apply it
-to HTTP, gRPC, WebSocket, and custom TCP protocols. Adapt the controls to the
-framework that the workspace already uses.
+Apply this policy to HTTP, gRPC, WebSocket, and custom TCP clients and servers.
+Use the timeout, retry, pool, body-limit, and shutdown controls of the stack
+that the workspace already uses. Do not replace the framework to get one
+middleware type.
 
-Do not replace the framework to get a specific middleware type. Most mature
-Rust network stacks provide timeout, retry, pool, body-limit, and shutdown
-controls. Use those controls before you write new middleware.
-
-## Boundaries
-
-This skill owns these decisions:
-
-- the operation deadline and the phase timeout caps;
-- the retry eligibility, delay, and attempt budget;
-- TLS identity verification and trust-root selection;
-- proxy, DNS, and connection-pool lifecycle;
-- streaming, body-size, queue, and concurrency limits;
-- network cancellation semantics and graceful shutdown;
-- network-safe diagnostic fields and deterministic test seams.
-
-Use `rust-async-internals` for `select!`, task ownership, cancel safety, and
-runtime configuration. Use `rust-observability` to implement tracing, metrics,
-and exporters. Use `rust-security` for dependency policy and generic
-untrusted-input parser hardening.
+Use these skills, when they are installed, for adjacent work:
+`rust-async-internals` for `select!`, task ownership, cancel safety, and runtime
+configuration; `rust-observability` for tracing, metrics, and exporters;
+`rust-security` for dependency advisories and untrusted-input parser hardening.
 
 ## Start from one operation contract
 
-Write the contract before you change code. Record these fields next to the
-client or server configuration:
+Record these decisions next to the client or server configuration before you
+tune individual settings:
 
 | Field | Required decision |
 |---|---|
 | Operation deadline | Maximum wall-clock time for all attempts and delays |
-| Connect cap | Maximum time for DNS, address selection, TCP, proxy, and TLS |
-| Write cap | Maximum time without upload progress |
-| First-byte cap | Maximum time after request upload until response headers |
-| Read idle cap | Maximum time without response-body progress |
+| Phase caps | DNS, connect, write idle, first-byte, and read idle caps (see "Use one absolute deadline") |
 | Retry attempts | Total attempts, including the first attempt |
 | Retry eligibility | Operation semantics, replayable body, and retryable result |
 | Response limit | Maximum decoded bytes accepted by the caller |
@@ -54,6 +36,95 @@ client or server configuration:
 Do not copy timeout values from another service. Derive them from the caller's
 deadline and the service latency objective. Keep all values configurable. Give
 each value a finite production default when the caller does not supply one.
+
+## Set the limits the stack leaves open
+
+Most Rust network stacks ship without the limits in the contract. An unset
+limit compiles and passes tests, then fails under a slow or hostile peer. Set
+each one explicitly:
+
+| Stack | Default | Consequence |
+|---|---|---|
+| reqwest 0.13 async `Client` | No `timeout`, `connect_timeout`, or `read_timeout`; `pool_max_idle_per_host` is `usize::MAX` | A stalled peer holds a request forever; the idle pool has no bound |
+| reqwest `Response::bytes`, `text`, `json` | Collect the whole body with no size limit | A large response exhausts memory |
+| hyper 1.x HTTP/1 server | `header_read_timeout` (30 s) acts only after `Builder::timer`; a configured value with no timer panics | Slow-header clients hold connections |
+| `axum::serve` 0.8 | Builds its hyper builder with no timer | No header-read timeout at all |
+| axum `with_graceful_shutdown` | Waits for open connections with no deadline | One open request stalls shutdown |
+| tower-http `TimeoutLayer::new` | Deprecated since 0.6.7; answers `408` | A client can repeat even a `POST` that the handler already ran |
+| tonic 0.14 `Endpoint` | No connect timeout; `timeout` does not send `grpc-timeout` | The server never sees the deadline, so it cannot stop at it or pass it downstream |
+| rustls 0.23 | Zero or two provider features (or `custom-provider`) and no installed provider | `ClientConfig::builder()` panics at run time |
+
+Read [references/stack-defaults.md](references/stack-defaults.md) when the
+workspace uses one of these crates: it has the reqwest 0.13 upgrade changes,
+working client and server setups, and the rustls and Android TLS setup.
+
+## Verify the configuration
+
+Run these checks when you add or review network configuration. Review each hit;
+a hit is not always a defect.
+
+```bash
+rg -n --type rust 'danger_accept_invalid|tls_danger_|\.dangerous\(\)|tls_sslkeylogfile\(true\)|KeyLogFile|DefaultBodyLimit::disable|\bTimeoutLayer::new|axum::serve\(|with_graceful_shutdown\(|\breqwest::get\(|\bClient(Builder)?::(new|builder)\(\)|\.(bytes|text|json)\(\)\.await|\.json::<'
+cargo tree --locked -e features -i rustls --prefix none | grep -oE '^rustls feature "(ring|aws_lc_rs|custom-provider)"' | sort -u
+cargo deny --config deny.toml --locked check advisories
+```
+
+| Check | Proves | Does not prove |
+|---|---|---|
+| `rg` | Each bypass, key log, unbounded body, `408` timeout, and unbounded serve or client construction is visible | That the configured values fit the contract |
+| `cargo tree` | Which rustls provider features are on. Any output other than a single `ring` or `aws_lc_rs` line means `main` must install a provider | That the provider is installed before first TLS use |
+| `cargo deny` | No known vulnerability in rustls, h2, hyper, quinn, or the rest of the graph. An unsound advisory in a transitive crate fails only with `unsound = "all"` (the `rust-security` skill owns this `deny.toml` policy) | Protocol correctness |
+
+A green grep does not prove the timing contract; the tests in "Test
+deterministic seams" do. The work is complete when each contract field and each
+stack-defaults row has a finite, configurable, tested value, and the TLS root
+source, the pool key, the outcome-unknown error state, and the diagnostics
+field list match their sections. In a review, each gap is a finding.
+
+## Failure triage
+
+| Symptom | Likely cause | First check |
+|---|---|---|
+| Request exceeds its advertised timeout | Each retry received a fresh timeout | Trace one absolute deadline across attempts |
+| POST executes twice | Method-only retry policy | Check idempotency and body replayability |
+| Retry storm during outage | No jitter, no attempt cap, or ignored `Retry-After` | Inspect delay and total attempt metrics |
+| TLS works only in development | Production root source differs or verifier bypass leaks into tests | Print root source and certificate error class |
+| Requests use the old endpoint | Live pooled connection survives DNS change | Compare pool reuse and connect events |
+| Memory grows under slow clients | Body collection or unbounded queue | Inspect decoded-byte and queue limits |
+| HTTP/2 overloads the service | Connection limit is used as request limit | Inspect in-flight streams and route permits |
+| Shutdown never finishes | New work is still admitted, each step resets grace, or axum `with_graceful_shutdown` has no outer deadline | Trace admission close and one deadline |
+| Slow clients exhaust server connections | `axum::serve` or a hyper builder without a timer has no header-read timeout | Send a partial header and time the close |
+| Panic "Could not automatically determine the process-level CryptoProvider" | Zero or two provider features (or `custom-provider`) and no installed provider | Run the `cargo tree` check; install one provider in `main` |
+| Metrics leak user data | Raw URI, header, or error text is a label | Apply the closed field vocabulary |
+
+## Keep TLS verification on
+
+Use the TLS backend that the workspace already selected. Apply these rules:
+
+- Verify the certificate chain and the server name on every production
+  connection.
+- Load trust roots from one explicit source. Choose the platform store when the
+  product must honor managed enterprise roots. Choose a bundled store when the
+  product requires the same roots on every target. A reqwest 0.12 `rustls-tls`
+  build (bundled webpki roots) silently moves to the platform verifier on 0.13;
+  call `tls_certs_only(roots)` to keep a bundled or private set.
+- Fail startup or client construction when the required root store is empty.
+- Keep certificate and hostname bypass APIs (the `rg` check above lists them)
+  out of production code paths. A test verifier must not be reachable from
+  runtime configuration.
+- Send SNI for a DNS name. Verify the original service name, not the resolved IP
+  address.
+- Keep private keys out of logs and error chains. Never enable key logging in
+  production: reqwest `tls_sslkeylogfile(true)` and rustls `KeyLogFile` write
+  session secrets to the file that `SSLKEYLOGFILE` names.
+- Rebuild the client and drain old pooled connections after a trust-root,
+  client-certificate, or private-key rotation.
+- Use certificate pinning only when the product has a rotation and recovery
+  plan. Ship at least one backup identity before the active identity changes.
+
+Do not force a protocol-version policy that conflicts with the platform or the
+service contract. Use the secure defaults of the maintained TLS backend. Raise
+the minimum only when the deployment matrix proves that every peer supports it.
 
 ## Use one absolute deadline
 
@@ -68,32 +139,25 @@ phase allowance = min(configured phase cap, operation deadline - monotonic now)
 ```
 
 Fail before the phase starts when no time remains. Report which phase consumed
-the budget. Do not report every deadline failure as `connect timeout`.
+the budget. Do not report every deadline failure as `connect timeout`. Read
+[references/deadlines-and-retries.md](references/deadlines-and-retries.md) when
+you set the phase caps: it gives the start, the end, and the failure mode of
+each cap.
 
-Use separate controls for separate failure modes:
-
-| Control | Starts | Ends | Protects against |
-|---|---|---|---|
-| DNS cap | Before lookup | Address set returned | Resolver stall |
-| Connect cap | Before socket or proxy connect | Secure connection ready | Route, proxy, TCP, or TLS stall |
-| Write idle cap | After write starts | Request body complete | Peer that stops reading |
-| First-byte cap | After request complete | Response headers arrive | Slow handler or upstream |
-| Read idle cap | After body starts | Each body chunk | Peer that stops sending |
-| Operation deadline | At API entry | Body consumed or discarded | All cumulative work |
-
-On a server, also bound request-header read time and size, keep-alive idle
-time, request-body read idle time, and response-write idle time. Start the
-header deadline when the connection is accepted, before application admission.
+On a server, start the header-read deadline when the connection is accepted.
 A slow client must not hold an accepted-connection slot without completing a
 bounded header.
 
 An idle timeout is not a total transfer timeout. Reset it only after useful
 progress. A peer that sends one byte before every idle timeout can still consume
-the operation deadline, so enforce both.
+the operation deadline, so enforce both. With tower-http, pair
+`RequestBodyTimeoutLayer` (idle) with `RequestBodyDeadlineLayer` (total,
+tower-http 0.7+). With reqwest, pass the remaining time to
+`RequestBuilder::timeout` on every attempt.
 
 Use `tokio::time::timeout_at` or the runtime equivalent when the stack does not
-accept a deadline directly. Remember that dropping the timed future cancels it.
-Check cancel safety with `rust-async-internals`.
+accept a deadline directly. Dropping the timed future cancels it, so check its
+cancel safety.
 
 ## Retry only a safe operation
 
@@ -138,113 +202,21 @@ Also bound retries per upstream across the process. Require a retry permit or
 token before a second attempt. Limit retry concurrency, and suppress retries
 when the local service is overloaded or the upstream failure rate crosses the
 configured threshold. If no retry budget remains, return the original failure
-instead of adding outage load.
+instead of adding outage load. `tower::retry::budget::TpsBudget` implements
+such a budget for a tower stack.
 
 Use exponential backoff with full jitter. Let `base` be the first cap and
 `maximum` be the largest cap. For retry number `n`, starting at zero, select a
-uniform delay in this range:
-
-```text
-0 .. min(maximum, base * 2^n)
-```
+uniform delay in `0 ..= min(maximum, base * 2^n)`.
 
 Parse both `Retry-After` forms: delay seconds and HTTP date. Reject invalid or
 negative values. Use the larger of the server delay and the local jitter delay.
 Do not sleep past the operation deadline. Clamp arithmetic to prevent overflow.
 
 Keep delay calculation pure. Pass the random sample and current time into it.
-This small seam makes retry tests deterministic without a mock HTTP framework.
-
-```rust
-use std::time::Duration;
-
-fn full_jitter_delay(
-    base: Duration,
-    maximum: Duration,
-    retry_number: u32,
-    sample: u64,
-) -> Duration {
-    let factor = 1_u128.checked_shl(retry_number).unwrap_or(u128::MAX);
-    let cap = base.as_millis().saturating_mul(factor);
-    let cap = cap.min(maximum.as_millis()).min(u128::from(u64::MAX)) as u64;
-    Duration::from_millis(if cap == u64::MAX {
-        sample
-    } else {
-        sample % (cap + 1)
-    })
-}
-
-fn main() {
-    assert!(full_jitter_delay(
-        Duration::from_millis(100),
-        Duration::from_secs(2),
-        3,
-        900,
-    ) <= Duration::from_millis(800));
-}
-```
-
-## Keep TLS verification on
-
-Use the TLS backend that the workspace already selected. Apply these rules:
-
-- Verify the certificate chain and the server name on every production
-  connection.
-- Load trust roots from one explicit source. Choose the platform store when the
-  product must honor managed enterprise roots. Choose a bundled store when the
-  product requires the same roots on every target.
-- Fail startup or client construction when the required root store is empty.
-- Keep certificate and hostname bypass APIs out of production features. Do not
-  add `accept_invalid_certs`, an all-accepting verifier, or a test verifier to a
-  runtime configuration path.
-- Send SNI for a DNS name. Verify the original service name, not the resolved IP
-  address.
-- Keep private keys out of logs and error chains. Disable TLS key logging in
-  production.
-- Rebuild the client and drain old pooled connections after a trust-root,
-  client-certificate, or private-key rotation.
-- Use certificate pinning only when the product has a rotation and recovery
-  plan. Ship at least one backup identity before the active identity changes.
-
-Do not force a protocol-version policy that conflicts with the platform or the
-service contract. Use the secure defaults of the maintained TLS backend. Raise
-the minimum only when the deployment matrix proves that every peer supports it.
-
-## Treat proxy and DNS as connection identity
-
-Resolve proxy policy once per request destination. Support explicit proxy
-configuration and the platform convention that the product requires. Parse
-`NO_PROXY` with a maintained implementation. Do not copy a home-grown suffix
-matcher into the client.
-
-Never log proxy credentials. Keep origin credentials and proxy credentials in
-separate configuration. Send `Proxy-Authorization` only to the proxy. Do not
-reuse origin `Authorization` or cookies as proxy authentication. For HTTPS
-through `CONNECT`, send origin headers and client certificates only inside the
-verified end-to-end TLS tunnel. A plaintext forward proxy can inspect origin
-requests, so do not send secrets through it unless the product policy accepts
-that trust boundary.
-
-Apply DNS changes to new connections. Do not assume that an existing pooled
-connection follows a changed DNS record. Bound the DNS cache by the resolver
-TTL or by a shorter product cap. Do not cache a failure forever. Preserve all
-returned addresses and use the stack's IPv6 and IPv4 fallback strategy instead
-of selecting the first address permanently.
-
-Key a connection pool by every property that changes connection security or
-routing:
-
-```text
-scheme + authority + proxy route + TLS identity + protocol settings
-```
-
-Do not create a client per request. Reuse one configured client for its policy
-lifetime. Also do not keep an unbounded pool. Set per-host idle limits and an
-idle lifetime. Let the protocol implementation detect stale connections.
-
-HTTP/2 and HTTP/3 multiplex requests over a connection. A connection count is
-not a request concurrency limit. Bound in-flight requests separately. Drain the
-old pool when proxy, trust, identity, or protocol policy changes.
+This seam makes retry tests deterministic without a mock HTTP framework. Read
+[references/deadlines-and-retries.md](references/deadlines-and-retries.md) when
+you write the delay function: it has a tested implementation.
 
 ## Stream with hard limits and backpressure
 
@@ -257,17 +229,16 @@ compressed body can expand into a large decoded body. If the stack exposes both
 wire and decoded sizes, limit and record both.
 
 Process large bodies as streams. Do not call a collect-to-bytes helper unless
-the route limit is small enough to allocate safely. Put a bounded channel
-between network reads and a slower consumer. Await capacity or cancel the
-request when the channel is full. Never add an unbounded queue to hide
-backpressure.
+the route limit is small enough to allocate safely. On a server, use
+`http_body_util::Limited`, `axum::body::to_bytes(body, limit)`, or a per-route
+`DefaultBodyLimit::max(n)`. Put a bounded channel between network reads and a
+slower consumer. Await capacity or cancel the request when the channel is full.
+Never add an unbounded queue to hide backpressure.
 
-For uploads, make replayability explicit:
-
-- A byte buffer is replayable.
-- A file is replayable only when each attempt opens a new handle and starts at
-  the same offset.
-- A live channel, socket, decoder, or one-shot generator is not replayable.
+For uploads, make replayability explicit. A byte buffer is replayable. A file is
+replayable only when each attempt opens a new handle and starts at the same
+offset. A live channel, socket, decoder, or one-shot generator is not
+replayable.
 
 Stop reading after cancellation, a body-limit error, or an expired deadline.
 Release or reset the protocol stream as the library requires. Do not return a
@@ -296,8 +267,31 @@ response body. Let the protocol stack send the correct stream reset or close.
 On server cancellation, stop application work promptly, but do not claim that
 a partial response can be withdrawn from the peer.
 
-Use `rust-async-internals` to implement the cancellation tree and to verify that
-dropped futures leave no locks, permits, or transactions behind.
+Use `rust-async-internals`, when it is installed, to implement the cancellation
+tree and to verify that dropped futures leave no locks, permits, or
+transactions behind.
+
+## Treat proxy and DNS as connection identity
+
+Key a connection pool by every property that changes connection security or
+routing:
+
+```text
+scheme + authority + proxy route + TLS identity + protocol settings
+```
+
+Do not create a client per request. Reuse one configured client for its policy
+lifetime. Also do not keep an unbounded pool. Set per-host idle limits and an
+idle lifetime. Let the protocol implementation detect stale connections.
+
+HTTP/2 and HTTP/3 multiplex requests over a connection. A connection count is
+not a request concurrency limit. Bound in-flight requests separately. Drain the
+old pool when proxy, trust, identity, or protocol policy changes.
+
+Send `Proxy-Authorization` only to the proxy, and never reuse origin
+credentials as proxy authentication. Read
+[references/proxy-and-dns.md](references/proxy-and-dns.md) when you configure a
+proxy, `NO_PROXY`, a resolver, or a DNS cache.
 
 ## Bound server overload
 
@@ -311,6 +305,11 @@ database work, or downstream calls. Keep the wait queue bounded. When capacity
 is exhausted, reject promptly with the protocol's overload response. For HTTP,
 use `503 Service Unavailable` and a valid `Retry-After` when the server can give
 a useful delay.
+
+Answer a handler timeout with `503` or `504`, never `408`. `408` tells the
+client that the server did not receive the whole request, so a client can
+repeat even a `POST` after the handler already ran. With tower-http, use
+`TimeoutLayer::with_status_code(StatusCode::SERVICE_UNAVAILABLE, timeout)`.
 
 Do not combine a large buffer with a concurrency limit and call the result
 bounded. The buffer is admitted work too. Include queued requests in the memory
@@ -328,8 +327,13 @@ Use this server shutdown sequence:
 6. Cancel the remaining work after the deadline.
 7. Await task termination and release listeners, pools, and permits.
 
-Keep one finite shutdown deadline. Do not apply a new full grace period at each
-step. A signal storm must not restart the deadline.
+Keep one finite shutdown deadline. Start it when the shutdown signal arrives,
+not when the server starts. Do not apply a new full grace period at each step.
+A signal storm must not restart the deadline. axum `with_graceful_shutdown`
+covers steps 2 to 5 but has no deadline; bound it from the signal as
+[references/stack-defaults.md](references/stack-defaults.md) shows. Track
+spawned background work with `tokio_util::task::TaskTracker` (`close()`, then
+`wait()`) so the drain covers it.
 
 For clients, stop accepting new operations, let eligible in-flight operations
 finish within the deadline, then close pools. Do not drop a runtime while
@@ -337,83 +341,30 @@ network tasks still own sockets.
 
 ## Emit safe network diagnostics
 
-Record bounded, low-cardinality fields:
-
-- operation name or route template, not the full URL;
-- method or protocol operation;
-- attempt number and retry reason class;
-- timeout phase and elapsed bucket;
-- response status class;
-- bytes sent and received;
-- TLS protocol version and certificate error class;
-- pool reuse, DNS result count, and proxy-used boolean.
+Record bounded, low-cardinality fields: route template or operation name (not
+the full URL), method, attempt number, retry reason class, timeout phase,
+elapsed bucket, status class, bytes sent and received, TLS version, certificate
+error class, pool reuse, DNS result count, and a proxy-used boolean.
 
 Do not record URL queries, raw paths with identifiers, headers, cookies,
 tokens, certificate contents, body fragments, proxy credentials, or peer error
 text that can echo those values. Do not put the remote address into a metric
-label. Use `rust-observability` to implement redaction and cardinality gates.
+label. Use `rust-observability`, when it is installed, to implement redaction and
+cardinality gates.
 
 ## Test deterministic seams
 
-Test policy without a real public network. Use the smallest seam that exposes
-the behavior under test:
+Test policy without a real public network. Read
+[references/test-seams.md](references/test-seams.md) when you write a network
+policy test: it maps each control to the smallest seam that exposes it.
 
-- pause or inject monotonic time for deadlines and backoff;
-- pass a fixed jitter sample into the delay calculation;
-- run a local listener for partial writes, delayed headers, and stalled bodies;
-- inject a resolver result for multiple addresses and DNS failures;
-- generate a test CA and server certificate for TLS name and trust failures;
-- use a counting body that fails if a retry reads it twice;
-- expose pool-connect counts to prove reuse and policy-change drain;
-- hold a concurrency permit to prove overload rejection;
-- keep one handler open to prove bounded graceful shutdown.
+`#[tokio::test(start_paused = true)]` needs tokio's `test-util` feature. Do not
+combine `start_paused` with real sockets: auto-advance fires the deadline while
+the socket waits.
 
 Do not assert only the final error string. Assert the attempt count, elapsed
 virtual time, bytes consumed, connection count, and error class.
 
 Run the smallest affected tests first. Then run the workspace network tests
-with retries disabled at the test runner level. A runner retry can hide a
-flaky network contract.
-
-## Failure triage
-
-| Symptom | Likely cause | First check |
-|---|---|---|
-| Request exceeds its advertised timeout | Each retry received a fresh timeout | Trace one absolute deadline across attempts |
-| POST executes twice | Method-only retry policy | Check idempotency and body replayability |
-| Retry storm during outage | No jitter, no attempt cap, or ignored `Retry-After` | Inspect delay and total attempt metrics |
-| TLS works only in development | Production root source differs or verifier bypass leaks into tests | Print root source and certificate error class |
-| Requests use the old endpoint | Live pooled connection survives DNS change | Compare pool reuse and connect events |
-| Memory grows under slow clients | Body collection or unbounded queue | Inspect decoded-byte and queue limits |
-| HTTP/2 overloads the service | Connection limit is used as request limit | Inspect in-flight streams and route permits |
-| Shutdown never finishes | New work is still admitted or each step resets grace | Trace admission close and one deadline |
-| Metrics leak user data | Raw URI, header, or error text is a label | Apply the closed field vocabulary |
-
-## Review checklist
-
-- [ ] One absolute deadline covers all attempts, body work, and delay.
-- [ ] Connect, write, first-byte, and read-idle failures stay distinct.
-- [ ] Retry requires idempotency, replayability, and a transient result.
-- [ ] Backoff uses bounded jitter and honors valid `Retry-After`.
-- [ ] TLS verifies the chain and service name with an explicit root source.
-- [ ] Proxy, DNS, TLS identity, and protocol settings participate in pool policy.
-- [ ] Pool, body, queue, connection, and request concurrency are bounded.
-- [ ] Cancellation preserves an outcome-unknown state after partial send.
-- [ ] Shutdown stops admission, drains to one deadline, then cancels and joins.
-- [ ] Diagnostics contain no raw URL, secret header, credential, or body data.
-- [ ] Tests control time, jitter, DNS, TLS trust, and partial I/O as needed.
-
-## Primary references
-
-- [RFC 9110 HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html) defines
-  idempotent methods and `Retry-After`.
-- [RFC 6585 Additional HTTP Status Codes](https://www.rfc-editor.org/rfc/rfc6585.html)
-  defines `429 Too Many Requests`.
-- [RFC 8305 Happy Eyeballs Version 2](https://www.rfc-editor.org/rfc/rfc8305.html)
-  defines IPv6 and IPv4 connection racing.
-- [Tokio time](https://docs.rs/tokio/latest/tokio/time/) documents timeout
-  cancellation and deterministic clock control.
-- [rustls configuration](https://docs.rs/rustls/latest/rustls/struct.ConfigBuilder.html)
-  documents certificate verification and trust-root configuration.
-- [Tower ServiceBuilder](https://docs.rs/tower/latest/tower/struct.ServiceBuilder.html)
-  documents framework controls for timeout, retry, limits, and load shedding.
+once, with test-runner retries off (for cargo-nextest, pass `--retries 0`). A
+runner retry can hide a flaky network contract.
