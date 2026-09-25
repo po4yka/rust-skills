@@ -1,43 +1,104 @@
 ---
 name: memory-model
-description: Use when you write or review Rust atomic operations, lock-free data structures, or publish/subscribe flags, when you choose between Ordering::Relaxed, Acquire, Release, AcqRel and SeqCst, when you place atomic fences, when you declare or review global state, or when you diagnose a data race that appears only on weakly ordered targets such as ARM64. Covers happens-before reasoning, valid orderings per operation, counter and stop-flag and publish patterns, compare-exchange rules, the choice between const, static, OnceLock, LazyLock and thread_local!, common ordering mistakes, and verification with Miri and loom. Triggers on "global variable", "global state", "static mut", "global static", "OnceLock", "LazyLock", "thread_local", "lazy_static", "once_cell", or any memory ordering question.
+description: Use when choosing or reviewing atomic orderings (Ordering::Relaxed, Acquire, Release, AcqRel, SeqCst) or declaring global state (static mut, const vs static, OnceLock, LazyLock, thread_local), including happens-before edges, fences, compare-exchange or fetch_update loops, lock-free code, and a data race seen only on ARM64. Triggers on "global variable", "lazy_static", "once_cell".
 license: BSD-3-Clause
 ---
 
 # Memory Model
 
-## Purpose
-
-Use this skill to select and review memory orderings in Rust. It gives you the
-happens-before rules, a decision table for each ordering, the standard atomic
-patterns, and the checks that prove the code is correct.
-
-The default assumption in this skill is a **weakly ordered target** (ARM64,
-POWER, RISC-V). On these targets the hardware reorders memory accesses unless
-you request a barrier. Code that passes on x86 can fail on ARM64.
-
-## When to use
-
-- You must pick an ordering for a new atomic operation.
-- You review a diff that adds `AtomicBool`, `AtomicU64`, `AtomicUsize`, or a CAS loop.
-- You must explain the difference between acquire-release and sequential consistency.
-- A concurrency bug reproduces on an ARM64 device but not on an x86 developer machine.
-- You must decide if `Relaxed` is safe for a counter or for a stop flag.
+Assume a weakly ordered target (ARM64, RISC-V, POWER). These CPUs reorder
+memory accesses that x86 keeps in order. An ordering bug can pass every test on
+x86 and fail on a phone or on an Apple silicon Mac.
 
 ## Core rules
 
-Apply these five rules before you write any atomic code.
+1. **Derive the ordering from the data it publishes.** Name the writes that the
+   reader must see, then pick the weakest ordering that publishes them. Do not
+   start from `SeqCst`: it hides the missing reasoning, and it does not repair
+   an unpaired or misplaced access.
+2. **Ordering is a property of a pair.** A `Release` store synchronizes
+   with an `Acquire` load of the same atomic that reads the stored value.
+3. **An atomic that publishes nothing needs only `Relaxed`.** Counters and
+   unique ids are the usual case.
+4. **Prefer a lock, `OnceLock`, or a channel over hand-rolled publication.**
+   To publish non-atomic data through a flag you need `UnsafeCell` and
+   `unsafe`. Treat that code as a lock-free structure: it needs a loom test and
+   an unsafe review (the `rust-unsafe` skill, when it is installed).
+5. **A pass on x86 proves nothing about ordering.** The compiler also reorders
+   `Relaxed` accesses, so a `Relaxed` bug can appear on x86 after an unrelated
+   optimization change. Use the checks in [Verification](#verification).
 
-1. **Use the weakest ordering that is correct.** Do not start from `SeqCst`.
-   Start from the data dependency, then select the ordering that publishes it.
-2. **Ordering is a property of a pair, not of one operation.** A `Release`
-   store is useless without a matching `Acquire` load of the same atomic.
-3. **Atomics order the *other* data around them.** If the atomic carries no
-   dependent data, `Relaxed` is usually enough.
-4. **Do not use atomics to guard non-atomic data directly.** Use `Mutex`,
-   `RwLock`, or an ownership transfer. Use the atomic only as the signal.
-5. **Verify, do not assume.** Run the code under Miri and loom. Test on a
-   weakly ordered device.
+## Common mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| `Relaxed` used for publish/subscribe | Use `Release` on the store and `Acquire` on the load. |
+| `SeqCst` used everywhere "to be safe" | Derive the ordering from the data dependency. Keep `SeqCst` only for a named multi-atomic order. |
+| `Release` on one atomic paired with `Acquire` on a different atomic | Pair the operations on the same atomic, or build an explicit synchronization chain. A `SeqCst` fence alone does not connect different atomics. |
+| `static mut` used for shared data | Use `Mutex`, `RwLock`, `OnceLock`, `LazyLock`, or an atomic. |
+| `const` used for shared state with interior mutability | Declare it `static`. A `const` is inlined, so every use site mutates a fresh copy. |
+| Non-atomic data guarded only by an atomic flag | Guard the payload with a lock. Hand-rolled `UnsafeCell` publication needs a loom test and an unsafe review. |
+| `Relaxed` decrement in a reference count | Use `AcqRel`, or `Release` plus an `Acquire` fence before the destructor. |
+| `compare_exchange` on a pointer or index that can be freed and reused (ABA) | Pack a generation counter with the value, or use epoch-based reclamation. |
+| Side effect in an `update` or `try_update` closure | Keep the closure free of side effects. It runs again after each lost race. |
+| `compiler_fence` used to order memory between threads | Use `fence` or an ordered atomic. `compiler_fence` emits no CPU barrier. |
+| ThreadSanitizer reports a race on fence-based code | Do not strengthen the ordering to silence it. TSan does not support `fence`, so the report can be false. Check with Miri or loom. |
+| ARM64 assumed to behave like x86 | Run Miri and loom, and test on a weakly ordered host. |
+
+## Verification
+
+Match the check to the risk. Each check misses a class of bugs.
+
+```bash
+# Miri: data races and UB on the executed paths, one schedule per seed.
+MIRIFLAGS="-Zmiri-many-seeds=0..16" cargo +nightly miri test --locked <test_filter>
+
+# loom: all interleavings of a loom-instrumented test.
+RUSTFLAGS="--cfg loom" cargo test --locked --release --test <loom_target>
+
+# Hardware: the normal suite on an aarch64 host or device.
+cargo test --locked
+```
+
+- **Miri** runs, when a nightly toolchain with the `miri` component is
+  installed, for any change that adds or edits an atomic operation that a test
+  reaches. Without it, report the atomic change as not checked by Miri. Each
+  seed is one schedule, and Miri emulates only some weak memory effects, so a
+  pass is evidence, not proof. Miri model flags and CI setup live in the
+  `rust-sanitizers-miri` skill, when it is installed.
+- **loom** runs for a lock-free structure, a hand-written lock, or publication
+  through `UnsafeCell`. It checks only code built on its types: `loom::sync`
+  atomics, `loom::thread`, and `loom::cell::UnsafeCell` for the payload. A
+  payload in `std::cell::UnsafeCell` is invisible to loom, so gate the cell type
+  with `cfg(loom)` too. Setup lives in the `rust-test-tools` skill, when it is
+  installed. Know its two limits. It treats `SeqCst` loads and stores as
+  `AcqRel`, so a failure in `SeqCst` code can be a false alarm (`fence(SeqCst)`
+  is modelled). It does not explore load buffering, so a pass is not proof. A
+  `LOOM_MAX_PREEMPTIONS` bound also limits what a pass covers.
+- **A weakly ordered host** runs the suite before you ship a lock-free
+  structure. An Apple silicon Mac qualifies. A finite run that does not fail
+  proves only that this run did not fail.
+
+## Review checklist
+
+Check each item before you approve a diff that touches atomics.
+
+- [ ] Every `Release` store has a matching `Acquire` load of the same atomic.
+- [ ] Every ordering is the weakest one that is still correct, with a comment
+      that names the data it publishes.
+- [ ] No `SeqCst` remains without a stated multi-atomic ordering requirement.
+- [ ] Non-atomic shared data is guarded by a lock, not by the flag alone.
+- [ ] Reference-count decrements use `AcqRel`, or `Release` plus an `Acquire`
+      fence.
+- [ ] Every compare-exchange and `update` failure ordering is `Relaxed`,
+      `Acquire`, or `SeqCst`, and is chosen for what the losing thread reads.
+- [ ] Every CAS on a pointer or index is safe against ABA.
+- [ ] New code uses `update` or `try_update`, not `fetch_update`, unless the
+      MSRV is below 1.95.
+- [ ] Busy-wait loops call `std::hint::spin_loop()` or are replaced by blocking.
+- [ ] The change has a Miri run, or the report says it is not checked by Miri
+      because no nightly `miri` component is installed. A lock-free change also
+      has a loom test.
 
 ## Global state
 
@@ -61,8 +122,8 @@ Five rules decide the choice. Each one is a compile error or a silent bug.
 2. **A `const` has no single address.** The compiler inlines the value at every
    use site, so interior mutability in a `const` mutates a fresh temporary and
    discards it. `const HITS: AtomicUsize` incremented three times reads back
-   `0`. The same declaration as a `static` reads back `3`. rustc warns with
-   `const_item_interior_mutations`, clippy with
+   `0`. The same declaration as a `static` reads back `3`. rustc 1.93 and later
+   warns with `const_item_interior_mutations`, and clippy warns with
    `clippy::declare_interior_mutable_const`. Neither is an error, so this ships.
 3. **`OnceLock` and `LazyLock` differ on panic.** When the initializer panics,
    `OnceLock::get_or_init` leaves the cell empty and the next call retries.
@@ -78,14 +139,21 @@ Five rules decide the choice. Each one is a compile error or a silent bug.
    for a value on the main thread. Never put required cleanup in thread-local
    state.
 
+Do not rewrite a `static mut` to an atomic without reading its type. An atomic
+replaces a `static mut` that holds an integer or a `bool`. A `static mut` that
+holds a `Vec` or a `String` needs `OnceLock` or `LazyLock` plus a `Mutex`. On
+edition 2024 the `static_mut_refs` lint is deny-by-default, so every reference
+to the static stops the build. The `cargo-workflows` skill, when it is
+installed, has the two exact messages and the edition-2024 migration steps.
+
 `LazyLock` is stable since 1.80.0 and `OnceLock` since 1.70.0. A workspace on a
 newer toolchain needs no `lazy_static` or `static_init` dependency. Keep
 `once_cell` while `rust-version` stays below 1.80.0, or while a global
 initializer returns a `Result`. `OnceLock::get_or_try_init` is still unstable on
-1.97.0. It fails with `error[E0658]` under the feature gate `once_cell_try`,
+1.98.1. It fails with `error[E0658]` under the feature gate `once_cell_try`,
 issue 109737.
 
-```rust
+```rust,run
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, OnceLock};
@@ -104,72 +172,58 @@ thread_local! {
 
 fn main() {
     CONFIG.set(String::from("prod")).expect("set exactly once");
-    TABLE.lock().unwrap().insert(1, 42);
+    TABLE.lock().expect("TABLE poisoned").insert(1, 42);
     DEPTH.set(DEPTH.get() + 1);
-    println!("{:?} {} {}", CONFIG.get(), TABLE.lock().unwrap().len(), DEPTH.get());
+    let len = TABLE.lock().expect("TABLE poisoned").len();
+    println!("{:?} {} {}", CONFIG.get(), len, DEPTH.get());
 }
 ```
 
-Do not rewrite a `static mut` to an atomic without reading its type. An atomic
-replaces a `static mut` that holds an integer or a `bool`. A `static mut` that
-holds a `Vec` or a `String` needs `OnceLock` or `LazyLock` plus a `Mutex`. On
-edition 2024 the `static_mut_refs` lint is deny-by-default, so every reference
-to the static stops the build. See the `cargo-workflows` skill for the two exact
-messages and the edition-2024 migration steps.
+## Orderings
 
-## Ordering strength
+| Ordering | Valid on | Guarantee |
+|----------|----------|-----------|
+| `Relaxed` | load, store, read-modify-write | Atomicity and one modification order per atomic. No order for other memory. |
+| `Acquire` | load, read-modify-write, fence, compiler_fence | When it reads the value of a `Release` store, every write before that store is visible after it. |
+| `Release` | store, read-modify-write, fence, compiler_fence | Publishes every earlier write to an `Acquire` load that reads this value. |
+| `AcqRel` | read-modify-write, fence, compiler_fence | `Acquire` on the read half, `Release` on the write half. |
+| `SeqCst` | all | Acquire and release, plus one total order over all `SeqCst` operations. |
 
-```text
-Relaxed  <  Release/Acquire  <  AcqRel  <  SeqCst
+An invalid ordering panics at run time: a `load` with `Release` or `AcqRel`, a
+`store` with `Acquire` or `AcqRel`, a `fence` or `compiler_fence` with
+`Relaxed`, and a compare-exchange or `update` failure ordering of `Release` or
+`AcqRel`. The rustc lint `invalid_atomic_ordering` is deny-by-default and
+rejects these calls at compile time when the ordering is a literal. It cannot
+see an ordering that arrives through a variable, so the panic remains the last
+line of defence.
 
-Stronger ordering = more synchronization = more barriers = slower
-Weaker ordering   = fewer barriers = faster = needs careful analysis
-```
-
-## Ordering reference
-
-| Order | Rust | What it means |
-|-------|------|---------------|
-| Relaxed | `Ordering::Relaxed` | No ordering guarantee. Atomicity only. |
-| Acquire | `Ordering::Acquire` | This load sees all writes made before the matching release store. |
-| Release | `Ordering::Release` | All writes before this store become visible to a matching acquire load. |
-| AcqRel | `Ordering::AcqRel` | Acquire and release together. Read-modify-write operations only. |
-| SeqCst | `Ordering::SeqCst` | Total order across all SeqCst operations in all threads. |
-
-## Valid orderings by operation type
-
-| Operation type | Valid orderings |
-|----------------|-----------------|
-| Atomic load (`load`) | Relaxed, Acquire, SeqCst |
-| Atomic store (`store`) | Relaxed, Release, SeqCst |
-| Read-modify-write (`fetch_add`, `swap`, `compare_exchange`) | All orderings |
-| Fence (`fence`, `compiler_fence`) | Acquire, Release, AcqRel, SeqCst |
-
-An invalid ordering panics at run time. A `load` with `Release` or `AcqRel`
-panics. A `store` with `Acquire` or `AcqRel` panics. A `fence` or a
-`compiler_fence` with `Relaxed` panics. The rustc lint
-`invalid_atomic_ordering` is deny-by-default and rejects these calls at compile
-time when the ordering is a literal. It cannot see an ordering that arrives
-through a variable, so the panic remains the last line of defence.
-
-## Choosing the right ordering
+## Choosing an ordering
 
 ```text
-Use case?
-+-- Counter or sequence number (order irrelevant)        -> Relaxed
-+-- Stop or shutdown flag with no dependent data         -> Relaxed
-+-- Stop or shutdown flag that publishes prior writes    -> Release (store), Acquire (load)
-+-- Publish data from one thread to another              -> Release (store), Acquire (load)
-+-- Read-modify-write that both consumes and publishes   -> AcqRel
-+-- Reference counting                                   -> Relaxed (increment), AcqRel or Release+fence (decrement), Acquire (zero check)
-+-- Mutual exclusion or lock implementation              -> AcqRel on the lock word
-+-- Global order needed across several different atomics -> SeqCst (benchmark it)
+Use case                                                  Ordering
+Counter, unique id, or statistic                          Relaxed
+Stop flag or progress counter; reader uses nothing else   Relaxed
+Stop flag or progress counter; reader then reads state    Release store, Acquire load
+Publish data from one thread to another                   Release store, Acquire load
+Read-modify-write that both consumes and publishes        AcqRel
+Reference count                                           Relaxed increment;
+                                                          Release or AcqRel decrement;
+                                                          Acquire (load or fence) before the destructor
+Lock word of a hand-written mutex or spinlock             Acquire on the lock CAS (Relaxed on failure);
+                                                          Release on unlock
+Global order across several different atomics             SeqCst on every participating access
 ```
 
-## Pattern 1: counter or sequence number (Relaxed)
+The lock row matches the std futex mutex:
+`compare_exchange(UNLOCKED, LOCKED, Acquire, Relaxed)` to lock and
+`swap(UNLOCKED, Release)` to unlock. `SeqCst` is needed only when correctness
+depends on two different atomics being seen in one global order. Read
+[references/platform-memory-models.md](references/platform-memory-models.md)
+when you must justify `SeqCst` with a Dekker-style argument, port C++ atomics,
+need the formal happens-before rules, or need the per-target barrier and
+compare-exchange cost.
 
-A counter that no other data depends on needs atomicity only. `Relaxed` gives
-atomicity with no barrier.
+## Pattern 1: counter or unique id (Relaxed)
 
 ```rust
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -177,134 +231,71 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 // Hand out a unique id. No other memory is published with it.
-let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-
-// Statistics counters follow the same rule.
-struct Telemetry {
-    total_sessions: AtomicU64,
-}
-
-impl Telemetry {
-    fn record_session(&self) {
-        self.total_sessions.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn snapshot(&self) -> u64 {
-        self.total_sessions.load(Ordering::Relaxed)
-    }
+fn next_id() -> u64 {
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 ```
 
-`fetch_add` with `Relaxed` is still atomic. Every increment is counted. Only
-the ordering against *other* memory operations is dropped.
-
-Do not use `Relaxed` here if the reader also reads a buffer that the counter
-indexes. That buffer is dependent data, so the counter must publish it with
-`Release`/`Acquire`.
+`fetch_add` with `Relaxed` is still atomic, so every increment is counted. Only
+the order against other memory is dropped. The counter stops being `Relaxed`
+when the reader uses it to index a buffer that the writer filled: that buffer is
+dependent data.
 
 ## Pattern 2: publish/subscribe (Release store, Acquire load)
 
-This is the core pattern. One thread writes data, then stores a flag. The other
-thread loads the flag, then reads the data. The `Release`/`Acquire` pair creates
-the happens-before edge that makes the data visible.
+One thread writes data, then stores a flag. The other thread loads the flag,
+then reads the data. The `Release`/`Acquire` pair creates the happens-before
+edge that makes the data visible.
 
-```rust
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+```rust,run
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread;
 
-struct SharedState {
-    ready: AtomicBool,
-    data: Mutex<Option<u64>>, // Mutex guards the non-atomic payload.
-}
+static DATA: AtomicU64 = AtomicU64::new(0);
+static READY: AtomicBool = AtomicBool::new(false);
 
-let state = Arc::new(SharedState {
-    ready: AtomicBool::new(false),
-    data: Mutex::new(None),
-});
-
-// Publisher: write the payload first, then signal with a Release store.
-*state.data.lock().unwrap() = Some(42);
-state.ready.store(true, Ordering::Release);
-
-// Subscriber: observe the signal with an Acquire load, then read the payload.
-while !state.ready.load(Ordering::Acquire) {
-    std::hint::spin_loop();
-}
-let value = state.data.lock().unwrap().unwrap(); // Guaranteed to observe 42.
-```
-
-Rules for this pattern:
-
-- The store must be the **last** operation of the publisher. Any write after
-  the `Release` store is not covered.
-- The load must be the **first** operation of the subscriber. Any read before
-  the `Acquire` load is not covered.
-- Both sides must use the **same atomic**. A `Release` on atomic A does not
-  synchronize with an `Acquire` on atomic B.
-- The busy-wait loop must call `std::hint::spin_loop()`. A bare loop wastes
-  power and can starve the publisher on a single core.
-- Prefer a channel, `Condvar`, or a task waker over a spin loop when the wait
-  can be long. Spin only for waits of a few hundred nanoseconds.
-
-## Pattern 3: stop or shutdown flag
-
-A stop flag that only terminates a loop, and publishes nothing else, can use
-`Relaxed`. The reader may observe the flag a few iterations late. That delay is
-acceptable for loop teardown.
-
-```rust
-use std::sync::atomic::{AtomicBool, Ordering};
-
-// Signal side.
-stop.store(true, Ordering::Relaxed);
-
-// Poll side: the loop body touches no data published by the signaller.
-while !stop.load(Ordering::Relaxed) {
-    accept_one_connection();
+fn main() {
+    thread::scope(|s| {
+        s.spawn(|| {
+            // Publisher: every write the reader needs comes before the Release store.
+            DATA.store(42, Ordering::Relaxed);
+            READY.store(true, Ordering::Release);
+        });
+        s.spawn(|| {
+            // Subscriber: the Acquire load that reads `true` makes DATA == 42 visible.
+            while !READY.load(Ordering::Acquire) {
+                std::hint::spin_loop();
+            }
+            assert_eq!(DATA.load(Ordering::Relaxed), 42);
+        });
+    });
 }
 ```
 
-Use `Release`/`Acquire` instead as soon as the signaller writes any state that
-the stopping thread must observe. This is the safe default in review, because
-the dependency is easy to add later and easy to miss.
+- Put every published write before the `Release` store. A write after the
+  store is not published.
+- Put every dependent read after the `Acquire` load. A read before the load is
+  not covered.
+- Call `std::hint::spin_loop()` in a busy-wait. It is a CPU hint, not a yield
+  to the scheduler. Block on a channel, a `Condvar`, or `thread::park` when the
+  wait is not short and bounded.
 
-```rust
-// Signal side: Release publishes every write made before the flag.
-shutdown.store(true, Ordering::Release);
+## Pattern 3: stop flag and progress counter
 
-// Worker side: Acquire observes those writes together with the flag.
-if shutdown.load(Ordering::Acquire) {
-    return Err(Error::Cancelled);
-}
-```
+A stop flag that only ends a loop can be `Relaxed`. The worker can see the flag
+a few iterations late, and loop teardown accepts that delay. Use
+`Release`/`Acquire` as soon as the signaller writes state that the worker reads
+after it stops, such as a reason or a new configuration. In review, ask for
+`Release`/`Acquire` unless a comment states that the flag publishes nothing.
+The dependency is easy to add later and easy to miss.
 
-Guidance:
+A polled progress counter follows the same rule: `Relaxed` when the reader only
+displays the number, `Release`/`Acquire` when the reader then reads the state
+that the number refers to. A progress callback or a channel needs no ordering
+choice. The `ffi-error-progress-cancel` skill, when it is
+installed, covers cancellation and progress across a foreign function interface.
 
-- Poll the flag at a **coarse** granularity. One check per work item or per
-  loop chunk is enough. A check inside the innermost arithmetic loop costs
-  more than it saves.
-- Share the flag as `Arc<AtomicBool>` so the signaller and the worker keep it
-  alive independently.
-- Return a distinct `Cancelled` error variant. Do not return `Ok` from a
-  cancelled operation, and do not panic.
-- For cancellation that crosses a foreign function interface, see the
-  `ffi-error-progress-cancel` skill.
-
-## Pattern 4: progress reporting
-
-Do not build a polled `AtomicU64` progress counter by default. Push progress
-through a callback or a channel instead. A push design has no ordering question
-to get wrong, and it does not force the reader to spin.
-
-Use a polled atomic counter only when the consumer already runs a loop that can
-sample it. Then publish it with `Release` and read it with `Acquire`, because
-the reader almost always reads other state that the counter refers to.
-
-Keep the progress path observational. Progress must never feed back into the
-computation, and the callback must be cheap and non-blocking, because it runs
-on the worker thread.
-
-## Pattern 5: reference counting
+## Pattern 4: reference counting
 
 ```rust
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -319,105 +310,73 @@ if count.fetch_sub(1, Ordering::AcqRel) == 1 {
 }
 ```
 
-The decrement must not be `Relaxed`. The destructor reads the object, so it
-must acquire the writes of all other owners.
+The destructor reads the object, so the decrement must acquire the writes of
+all other owners. std `Arc` uses a `Release` decrement and a `fence(Acquire)` on
+the zero path. Both forms are correct.
+
+## Compare-exchange and update loops
+
+```rust,run
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+fn main() {
+    let val = AtomicUsize::new(0);
+
+    // Strong CAS: one attempt, no spurious failure. The failure ordering is
+    // chosen independently of the success ordering (Rust 1.64 and later).
+    assert_eq!(val.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Acquire), Ok(0));
+
+    // Weak CAS: it can fail spuriously, so use it only in a loop that feeds the
+    // observed value back into the next attempt.
+    let mut current = val.load(Ordering::Relaxed);
+    loop {
+        match val.compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(actual) => current = actual,
+        }
+    }
+
+    // `update` (1.95+) writes that loop and returns the previous value.
+    assert_eq!(val.update(Ordering::AcqRel, Ordering::Relaxed, |v| v + 1), 2);
+
+    // `try_update` (1.95+) stops without a write when the closure returns None.
+    assert_eq!(val.try_update(Ordering::AcqRel, Ordering::Relaxed, |v| v.checked_sub(10)), Err(3));
+    assert_eq!(val.load(Ordering::Relaxed), 3);
+}
+```
+
+- **Failure ordering.** It can be `Relaxed`, `Acquire`, or `SeqCst`. `Release`
+  and `AcqRel` are invalid, because a failed exchange writes nothing. Since Rust
+  1.64 the failure ordering can be stronger than the success ordering. Do not
+  weaken a failure ordering only to match the success ordering.
+- **Choose each ordering for its own path.** The success ordering covers what
+  the winner publishes or consumes. The failure ordering covers what the loser
+  reads next. `Relaxed` on failure is correct when the loser only retries.
+- **Weak or strong.** Use `compare_exchange_weak` only inside a retry loop.
+  Read
+  [references/platform-memory-models.md](references/platform-memory-models.md#platform-memory-models)
+  when you choose between the weak and strong form on an LL/SC target or in a
+  hot loop.
+- **`fetch_update` is being renamed.** Use `update` (the closure always returns
+  a value) or `try_update` (the closure returns `Option`). Both are stable since
+  1.95. `try_update` has the same arguments and result as `fetch_update`, so
+  rename the call. The std source marks `fetch_update` deprecated since 1.99.0:
+  on 1.98 only the allow-by-default `deprecated_in_future` lint reports it, and
+  Rust 1.99 (due 2026-10-01) makes it a `deprecated` warning that fails a
+  `-D warnings` gate. Keep `fetch_update` only while `rust-version` is below
+  1.95.
 
 ## Fences
 
-A fence orders the operations of the thread that executes it. Use a fence when
-the ordering does not belong to one specific atomic access.
-
-| Call | Effect |
-|------|--------|
-| `fence(Ordering::Release)` | No earlier memory operation moves after the fence. |
-| `fence(Ordering::Acquire)` | No later memory operation moves before the fence. |
-| `fence(Ordering::AcqRel)` | Both directions. |
-| `fence(Ordering::SeqCst)` | Both directions plus participation in the SeqCst total order. |
-| `compiler_fence(...)` | Blocks compiler reordering only. Emits no CPU barrier. |
-
-Use `compiler_fence` only for signal handlers and interrupt handlers on the
-same thread. It gives no protection against another core.
-
-Prefer an ordered atomic operation over a separate fence. A fence is harder to
-review, because the pairing is not visible at the access site.
-
-## Common mistakes
-
-| Mistake | Fix |
-|---------|-----|
-| `Relaxed` used for publish/subscribe | Use `Release` on the store and `Acquire` on the load. |
-| `SeqCst` used everywhere "to be safe" | Derive the ordering from the data dependency. Benchmark before you keep `SeqCst`. |
-| `Release` on one atomic paired with `Acquire` on a different atomic | Pair the operations on the same atomic, or establish an explicit synchronization chain. A `SeqCst` fence alone does not connect different atomics. |
-| Writes placed after the `Release` store | Move every published write before the store. |
-| Reads placed before the `Acquire` load | Move every dependent read after the load. |
-| `unsafe` mutable statics used for shared data | Use `Mutex`, `RwLock`, `OnceLock`, or an atomic. |
-| `const` used for shared state with interior mutability | Declare it `static`. A `const` is inlined, so every use site mutates a fresh copy. |
-| Non-atomic data guarded only by an atomic flag | Guard the payload with `Mutex`/`RwLock`, and keep the atomic as the signal. |
-| `Relaxed` decrement in a reference count | Use `AcqRel` on the decrement. |
-| `compare_exchange` failure ordering stronger than success ordering | Weaken the failure ordering. The failure path is a load. |
-| `compare_exchange_weak` used without a retry loop | Use `compare_exchange` for a single attempt, or wrap the weak form in a loop. |
-| Busy-wait loop without `spin_loop()` | Add `std::hint::spin_loop()`, or block on a channel or `Condvar`. |
-| ARM64 assumed to behave like x86 TSO | Test on a weakly ordered device and run Miri. |
-
-## Weakly ordered targets
-
-ARM64 is weakly ordered. Plan for it:
-
-- `Relaxed` loads and stores cost no barrier and give no ordering.
-- `Acquire` and `Release` cost real instructions. The compiler emits the
-  ordered load and store forms (`ldar`, `stlr`), or an explicit `dmb` barrier.
-  On x86 the same orderings need no extra instruction.
-- `SeqCst` is never cheaper than acquire-release, and it is more expensive on
-  some targets. Measure the cost before you keep it.
-- An incorrect ordering can pass every test on x86, because x86 is TSO and
-  gives acquire-release semantics for free.
-- Apple Silicon uses the same ARM64 memory model. A macOS ARM64 machine can
-  reproduce these bugs, so run the suite there as well when it is available.
-
-See [references/platform-memory-models.md](references/platform-memory-models.md)
-for the happens-before rules, the platform table, the C++ equivalence table,
-the compare-exchange rules, and the quick selection guide.
-
-## Verification
-
-Run these checks on any change that adds or edits an atomic operation.
-
-```bash
-# Miri detects data races and undefined behaviour in the tested code paths.
-cargo +nightly miri test --locked
-
-# Run the full suite on a weakly ordered host as well when one is available.
-cargo test --locked
-```
-
-- Use **Miri** for data races and undefined behaviour. See the
-  `rust-sanitizers-miri` skill.
-- Use **loom** to model-check an ordering. Loom explores the legal
-  interleavings and the legal reorderings of your atomics, so it finds bugs
-  that Miri and hardware tests miss. See the `rust-test-tools` skill.
-- Test on a real weakly ordered device before you ship a lock-free structure.
-
-## Review checklist
-
-Check each item before you approve a diff that touches atomics.
-
-- [ ] Every `Release` store has a matching `Acquire` load of the same atomic.
-- [ ] Every ordering is the weakest one that is still correct, with a comment
-      that names the data it publishes.
-- [ ] No `SeqCst` remains without a stated multi-atomic ordering requirement.
-- [ ] Non-atomic shared data is guarded by a lock, not by the flag alone.
-- [ ] Reference-count decrements use `AcqRel` or `Release` plus an `Acquire` fence.
-- [ ] `compare_exchange` failure ordering is not stronger than success ordering,
-      and is not `Release` or `AcqRel`.
-- [ ] Busy-wait loops call `std::hint::spin_loop()` or are replaced by blocking.
-- [ ] Stop and cancel flags are polled at a coarse granularity.
-- [ ] The change is covered by a Miri run, and by a loom test if it is lock-free.
+Prefer an ordered atomic operation over a separate `fence`, because the pairing
+of a fence is not visible at the access site. A fence synchronizes only through
+an atomic access. Read
+[references/platform-memory-models.md](references/platform-memory-models.md#fences)
+when you write or review a `fence` or `compiler_fence`.
 
 ## Related skills
 
-- `rust-sanitizers-miri` — Miri and the sanitizers detect memory-ordering and data-race defects.
-- `rust-test-tools` — loom model checking for atomic ordering.
-- `rust-unsafe` — the unsafe rules around raw pointers and atomic-guarded data.
-- `rust-async-internals` — how async task scheduling interacts with atomics and wakers.
-- `rust-performance` — measure the barrier cost before you keep a stronger ordering.
-- `ffi-error-progress-cancel` — cancellation and progress across a foreign function interface.
+Use these skills when they are installed: `rust-send-sync` for `Send` and `Sync`
+bounds before any ordering question, `rust-async-internals` for tokio task,
+cancellation, and runtime behavior, and `rust-performance` to measure the
+barrier cost before you keep a stronger ordering.

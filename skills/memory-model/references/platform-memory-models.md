@@ -1,8 +1,15 @@
 # Platform Memory Models Reference
 
-Deep reference for the `memory-model` skill: happens-before, platform tables,
-C++ equivalence, sequential consistency, compare-and-swap, and a quick
-selection guide.
+Background for the `memory-model` skill: the happens-before rules, the platform
+table, fences, the C++ equivalence table, and the case that needs `SeqCst`.
+
+Contents:
+
+- [Happens-before relation](#happens-before-relation)
+- [Platform memory models](#platform-memory-models)
+- [Fences](#fences)
+- [C++ / Rust ordering equivalence](#c--rust-ordering-equivalence)
+- [SeqCst total order](#seqcst-total-order)
 
 ## Happens-before relation
 
@@ -11,49 +18,93 @@ the effects of A are guaranteed to be visible when B executes.
 
 You establish HB in three ways:
 
-1. **Sequenced-before** — program order inside a single thread.
-2. **Synchronizes-with** — a release store synchronizes-with an acquire load
+1. **Sequenced-before**: program order inside a single thread.
+2. **Synchronizes-with**: a release store synchronizes-with an acquire load
    that reads the value written by that store.
-3. **Transitivity** — if A HB B and B HB C, then A HB C.
+3. **Transitivity**: if A HB B and B HB C, then A HB C.
 
 ```text
-Thread 1:                    Thread 2:
-x.lock() = 42;  <--------------------------------------
-flag.store(true,             while (!flag.load(
-  Release);      - sync-with -  Acquire)) {}
-                             assert(x.lock() == 42);  // HB guarantees this
+Thread 1                                Thread 2
+DATA.store(42, Relaxed)                 while !READY.load(Acquire) {}
+READY.store(true, Release) --sync-with-->   (the load reads `true`)
+                                        DATA.load(Relaxed) == 42   // HB guarantees this
 ```
 
-Consequences you must respect:
+Consequences:
 
 - A release store publishes only the writes that come **before** it in program
   order. A write placed after the store is not published by it.
 - An acquire load covers only the reads that come **after** it in program
   order. A read placed before the load is not covered.
-- The relation is per-atomic. A release on atomic A does not synchronize with
+- The relation is per atomic. A release on atomic A does not synchronize with
   an acquire on atomic B.
 
 ## Platform memory models
 
 | Platform | Default ordering | Barrier cost | Notes |
 |----------|------------------|--------------|-------|
-| x86 / x86-64 | TSO (total store order) | Acquire and Release are free | SeqCst needs `mfence` or a locked instruction |
-| **ARM64 (Android, Linux, iOS, Apple Silicon)** | **Weakly ordered** | **All barriers explicit** | Most permissive reordering of the common targets |
-| POWER | Weakly ordered | Explicit | Weaker than ARM in some cases |
+| x86 / x86-64 | TSO (total store order) | Acquire and Release need no extra instruction | SeqCst stores need `mfence` or a locked instruction |
+| **ARM64 (Android, Linux, iOS, Apple silicon)** | **Weakly ordered** | **All barriers explicit** | The most permissive reordering of the common targets |
+| POWER | Weakly ordered | Explicit | Weaker than ARM64 in some cases |
 | RISC-V | RVWMO | Defined per instruction | Fence granularity is per access type |
 
-ARM64 implications:
+- `Relaxed` loads and stores cost no barrier on ARM64 and give no ordering.
+- `Acquire` and `Release` cost real instructions on ARM64: the ordered load and
+  store forms (`ldar`, `stlr`) or an explicit `dmb` barrier. On x86 plain loads
+  and stores already have these semantics.
+- x86 keeps loads and stores in order, except that a store can pass a later
+  load of a different location (TSO). The compiler also reorders `Relaxed`
+  accesses, so a `Relaxed` bug can appear on x86 after an unrelated
+  optimization change.
+- Apple silicon uses the ARM64 memory model. A macOS ARM64 machine can
+  reproduce these bugs.
 
-- Acquire and release cost real instructions. The compiler emits the ordered
-  load and store forms (`ldar`, `stlr`), or an explicit `dmb` barrier.
-- SeqCst is never cheaper than acquire-release, and it is more expensive on
-  some targets. Measure it on the target before you keep it.
-- A defect can hide on x86, because x86 gives acquire-release semantics for
-  free, and then surface on an ARM64 phone or an Apple Silicon machine.
-- Apple Silicon uses the same ARM64 memory model as an ARM64 phone. Use a
-  macOS ARM64 machine as a second reproduction host when one is available.
-- Always test on a device or validate with Miri:
-  `cargo +nightly miri test --locked`.
+Use `compare_exchange_weak` only inside a retry loop. On LL/SC targets (ARMv8.0
+without LSE, RISC-V) the strong form contains an inner retry loop that the weak
+form omits. Where LSE is in the target baseline, both forms compile to the same
+instruction.
+
+Compare-exchange cost depends on the target baseline. Measured with
+`rustc 1.98.1 -O --emit asm`:
+
+- `aarch64-linux-android` and `aarch64-apple-ios` have no LSE in their
+  baseline. The strong form is an `ldaxr`/`stlxr` loop, and the weak form is
+  one attempt.
+- `aarch64-apple-darwin` has LSE in its baseline. Both forms compile to one
+  `casal` instruction.
+- `aarch64-unknown-linux-gnu` and `aarch64-unknown-linux-musl` have no LSE in
+  their baseline, but their target spec enables `+outline-atomics`. Both forms
+  compile to the same `bl __aarch64_cas8_acq_rel` call, and the helper selects
+  LSE or LL/SC at run time. `--print cfg` does not show this feature; read
+  `--print target-spec-json`. Measured on `aarch64-linux-android` with
+  `-C target-feature=+outline-atomics`.
+
+## Fences
+
+A fence orders the operations of the thread that executes it. Use a fence when
+the ordering does not belong to one specific atomic access.
+
+| Call | Effect |
+|------|--------|
+| `fence(Ordering::Release)` | No earlier memory operation moves after the fence. |
+| `fence(Ordering::Acquire)` | No later memory operation moves before the fence. |
+| `fence(Ordering::AcqRel)` | Both directions. |
+| `fence(Ordering::SeqCst)` | Both directions plus participation in the SeqCst total order. |
+| `compiler_fence(...)` | Blocks compiler reordering only. Emits no CPU barrier. |
+
+- A fence synchronizes only through an atomic access. `fence(Release)` followed
+  by a store to X synchronizes with a load of X that reads that store and is
+  followed by `fence(Acquire)`, or that is itself `Acquire`.
+- Use `compiler_fence` only for signal handlers and interrupt handlers on the
+  same thread, and for a DMA buffer handoff on a single-core MCU with no data
+  cache (the `rust-embedded-no-std` skill, when it is installed, has the DMA
+  rules). It gives no protection against another core.
+- Prefer an ordered atomic operation over a separate fence. A fence is harder to
+  review, because the pairing is not visible at the access site.
+- ThreadSanitizer does not support `fence`, so it reports false races on
+  fence-based code. std `Arc` replaces its `Acquire` fence with an `Acquire`
+  load under TSan for this reason. Do not strengthen an ordering to silence such
+  a report. Check the code with Miri or loom instead.
 
 ## C++ / Rust ordering equivalence
 
@@ -66,9 +117,10 @@ Use this table when you read literature, standards text, or C++ source.
 | `memory_order_release` | `Ordering::Release` | |
 | `memory_order_acq_rel` | `Ordering::AcqRel` | Read-modify-write only |
 | `memory_order_seq_cst` | `Ordering::SeqCst` | |
-| `memory_order_consume` | (use `Acquire`) | Consume is deprecated in practice |
+| `memory_order_consume` | (use `Acquire`) | Compilers already treat consume as acquire |
 | `atomic_thread_fence(acquire)` | `fence(Ordering::Acquire)` | |
 | `atomic_signal_fence` | `compiler_fence(Ordering::*)` | Compiler barrier only |
+| `compare_exchange_strong` | `compare_exchange` | Same rule: the failure ordering is free of the success ordering |
 
 Rust has no `Ordering::Consume`. Map C++ consume code to `Acquire`.
 
@@ -79,89 +131,9 @@ all threads. Every thread observes those operations in the same order.
 
 Use SeqCst only when correctness depends on several **different** atomics being
 observed in a consistent global order. The classic case is Dekker-style
-mutual exclusion, where two threads each store to their own flag and then load
-the other flag. Acquire-release is not enough there, because a store-load pair
-on two different atomics can be reordered.
+mutual exclusion: two threads each store to their own flag and then load the
+other flag. Acquire-release is not enough there, because a store followed by a
+load of a different atomic can be reordered.
 
 If you cannot name the second atomic that needs the shared order, you do not
 need SeqCst. Benchmark the cost on a weakly ordered target before you keep it.
-
-## CAS (compare-and-swap) in Rust
-
-```rust
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-let val = AtomicUsize::new(0);
-
-// Strong CAS: never fails spuriously. Use for a single attempt.
-match val.compare_exchange(0, 42, Ordering::AcqRel, Ordering::Relaxed) {
-    Ok(prev) => { /* swapped; prev == 0 */ }
-    Err(actual) => { /* failed; actual is the current value */ }
-}
-
-// Weak CAS: may fail spuriously. Use it only inside a retry loop, where it is
-// cheaper than the strong form on ARM64, because it maps to one LL/SC attempt.
-// Feed the observed value back into the next attempt. Do not retry with the
-// same expected value, because a racing writer then spins the loop forever.
-let mut current = val.load(Ordering::Relaxed);
-loop {
-    let next = current + 1;
-    match val.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Relaxed) {
-        Ok(_) => break,
-        Err(actual) => current = actual,
-    }
-}
-
-// `fetch_update` wraps the same loop. Prefer it when the new value is a pure
-// function of the old value.
-let _ = val.fetch_update(Ordering::AcqRel, Ordering::Relaxed, |v| Some(v + 1));
-```
-
-CAS ordering rules:
-
-- The **failure** ordering must not be stronger than the success ordering.
-- The failure ordering cannot be `Release` or `AcqRel`, because the failure
-  path performs a load only. `Relaxed`, `Acquire`, or `SeqCst` are valid.
-- Use the success ordering that publishes the data the successful writer
-  produced. Use the failure ordering that covers the data the loser then reads.
-  `Relaxed` on failure is correct when the loser only retries.
-
-## Quick selection guide
-
-```text
-Counter or sequence number only (statistics, unique ids):
-    -> Relaxed for every operation
-
-Stop or shutdown flag with no dependent data:
-    -> Relaxed (a few iterations of delay is acceptable)
-    -> Prefer Acquire/Release when promptness or future dependent state matters
-
-One writer, one reader, flag plus dependent data:
-    -> Release on the store, Acquire on the load
-
-Read-modify-write that both consumes and publishes state:
-    -> AcqRel
-
-Reference count:
-    -> Relaxed on increment
-    -> AcqRel on decrement (so the thread that sees zero sees all prior writes)
-    -> Acquire on an optional final load or fence before the destructor
-
-Lock word in a hand-written mutex or spinlock:
-    -> AcqRel on the acquire attempt, Release on the unlock
-
-Global order required across several different atomics:
-    -> SeqCst on all of them (benchmark on a weakly ordered target first)
-```
-
-## Verification tools
-
-| Tool | Finds | Command |
-|------|-------|---------|
-| Miri | Data races and undefined behaviour on the executed paths | `cargo +nightly miri test --locked` |
-| loom | Illegal interleavings and reorderings of atomics in a model | Run the loom-gated tests; see `rust-test-tools` |
-| Device test | Real hardware reordering on a weakly ordered CPU | `cargo test --locked` on the ARM64 host or device |
-
-Miri executes one interleaving per run. Loom enumerates the legal
-interleavings and the legal reorderings, so use loom for any lock-free
-structure. Neither tool replaces a test on a weakly ordered device.

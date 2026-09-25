@@ -250,6 +250,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | LazyLock | memory-model |
 | thread_local | memory-model |
 | lazy_static | memory-model |
+| fetch_update | memory-model |
 | pin projection | rust-pin-projection |
 | structural pinning | rust-pin-projection |
 | pin-project-lite | rust-pin-projection |
