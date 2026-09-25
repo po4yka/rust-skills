@@ -312,4 +312,5 @@ claiming a phrase the other owns.
 | Phrase a user types | Must answer | Must not answer |
 | --- | --- | --- |
 | cannot be sent between threads safely | rust-send-sync | rust-compiler-errors |
+| unresolved import | rust-compiler-errors |
 | panic policy | rust-panic-safety | rust-discipline |

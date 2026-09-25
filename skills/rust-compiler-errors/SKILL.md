@@ -1,16 +1,10 @@
 ---
 name: rust-compiler-errors
-description: Use when rustc or cargo reports a numbered error and you need the cause rather than the first fix that compiles. Covers ownership and move errors (E0382, E0505, E0507, E0509), borrow conflicts (E0499, E0502, E0596), lifetime errors (E0597, E0716, E0515, E0521, E0106), trait and type errors (E0038, E0277, E0271, E0282, E0283, E0284, E0308, E0599, E0631, E0275), Drop impl errors (E0184, E0367, E0740), the unnumbered Send error on a future, resolution errors (E0433, E0425, E0603), and layout errors (E0072, E0793). States which reflexive fix hides the bug and which one resolves it. Triggers on any "E0" code that no topic skill owns (E0207 is rust-iterator-impl, E0793 is rust-unsafe, Send and Sync go to rust-send-sync), "borrow checker", "value moved", "does not live long enough", "cannot borrow", "missing lifetime specifier", "trait bound not satisfied", "not dyn compatible", "dyn compatibility", "object safety", "overflow evaluating the requirement", or a paste of a cargo build failure.
+description: Use when rustc or cargo fails with a borrow checker, lifetime, trait bound, type inference, or unresolved import error, or any E0xxx code, and the cause matters more than the first fix that compiles. Names the fix that hides the bug and the fix that resolves it. Codes include E0382, E0499, E0502, E0506, E0507, E0373, E0597, E0716, E0521, E0106, E0277, E0308, E0599, E0282, E0283, E0284, E0425, E0432, E0433, E0038, E0275, E0658. Also "does not live long enough", "missing lifetime specifier", "not dyn compatible", "object safety", or a pasted rustc error. Not for E0207 (rust-iterator-impl for an iterator lifetime, rust-event-loop-state for a handler trait's state type), E0658 on impl Trait in an associated type (rust-iterator-impl), E0793 (rust-unsafe), or whether a type is Send (rust-send-sync).
 license: BSD-3-Clause
 ---
 
 # Rust compiler errors
-
-## Purpose
-
-Map a compiler error to its cause, then to the fix that resolves it instead of the fix that
-moves it. Most numbered errors have an obvious escape (`.clone()`, `'static`, `Rc<RefCell<T>>`)
-that compiles and leaves the real problem in place. This skill names both.
 
 ## First moves
 
@@ -18,19 +12,51 @@ that compiles and leaves the real problem in place. This skill names both.
 # The full explanation, with a worked example. Works offline.
 rustc --explain E0499
 
-# One line per diagnostic. Use it when the build produces a wall of output.
+# One line per diagnostic, for a wall of output.
 cargo build --message-format=short
 
-# Use Cargo's default failure behavior. Add `--keep-going` only when you want
-# Cargo to continue with independent crates after one crate fails.
-cargo build
-
-# Machine-readable, for counting error codes across a large failure.
+# Count the error codes in a large failure.
 cargo build --message-format=json 2>/dev/null | grep -o '"code":{"code":"E[0-9]*"' | sort | uniq -c | sort -rn
 ```
 
-Fix the first error, then rebuild. A single move error produces a cascade of type errors
-downstream, and most of them disappear on their own.
+Fix the first error, then rebuild. One move or type error produces a cascade downstream, and most
+of the cascade disappears with the first fix.
+
+## Prove the fix
+
+- While you iterate, run `cargo check` with the same package, features, and target that failed.
+  It reports the same type and borrow errors, faster.
+- `cargo check` checks only library and binary targets. Add `--all-targets` when the error came
+  from `cargo test`, a bench, or an example.
+- Before you call the error fixed, run the command that failed. `cargo check` and `cargo clippy`
+  stop before monomorphization and linking, so they exit 0 on "reached the recursion limit while
+  instantiating" and on linker errors.
+- A clean build proves that the types check, not that the behavior is right. Run the test that
+  covers the changed code.
+
+## Fixes that compile and hide the bug
+
+Each of these removes the error and keeps the defect. Do not use one to silence a diagnostic.
+
+| Reflex | What it hides | When it is right, or what to do instead |
+| --- | --- | --- |
+| `.clone()` for E0382 or E0505 | Two owners of an identity, a handle, or a large buffer; one allocation per loop iteration | The value is small and the copy is the point. Otherwise decide the owner, see [The clone reflex](#the-clone-reflex) |
+| `'static` on a field or a bound for E0106, E0597, or E0521 | It demands data that lives forever, and it moves the error to the caller | Store owned data, or scope the borrow |
+| `RefCell` or `Rc<RefCell<T>>` for E0499 or E0502 | A `RefCell already borrowed` panic at run time | A split failed and the graph shape needs it |
+| `Box::leak` for E0521 or E0597 | Memory that grows once per call | Use `Arc` or `std::thread::scope` |
+| `.unwrap()` or `.expect()` to get `T` out of `Option<T>` or `Result<T, E>` for E0308 or E0277 | A panic path. rustc's own `help:` for E0308 on an `Option` suggests `Option::expect` | Use `?` or handle `None` and `Err`. Use `.expect("<invariant>")` only for a documented invariant |
+| An `unsafe` block, `unsafe impl Send`, or `transmute` | The check that found the bug; possible undefined behavior | Never for a type or borrow error. Fix the ownership or the type; see the `rust-unsafe` skill |
+| `#![feature(...)]` for E0658 | E0554 on stable, and a crate that builds only on nightly | Never in a stable crate. Use a stable alternative, or raise the toolchain and MSRV on purpose |
+| `cargo add <name>` from a `help:` line for E0432 or E0433 | rustc suggests `cargo add` for any unknown first path segment, a module of this crate included. A guessed name can be an unrelated or malicious package | Follow [Unresolved imports](#e0432-and-e0433-unresolved-imports) |
+| A higher `#![recursion_limit]` for E0275 or "reached the recursion limit while instantiating" | An infinite type chain; the build fails later and slower | See the E0275 row and the "while instantiating" row of the triage table |
+
+After three failed attempts at the same error, suspect the design, not the syntax. Stop editing
+and answer these:
+
+1. Which single component should own this data for its whole lifetime?
+2. Does the borrow cross a boundary it should not cross: a thread, an `.await`, a callback, an
+   FFI call?
+3. Would the error disappear if the data were owned rather than borrowed, and what does that cost?
 
 ## Triage table
 
@@ -38,47 +64,47 @@ downstream, and most of them disappear on their own.
 | --- | --- | --- | --- |
 | E0382 | borrow of moved value | The value was consumed, then used again | Decide the owner; borrow instead of moving |
 | E0505 | cannot move out of `x` because it is borrowed | A live borrow outlives the move | Shorten the borrow, or move before borrowing |
-| E0507 | cannot move out of `x` which is behind a shared reference | You need ownership but only hold `&` | `mem::take`, `Option::take`, `clone`, or take `self` |
-| E0509 | cannot move out of type `T`, which implements the `Drop` trait | A `Drop` impl blocks every partial move out of the value | Make the field an `Option` and call `.take()`, or `mem::replace` |
-| E0499 | cannot borrow `*x` as mutable more than once | Two live `&mut` to the same place | `split_at_mut`, index disjointly, or scope one borrow |
-| E0502 | cannot borrow as mutable because it is also borrowed as immutable | A read borrow is live across a write | Copy the value out, then mutate |
+| E0507 | cannot move out of `x` which is behind a shared reference | You need ownership but only hold `&` | Pick by what the original keeps: `mem::take` or `mem::replace` through `&mut`, `Option::take`, a `self` receiver, or a clone. See [references/borrow-checker-fixes.md](references/borrow-checker-fixes.md) |
+| E0509 | cannot move out of type `T`, which implements the `Drop` trait | A `Drop` impl blocks every partial move out of the value | Move `Drop` to a one-field guard type and keep the aggregate `Drop`-free. When the cleanup consumes the guard's field, make that one field an `Option` and `.take()` it, or `mem::replace` it. Do not make the aggregate's fields `Option`: each use then needs an `unwrap` |
+| E0499 | cannot borrow `x` as mutable more than once at a time | Two live `&mut` to the same place | `split_at_mut`, index disjointly, or scope one borrow |
+| E0502 | cannot borrow `x` as mutable because it is also borrowed as immutable | A read borrow is live across a write | Copy the value out, then mutate |
+| E0506 | cannot assign to `x` because it is borrowed | A write to a place while a borrow of it is live | Finish the read first, or borrow the fields instead of `self` |
+| E0502, E0499 | note: this call may capture more lifetimes than intended | Edition 2024: a returned `impl Trait` captures every lifetime in scope | Add `+ use<..>` to the callee's return type when the returned value does not borrow that argument (1.82+; 1.87+ in a trait). If it does borrow it, end the borrow at the caller. Do not clone at the caller |
 | E0596 | cannot borrow as mutable, as it is behind a `&` reference | The parameter is `&T`, not `&mut T` | Change the signature; do not reach for interior mutability first |
+| E0373 | closure (or async block) may outlive the current function, but it borrows `x` | A `'static` closure or future (`thread::spawn`, `tokio::spawn`) borrows a local | Add `move`; clone an `Arc` first if the caller still needs the data, or use `thread::scope` |
 | E0597 | `x` does not live long enough | A named local is dropped while borrowed | Move the binding to the outer scope |
-| E0716 | temporary value dropped while borrowed | A temporary ended before its borrow | Name the owner, then verify the syntax-sensitive temporary scope |
+| E0716 | temporary value dropped while borrowed | A temporary ended before its borrow | Name the owner in a `let`; a function argument such as `bar(&foo())` is never extended. See [references/borrow-checker-fixes.md](references/borrow-checker-fixes.md) |
 | E0515 | cannot return reference to local variable | The callee owns the data the caller wants | Return owned, or accept a buffer parameter |
-| E0521 | borrowed data escapes outside of function | A borrow crossed a `'static` boundary such as `thread::spawn` | Clone, or pass an `Arc` |
-| E0106 | missing lifetime specifier | A struct or return type holds a reference with no stated source | Name the lifetime, or store owned data |
-| E0277 | the trait bound `T: X` is not satisfied | A required trait is missing or not in scope | Read which trait; import it or add the bound |
+| E0521 | borrowed data escapes outside of function | A borrowed parameter reaches a `'static` bound such as `thread::spawn` | Pass an `Arc` or owned data, or use `thread::scope` |
+| E0106 | missing lifetime specifier | A struct or return type holds a reference with no stated source | Struct field: store owned data unless the type is a short-lived view, such as a parser view or a zero-copy frame; a struct lifetime spreads to every type that holds it. Return type: name the input it borrows from, with the narrowest lifetime that is true. See [references/borrow-checker-fixes.md](references/borrow-checker-fixes.md) |
+| E0277 | the trait bound `T: X` is not satisfied | A required trait is missing or not in scope | Read which trait and which type; import it or add the bound |
+| E0277 | the trait bound `!: X` is not satisfied | Edition 2024 never-type fallback | Name the type, see [the fallback section](#e0282-e0283-e0284-and-the-never-type-need-a-type-anchor) |
+| E0277 | `T` cannot be sent between threads safely | A non-`Send` value crosses a thread boundary | Decide with the `rust-send-sync` skill |
+| (none) | future cannot be sent between threads safely | A non-`Send` value (an `Rc`, a lock guard, a `RefCell` borrow) lives across an `.await` | Read the `note:`; it names the value and the `.await`. Drop the value before the `.await`, or use `Arc`. `cargo clippy` flags a held lock guard (`clippy::await_holding_lock`, warn by default) |
 | E0271 | expected `A` to be an iterator that yields `B` | An associated type does not match | Fix the item type, usually with `map` |
-| E0308 | mismatched types | The two sides differ, often by one reference layer | Compare the two types the note prints, not the expressions |
-| E0599 | no method named `m` found | Typo, or the trait that defines `m` is not imported | `use` the trait |
+| E0308 | mismatched types | The two sides differ, often by one reference layer or one `Option` | Compare the two types the note prints, not the expressions |
+| E0599 | no method named `m` found | Typo, the trait is not imported, or the method is from another version of the crate | `use` the trait from `help:`; otherwise read the locked source, see step 4 [below](#e0432-and-e0433-unresolved-imports) |
 | E0631 | type mismatch in function arguments | A function item was passed to a higher-order call; no deref coercion applies at a trait bound | Wrap the call in a closure, or insert `.map(String::as_str)` |
-| E0275 | overflow evaluating the requirement `T: X` | A generic impl builds an unbounded type chain at instantiation | Fix the signature; never raise `recursion_limit` |
-| E0038 | the trait `T` is not dyn compatible | One item of the trait gets no vtable slot | Read the `...because` note; add `where Self: Sized` to that item |
+| E0275 | overflow evaluating the requirement `T: X` | The trait solver reached the recursion limit during type checking | A repeating type in the note means an infinite chain: fix the impl. Raise the limit only for a finite, deep type |
+| (none) | reached the recursion limit while instantiating | An infinite chain at monomorphization, often `&mut &mut ... W` from a recursive call on a by-value `impl Write` | `cargo check` exits 0 on it. Take `&mut dyn Write`; see the `rust-callback-bounds` skill |
+| E0038 | the trait `T` is not dyn compatible | One item of the trait gets no vtable slot | Read the `...because` note. Read [references/dyn-compatibility.md](references/dyn-compatibility.md) when you choose the fix; it maps each note to its fix |
 | E0562 | `impl Trait` is not allowed in the return type of `Fn` trait bounds | `impl FnMut(&T) -> impl Ord` puts `impl Trait` in an associated-type binding | Name a generic parameter instead: `<K: Ord>` |
 | E0184 | the trait `Copy` cannot be implemented for this type; the type has a destructor | One type asks for both `Copy` and `Drop` | Remove the `Copy` derive; a resource handle is not `Copy` |
 | E0367 | `Drop` impl requires `T: Clone` but the struct it is implemented for does not | The `Drop` impl added a bound the type definition does not carry | Move the bound onto the struct definition |
-| E0740 | field must implement `Copy` or be wrapped in `ManuallyDrop<...>` | A union field has drop glue | Wrap the field in `std::mem::ManuallyDrop` and drop it by hand |
-| E0433 | cannot find module or crate | The dependency is missing or the path is wrong | `cargo add`, or fix the path |
-| E0425 | cannot find value in this scope | Typo, or the item is not imported | Check the `use` list |
-| E0603 | module is private | The path exists but is not exported | `pub use` it, or use the public path |
-| E0072 | recursive type has infinite size | A type contains itself by value | `Box`, `Rc`, or `Arc` the recursive field |
+| E0740 | field must implement `Copy` or be wrapped in `ManuallyDrop<...>` | A union field is not `Copy`, `ManuallyDrop<T>`, a reference, or a tuple or array of those | Derive `Copy` when the type allows it. Otherwise wrap the field in `std::mem::ManuallyDrop` and drop it by hand |
+| E0432 | unresolved import `x` | A feature is off, a path is wrong, or the crate is missing or does not exist | See [Unresolved imports](#e0432-and-e0433-unresolved-imports) |
+| E0433 | cannot find type `T` in this scope; cannot find module or crate `x` in this scope. Before 1.95: failed to resolve: use of undeclared type `T`, or use of unresolved module or unlinked crate `x` | A missing `use`, often from `std`; a module path that needs `crate::` or `super::`; or a missing crate | See [Unresolved imports](#e0432-and-e0433-unresolved-imports) |
+| E0425 | cannot find value, type, or function `x` in this scope (E0412 for a type on older toolchains) | Typo, a missing import, or an item behind an off feature | Read the `note:` and `help:`, see [Unresolved imports](#e0432-and-e0433-unresolved-imports) |
+| E0603 | `x` is private | The path exists but is not exported | `pub use` it, or use the public path |
+| E0658 | use of unstable library feature `f` | The API is unstable, or stable only in a newer Rust than this toolchain | Compare `rustc -V` and the crate's `rust-version` with the version on the API's docs page |
+| E0072 | recursive type has infinite size | A type contains itself by value | `Box`, `Rc`, or `Arc` the recursive field; `Weak` for a back edge |
 | E0793 | reference to field of packed struct is unaligned | A reference into `#[repr(packed)]` | See the `rust-unsafe` skill |
 
 ## The clone reflex
 
-`E0382` has one fix that always compiles:
-
-```rust
-let s = String::from("x");
-let t = s.clone();   // compiles
-```
-
-Treat that as a diagnostic, not a fix. The error stated that two places want the same value. A
-clone answers "both get one", which is right when the value is a small owned copy and wrong when
-the value is an identity, a handle, a large buffer, or shared state.
-
-Decide which case you are in before you type `.clone()`:
+E0382 has one fix that always compiles: `.clone()`. Treat it as a diagnostic, not a fix. The
+error stated that two places want the same value. A clone answers "both get one", which is right
+for a small owned copy and wrong for an identity, a handle, a large buffer, or shared state.
 
 | The value is | The answer |
 | --- | --- |
@@ -88,95 +114,21 @@ Decide which case you are in before you type `.clone()`:
 | An identity: a connection, a file, a job | One owner. Pass `&mut` down, or pass a handle |
 | Large and consumed once | Move it, and restructure the caller so it can be moved |
 
-A clone inside a loop is the version of this mistake that reaches production. It compiles, it is
-correct, and it allocates once per iteration. See the `rust-performance` skill.
+A clone inside a loop compiles, is correct, and allocates once per iteration. See the
+`rust-performance` skill.
 
 ## Borrow conflicts are usually a split problem
 
-`E0499` and `E0502` almost never require interior mutability. They require the compiler to see
-that two borrows touch different data.
+E0499 and E0502 rarely need interior mutability. They need the compiler to see that two borrows
+touch different data: `split_at_mut` or `get_disjoint_mut` for indices, field borrows instead of a
+`&self` helper, or a copy of the value before the write. Reach for `RefCell` only after the splits
+fail (see the hazard table).
 
-```rust
-// E0499: two &mut into the same slice.
-let a = &mut v[0];
-let b = &mut v[1];
+Read [references/borrow-checker-fixes.md](references/borrow-checker-fixes.md) when the first move
+in the triage table does not fit an E0499, E0502, E0506, E0507, E0716, E0373, E0521, or E0106
+error, or to compare the cost of each interior mutability type.
 
-// Fix: split, so the two halves are provably disjoint.
-let (left, right) = v.split_at_mut(1);
-left[0] += right[0];
-```
-
-```rust
-// E0502: a read borrow is still live when the write starts.
-let first = &v[0];
-v.push(1);
-println!("{first}");
-
-// Fix: end the read by copying the value out.
-let first = v[0];
-v.push(first);
-```
-
-Reach for `RefCell` only after both of these fail. `RefCell` moves the check from compile time
-to run time; it converts a build error into a `RefCell already borrowed` panic in
-production. Reach for it when the graph shape genuinely requires it, not to silence a message.
-
-The full catalogue of splits is in
-[references/borrow-checker-fixes.md](references/borrow-checker-fixes.md).
-
-## E0597 and E0716 are the same shape with different data
-
-Both say a borrow outlived its target. They differ in what the target was.
-
-```rust,compile_fail
-// E0597: `s` is a named local. It is dropped at the end of the inner block.
-let r;
-{
-    let s = String::from("x");
-    r = &s;
-}
-println!("{r}");
-```
-
-Fix by moving the binding out, so the owner lives at least as long as the borrow.
-
-```rust,compile_fail,E0716
-fn foo() -> Vec<u8> { vec![1, 2, 3] }
-fn bar(v: &Vec<u8>) -> &u8 { &v[0] }
-
-// E0716: `foo()` produced a temporary with no name. It dies at the `;`.
-let p = bar(&foo());
-let q = *p;
-```
-
-Fix by giving the temporary a name, which extends it to the end of the enclosing block:
-
-```rust
-fn foo() -> Vec<u8> { vec![1, 2, 3] }
-fn bar(v: &Vec<u8>) -> &u8 { &v[0] }
-
-let tmp = foo();
-let p = bar(&tmp);
-let q = *p;
-```
-
-Do not turn this example into the false rule that every temporary dies at the semicolon. Rust
-extends some temporaries from an extending `let` pattern or expression to the end of the block:
-
-```rust,run
-fn make() -> String { String::from("extended") }
-
-fn main() {
-    let borrowed = &make();
-    assert_eq!(borrowed, "extended");
-}
-```
-
-A function argument such as `bar(&foo())` does not get that extension. Match the exact syntax,
-then name the temporary when the consumer needs a longer lifetime. Use `rust-borrow-semantics`
-for temporary-scope, place-expression, and two-phase-borrow analysis.
-
-## E0282, E0283, and E0284 need a type anchor
+## E0282, E0283, E0284, and the never type need a type anchor
 
 These errors mean the available constraints do not select one type. Rust does not infer every
 method or operator input backward from the final result type. Add the smallest local anchor:
@@ -192,282 +144,95 @@ fully qualified call. Do not change a public return type, add `'static`, or add 
 bound only to silence inference. Rebuild after the one anchor; later diagnostics can be a
 cascade from the first unknown type.
 
-## E0507: you hold a reference and you need the value
+An unconstrained generic call as a statement, such as `f()?;`, has no anchor at all. Edition 2024
+falls back to `!` instead of `()`, so the error names the never type:
 
-```rust,compile_fail
-struct S { name: String }
-fn f(s: &S) -> String { s.name }   // E0507
+```rust,compile_fail,E0277
+fn parse_or_default<T: Default>() -> Result<T, ()> { Ok(T::default()) }
+
+fn load() -> Result<(), ()> {
+    parse_or_default()?; // the trait bound `!: Default` is not satisfied
+    Ok(())
+}
 ```
 
-Pick by what should happen to the original:
+The note says "this error might have been caused by changes to Rust's type-inference algorithm".
+On edition 2021 the same code fails with the deny-by-default lint
+`dependency_on_unit_never_type_fallback` (1.92+): "this function depends on never type fallback
+being `()`". Both have one fix. Name the type:
 
-| Intent | Call |
-| --- | --- |
-| The original keeps its value | `s.name.clone()` |
-| The original is left empty and is still valid | `std::mem::take(&mut s.name)` |
-| The original is left holding something else | `std::mem::replace(&mut s.name, other)` |
-| The field is optional and becomes `None` | `s.name.take()` on an `Option` |
-| The caller is finished with the whole value | Change the signature to take `self` |
+```rust
+fn parse_or_default<T: Default>() -> Result<T, ()> { Ok(T::default()) }
 
-`mem::take` needs `&mut` and needs `Default`. It is the cheapest of these: no allocation, no
-clone.
+fn load() -> Result<(), ()> {
+    parse_or_default::<()>()?;
+    Ok(())
+}
+```
+
+`let () = parse_or_default()?;` also works. Do not allow the lint; it is a hard error on 2024.
+
+## E0432 and E0433: unresolved imports
+
+Read the `note:` and `help:` lines before you add a dependency. A `cargo add` line in `help:` is
+not a fix (see the hazard table). Stop at the first step that matches:
+
+1. `note: found an item that was configured out` with "the item is gated behind the `f`
+   feature". The feature is off. Read the file path under the note.
+   - The item is in a dependency: enable its feature with `cargo add <crate> --features f`, or
+     add `f` to that dependency's `features` list. Do not rewrite the import.
+   - The item is in this crate: the caller lacks the item's gate. Put the same
+     `#[cfg(feature = "f")]` on the caller, or build with `--features f`. Do not add `f` to
+     `default` to silence the error; that hides the break in the build without the feature.
+2. `help:` offers a `use` path ("consider importing") or says "a similar path exists". This
+   covers `cannot find type` and `cannot find value` (E0425 or E0433) and E0432. Take that path:
+   `std::...`, `crate::...`, or `super::...`. Check `std` and this crate before any new crate.
+3. The first path segment is a module of this crate: `grep -rn 'mod <segment>' src` finds it.
+   Write the path from `crate::` or `super::`.
+4. The first path segment is a crate that `Cargo.toml` already lists. The item path is wrong, or
+   the item exists only in another version. Read the source of the version in `Cargo.lock`, not
+   the documentation of the latest release. Use the package name as `Cargo.toml` writes it: the
+   path segment `tokio_util` is the package `tokio-util`.
+
+   ```bash
+   cargo metadata --format-version 1 --locked \
+     | jq -r '.packages[] | select(.name == "<package>") | "\(.version) \(.manifest_path)"'
+   ```
+
+   If `jq` is not installed, `cargo tree -i <package> --locked --depth 0` prints the locked
+   version.
+5. The crate is not in `Cargo.toml`. Add a crate only when the code was written against that
+   crate, or the task asks for a new dependency. Otherwise use `std` or an existing dependency.
+   Run `cargo info <name>`: it prints the description, version, `rust-version`, repository, and
+   features of that exact package, or "could not find". It proves that the name exists, not that
+   it is the crate the code expects. Compare its `repository` and `description` with that crate.
+   If they do not match, or the name came only from rustc's `help:` line, do not add it; ask the
+   user. Otherwise run `cargo add <name>`.
 
 ## A `Drop` impl changes the borrow checker
 
-`impl Drop` is not a local change. It breaks code that compiled before, and no error title names
-`Drop`.
-
-| You add `Drop` to | The new error | Cause |
-| --- | --- | --- |
-| a type with a lifetime parameter | E0597 on the borrowed local | dropck extends the borrow to the drop point |
-| a guard that holds `&mut T` | E0502 at the next read of `T` | the drop point is one more use, after the last visible use |
-| any type | E0509 at each partial move out of it | drop glue needs the whole value |
-| a type that derives `Copy` | E0184 at the derive | `Copy` and `Drop` are exclusive |
-
-```rust,compile_fail
-struct Guard<'a>(&'a mut u32);
-impl Drop for Guard<'_> {
-    fn drop(&mut self) {}
-}
-
-fn read_while_guarded() {
-    let mut x = 0u32;
-    let _g = Guard(&mut x);
-    println!("{x}");   // E0502
-}
-```
-
-The note states the cause: "mutable borrow might be used here, when `_g` is dropped and runs the
-`Drop` code for type `Guard`". NLL ends a borrow at its last use, and a `Drop` impl adds one last
-use at the end of the scope. Call `drop(_g)` before the read, scope the guard in an inner block,
-or leave the type `Drop`-free.
-
-Inside `drop` you hold `&mut self`, so a by-value pattern on a field is E0507. Match on `self`
-instead: match ergonomics then bind the payload as `&mut`. That fix, the dropck E0597 case, and
-the E0509 partial-move case are in
-[references/borrow-checker-fixes.md](references/borrow-checker-fixes.md).
-
-## Send and Sync
-
-`thread::spawn` reports a numbered error:
-
-```text
-error[E0277]: `Rc<i32>` cannot be sent between threads safely
-```
-
-An async block reports the same class of problem with **no error code**, so searching for E0277
-finds nothing:
-
-```text
-error: future cannot be sent between threads safely
-  = help: within `{async block}`, the trait `Send` is not implemented for `Rc<i32>`
-note: future is not `Send` as this value is used across an await
-```
-
-Read the `note:`. It names the exact value and the exact `.await` that traps it. The usual causes
-are an `Rc` where an `Arc` belongs, and a `MutexGuard` or `RefCell` borrow held across an
-`.await`.
-
-The fix is almost never to add an `unsafe impl Send`. Drop the guard before the await:
-
-```rust
-let value = {
-    let guard = state.lock().unwrap();
-    guard.value.clone()
-};              // guard is dropped here
-do_async(value).await;
-```
-
-`clippy::await_holding_lock` catches the lock case at build time. See the `rust-send-sync` skill
-to decide whether a type is `Send` or `Sync` at all, the `rust-async-internals` skill for cancel
-safety, and the `rust-lints` skill for the lint configuration.
-
-## E0106: missing lifetime specifier
-
-```rust,compile_fail
-struct S { name: &str }   // E0106
-```
-
-Two answers, and the right one is usually the second:
-
-```rust
-struct Borrowed<'a> { name: &'a str }   // the struct cannot outlive the source
-struct Owned { name: String }           // the struct owns its data
-```
-
-Store owned data unless the type is a short-lived view built inside one function and consumed
-inside it. A lifetime parameter on a struct spreads: every type that holds it needs one too, and
-the annotation reaches the whole call graph. Pay that cost for a parser view or a zero-copy
-frame, not for a config or a message.
-
-Never answer E0106 with `'static` on a struct field. It does not extend the data; it demands the
-data already live forever, and it moves the error to the caller.
-
-## E0072: recursive type has infinite size
-
-```rust,compile_fail
-struct Node { next: Option<Node> }   // E0072: the size is unbounded
-```
-
-```rust
-struct Node { next: Option<Box<Node>> }   // one pointer, so the size is known
-```
-
-`Box` for a single owner, `Rc` for shared and single-threaded, `Arc` for shared across threads.
-If the structure has cycles, `Rc` alone leaks: the cycle keeps the count above zero. Use `Weak`
-for the back edge.
-
-## E0038: the trait is not dyn compatible
-
-`dyn Trait` needs a vtable. One item that cannot get a vtable slot removes the whole trait from
-`dyn` use, so the error points at the `dyn Trait` type and not at the call that broke:
-
-```text
-error[E0038]: the trait `NoSelf` is not dyn compatible
-note: for a trait to be dyn compatible it needs to allow building a vtable
-   |     fn describe() -> String;
-   |        ^^^^^^^^ ...because associated function `describe` has no `self` parameter
-```
-
-Read the `...because` note first. rustc prints one note per shape; these ten are the common
-ones.
-
-| Shape in the trait | The `...because` note |
-| --- | --- |
-| `fn describe() -> String;` | ...because associated function `describe` has no `self` parameter |
-| `fn go<T: Copy>(&self, t: T);` | ...because method `go` has generic type parameters |
-| `fn ser(&self, out: impl Write);` | ...because method `ser` has generic type parameters |
-| `fn dup(&self) -> Self;` | ...because method `dup` references the `Self` type in its return type |
-| `fn eq_me(&self, other: &Self) -> bool;` | ...because method `eq_me` references the `Self` type in this parameter |
-| `fn it(&self) -> impl Iterator<Item = u8>;` | ...because method `it` references an `impl Trait` type in its return type |
-| `async fn m(&self) -> u32;` | ...because method `m` is `async` |
-| `const N: usize;` | ...because it contains associated const `N` |
-| `type Item<T>;` | ...because it contains generic associated type `Item` |
-| `trait T: Clone` or `trait T: Sized` | ...because it requires `Self: Sized` |
-| `trait T: PartialEq<Self>` | ...because it uses `Self` as a type parameter |
-
-Row two and row three print the same note for signatures that look nothing alike. An
-argument-position `impl Trait` is a hidden generic parameter: `fn ser(&self, out: impl Write)` is
-`fn ser<W: Write>(&self, out: W)`. Take `&mut dyn Write` when a consumer may need `Box<dyn Trait>`.
-
-The last four rows name no method, so they read like a different error. `Clone` has `Sized` as
-a supertrait, so `: Clone` on the trait alone removes the vtable.
-
-The first seven sit on one item, and one clause on that item is the whole fix:
-
-```rust
-pub trait Codec {
-    fn decode(&self, src: &[u8]) -> Vec<u8>;   // keeps its vtable slot
-    fn name() -> &'static str
-    where
-        Self: Sized;                           // leaves the vtable
-}
-```
-
-`Vec<Box<dyn Codec>>` now compiles. Each implementor still calls `name()` through its concrete
-type.
-
-Know the cost before you type the clause: the item leaves the trait-object API. A later call
-through `dyn` fails at the call site, not at the trait definition, and the message never mentions
-dyn compatibility:
-
-```text
-error[E0277]: the size for values of type `dyn Codec` cannot be known at compilation time
-note: required by a bound in `Codec::name`
-```
-
-Add `where Self: Sized` only to an item no caller needs through `dyn`. If callers need it, move
-the item to a second trait, or take `&self` and return an owned type instead of `Self`.
-
-`where Self: Sized` does not answer the last four rows. A supertrait bound is not an item, and
-an associated const rejects the clause: rustc reports `error[E0658]: generic const items are
-experimental`. Move an associated const or a generic associated type to a second trait. Drop a
-`Clone` supertrait and put the clone in the vtable:
-
-```rust
-trait Shape {
-    fn area(&self) -> f64;
-    fn clone_box(&self) -> Box<dyn Shape>;
-}
-
-impl Clone for Box<dyn Shape> {
-    fn clone(&self) -> Self {
-        self.clone_box()
-    }
-}
-```
-
-rustc renamed this check from "object safety" to "dyn compatibility". A grep of a current build
-log for "object safe" finds nothing. Grep for `E0038` or for "dyn compatible".
-
-## `cargo check` and `cargo build` disagree on recursive generic instantiation
-
-```text
-error: reached the recursion limit while instantiating `<Node as Serialize>::serialize::<&mut &mut &mut &mut &mut &mut ...>`
-  = note: the full name for the type has been written to '<crate>.long-type-<hash>.txt'
-```
-
-**`cargo check` exits 0 on a crate that `cargo build` rejects.** `cargo check` stops after
-type-checking and metadata emission. The instantiation chain is walked only by the
-monomorphization collector, which runs during codegen. The collector starts at reachable roots, so
-an uncalled generic function stays silent until a caller appears. Gate CI on `cargo build`, not on
-`cargo check`, for any crate with recursive generic trait impls.
-
-**A higher `recursion_limit` only makes the failure slower.** The `&mut &mut ... &mut T` chain is
-infinite by construction, so no finite `recursion_limit` ends it. Measured on the `Node` shape
-below with rustc 1.97.0 on aarch64-apple-darwin: the default limit of 128 fails in 0.10 s, and
-`#![recursion_limit = "1024"]` fails in 11.1 s with the identical message. This error prints no
-`help:` line.
-
-The cause is a trait method that takes its writer by value and hands `&mut out` to the recursive
-call, so the type grows one `&mut` per level:
-
-```rust,ignore
-// W, then &mut W, then &mut &mut W, without end.
-trait Serialize { fn serialize(&self, out: impl Write) -> io::Result<()>; }
-// impl Serialize for Node { ... for c in &self.children { c.serialize(&mut out)?; } ... }
-```
-
-Take `&mut dyn Write` in the trait method. It is one concrete type at every depth, and it keeps
-the trait dyn compatible. In a free function `&mut impl Write` also stops the chain, but its
-implicit `Sized` bound rejects a caller that already holds `&mut dyn Write`, with E0277 "the size
-for values of type `dyn Write` cannot be known at compilation time". Write `&mut (impl Write +
-?Sized)` when both callers must work. See the `rust-type-erasure` skill for the wider trade.
-
-`error[E0275]: overflow evaluating the requirement ...` is a different error. The trait solver
-emits it during type checking, so `cargo check` does report it. It carries a `help:` line that
-asks for double the current `recursion_limit` every time. Do not take it either; the chain is
-still unbounded.
-
-## Escalation rule
-
-Three failed attempts at the same error is a signal, not bad luck. Stop editing and answer these:
-
-1. Which single component should own this data for its whole lifetime?
-2. Is the borrow crossing a boundary it should not cross: a thread, an `.await`, a callback, an
-   FFI call?
-3. Would the error disappear if the data were owned rather than borrowed, and what does that
-   cost?
-
-Errors that mean the design is wrong, not the syntax: E0382 fixed by cloning in a hot loop,
-E0499 fixed by `RefCell`, E0597 fixed by `'static`, E0521 fixed by leaking. Each compiles. Each
-converts a build error into a run-time cost or a run-time panic.
-
-See the `rust-crate-architecture` skill for ownership across module boundaries, and the
-`rust-discipline` skill for the API shapes that avoid these errors.
+`impl Drop` is not a local change. It breaks code that compiled before with E0597, E0502, E0509,
+or E0184, and no error title names `Drop`: the drop point is one more use of every borrow the value
+holds. The note says "... when `_g` is dropped and runs the `Drop` code for type `Guard`". Drop the
+guard before the read, scope it in an inner block, or keep the type `Drop`-free. Read the `Drop`
+section of [references/borrow-checker-fixes.md](references/borrow-checker-fixes.md) when an error
+follows a new `impl Drop`, or for E0507 inside `drop(&mut self)`.
 
 ## Related skills
 
-- `rust-unsafe` — E0793 and the layout rules behind it
-- `rust-send-sync` — the auto trait decision behind every `cannot be sent` message
-- `rust-async-internals` — `Send` across `.await`, cancel safety, and shutdown
-- `rust-lints` — where `clippy::await_holding_lock` and the rest are configured
-- `rust-crate-architecture` — ownership and dependency direction across crates
-- `rust-discipline` — the API shapes that avoid E0038 and the borrow errors
-- `rust-callback-bounds` — E0309, E0621, and E0502 on a `Fn(&T) -> K` parameter
-- `rust-type-erasure` — `&mut dyn Trait` against `impl Trait`, and what each costs
-- `rust-performance` — the cost of the clone that silenced the error
-- `cargo-workflows` — build and check commands in full
+Refer to these by name when they are installed.
 
-For the split-borrow catalogue, see
-[references/borrow-checker-fixes.md](references/borrow-checker-fixes.md).
+| Skill | Use it for |
+| --- | --- |
+| `rust-borrow-semantics` | Temporary scopes, lifetime extension, two-phase borrows, edition 2024 drop order |
+| `rust-callback-bounds` | E0309, E0621, E0502 on a `Fn(&T) -> K` parameter; the `&mut impl Write` recursion chain; `&mut dyn Trait` against `impl Trait` |
+| `rust-send-sync` | Whether a type is `Send` or `Sync`, behind every `cannot be sent` message |
+| `rust-async-internals` | `Send` across `.await`, cancel safety, and shutdown |
+| `rust-unsafe` | E0793 and the layout rules behind it |
+| `rust-iterator-impl` | E0207 on an iterator impl |
+| `rust-event-loop-state` | E0207 and E0119 on a generic `Handler` trait, and E0499 in a dispatch loop |
+| `rust-type-erasure` | `dyn Any` and `TypeId` stores, downcasting, and the `'static` bound of `Any` |
+| `rust-discipline` | API shapes that avoid E0038 and the borrow errors; the one-field `Drop` guard |
+| `rust-crate-architecture` | Ownership and dependency direction across modules and crates |
+| `rust-performance` | The cost of the clone that silenced the error |
+| `cargo-workflows` | Build, check, feature, and target commands in full |
