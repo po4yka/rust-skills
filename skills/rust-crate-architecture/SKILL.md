@@ -1,40 +1,50 @@
 ---
 name: rust-crate-architecture
-description: Use when you add, split, merge, rename, or remove a crate in a Rust workspace, when you define or enforce dependency layers and direction rules, when you decide whether new code belongs in a new crate or an existing module, when you restructure a workspace after a layering violation or a dependency cycle between normal crates, or when you lay out modules inside a crate that grew too large. A cyclic package dependency that involves a proc-macro crate belongs to rust-macros.
+description: Use when deciding Rust workspace crate boundaries and dependency direction, such as adding, splitting, merging, renaming, or removing a workspace crate, defining or enforcing dependency layers, fixing a layering violation or a dependency cycle between workspace crates, or choosing between a new crate and a module for new code or for a crate that grew too large. Not for module file layout or visibility; use rust-code-style. A cyclic package dependency that involves a proc-macro crate belongs to rust-macros.
 license: BSD-3-Clause
 ---
 
 # Rust Crate Architecture
 
-This skill covers the shape of a Rust workspace: which crates exist, which
-crate is allowed to depend on which, and how modules are laid out inside a
-crate. `cargo-workflows` covers the mechanics of the manifests, profiles, and
-build commands. Use both together.
+This skill decides which crates exist, which crate may depend on which, and
+whether new code needs a crate or a module. The `cargo-workflows` skill owns
+manifests, dependency inheritance, profiles, features, lockfile policy,
+cross-compilation, and build commands. The `rust-code-style` skill owns module
+file layout, the `lib.rs` re-export policy, and visibility levels. Use them
+together when they are installed.
 
-## Establish ground truth first
+## Read the graph from cargo
 
-A workspace changes faster than its documentation. Before you move any crate,
-read the current graph from cargo, not from a diagram.
+A workspace changes faster than its documentation. Before you move a crate, read
+the current graph from cargo, not from a diagram.
 
 ```bash
-# Authoritative machine-readable inventory of the workspace members.
+# Members, manifest paths, versions, features, and targets.
 cargo metadata --locked --no-deps --format-version 1
 
-# Forward dependencies of one crate: what it is allowed to know.
-cargo tree --locked -p <crate> -e normal
+# Every edge between path crates, with its kind. It includes optional and
+# target-gated edges, so it is the complete list to compare with the layer table.
+cargo metadata --locked --no-deps --format-version 1 \
+  | jq -r '.packages[] | .name as $n | .dependencies[] | select(.path != null)
+           | "\($n) -> \(.name) [\(.kind // "normal")]"' | sort
 
-# Reverse dependencies of one crate: who is allowed to know it.
-# Pass the crate as the value of -i, and keep --workspace, or the inverted
-# tree is scoped to that crate alone and shows no dependents.
-cargo tree --locked --workspace -i <crate>
+# Forward dependencies of one crate: what it is allowed to know.
+cargo tree --locked -p <crate> -e normal,build --target all
+
+# Reverse dependencies: who knows the crate. Keep --workspace. Inside a member
+# directory, cargo tree -i otherwise searches only that member's own tree.
+cargo tree --locked --workspace -i <crate> --target all
 ```
+
+`cargo tree` resolves for the host target unless you pass `--target all`, so an
+Android-only or iOS-only edge is invisible in a plain run. It also shows only the
+features that the command line enables.
 
 Rules:
 
-- Treat any hand-written architecture document as stale until `cargo metadata`
+- Treat a hand-written architecture document as stale until `cargo metadata`
   agrees with it. Fix the document in the same change that moves a crate.
-- Do not hardcode a crate count in documentation. Derive it from
-  `cargo metadata`.
+  Derive crate counts from `cargo metadata`; do not hardcode them.
 - Run every command from the directory that holds the workspace `Cargo.toml`,
   or pass `--manifest-path <workspace-root>/Cargo.toml`.
 
@@ -45,10 +55,10 @@ know. Names of layers matter less than the direction between them.
 
 | Layer | Contents | May depend on | Must not depend on |
 |-------|----------|---------------|--------------------|
-| 0 Foundation | Pure data types, error types, format and protocol primitives. No I/O, no global state. | Third-party leaf crates only | Any workspace crate |
-| 1 Domain | Algorithms, state machines, policy, decisions. Deterministic and testable without I/O. | Layer 0 | Layers 2 and 3 |
-| 2 Runtime | I/O, sockets, files, timers, task scheduling, process state. | Layers 0-1 | Layer 3 |
-| 3 Adapter | FFI boundary crates (`cdylib` / `staticlib`), platform bindings, CLI binaries. | Layers 0-2 | Nothing in the workspace depends on an adapter |
+| 0 Foundation | Pure data types, error types, format and protocol primitives. No I/O, no global state. | Third-party leaf crates, other Layer 0 crates | Layers 1-3 |
+| 1 Domain | Algorithms, state machines, policy, decisions. Deterministic and testable without I/O. | Layer 0, other Layer 1 crates | Layers 2 and 3 |
+| 2 Runtime | I/O, sockets, files, timers, task scheduling, process state. | Layers 0-1, other Layer 2 crates | Layer 3 |
+| 3 Adapter | FFI boundary crates (`cdylib` / `staticlib`), platform bindings, CLI binaries. | Layers 0-2 | Other adapters. Nothing in the workspace depends on an adapter |
 
 Two derived rules:
 
@@ -58,13 +68,78 @@ Two derived rules:
   crates.** An adapter crate is a sink. If something needs to depend on an
   adapter, the thing you need is in the wrong crate.
 
+## Verification
+
+While you iterate, check the changed crate:
+
+```bash
+cargo tree --locked -p <changed-crate> -e normal,build --target all   # no higher-layer crate
+cargo clippy --locked -p <changed-crate> --all-targets -- -D warnings
+```
+
+Once before commit, run the workspace gate:
+
+```bash
+cargo metadata --locked --no-deps --format-version 1     # inventory changed as intended
+cargo tree --locked --workspace -i <foundation-crate> --target all   # who now depends on the shared crate
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo deny --config deny.toml --locked check
+```
+
+Then compare the edge list from [Read the graph from cargo](#read-the-graph-from-cargo)
+with the layer table. Every `[normal]` and `[build]` edge must point to a lower
+layer, or to the same layer below Layer 3. No such edge may point to an adapter.
+A `[dev]` edge may point up. The `rust-security` skill owns the
+`cargo-deny` policy.
+
+A green gate does not prove the layering. Clippy and a default cargo-deny policy
+accept every acyclic upward edge. Only the edge-list comparison checks
+direction.
+
+Checklist:
+
+- [ ] The new or moved crate sits at the lowest layer that compiles.
+- [ ] No `[normal]` or `[build]` edge points up, and no cross-stack edge appeared.
+- [ ] Test-support crates are under `[dev-dependencies]` only.
+- [ ] The manifest inherits the keys the workspace defines, and
+      `[lints] workspace = true` when the workspace defines `[workspace.lints]`.
+- [ ] The crate has a `[workspace.dependencies]` entry.
+- [ ] `#![forbid(unsafe_code)]` is present, or the `unsafe` need is stated.
+- [ ] `Cargo.lock` is committed with the manifest change that caused it, and its
+      diff holds only that change.
+- [ ] The architecture document matches `cargo metadata` again.
+
+## Triage
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "cyclic package dependency: package `<name> v<version> (<path>)` depends on itself" | A normal or build edge closes a cycle | Read the `Cycle:` lines to find the back edge. Extract the shared type into a lower-layer crate; delete the back edge |
+| A Layer 1 crate has a Layer 2 crate in its tree | Upward dependency | Move the type down, or invert with a trait ([references/dependency-direction.md](references/dependency-direction.md), Fix A and Fix B) |
+| E0116 "cannot define inherent `impl` for a type outside of the crate where the type is defined" or E0117 "only traits defined in the current crate can be implemented for types defined outside of the crate" after a split or a type move | An inherent impl or an impl of a foreign trait stayed in the old crate | Move the impl with the type. An impl of a trait that the old crate defines may stay |
+| `runtime-b` depends on `runtime-a` | Cross-stack edge | Put the shared type in Layer 0; keep the stacks independent |
+| A runtime crate depends on the diagnostics crate | Observation edge points the wrong way | Define the sink as a trait in a contracts crate; invert the edge |
+| A fixture crate appears in `cargo tree -e normal` | Test-support crate under `[dependencies]` | Move it to `[dev-dependencies]` |
+| E0308 "expected `T`, found `my_crate::T`" in a unit test, with "multiple different versions of crate" | Dev-dependency cycle through a test-support crate | Move the test under `tests/` |
+| "cannot update the lock file ... because --locked was passed" right after `cargo new` | `Cargo.lock` does not list the new member | Run `cargo update --workspace` once, read the lockfile diff, and vet each new package name (the `rust-security` skill). Commit the lock with the manifest, then rerun with `--locked` |
+| "error inheriting `<name>` from workspace root manifest's `workspace.dependencies.<name>`" | Member added without a `[workspace.dependencies]` entry | Add the entry |
+| "failed to select a version for the requirement" on a path dependency | `version` in `[workspace.dependencies]` does not match the member | Align the version, or drop it when the policy allows |
+| Hand-written manifest without `[lints] workspace = true` in a workspace that defines `[workspace.lints]` | Manifest not generated by `cargo new` | Add the `[lints]` table |
+| Member manifest sets `version = "0.1.0"` in a workspace that versions together | Version not inherited | Use `version.workspace = true` |
+| Logic added to an FFI or platform adapter crate | Adapter is no longer thin | Move it one layer down, where it can be tested without the platform |
+| An upward edge exists only under `[target.'cfg(...)'.dependencies]` | Target gate hides a layering violation | Restructure; the gate does not make the edge legal |
+| A crate that holds one type | Crate created without a crate reason | Make it a module; promote it when a real crate reason appears |
+
 ## Direction rules
 
 ### 1. No upward dependencies
 
-A Layer N crate must not depend on a Layer N+1 crate. Cargo rejects cycles, but
-an acyclic upward edge is still an architecture defect: it drags I/O, platform
-code, and heavy dependency trees into crates that were supposed to stay pure.
+A crate must not depend on a crate in a higher layer. Cargo rejects a cycle of
+normal or build edges: "cyclic package dependency: package `<name> v<version>
+(<path>)` depends on itself". Cargo accepts an upward edge that closes no cycle.
+That edge is still an architecture defect: it drags I/O, platform code, and
+heavy dependency trees into crates that were supposed to stay pure. Cargo also
+accepts a cycle that closes through a dev-dependency. Rule 3 allows that cycle
+for a test-support crate.
 
 Violation:
 
@@ -81,13 +156,15 @@ reverse.
 ### 2. Independent stacks stay independent
 
 When a workspace hosts two product areas, model them as two dependency trees
-that meet only at the foundation layer.
+that meet only at shared Layer 0 or Layer 1 crates that neither stack owns.
 
 ```text
-Stack A:  core-types -> core-config  -> domain-a -> runtime-a -> ffi-a
-Stack B:  core-types -> device-config -> domain-b -> runtime-b -> ffi-b
-                \______ shared Layer 0 crates ______/
+Stack A:  ffi-a -> runtime-a -> domain-a -> core-config   -> core-types
+Stack B:  ffi-b -> runtime-b -> domain-b -> device-config -> core-types
 ```
+
+An arrow points from a crate to its dependency. The stacks meet only at the
+shared Layer 0 crate `core-types`.
 
 `runtime-b` must not depend on `runtime-a`. If both stacks need the same type,
 the type belongs in a Layer 0 crate that both already depend on. A cross-stack
@@ -95,20 +172,20 @@ edge means one stack can no longer be built, tested, or shipped alone.
 
 ### 3. Test-support crates are dev-dependencies only
 
-Fixture and harness crates must appear under `[dev-dependencies]` only. They
-pull in servers, temporary files, and assertion machinery that must never reach
-a shipped artifact.
+Golden-file, network-fixture, soak, and platform-logging harness crates go under
+`[dev-dependencies]` only. They pull in servers, temporary files, and assertion
+machinery that must never reach a shipped artifact.
 
-| Test-support crate role | Typical contents |
-|-------------------------|------------------|
-| Golden-file support | Snapshot loading, blessing, diff reporting |
-| Network fixture | Local DNS / HTTP / TCP servers bound to loopback |
-| Soak support | Long-running stress and leak harness |
-| Platform support | Platform logging and binding helpers |
+One exception: a platform-support crate that also carries real runtime helpers
+may be a normal dependency, but only of adapter crates, never of a Layer 0 or
+Layer 1 crate.
 
-The only accepted exception is a platform-support crate that also carries real
-runtime helpers. Such a crate may be a normal dependency, but only of adapter
-crates, and never of a Layer 0 or Layer 1 crate.
+A test-support crate often depends on the crate it tests. That dev-dependency
+cycle compiles, but a unit test in `src/` then sees two copies of the crate under
+test. The build fails with E0308 "expected `Token`, found `my_crate::Token`" and
+the note "there are multiple different versions of crate `my_crate` in the
+dependency graph". Put a test that uses such a crate under `tests/`. An
+integration test links the one library copy that the support crate also uses.
 
 ### 4. Observation is an adapter edge, not a core dependency
 
@@ -124,7 +201,8 @@ When a runtime crate must emit an observation, define the sink as a trait or a
 handle in a Layer 0 contracts crate. The runtime crate depends on the contract.
 The monitor crate implements it. Split a large diagnostics area into a
 contracts crate, a runner crate, and one crate per protocol or subsystem, so a
-consumer takes only the part it needs. See `rust-observability`.
+consumer takes only the part it needs. The `rust-observability` skill covers
+the sink itself.
 
 ### 5. Platform isolation uses `cfg`, not layer breaks
 
@@ -144,19 +222,24 @@ ffi-adapter = { workspace = true }
 ```
 
 A conditional dependency that is legal on one target and illegal on another is
-a layering violation on every target. It also hides from a host-only CI job.
+a layering violation on every target. A host-only `cargo tree` does not show it;
+the edge list in [Read the graph from cargo](#read-the-graph-from-cargo) does.
+
+For a multi-branch platform choice inside a crate, use the standard
+`cfg_select!` macro (MSRV 1.95) instead of adding the `cfg-if` crate.
 
 ### 6. Adapter crates stay thin
 
 An FFI or platform crate does four things: marshal arguments, manage handle
 lifetimes, translate errors, and contain panics. Decisions and algorithms belong
-one layer down, where they can be tested without the platform. See `rust-jni`,
-`uniffi-boundary`, and `ffi-error-progress-cancel`.
+one layer down, where they can be tested without the platform. The `rust-jni`,
+`uniffi-boundary`, and `ffi-error-progress-cancel` skills cover the boundary.
 
 ## Crate or module?
 
-A new crate is not free. It costs a manifest, a lint block, an entry in two
-workspace tables, a place in the members order, and one more unit that every
+A new crate is not free. It costs a manifest, a `[workspace.dependencies]`
+entry, a `Cargo.lock` entry, a public API for every item a dependent uses (the
+`rust-discipline` skill covers that API), and one more unit that every
 contributor has to locate. Default to a module inside an existing crate.
 
 Create a crate when at least one of these is true:
@@ -171,94 +254,99 @@ Create a crate when at least one of these is true:
   code around it changes every day.
 - The code is published separately.
 
+A procedural macro always needs its own `proc-macro` crate; the `rust-macros`
+skill covers it.
+
 These are not reasons: the file is long, the area "feels like a component",
-one type wants a home of its own. Split the module first. Promote it to a crate
-when a rule above becomes true.
+one type wants a home of its own. Split a crate that grew too large into modules
+along its existing responsibilities first. Promote a module to a crate when a
+rule above becomes true.
 
 ## Creating a new crate
 
-### Checklist
+1. **Choose the layer.** Match the crate's contents to the layer table, and list
+   the crates it must depend on. Its layer must be at or above the highest layer
+   among them. If that puts it above a crate that will use it, the design is
+   wrong: stop and re-read [Direction rules](#direction-rules).
 
-1. **Choose the layer.** List the crates the new crate must depend on. Its layer
-   is one above the highest of them. If that puts it above the crate that will
-   use it, the design is wrong: stop and re-read [Direction rules](#direction-rules).
-
-2. **Create the directory** from the workspace root. `crates/` is the common
-   layout; use whatever directory the workspace already uses for members.
+2. **Create the package** from the workspace root. `crates/` is the common
+   layout; use the directory the workspace already uses for members.
 
    ```bash
-   cargo init --lib crates/<crate-name>
+   cargo new --lib crates/<crate-name>
    ```
 
-3. **Register it in the workspace `Cargo.toml`**, in alphabetical order in both
-   tables:
+   Use `cargo init --lib <dir>` for a directory that already exists. Either
+   command adds the member to `[workspace] members` unless a glob already
+   matches it. It keeps a sorted list sorted and appends to an unsorted one, so
+   check the result.
+
+3. **Read the generated manifest.** Cargo writes `<key>.workspace = true` only
+   for the keys that `[workspace.package]` defines, and `[lints] workspace =
+   true` only when `[workspace.lints]` exists. Add a missing inheritance line by
+   hand. The `rust-lints` skill owns the lint set that the `[lints]` table
+   inherits.
+
+4. **Add the `[workspace.dependencies]` entry by hand.** Cargo never writes it.
+   Without it, a dependent that writes `<crate-name> = { workspace = true }`
+   fails with "error inheriting `<crate-name>` from workspace root manifest's
+   `workspace.dependencies.<crate-name>`".
 
    ```toml
-   [workspace]
-   members = [
-       # ... existing members, leaf crates first, adapter crates last
-       "crates/<crate-name>",
-   ]
-
    [workspace.dependencies]
-   # The path resolves the crate inside the workspace.
    <crate-name> = { path = "crates/<crate-name>" }
    ```
 
-   `cargo init` appends the member to `members` for you, at the end of the
-   list. Move the entry into alphabetical order yourself. `cargo init` never
-   writes the `[workspace.dependencies]` entry. Add that entry by hand. Without
-   it, a dependent that writes `workspace = true` fails to resolve.
+   Add a matching `version` field when you publish the crate, or when the
+   workspace denies wildcard dependency requirements even with
+   `publish = false`. Read the local policy before you choose the path-only
+   form. A `version` that does not match the member version makes every cargo
+   command fail with `failed to select a version for the requirement`.
 
-   Add a matching `version` field when you publish the crate or when the
-   consumer workspace requires versions on internal path dependencies. For
-   example, a workspace that denies wildcard dependency requirements can use
-   `{ path = "crates/<crate-name>", version = "<workspace-version>" }` even when
-   every member has `publish = false`. Read the local workspace policy before
-   you choose the path-only form. A version requirement that does not match the
-   member version makes every cargo command fail with `failed to select a
-   version for the requirement`.
-
-4. **Write the crate manifest.** Inherit everything the workspace defines, and
-   take every dependency through `workspace = true`:
+5. **Add dependencies through `workspace = true`.** This is the default because
+   it keeps each version requirement in one place.
 
    ```toml
-   [package]
-   name = "<crate-name>"
-   edition.workspace = true
-   version.workspace = true
-   license.workspace = true
-
    [dependencies]
    core-types = { workspace = true }
 
    [dev-dependencies]
    golden-test-support = { workspace = true }
-
-   [lints]
-   workspace = true
    ```
 
-5. **Add the safety attribute** to `src/lib.rs`:
+6. **Add the safety attribute** to `src/lib.rs`:
 
    ```rust
    #![forbid(unsafe_code)]
    ```
 
-   Omit it only when the crate genuinely needs `unsafe`: an FFI or JNI crate, a
-   driver, a crate over a raw C API. A crate that keeps `unsafe` must document
-   every block. See `rust-unsafe`.
+   Omit it only when the crate has hand-written `unsafe`, including an
+   `#[unsafe(no_mangle)]` export: a C ABI or JNI export crate, a driver, a crate
+   over a raw C API. A crate that calls C only through a safe wrapper crate
+   keeps it. The `rust-unsafe` skill covers the crates that omit it.
 
-6. **Verify before you write any logic:**
+7. **Record the member in `Cargo.lock`, then verify.** A new member changes the
+   lockfile, so every `--locked` command that resolves the graph (`check`,
+   `clippy`, `tree`, `test`) fails with `cannot update the lock file ... because
+   --locked was passed` until you update it once:
+
+   ```bash
+   cargo update --workspace          # adds the member; leaves other locked versions alone
+   git diff Cargo.lock               # expect the new package and any new dependency only
+   ```
+
+   `cargo update` resolves without a build. Vet every new third-party package
+   name in the diff before the next command compiles their build scripts and
+   proc macros; the `rust-security` skill owns that gate. Never repair the lock
+   by running a build, test, or clippy command without `--locked`: that runs
+   unvetted code.
 
    ```bash
    cargo clippy --locked -p <crate-name> --all-targets -- -D warnings
-   cargo deny --locked check
-   cargo tree --locked -p <crate-name> -e normal
+   cargo tree --locked -p <crate-name> -e normal,build --target all
    ```
 
-   Read the tree output. Every crate in it must sit at or below the new crate's
-   layer.
+   Every crate in the tree must sit at or below the new crate's layer.
 
 ### Naming conventions
 
@@ -268,68 +356,19 @@ when a rule above becomes true.
   `golden-test-support`, `network-fixture`.
 - Do not encode a layer number in the name. Layers move during a refactor;
   renaming a crate is expensive.
-- Crate names use hyphens. The library target and the `use` path use
-  underscores, and so does the built artifact file name. Renaming a crate
-  renames `lib<name>.so` or `lib<name>.a` and breaks every loader and binding
-  that names it. See `cargo-workflows`.
-
-## Module structure inside a crate
-
-Pick the layout from the size of the crate. Move up a tier when the current tier
-stops fitting on one screen of `ls`.
-
-### Small crate, under about 500 lines
-
-A single `src/lib.rs` with an inline `#[cfg(test)] mod tests`.
-
-### Medium crate, about 500 to 2000 lines
-
-```text
-src/
-  lib.rs           # mod declarations + pub use re-exports
-  types.rs         # data structures
-  logic.rs         # core algorithms
-```
-
-Keep tests inline, or in a single `tests.rs`.
-
-### Large crate, over about 2000 lines
-
-```text
-src/
-  lib.rs           # mod declarations + pub use re-exports
-  engine.rs        # module root: declares its sub-modules
-  engine/
-    plan.rs
-    report.rs
-    runners.rs
-    tests.rs       # focused test module for engine/
-  types.rs         # module root
-  types/
-    request.rs
-    response.rs
-  test_fixtures.rs # shared test helpers, #[cfg(test)]
-  tests.rs         # top-level unit tests
-tests/
-  integration.rs   # integration tests: public API only
-  golden/          # golden test fixtures
-```
-
-Rules:
-
-- Use the `name.rs` + `name/` pattern. Use `mod.rs` only at three or more levels
-  of nesting, where the repeated file name stops being ambiguous.
-- `lib.rs` holds `mod` declarations and `pub use` re-exports, and nothing else.
-  Keep the public surface one level deep, so a caller writes
-  `my_crate::Request`, not `my_crate::types::request::Request`.
-- Everything not re-exported stays `pub(crate)`. A `pub` item is an API promise.
-- A file under `tests/` links against the crate as an external user. It can only
-  use the public API, which makes it the honest check on the re-export list.
+- Cargo maps hyphens in a package name to underscores in the library target, the
+  `use` path, and the artifact file name. Renaming a package renames
+  `lib<name>.so` or `lib<name>.a` and breaks every loader and binding that names
+  it. To rename the package and keep the artifact and the `use` path, set
+  `[lib] name = "<old_name>"`. The `[workspace.dependencies]` key, each
+  dependent's dependency key, and every `-p <name>` in scripts and CI still
+  change.
 
 ## Restructuring an existing workspace
 
-Read `references/dependency-direction.md` for the full procedure. The short
-form:
+Read [references/dependency-direction.md](references/dependency-direction.md)
+when you audit an inherited workspace, break an upward edge, or split, merge, or
+delete a crate. The short form:
 
 | Situation | Move |
 |-----------|------|
@@ -337,63 +376,6 @@ form:
 | A lower crate calls into a higher crate | Invert with a trait defined in the lower crate |
 | One crate does two unrelated jobs | Split it, and keep a re-export shim for one release to keep the diff reviewable |
 | Two crates always change together and share no other consumer | Merge them, and delete a layer boundary that was never real |
-| A cycle appears the moment you add an edge | The edge is wrong; find the shared type and extract it downward |
 
-Do a restructure on its own branch, and in its own commit. A move plus a
-behavior change in one diff is unreviewable.
-
-## Verification and review gate
-
-Run these before you claim a crate change is complete:
-
-```bash
-cargo metadata --locked --no-deps --format-version 1     # inventory changed as intended
-cargo tree --locked -p <changed-crate> -e normal          # no higher-layer crate appears
-cargo tree --locked --workspace -i <foundation-crate>     # who now depends on the shared crate
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo deny --locked check
-```
-
-Checklist:
-
-- [ ] The new or moved crate sits at the lowest layer that compiles.
-- [ ] `cargo tree -e normal` for the crate contains no crate from a higher layer.
-- [ ] No cross-stack edge appeared.
-- [ ] Test-support crates are under `[dev-dependencies]` only.
-- [ ] The crate manifest inherits `edition`, `version`, `license`, and
-      `[lints] workspace = true`.
-- [ ] Every dependency uses `workspace = true`.
-- [ ] `#![forbid(unsafe_code)]` is present, or the `unsafe` need is stated.
-- [ ] The crate appears in both `members` and `[workspace.dependencies]`, in
-      alphabetical order.
-- [ ] `Cargo.lock` is committed with the change.
-- [ ] The architecture document matches `cargo metadata` again.
-
-## Common mistakes
-
-| Mistake | Fix |
-|---------|-----|
-| Upward dependency, for example Layer 1 -> Layer 2 | Extract the shared type into a lower-layer crate |
-| Cross-stack dependency between two independent trees | Keep the stacks independent; put the shared type in Layer 0 |
-| Runtime crate depends on the diagnostics crate | Define the sink as a trait in a contracts crate; invert the edge |
-| Test-support crate under `[dependencies]` | Move it to `[dev-dependencies]` |
-| Missing `[lints] workspace = true` in a new crate | Always inherit the workspace lints |
-| Missing `#![forbid(unsafe_code)]` on a safe crate | Add it to `lib.rs` unless the crate genuinely needs `unsafe` |
-| `version = "0.1.0"` in a member manifest | Use `version.workspace = true`; all members share one version |
-| Dependency declared with an explicit version in a member | Use `workspace = true` so the version stays in one place |
-| Crate added to `members` but not to `[workspace.dependencies]` | Add both; `workspace = true` in a dependent needs the second entry |
-| New member appended at the end of `members` | Keep the list in alphabetical order inside its group |
-| Logic added to an FFI or platform adapter crate | Move it one layer down, where it can be tested without the platform |
-| Target-gated dependency that breaks the layer model | The gate does not make the edge legal; restructure instead |
-| A crate created for one type | Make it a module; promote it when a real crate reason appears |
-
-## Related skills
-
-- `cargo-workflows` for manifests, dependency inheritance, workspace lints,
-  profiles, cross-compilation, and edition migration.
-- `rust-lints` for the lint catalogue that `[lints] workspace = true` inherits.
-- `rust-unsafe` for the crates that cannot use `#![forbid(unsafe_code)]`.
-- `rust-discipline` for the public API surface a crate boundary exposes.
-- `rust-observability` for the contract a diagnostics crate implements.
-- `rust-jni`, `uniffi-boundary`, and `ffi-error-progress-cancel` for what an
-  adapter crate at Layer 3 is allowed to contain.
+Put a crate move in its own commit, apart from any behavior change. A move plus
+a behavior change in one diff is unreviewable.

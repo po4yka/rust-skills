@@ -1,8 +1,19 @@
 # Dependency Direction Reference
 
-Deep material for `rust-crate-architecture`: how to audit a workspace graph, how
+Deep material for [SKILL.md](../SKILL.md): how to audit a workspace graph, how
 to break an upward edge, and how to split, merge, or delete a crate without an
 unreviewable diff.
+
+Contents:
+
+- [Audit procedure](#audit-procedure)
+- [Breaking an upward edge](#breaking-an-upward-edge)
+- [Splitting a crate](#splitting-a-crate)
+- [Merging crates](#merging-crates)
+- [Deleting a crate](#deleting-a-crate)
+- [Features and direction](#features-and-direction)
+- [Granularity](#granularity)
+- [Cross-stack sharing decision table](#cross-stack-sharing-decision-table)
 
 ## Audit procedure
 
@@ -35,21 +46,26 @@ Use these questions in order:
 
 ### 3. Check every edge
 
-For each crate, read its forward tree and compare against the table:
+Compare the workspace edge list from
+[SKILL.md](../SKILL.md#read-the-graph-from-cargo) with the table. It lists every
+direct edge between path crates, including optional and target-gated ones. Then
+read the forward tree of each crate, which adds the transitive and third-party
+crates:
 
 ```bash
-cargo tree --locked -p <crate> -e normal,build
+cargo tree --locked -p <crate> -e normal,build --target all
 ```
 
 Include build-dependencies: build scripts can compile native code, read the
 environment, and introduce the same upward coupling as a normal dependency.
 Exclude dev-dependencies from the production direction check because a test can
-legitimately depend on a higher-layer harness.
+legitimately depend on a higher-layer harness. Keep `--target all`: without it,
+`cargo tree` resolves for the host only and hides every platform-gated edge.
 
 Then check the reverse direction for the crates that must stay shared:
 
 ```bash
-cargo tree --locked --workspace -i <foundation-crate>
+cargo tree --locked --workspace -i <foundation-crate> --target all
 ```
 
 A foundation crate should have many dependents. An adapter crate should have
@@ -110,10 +126,10 @@ pub struct SystemClock;
 
 impl domain::Clock for SystemClock {
     fn now_millis(&self) -> u64 {
+        // A wall clock set before 1970 reads as 0 instead of panicking.
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock is before the unix epoch")
-            .as_millis() as u64
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
     }
 }
 ```
@@ -129,7 +145,7 @@ Choose the dispatch form deliberately:
 - A `&dyn Trait` keeps the caller's code size down and lets a struct hold a
   boxed sink chosen at run time.
 - Do not add a generic parameter that every caller instantiates with one type.
-  See `rust-discipline`.
+  The `rust-discipline` skill covers the signature trade-offs.
 
 ### Fix C: the two crates are one crate
 
@@ -147,11 +163,15 @@ Procedure that keeps the diff reviewable:
 
 1. **Cut along the module boundary that already exists.** If no module boundary
    matches the split, do the module refactor first, in its own commit.
-2. **Create the new crate** with the checklist in `SKILL.md`. The new crate goes
+2. **Create the new crate** with the
+   [checklist in SKILL.md](../SKILL.md#creating-a-new-crate). The new crate goes
    at the layer of the extracted code, which is usually lower than the original.
 3. **Move files unchanged.** Use `git mv` so the history follows. Do not rename,
    reformat, or fix anything while moving. A move commit with no content change
-   is readable; a move commit with edits is not.
+   is readable; a move commit with edits is not. Move each inherent impl and
+   each impl of a foreign trait with its type, also when it lives in another
+   file: the orphan rule rejects it in the old crate with E0116 or E0117. An
+   impl of a trait that the old crate defines may stay.
 4. **Fix visibility.** Items that were `pub(crate)` and are now used across the
    crate boundary become `pub`. Review each one: this is a new public API, and
    it is permanent in practice. Do not blanket-`pub` a module to make the build
@@ -182,28 +202,34 @@ Merge when a crate has exactly one dependent, changes only together with that
 dependent, and exposes no separate unsafe policy, feature set, or target set.
 
 1. Move the modules into the dependent with `git mv`.
-2. Demote every item that is no longer used outside to `pub(crate)`. This is the
-   value of the merge: the public surface shrinks.
+2. Demote every item that is no longer used outside to `pub(crate)` or private.
+   This is the value of the merge: the public surface shrinks.
 3. Remove the crate from `members` and from `[workspace.dependencies]`.
 4. Remove the dependency line from every former dependent.
 5. Run `cargo metadata --locked --no-deps` and confirm the member is gone.
-6. Commit `Cargo.lock`.
+6. Run `cargo update --workspace`, and commit `Cargo.lock`. A `--locked` build
+   succeeds with the stale `[[package]]` entry of a removed member still in the
+   lockfile; only an update removes it.
 
 ## Deleting a crate
 
 A crate that nothing depends on still costs build time and review attention.
 
 ```bash
-# Confirm nothing depends on it, in normal, dev, and build edges.
-cargo tree --locked --workspace -i <crate>
+# Must print nothing. The edge list includes dev, build, optional, and
+# target-gated edges. cargo tree -i does not: it resolves only default features.
+cargo metadata --locked --no-deps --format-version 1 \
+  | jq -r '.packages[] | .name as $n | .dependencies[] | select(.path != null)
+           | "\($n) -> \(.name) [\(.kind // "normal")]"' | grep -- '-> <crate> '
 ```
 
 Then remove, in one commit: the directory, the `members` entry, the
 `[workspace.dependencies]` entry, any dependency line in other members, any
 entry in a supply-chain policy file that names it, and any build-system
-reference to its artifact. Commit `Cargo.lock` with the change.
+reference to its artifact. Run `cargo update --workspace` to drop the stale
+lockfile entry, and commit `Cargo.lock` with the change.
 
-Never leave a crate in `members` with an empty `lib.rs` as a placeholder. It
+Do not leave a crate in `members` with an empty `lib.rs` as a placeholder. It
 compiles, it lints, it slows every build, and it tells the next reader that the
 area is still alive.
 
@@ -227,10 +253,10 @@ Rules:
   code that needs the feature up one layer instead.
 - Features are additive. When one member of a build enables a feature on a
   shared dependency, every other member in that build sees the dependency with
-  the feature on. Resolver version 2 stops that unification from crossing into
-  build-dependencies, proc-macro dependencies, and target-specific dependencies
-  that do not apply to the current target, but it does not separate two normal
-  dependents of the same crate. Do not rely on a feature being off in one
+  the feature on. Resolver versions 2 and 3 stop that unification from crossing
+  into build-dependencies, proc-macro dependencies, and target-specific
+  dependencies that do not apply to the current target, but they do not separate
+  two normal dependents of the same crate. Do not rely on a feature being off in one
   crate.
 - A `default` feature that pulls in I/O turns a Layer 0 crate into a Layer 2
   crate for every consumer that forgets `default-features = false`. Keep
@@ -241,7 +267,7 @@ Rules:
   cargo tree --locked -p <crate> -e normal --features <feature>
   ```
 
-See `cargo-workflows` for feature unification and lock-file effects.
+The `cargo-workflows` skill covers feature unification and lockfile effects.
 
 ## Granularity
 
@@ -260,8 +286,8 @@ Guidance:
   crate does not remove that work from the consumer's rebuild. Split for API
   clarity there, not for build time.
 - Measure before and after with `cargo build --timings`. Reason about a
-  compile-time claim only with a report in front of you. See `rust-performance`
-  for the measurement discipline.
+  compile-time claim only with a report in front of you. The `rust-performance`
+  skill covers the measurement discipline.
 
 ## Cross-stack sharing decision table
 
