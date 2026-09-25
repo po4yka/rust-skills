@@ -1,8 +1,13 @@
 # Mobile lifecycle contract
 
 Use this reference when a UniFFI job or callback follows an Android or iOS UI
-owner. Keep raw JNI rules in `rust-jni`. Keep a hand-written Swift C ABI in
-`rust-swift-ffi`.
+owner. Raw JNI rules belong to the `rust-jni` skill, and a hand-written Swift C
+ABI belongs to the `rust-swift-ffi` skill.
+
+Contents: execution model, owner responsibilities, non-blocking teardown, UI
+executor delivery, callback release race, foreground and background, process
+death and re-initialization, low-memory signals, required lifecycle tests,
+failure triage.
 
 ## Choose the execution model
 
