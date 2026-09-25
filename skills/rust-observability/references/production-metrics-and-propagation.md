@@ -1,8 +1,23 @@
 # Production Metrics and Context Propagation
 
-Read this reference before you add a production metric, propagate an
-OpenTelemetry context, or change an exporter. Keep the redaction and data-plane
-rules in `SKILL.md` in force.
+The redaction and data-plane rules in `SKILL.md` stay in force here. The Rust
+SDK facts below are for the `opentelemetry` 0.33 release set, as of 2026-09.
+Re-check them against the
+[SDK changelog](https://github.com/open-telemetry/opentelemetry-rust/blob/main/opentelemetry-sdk/CHANGELOG.md)
+when you upgrade.
+
+Contents:
+
+- Define the metric contract first
+- Choose the instrument from its semantics
+- Set histogram boundaries from decisions (the Rust SDK default-bucket trap)
+- Budget attribute cardinality (the Rust SDK cardinality cap)
+- Use exemplars only as links
+- Propagate one context: HTTP, messages, async tasks, callbacks, FFI
+- Keep one OpenTelemetry release set
+- Bound the exporter (the Rust SDK thread-based processors)
+- Shut down once
+- Review checklist
 
 ## Define the metric contract first
 
@@ -64,6 +79,15 @@ range. Start with the thresholds that change an operational decision:
 4. Keep all boundaries strictly increasing and in the declared unit.
 5. Keep the same boundaries for every process that emits the metric.
 
+The Rust SDK default boundaries are
+`[0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000]`, a
+millisecond scale. Semantic-convention durations use seconds (`s`), so a
+duration recorded in seconds against the defaults lands almost entirely in the
+`(0, 5]` bucket and no latency threshold resolves. Set the boundaries on the
+instrument with `HistogramBuilder::with_boundaries(vec![...])`, or in a View.
+For `http.server.request.duration` the semantic conventions advise
+`[0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10]`.
+
 Do not add buckets only to make a chart smooth. Each bucket increases storage
 and export cost. Test zero, every decision boundary, one value between adjacent
 boundaries, and one value above the last boundary. Assert that the observation
@@ -82,6 +106,12 @@ Record `max_series` in the metric contract. Reject the change if the calculated
 product exceeds that number. Configure an SDK or backend hard limit when the
 selected stack supports one. Monitor the overflow or dropped-series signal.
 Do not treat a hard limit as permission to emit unbounded attributes.
+
+The Rust SDK caps each metric stream at 2000 attribute sets by default (since
+`opentelemetry_sdk` 0.30). Measurements past the cap go into one overflow series
+with the attribute `otel.metric.overflow = true`. Set a per-stream limit with a
+View, `Stream::builder().with_cardinality_limit(n)`, and alert when the overflow
+series appears.
 
 Budget at the backend identity boundary, not only at one instrument call.
 Include bounded resource attributes, collector-added dimensions, and the
@@ -106,6 +136,11 @@ Enable exemplars only when the SDK and exporter preserve them and the backend
 can query them. Prefer trace-based exemplar sampling from sampled spans. An
 exemplar links an aggregate point to a trace; it does not replace the metric
 and must not be required for an alert.
+
+`opentelemetry_sdk` 0.33 fills no exemplars: the data-point fields exist, but
+collection is an open pull request (opentelemetry-rust#3624, behind the unstable
+`spec_unstable_metrics_exemplars` feature). Do not plan a dashboard on exemplars
+from a Rust service until a release ships it.
 
 Do not add a trace or span ID as a metric attribute. Verify exemplar privacy
 separately. Exemplars can retain measurement attributes that a metric view
@@ -174,6 +209,20 @@ for an async spawn, an HTTP round trip, and each FFI direction that exists.
 Also send malformed and oversized carriers and assert that domain behavior is
 unchanged.
 
+## Keep one OpenTelemetry release set
+
+`opentelemetry`, `opentelemetry_sdk`, and `opentelemetry-otlp` share one minor
+version per release. `tracing-opentelemetry` has its own number. Pick the release
+whose `opentelemetry` requirement matches yours: `tracing-opentelemetry` 0.34
+requires `opentelemetry` 0.33. Two `opentelemetry` versions in one build produce
+E0308 or E0277 errors between types that look identical. rustc 1.98.1 adds
+"note: there are multiple different versions of crate `opentelemetry` in the
+dependency graph".
+
+```bash
+cargo tree -d -e normal --depth 0 --workspace | grep '^opentelemetry'  # expect no output
+```
+
 ## Bound the exporter
 
 Use a batch processor or periodic reader for production export. Keep simple or
@@ -189,6 +238,26 @@ Set these limits explicitly from the service budget:
 | Export timeout | A stuck collector cannot hold a worker forever |
 | Retry attempts and elapsed time | A long outage cannot create an infinite retry loop |
 | Shutdown timeout | Process exit cannot wait forever |
+
+Since `opentelemetry_sdk` 0.28 the Rust `BatchSpanProcessor`,
+`BatchLogProcessor`, and `PeriodicReader` run on their own background thread and
+need no async runtime. This changes three decisions:
+
+- The process must allow the SDK to spawn a thread.
+- Pair them with the `grpc-tonic` or the default `reqwest-blocking-client` OTLP
+  feature. The async clients (`reqwest-client`, `hyper-client`) need a
+  Tokio-driven export path, which only the experimental async-runtime processors
+  provide. Check the resolved features with
+  `cargo tree -e features -i opentelemetry-otlp`. When several client features
+  unify, 0.33 picks `reqwest-client`, then `hyper-client`, then
+  `reqwest-blocking-client`, so an async client that any crate enables replaces
+  the blocking one. The tonic client still needs
+  a Tokio runtime. Build the exporter inside one and keep the runtime alive.
+  Without a runtime, use `reqwest-blocking-client`.
+- The processors do not enforce an export timeout. Set it on the exporter, with
+  `with_timeout(...)` on the tonic or HTTP builder, or with
+  `OTEL_EXPORTER_OTLP_TIMEOUT` in milliseconds. `OTEL_BSP_EXPORT_TIMEOUT` and
+  `with_max_export_timeout` no longer apply.
 
 Keep the maximum batch size at or below the queue capacity. Keep exporter I/O
 off application executor workers when the selected SDK requires a blocking
@@ -209,8 +278,16 @@ or exhausted budget, count it once, and continue domain work.
 ## Shut down once
 
 The process bootstrap owns providers and exporters. A library must not replace
-or shut down a host's global provider. Retain the provider handle that the
-current SDK version requires for explicit shutdown.
+or shut down a host's global provider. Keep a clone of each
+`SdkTracerProvider`, `SdkMeterProvider`, and `SdkLoggerProvider` that you
+install, and call `shutdown()` or `shutdown_with_timeout(...)` on it.
+`opentelemetry::global::shutdown_tracer_provider()` was removed in 0.28. The
+global setter does not keep a handle that you can shut down.
+
+Measure the shutdown time. In `opentelemetry_sdk` 0.33,
+`SdkMeterProvider::shutdown_with_timeout` ignores its argument, and the
+`PeriodicReader` waits up to a fixed 5 seconds. When the exit budget is shorter,
+run the shutdown on a helper thread and stop waiting at your own deadline.
 
 On controlled process exit:
 
@@ -238,6 +315,9 @@ provide durable delivery.
 - [ ] Exemplars preserve the privacy floor and are not labels.
 - [ ] Context is explicit across async, HTTP, message, callback, and FFI paths.
 - [ ] Malformed propagation does not fail domain work.
-- [ ] Export queue, batch, timeout, retry, and shutdown are bounded.
+- [ ] One `opentelemetry` version is in the build, and the OTLP HTTP client
+      matches the processor model.
+- [ ] Export queue, batch, timeout, retry, and shutdown are bounded. The export
+      timeout is set on the exporter.
 - [ ] Exporter loss and failure are observable without recursive export.
 - [ ] The owning bootstrap flushes and shuts down providers exactly once.

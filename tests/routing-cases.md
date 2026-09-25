@@ -163,6 +163,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | label cardinality | rust-observability |
 | OpenTelemetry context propagation | rust-observability |
 | exporter shutdown | rust-observability |
+| SetLoggerError | rust-observability |
 | catch_unwind | rust-panic-safety |
 | panic hook | rust-panic-safety |
 | panic payload | rust-panic-safety |

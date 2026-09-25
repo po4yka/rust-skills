@@ -1,7 +1,15 @@
 # Redaction and the Field Vocabulary
 
-This reference expands the redaction rules in `SKILL.md`. Read it before you add
-a field name, write a sink, or review a diagnostic for leakage.
+This reference expands the redaction rules in `SKILL.md`. The gate and the
+stdio lints stay in `SKILL.md`. The dispatcher and sink registration are in
+[dispatcher-install.md](dispatcher-install.md).
+
+Contents:
+
+- The vocabulary lives in exactly one place
+- The three smuggling routes
+- The redacting visitor
+- What a sink receives
 
 ## The vocabulary lives in exactly one place
 
@@ -43,7 +51,8 @@ these.
    the macro call, sees a variable, and passes. The caller decides what the
    variable holds.
 
-A green gate is not a privacy proof. Say so in the review, every time.
+The gate cannot see route 2 or route 3. Both stay reviewer-owned. A green gate
+is not a privacy proof. Say so in the review, every time.
 
 ## The redacting visitor
 
@@ -94,7 +103,9 @@ The important part is the shape, not the types.
 
 - Every `record_*` method is an allow list. The default is to drop.
 - `record_debug` is empty. `tracing` routes the event message through the
-  `message` field, so an empty `record_debug` drops the message for free.
+  `message` field, so an empty `record_debug` drops the message for free. It
+  also drops every value recorded with `%`, `?`, `#[instrument(err)]`, or
+  `ret`, because each one arrives through `Display` or `Debug`.
 - `record_str` maps a value to a known case. It does not copy the string. A
   string that is not a known case is dropped, not truncated.
 
@@ -121,67 +132,3 @@ tracing::error!(error_kind = err.kind().code(), "export failed");
 
 The host formatter renders the whole line, message included. The embedded sink
 receives `error_kind` and nothing else. Both are correct for their reader.
-
-## Sink registration
-
-```text
-install_dispatcher() -> Result<(), InstallError>
-register_sink(id, sink, level) -> Result<(), SinkError>
-```
-
-Semantics:
-
-- `install_dispatcher` calls `set_global_default` once during process bootstrap.
-  It creates a dispatcher with a dynamic fan-out registry, but no sinks.
-- `register_sink` never installs a subscriber. It adds one sink to the installed
-  dispatcher's registry and updates the effective level ceiling.
-- A duplicate sink ID returns `SinkError::DuplicateId` and leaves the original
-  sink unchanged.
-- A missing or failed dispatcher returns `SinkError::DispatcherUnavailable`.
-  Keep this distinct from duplicate registration.
-
-Return the installation or registration status across the FFI boundary. Do not
-panic and do not turn it into a domain-operation failure. A diagnostic surface
-must not be able to fail application start-up.
-
-The fan-out registry can add sinks after the dispatcher is installed. Its
-effective ceiling is the highest enabled level among registered sinks. With no
-sink the ceiling is off, and every callsite is rejected by design. See the main
-skill for the callsite-interest cache rule that makes a later registration
-visible.
-
-## The gate
-
-A shell gate that reads the vocabulary tables can reject five things by pattern.
-
-| Rejected | Why |
-|----------|-----|
-| `?ident` or `%ident` in an emission | `Debug` and `Display` are unbounded |
-| `format!` inside an emission | Free text |
-| `#[instrument]` without `skip_all` | Records every argument through `Debug` |
-| A field name that is not in a table | Undeclared vocabulary |
-| A crate whose coverage state disagrees with the coverage record | Silent regression in what is instrumented |
-
-Give the gate a `--self-test` mode that runs it against fixtures containing one
-known-bad case per rule. A gate with no self-test rots into a no-op after the
-first refactor of its regexes.
-
-The gate cannot see route 2 and route 3 above. Both stay reviewer-owned.
-
-## Stdio is not a diagnostic channel
-
-```rust
-#![deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
-```
-
-```toml
-# clippy.toml
-allow-print-in-tests = true
-```
-
-`println!` bypasses the visitor entirely. On a mobile or embedded target it also
-reaches no reader. Exempt only host-side tools whose job is to write to a
-terminal, and write the exemption as an inner attribute with a reason.
-
-Use `allow-print-in-tests` rather than a path rule, because test modules often
-live inside `src/` where a path-based exemption cannot distinguish them.

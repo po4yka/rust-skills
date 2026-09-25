@@ -1,27 +1,64 @@
 # The Embedded Telemetry Surface
 
-This reference expands the queue, snapshot, and crash sections in `SKILL.md`. It
-applies when a Rust library runs inside a host process — a mobile application, a
-game engine, a daemon plugin — and the host reads telemetry across a boundary.
+This reference expands the channel, queue, and snapshot sections in `SKILL.md`,
+and adds snapshot golden tests, the telemetry side of panic reporting, and stall
+detection. It applies when a Rust library runs inside a host process — a mobile
+application, a game engine, a daemon plugin — and the host reads telemetry
+across a boundary.
+
+Contents:
+
+- Why the shape differs from a server
+- Channel costs
+- The bounded event ring: contract, code, and what not to use
+- The snapshot entry point, and readiness as the exception
+- Golden-test the snapshot: key order and scrub paths
+- Panic reporting: the telemetry side
+- Stall detection: heartbeat and Tokio runtime metrics
 
 ## Why the shape differs from a server
 
-- A boundary crossing per event is a measurable cost. On Android a JNI call into
-  the platform logger costs roughly a microsecond with no arguments and roughly
-  three with formatted arguments. At a million items per second that is the
-  whole budget.
+- A boundary crossing per event is a measurable cost (see *Channel costs*). At a
+  million items per second that is the whole budget.
 - Several consumers want the same stream: a UI, a golden-test harness, an
   exporter. The channel choice decides whether a slow consumer blocks the
   producer.
 - The host can kill the process at any moment. A low-memory killer needs no
   warning. Any "exactly once" delivery assumption is wrong. Design for loss and
   report the loss.
-- Privacy rules constrain what may be emitted at all, before performance is even
-  a question.
+- The privacy floor in `SKILL.md` constrains what may be emitted at all, before
+  performance is even a question. Everything in the snapshot crosses the
+  boundary and often ends up in a bug report.
+
+## Channel costs
+
+| Channel | Use for | Forbidden for | Cost |
+|---------|---------|---------------|------|
+| `tracing` events and spans through the installed subscriber | Control plane: lifecycle, configuration, errors, single-shot diagnostics, control-flow spans | Per-packet, per-byte, per-item paths | Formatting plus an atomic load on the callsite cache; roughly a few microseconds per event when a platform log writer is behind it |
+| The `log` crate, bridged into the same subscriber | Dependencies that only speak `log` | The same hot paths | Roughly 1 µs per event with no arguments, roughly 3 µs with formatted arguments, when a syscall or FFI call (for example a JNI call into the Android logger) is behind it |
+| A native trace backend, for example Perfetto through `tracing_android_trace` | Performance investigation only | Anything enabled by default in release | Heavy. Put it behind a debug-only feature flag |
+| `AtomicU64::fetch_add` | Data-plane counters: items, bytes, drops, errors | Anything that is not a count | An `ldxr`/`stxr` loop on the default `aarch64-linux-android` and `aarch64-apple-ios` targets; one `ldadd` where LSE is on (`aarch64-apple-darwin`, or `-C target-feature=+lse`). rustc 1.98.1, opt-level 3 |
+| A bounded queue drained by a poller | Data-plane events that a consumer must see individually | Anything that must never be dropped | One bounded push, no allocation on the steady path |
+
+Re-measure the microsecond figures on your own target. Treat them as orders of
+magnitude, not as constants.
 
 ## The bounded event ring
 
 One ring per domain. Each ring owns an atomic bounded queue and a drop counter.
+
+Contract. Preserve every point if you change the implementation.
+
+1. The ring is **bounded**. Pick the capacity per domain.
+2. On a full ring, **atomically replace the oldest record**. The newest records
+   are the ones you need after a fault.
+3. Every eviction increments a **dropped-event counter** that the snapshot
+   exposes.
+4. Retained records keep **FIFO order**.
+5. `push` takes no mutex, does not deliberately sleep, and does not allocate on
+   the steady path. It can spin while a preempted peer owns a slot, so it has no
+   bounded latency and no formal lock-free progress guarantee. Do not call it
+   from an interrupt, a reentrant signal handler, or another real-time context.
 
 ```rust
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -70,16 +107,8 @@ impl EventRing {
 }
 ```
 
-Invariants to preserve if you change the implementation:
-
-1. The capacity bound holds.
-2. Retained records keep FIFO order.
-3. A full ring drops the oldest, not the newest.
-4. Every drop increments a counter that the snapshot exposes.
-5. `push` takes no mutex, does not deliberately sleep, and never allocates on
-   the steady path. It can spin behind a preempted peer and has no formal
-   lock-free progress guarantee. Exclude interrupt, reentrant, and real-time
-   contexts.
+A receive-then-send sequence on an MPMC channel is not an atomic drop-oldest
+operation. A concurrent drain can run between the two steps.
 
 Normalize domain aliases at the boundary, so a caller that names a domain
 slightly differently lands in the right ring instead of creating a new one.
@@ -98,8 +127,12 @@ slightly differently lands in the right ring instead of creating a new one.
 The host polls. It does not receive pushes per event.
 
 ```rust
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_example_app_TelemetryNative_jniSnapshot<'local>(
+use jni::objects::{JObject, JString};
+use jni::{EnvUnowned, jni_mangle};
+
+// Exports Java_com_example_app_TelemetryNative_jniSnapshot.
+#[jni_mangle("com.example.app.TelemetryNative")]
+pub fn jni_snapshot<'local>(
     mut env: EnvUnowned<'local>,
     _thiz: JObject<'local>,
 ) -> JString<'local> {
@@ -109,8 +142,10 @@ pub extern "system" fn Java_com_example_app_TelemetryNative_jniSnapshot<'local>(
             events: EVENT_RING.drain(),
             dropped_events: EVENT_RING.dropped(),
         };
-        let json = serde_json::to_string(&snap)
-            .map_err(|_| jni::errors::Error::JavaException)?;
+        let Ok(json) = serde_json::to_string(&snap) else {
+            env.throw("telemetry snapshot encoding failed")?;
+            return Err(jni::errors::Error::JavaException);
+        };
         env.new_string(json)
     })
     .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
@@ -119,6 +154,11 @@ pub extern "system" fn Java_com_example_app_TelemetryNative_jniSnapshot<'local>(
 
 `resolve` is the exit: it rebuilds an `Env`, throws for an error or a caught
 panic, and returns the default. The helper names differ per binding version.
+In jni 0.22, `ThrowRuntimeExAndDefault` throws only when no exception is
+pending, and it puts the error's `Display` text in the message. Throw a fixed
+message before you return `Error::JavaException`, or Java gets "Rust error:
+Java exception was thrown". For a panic, the policy copies a `&'static str`
+payload into the message and replaces a formatted payload with a fixed string.
 See the `rust-jni` skill for the binding rules and the `uniffi-boundary` skill
 if you generate the surface instead of writing it.
 
@@ -127,8 +167,8 @@ What matters, independent of binding:
 - One call returns counters and drained events together.
 - The drain empties the ring, so a slow poller loses only through the ring's own
   drop-oldest rule, and the drop count says how much.
-- The serialized form is stable enough to golden-test. See the determinism
-  section in `SKILL.md`.
+- The serialized form is stable enough to golden-test. See *Golden-test the
+  snapshot*.
 - Nothing in the data plane calls into the host.
 
 ### Readiness is the exception
@@ -144,64 +184,54 @@ Keep the readiness path separate from the snapshot path:
 - Do not put a readiness flag in the snapshot. If both exist, the two disagree
   during the window between them.
 
-## Panic reporting
+## Golden-test the snapshot
 
-An embedded component must not replace the process-global panic hook. Expose a
-redacted handler. Let the application-owned outermost Rust FFI bootstrap
-statically compose every component handler and install one hook from its
-`JNI_OnLoad` or explicit init entry. Emit one bounded structured record.
-Do not format `PanicHookInfo`, inspect its payload, or emit a backtrace. A panic
-payload is arbitrary application text and can contain input data, paths,
-identifiers, or secrets.
+Goldens compare snapshots. Serialize them with `serde_json::to_string_pretty`
+(two-space indent). Key order depends on the type:
 
-```rust
-#[derive(Clone, Copy)]
-enum PanicSite {
-    Boundary,
-    Engine,
-    Unknown,
-}
+- A derived `Serialize` struct writes fields in declaration order. That is
+  stable.
+- A `HashMap` iterates in a random order for each map. Use `BTreeMap` instead.
+- `serde_json::Value` and `serde_json::Map` sort keys, unless the
+  `preserve_order` feature is on anywhere in the build. Feature unification can
+  turn it on from another crate, and then insertion order wins. The `rust-serde`
+  skill owns the full `serde_json` map facts.
 
-fn classify_site(file: &str) -> PanicSite {
-    if file.starts_with("src/boundary/") {
-        PanicSite::Boundary
-    } else if file.starts_with("src/engine/") {
-        PanicSite::Engine
-    } else {
-        PanicSite::Unknown
-    }
-}
+Scrub the volatile fields before the diff. Keep the list in one file next to the
+goldens.
 
-pub fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
-    let (site, line, column) = info
-        .location()
-        .map(|location| {
-            (
-                classify_site(location.file()),
-                location.line(),
-                location.column(),
-            )
-        })
-        .unwrap_or((PanicSite::Unknown, 0, 0));
-
-    write_platform_panic("rust_panic", site, line, column);
+```json
+{
+  "scrub_paths": [
+    "$.events[*].timestamp_ms",
+    "$.events[*].request_id",
+    "$.counters.uptime_ms"
+  ]
 }
 ```
 
-The event name and site code come from closed vocabularies. The line and column
-are bounded integers. Unknown paths collapse to `Unknown`; never use an unknown
-path as a fallback field value.
+Any tool or reviewer that classifies a golden diff as semantic or volatile reads
+that file. Do not restate the list anywhere else.
 
-Three constraints:
+## Panic reporting
 
-- The hook runs on the panicking thread. Keep it allocation-light and
-  lock-free where you can. A lock held by the panicking thread deadlocks here.
+The `rust-panic-safety` skill owns the redacted `report_panic` block and the
+rule that the application-owned outermost bootstrap owns the process-global
+hook. An embedded component exposes a redacted handler and never replaces the
+hook. This section covers only the telemetry side of that record.
+
+- Route the record through the same platform sink as other events. The event
+  name and the site code come from closed vocabularies. The line and column are
+  bounded integers.
+- The hook runs on the panicking thread. Keep it allocation-light and lock-free
+  where you can. A lock that the panicking thread already holds deadlocks here.
 - The platform writer accepts structured fields, not one formatted string. Cap
   the encoded record before it reaches a platform-specific line limit.
 - A debug or opt-in build does not make a raw panic payload safe. Keep the same
   redaction contract in every profile.
-
-See the `rust-panic-safety` skill for unwinding across a boundary.
+- On Android, `panic = "abort"` copies a string panic message into the tombstone
+  "Abort message" whatever the hook does. The message itself must carry no user
+  data.
 
 ## Stall detection
 
@@ -209,12 +239,19 @@ A host-side "not responding" state has no direct Rust signal. The measurable
 proxy is an async runtime that stops making progress.
 
 ```rust
-tokio::spawn(async move {
-    loop {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        HEARTBEAT_TICK.fetch_add(1, Ordering::Relaxed);
-    }
-});
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+pub static HEARTBEAT_TICK: AtomicU64 = AtomicU64::new(0);
+
+pub fn spawn_heartbeat() {
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            HEARTBEAT_TICK.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+}
 ```
 
 The host reads `HEARTBEAT_TICK` through the same snapshot it already polls. It
@@ -224,27 +261,42 @@ default — means the runtime is not scheduling. Raise the alert on the host
 side. Do not compare wall-clock timestamps: clock corrections can create false
 stalls or hide real ones.
 
-This detects a stalled scheduler. It does not detect a blocked worker thread
-that still lets the timer task run. For that, add a per-worker last-progress
-timestamp on the same relaxed atomic pattern.
+The heartbeat detects a stalled scheduler. It does not detect one blocked worker
+while another worker still runs the timer task. For that, add Tokio's runtime
+metrics to the snapshot. Since tokio 1.45 these need no `tokio_unstable`:
+`num_workers`, `num_alive_tasks`, `global_queue_depth`, and, on targets with
+64-bit atomics, `worker_park_unpark_count` and `worker_total_busy_duration`.
 
-## Privacy floor for telemetry
+```rust
+use tokio::runtime::Handle;
 
-Everything in the snapshot crosses a boundary and often ends up in a bug report.
-Apply the same floor as for events:
+pub struct WorkerSample {
+    pub park_unpark_count: u64,
+    pub busy_nanos: u128,
+}
 
-- No device or network identifiers, raw or hashed. A salted hash remains a
-  stable correlation value and can permit dictionary attacks. Emit aggregate
-  counts or a local non-identifying category instead.
-- No hardware or subscriber identifiers under any encoding.
-- No addresses that identify a user's device or its location.
-- No secrets, key material, or handshake payload bytes.
-- No payload bytes. Sizes and counts are allowed. Opaque flow identifiers must
-  be random, short-lived, session-scoped, and unrelated to forbidden values.
+pub struct RuntimeSample {
+    pub global_queue_depth: usize,
+    pub workers: Vec<WorkerSample>,
+}
 
-Audit before every release, and remember that the grep is a floor, not a proof.
-
-```bash
-rg -i 'bssid|ssid|imei|imsi|raw_ip|latitude|longitude' \
-  . --type rust -n | grep -v '// allow:'
+pub fn sample_runtime(handle: &Handle) -> RuntimeSample {
+    let metrics = handle.metrics();
+    let workers = (0..metrics.num_workers())
+        .map(|worker| WorkerSample {
+            park_unpark_count: metrics.worker_park_unpark_count(worker),
+            busy_nanos: metrics.worker_total_busy_duration(worker).as_nanos(),
+        })
+        .collect();
+    RuntimeSample {
+        global_queue_depth: metrics.global_queue_depth(),
+        workers,
+    }
+}
 ```
+
+A worker publishes these values when it parks or runs maintenance. Compare two
+samples one threshold apart. An even `park_unpark_count` means the worker is
+active. When it is even and unchanged, and the busy time did not advance, the
+worker has been inside one poll the whole time: something blocks it. A growing
+`global_queue_depth` confirms that work waits behind it.

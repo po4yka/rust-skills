@@ -1,31 +1,180 @@
 ---
 name: rust-observability
-description: Use when you add a log field, production metric, OpenTelemetry exporter, context propagation across an async, HTTP, or FFI boundary, host or embedded log sink, hot-path telemetry, telemetry snapshot for a foreign caller, or sensitive-data review. Covers Rust diagnostics, tracing, metric names and units, counters, gauges, histograms, cardinality, exemplars, redaction, bounded export, and deterministic emission order. Triggers on "production metrics", "metric naming", "histogram boundaries", "label cardinality", "OpenTelemetry context propagation", or "exporter shutdown".
+description: Use when adding or reviewing tracing, logging, or production metrics in Rust, especially in a library or cdylib behind FFI that exposes a telemetry snapshot to its host. Also for metric naming, histogram boundaries, label cardinality, OpenTelemetry context propagation, and exporter shutdown. Triggers on tracing-subscriber, set_global_default, LogTracer, SetLoggerError, EnvFilter, instrument skip_all, android_logger, tracing-opentelemetry, opentelemetry_sdk.
 license: BSD-3-Clause
 ---
 
 # Rust Observability
 
-This skill covers diagnostic emission in a Rust library that other processes,
-languages, or runtimes embed. It applies to a cdylib behind an FFI boundary, a
-staticlib linked into an application, and a plain crate consumed by a host CLI.
+These rules assume a Rust library that another process, language, or runtime
+embeds: a cdylib behind FFI, a staticlib, or a crate that a host CLI or service
+links. The host owns the process. The library owns only its emissions.
 
 ## The six rules that are not style
 
-1. **One dispatcher install per process.** Call
-   `tracing::subscriber::set_global_default` once during process bootstrap. The
-   installed subscriber owns a fan-out registry for all embedded sinks. Never
-   call `set_global_default` once per sink or once per FFI boundary.
-2. **`skip_all` on every `#[instrument]`.** Without it the macro records every
-   argument through `Debug`.
+1. **One dispatcher install per process.** Only the host calls
+   `tracing::subscriber::set_global_default`, once, during process bootstrap.
+   The host is the binary, or the application-owned outermost bootstrap
+   `cdylib` that plays that role. The installed subscriber owns a fan-out
+   registry for all embedded sinks. Do not install once per sink or once per
+   FFI boundary: the second install fails, and that boundary stays silent.
+2. **`skip_all` plus explicit `fields(...)` on every `#[instrument]`.** Without
+   `skip_all` the macro records every argument, through `Debug` for any
+   non-primitive type. Do not add `err` or `ret` on a path that can reach a sink
+   you do not control. They record the error through `Display` and the return
+   value through `Debug`.
 3. **No `?` and no `%` sigils, and no `format!` inside an emission** that can
    reach a sink you do not control. All three produce free text.
 4. **Field names come from one declared vocabulary.** A name that is not in the
-   vocabulary does not compile past the gate.
+   vocabulary fails the gate.
 5. **Nothing on the data plane emits an event.** Data-plane work increments an
-   atomic counter or pushes into a bounded queue. It never calls a log macro.
+   atomic counter or pushes into a bounded queue. It never calls a log macro,
+   except an `error!` or `warn!` on an error path, where the slow case is
+   acceptable.
 6. **Diagnostics are observational.** No code path reads the outcome of an
    emission. Turning a subscriber on must not change a single output byte.
+
+The gates below enforce rules 1 to 4 and the `max_level_*` rule in *Severity*.
+The hot-path search in *Gates and what they prove* finds rule 5 violations,
+and the determinism test in *Done when* proves rule 6.
+
+## Gates and what they prove
+
+Run these before you push a change to the observability crate or to an
+emission.
+
+```bash
+cargo test --locked -p <observability-crate>
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo tree -p <library-crate> -e normal -i tracing-subscriber  # expect "nothing to print"
+cargo tree -e features -i tracing --workspace  # no library under a max_level_* feature
+cargo tree -e features -i log --workspace      # the same for log
+```
+
+Run the `tracing-subscriber` check once for each engine crate and inner FFI
+crate. When no workspace crate uses `tracing-subscriber`, it exits 101 with
+"did not match any packages". That is also a pass.
+
+Run the hot-path search on each crate that does per-item or per-byte work. It
+finds rule 5 candidates for review. The pattern leaves out `error!` and `warn!`,
+and catches both the qualified and the imported macro forms.
+
+```bash
+rg -n --type rust \
+  '\b(trace|debug|info|event|span|trace_span|debug_span|info_span)!|#\[(tracing::)?instrument' \
+  <hot-path-crate>/src
+```
+
+The test proves the install sequence and the redaction visitor. The `cargo tree`
+checks prove the dependency rules. None of them proves that a field value is
+safe. That stays a review task.
+
+Add a repository gate that reads the field tables from the observability crate
+rather than repeating them, so the gate and the runtime visitor cannot disagree.
+The gate rejects:
+
+- a `?` or `%` sigil in an emission,
+- `format!` inside an emission,
+- `#[instrument]` without `skip_all`, or with `err` or `ret` on a path to an
+  embedded sink,
+- a field name that is not declared in the vocabulary,
+- a crate whose declared coverage state disagrees with the coverage record.
+
+Give the gate a `--self-test` mode that runs it against one known-bad fixture per
+rule, and run that mode first. A gate with no self-test rots into a no-op after
+the first refactor of its patterns.
+
+Deny stdio macros in library, FFI, and embedded crates. Stdio bypasses the
+redacting visitor, and on a mobile or embedded target it reaches no reader.
+
+```toml
+# clippy.toml
+allow-print-in-tests = true
+```
+
+```rust
+// crate root: lib.rs or main.rs
+#![deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
+```
+
+Exempt only a host-side tool whose job is to write to a terminal. Put
+`#![expect(clippy::print_stdout, reason = "...")]` after the `#![deny]` line, or
+leave `print_stdout` out of that crate's deny list. An `expect` before the
+`deny` loses: clippy reports the `println!` and an unfulfilled expectation.
+`allow-print-in-tests` covers test code inside `src/`, where a path rule cannot
+see it.
+
+## Done when
+
+The gates are green. Then review what they cannot see:
+
+- [ ] Each field value is safe, not only its name. No correlation identifier
+      is derived from a forbidden value.
+- [ ] The instrumented entry point is the one the boundary actually calls.
+- [ ] No event, span, or `#[instrument]` sits on a per-item or per-byte path,
+      except an `error!` or `warn!` on an error path.
+- [ ] Only one bootstrap path installs the dispatcher: `set_global_default`,
+      then `LogTracer::init()`. A library bootstrap never calls `init()` or
+      `try_init()`. An `init()` in `JNI_OnLoad` or an FFI init export panics on
+      a second install and can abort the process. Boundary initializers only
+      register sinks.
+- [ ] An embedded sink record holds only declared fields and no message.
+- [ ] The queue is bounded, drops the oldest, and counts the drop. The drop
+      counter is in the snapshot.
+- [ ] The determinism test passes. It runs the same operation twice in one
+      process, once with no subscriber and once with a subscriber at the most
+      verbose level, and byte-compares every output artifact. Its negative
+      control mutates one input and asserts that the comparison fails, so a
+      pass cannot be vacuous.
+- [ ] A panic hook emits only bounded structured fields. It never formats raw
+      `PanicHookInfo`, its payload, or a backtrace.
+
+## "It emits nothing"
+
+Work down this list before you suspect the instrumentation.
+
+| Check | Symptom when it is the cause |
+|-------|------------------------------|
+| Is a sink registered at all? | With no sink the dispatcher's level ceiling is off, and `enabled` rejects every callsite by design. |
+| Was this callsite emitted before the first sink was registered? | The subscriber cached `Interest::never()` from the empty registry. Return `Interest::sometimes()` for a mutable registry, or rebuild the interest cache after each mutation. |
+| Did the one-time dispatcher install fail? | Another global subscriber won ("a global default trace dispatcher has already been set"). Report the bootstrap error; do not retry from each boundary. |
+| Do `log` records from dependencies vanish? | A second `log` logger was installed first, for example `android_logger`, so `LogTracer` got `SetLoggerError`. Keep one bridge. |
+| Do `log` records never arrive, even after a sink registers? | `try_init()` set `log::max_level()` to `Off` at install, when no sink existed. A later sink or `reload` filter raises only the `tracing` ceiling. Install with `set_global_default` plus `LogTracer::init()`. |
+| Did sink registration fail? | The dispatcher is unavailable or the sink ID is already registered. Inspect the distinct registration status. |
+| Is the sink's level above the emission's level? | Higher-severity events still arrive; the quiet ones do not. |
+| Does a dependency enable a `tracing` or `log` `max_level_*` feature? | The callsites are compiled out. `cargo tree -e features -i tracing --workspace` (or `-i log`) names the crate under that feature node. |
+| On a host, is `RUST_LOG` valid? | `EnvFilter::from_default_env` prints `ignoring ...` on stderr, drops each invalid directive, and falls back to `error` when none is valid. `try_from_default_env` returns `Err` instead. |
+| Is the instrumented function on the path you exercise? | Unit tests pass, the CLI prints nothing. See step 3 of *Add an emission*. |
+| Is the emission in a `#[cfg(test)]` module? | The release build drops it. |
+| Is the crate target in the filter? | `RUST_LOG=debug` is not the same as `RUST_LOG=my_crate=debug` when a dependency floods the output. |
+
+## Privacy floor
+
+Diagnostic emission and every telemetry snapshot must not carry:
+
+- Device or network identifiers, raw or hashed. A salted hash still supports
+  correlation and dictionary attacks. Emit only aggregate counts or a local
+  non-identifying category.
+- Hardware and subscriber identifiers under any encoding.
+- Addresses that identify a user's device or its location.
+- Secrets, key material, or handshake payload bytes.
+- Message or packet payloads. Counters and sizes are allowed. An opaque flow
+  identifier must be random, short-lived, and scoped to one process or session.
+  Never derive it from a forbidden value. Bytes are not allowed.
+- User data in a panic, `expect`, or `unreachable!` message. A panic message is
+  a log line: on Android, `panic = "abort"` copies it into the tombstone
+  "Abort message". The `rust-panic-safety` skill owns the redacted panic report.
+
+Audit before a release.
+
+```bash
+rg -i 'bssid|ssid|imei|imsi|raw_ip|latitude|longitude' \
+  . --type rust -n | grep -v '// allow:'
+```
+
+The grep is a floor, not a proof. Two leaks no regex finds are in the
+*smuggling routes* of
+[references/redaction-and-field-vocabulary.md](references/redaction-and-field-vocabulary.md).
 
 ## Add an emission
 
@@ -33,30 +182,32 @@ staticlib linked into an application, and a plain crate consumed by a host CLI.
 #[tracing::instrument(skip_all, fields(stage = stage.code()))]
 fn decode(stage: DecodeStage, items: &[Item]) -> Result<Output, EngineError> {
     tracing::debug!(item_count = items.len(), "decoding");
-    // ...
+    todo!()
 }
 ```
 
-Work through this list each time.
-
-1. Write `skip_all`. Then name each field you want. `fields(stage =
-   stage.code())` records a small closed enum code, not the whole argument.
-2. Use no sigils. `?value` and `%value` serialize through `Debug` and `Display`.
-   Both are unbounded channels into the record.
-3. Take the field name from the vocabulary tables in your observability crate.
-   Adding a name means adding it to the table. Ask what value the name will
-   carry, not what the name looks like. A field called `count` that holds a
-   fixed-point coordinate is a leak with a safe-looking name.
-4. **Verify the call chain before you instrument.** Many crates have two entry
-   points for the same work: a budgeted or cancellable entry used by the FFI
-   boundary, and a plain entry used by the CLI. Instrumenting the wrong one
+1. Record a closed code, not the argument. `fields(stage = stage.code())`
+   records a small enum code.
+2. Take each field name from the vocabulary tables in your observability crate.
+   Adding a name means adding it to the table. Judge the value that the name
+   carries, not the name. A field called `count` that holds a fixed-point
+   coordinate is a leak with a safe-looking name.
+3. **Instrument the entry point that the boundary calls.** Many crates have two
+   entry points for the same work: a budgeted or cancellable entry for the FFI
+   boundary, and a plain entry for the CLI. Instrumenting the wrong one
    compiles, passes unit tests, and emits nothing at run time. Exercise the path
    with the host tool before you trust it.
-5. Watch `clippy::large_stack_frames`. The lint is off by default. Enable it and
-   set `stack-size-threshold` in `clippy.toml`. A span or an event macro can push
-   a frame past a small threshold such as 4096 bytes. For a once-per-operation
-   call, an `#[expect]` with a reason is correct. In a hot loop, move the
-   emission into an `#[inline(never)]` helper, or delete it.
+4. Watch `clippy::large_stack_frames`. The lint is in `nursery`, so it is off by
+   default. Enable it and set `stack-size-threshold` in `clippy.toml`. A span or
+   an event macro can push a frame past a small threshold such as 4096 bytes.
+   For a once-per-operation call, write
+   `#[expect(clippy::large_stack_frames, reason = "...")]`. In a hot loop, move
+   the emission into an `#[inline(never)]` helper, or delete it.
+
+Read [references/redaction-and-field-vocabulary.md](references/redaction-and-field-vocabulary.md)
+when you add a field name, write a sink visitor, or review an emission for
+leakage. It has the vocabulary tables, the three smuggling routes, and the
+visitor contract.
 
 ## Severity
 
@@ -66,173 +217,117 @@ Work through this list each time.
 | `warn` | Recoverable degradation. The operation continues. |
 | `info` | A boundary event: start, stop, configuration applied. |
 | `debug` | Detail for one operation. |
-| `trace` | Per-item work inside a loop. Emit only for targeted diagnostics. |
-
-No tracing level is automatically off in a release build. The installed host
-subscriber and its filter decide which events are enabled. Configure and test
-the release filter explicitly; do not rely on `cfg(debug_assertions)` unless the
-product contract deliberately removes those callsites.
+| `trace` | Per-item detail in a control-plane loop, for targeted diagnostics. Never on the data plane. |
 
 Cancellation is `debug`. A cancelled operation is the caller getting what it
 asked for. Reporting it as an error teaches readers to ignore the severity that
 matters.
 
+No tracing level is off in a release build by default. The installed host
+subscriber and its filter decide which events are enabled. Configure and test
+the release filter explicitly. Do not rely on `cfg(debug_assertions)` unless the
+product contract deliberately removes those callsites.
+
+Do not enable the `max_level_*` or `release_max_level_*` features of `tracing`
+or `log` in a library. Cargo unifies features across the build, so one
+library's choice compiles out callsites in every crate of the binary. Only the
+final binary may set them. The `cargo tree -e features` gates prove it.
+
 ## Control plane and data plane
 
-Pick the channel by the path, not by the information you want.
+Pick the channel by the path, not by the information you want. `tracing` events
+and spans, and `log` records bridged into the same subscriber, serve the control
+plane: lifecycle, configuration, errors, single-shot diagnostics. The data plane
+uses an `AtomicU64` counter or a bounded queue. A native trace backend, for
+example Perfetto, stays behind a debug-only feature flag.
 
-| Channel | Use for | Forbidden for | Cost |
-|---------|---------|---------------|------|
-| `tracing` events and spans through a registered subscriber, for example `tracing-android` or `tracing-logcat` on Android | Control plane: lifecycle, configuration, errors, single-shot diagnostics, control-flow spans | Per-packet, per-byte, per-item paths | Formatting plus an atomic load on the callsite cache; roughly a few microseconds per event when a platform log writer is behind it |
-| The `log` crate forwarded to a platform logger, for example `android_logger` | Control plane in code you do not own, or a dependency that only speaks `log` | The same hot paths | Roughly 1 µs per event with no arguments, roughly 3 µs with formatted arguments, when a syscall or FFI call is behind it |
-| A native trace backend, for example Perfetto through `tracing-android-trace` | Performance investigation only | Anything enabled by default in release | Heavy. Put it behind a debug-only feature flag |
-| `AtomicU64::fetch_add` | Data-plane counters: items, bytes, drops, errors | Anything that is not a count | One instruction on ARM64 with LSE (`LDADD`) |
-| A bounded queue drained by a poller | Data-plane events that a consumer must see individually | Anything that must never be dropped | One bounded push, no allocation on the steady path |
+Any event, span, or `#[instrument]` on a per-item or per-byte path is rejected
+in review, except an `error!` or `warn!` on an error path. Run the hot-path
+search in *Gates and what they prove*.
 
-Re-measure the microsecond figures on your own target. Treat them as orders of
-magnitude, not as constants.
-
-**Rule:** any `tracing::event!`, `tracing::span!`, `log::info!`, or
-`log::debug!` inside a per-item or per-byte path is rejected in review. The one
-exception is an error path, where the slow case is acceptable.
-
-Find violations before review does.
-
-```bash
-rg 'tracing::(event|span|info|debug|trace)!|log::(info|debug|trace)!' \
-  <hot-path-crate>/src --type rust -n \
-  | grep -vE 'control|lifecycle|error'
-```
+Read [references/embedded-telemetry-surface.md](references/embedded-telemetry-surface.md)
+when you choose a channel for a new path. It has the per-channel cost and
+forbidden-use table.
 
 ## One dispatcher install, multiple sinks
 
-An application can load two FFI crates from the same workspace. Each one
-installs a subscriber. The second install returns an error that an init function
-usually discards, and that boundary then stays silent for the life of the
-process.
-
 Put the dispatcher and the sink registry in one shared observability crate.
-Install the dispatcher once. Let every boundary add its sink to the registry
-owned by that installed subscriber.
+`install_dispatcher` is the only function that calls `set_global_default`. Each
+FFI boundary only calls `register_sink`, which adds its sink to the installed
+subscriber's fan-out registry. Rows 2 to 5 of *"It emits nothing"* show the
+silent defects. Also:
 
-```text
-install_dispatcher() -> Result<(), InstallError>         process bootstrap, once
-register_sink(id, sink, level) -> Result<(), SinkError>   shared sink registry
-init_core_logging(sink, level)                           registers sink "core"
-init_render_logging(sink, level)                         registers sink "render"
-```
+- Store the install result in a one-time state. Do not retry a failed install
+  from a boundary.
+- Report the `set_global_default` and `LogTracer::init()` results separately.
+- Do not call `android_logger::init_once`. That logger writes dependency
+  records to logcat past the redacting visitor.
+- Only a host binary whose filter is fixed at install may use `try_init()`.
 
-`install_dispatcher` is the only function that calls `set_global_default`. Store
-its result in a one-time state. Do not retry a failed global install from a
-boundary. `register_sink` only mutates the installed subscriber's fan-out
-registry. Reject a duplicate sink ID, and report a missing or failed dispatcher
-separately from a duplicate registration.
+Logging stays optional for start-up. Return install and registration status to
+the host. Do not panic, and do not turn a diagnostic failure into a domain
+failure. Test the install in one process-level test, alone in its own
+integration-test file, because the global install succeeds once per process.
 
-Keep callsite interest valid when the sink set can change. Make the fan-out
-subscriber's `register_callsite` return `Interest::sometimes()` for every
-callsite. Do not return `Interest::never()` only because the registry is empty.
-The callsite caches that result, so a sink registered later cannot receive that
-callsite. If the subscriber instead caches interest from the current sinks,
-release the registry lock and call
-`tracing_core::callsite::rebuild_interest_cache()` after every sink, level, or
-filter mutation. Rebuild after a change to `max_level_hint` too.
-
-Logging remains optional for application start-up. Return installation and
-registration status to the host, but do not panic or turn a diagnostic failure
-into a domain-operation failure.
-
-Cover this with one process-level test. Install once with no sinks. Call one
-`emit_probe` helper and assert that no record arrives. Register a sink. Call the
-same helper again and assert that exactly one record arrives. This sequence uses
-the same static callsite and catches a stale cached `Interest::never()` result.
-Then register the other boundary sink, emit through both boundaries, and assert
-that both sinks receive their records. Also assert that a duplicate ID is
-rejected without replacing the original sink.
+Read [references/dispatcher-install.md](references/dispatcher-install.md) when
+you write or change `install_dispatcher`, `register_sink`, the fan-out
+subscriber, the `log` bridge, the install test, or an Android bootstrap sink.
+It has the registry API, the interest-cache rebuild rule, the exact `init`
+failure messages, and the six install-test steps.
 
 ## Host and embedded sink see different things
 
-This is the part reviewers get wrong.
-
-- **Host** (a CLI or a test binary): a `tracing-subscriber` formatting layer
-  renders the full event, including an error's `Display` message. Keep it off
-  unless an environment filter is set. Write to stderr so stdout stays
-  machine-readable.
+- **Host** (a CLI, a service, or a test binary): a `tracing-subscriber`
+  formatting layer renders the full event, including an error's `Display`
+  message. Write to stderr so stdout stays machine-readable. In a CLI, keep the
+  layer off unless an environment filter is set. The layer renders untrusted
+  text: use `tracing-subscriber` 0.3.20 or later, which escapes ANSI sequences
+  in logged values (RUSTSEC-2025-0055), and gate advisories with
+  `cargo deny --config deny.toml --locked check advisories`.
 
   ```bash
   RUST_LOG=my_pipeline=debug my-cli render input.toml
   ```
+
+- **Bootstrap `cdylib`** (the application-owned outermost library that a mobile
+  app or plugin host loads): it owns the install and may depend on
+  `tracing-subscriber`. In a shipped build, its platform sink receives the
+  redacted record, like any embedded sink. On Android, stderr and `RUST_LOG` do
+  not apply, and `tracing-logcat` writes the full text, message included: add
+  it only in a debug or opt-in build.
 
 - **Embedded sink** (a callback registered across FFI): receives a redacted
   record — severity, target, callsite name, and the fields that survive the
   visitor. **Never the message.** An error arrives as its kind, a frozen
   enumeration case, and nothing else.
 
-No engine crate and no FFI crate depends on `tracing-subscriber`. Only the host
-binary does. If you find yourself adding that dependency to a library crate,
-stop and put the layer in the host instead.
+Only a host binary and the bootstrap `cdylib` depend on `tracing-subscriber`.
+Engine crates, the shared observability crate, and inner FFI library crates do
+not. Put the layer in the host instead.
 
-See [references/redaction-and-field-vocabulary.md](references/redaction-and-field-vocabulary.md)
-for the visitor contract, the field tables, and the gate.
+## Counters, the bounded queue, and the snapshot
 
-## Bounded event queue
+Count data-plane work with `AtomicU64::fetch_add(n, Ordering::Relaxed)`. A
+counter needs atomicity, not a happens-before edge; see the `memory-model` skill.
+Two relaxed counters read in one pass are not consistent with each other, so do
+not derive an invariant from their ratio.
 
-A data-plane event that a consumer must see individually goes into a bounded
-queue, not into a log macro.
+Put a data-plane event that a consumer must see individually into a bounded
+queue, one per domain. On overflow it atomically drops the oldest record, for
+example with `crossbeam_queue::ArrayQueue::force_push`, and counts the drop. The
+newest records are the ones you need after a fault. Do not use
+`tokio::sync::broadcast`, an unbounded queue, or a blocking mutex-backed buffer.
 
-Contract:
+The host polls one serialized snapshot that carries the counters and the
+drained queue. Do not call across the FFI boundary per item or per telemetry
+event: the per-call cost is the whole budget on a hot path. A one-shot readiness
+callback is the one exception.
 
-- The queue is **bounded**. Pick the capacity per domain.
-- Task-context emission takes no mutex and does not deliberately sleep. The
-  queue can spin while a preempted peer owns a slot, so it provides no bounded
-  latency or formal lock-free progress guarantee. Do not call it from an
-  interrupt, a reentrant signal handler, or another real-time context.
-- On a full queue, **atomically replace the oldest record**.
-- Increment a **dropped-event counter** on every eviction, and expose it.
-- Retained records keep **FIFO order**.
-- Use **one queue per domain**. A consumer drains one domain into a snapshot.
-
-Use a queue with an atomic overwrite operation, for example
-`crossbeam_queue::ArrayQueue::force_push`. A receive-then-send sequence on an
-MPMC channel is not an atomic drop-oldest operation.
-
-Do not replace this with `tokio::sync::broadcast`, an unbounded queue, or a
-blocking mutex-backed buffer.
-
-- `broadcast` gives every subscriber every message and reports `Lagged`. That is
-  a different contract. Consumers here drain, they do not subscribe.
-- An unbounded queue converts a slow consumer into an out-of-memory kill.
-- A blocking buffer converts a slow consumer into a stalled data plane.
-
-If you change the implementation, preserve the capacity bound, the FIFO order
-among retained events, the drop-oldest behavior, and the observable drop count.
-
-## Data-plane counters
-
-```rust
-use core::sync::atomic::{AtomicU64, Ordering};
-
-pub struct DataPlaneCounters {
-    pub tx_items: AtomicU64,
-    pub tx_bytes: AtomicU64,
-    pub rx_items: AtomicU64,
-    pub rx_bytes: AtomicU64,
-    pub drops: AtomicU64,
-}
-
-impl DataPlaneCounters {
-    pub fn record_tx(&self, n: usize) {
-        self.tx_items.fetch_add(1, Ordering::Relaxed);
-        self.tx_bytes.fetch_add(n as u64, Ordering::Relaxed);
-    }
-}
-```
-
-`Relaxed` is correct for a counter. You need atomicity, not a happens-before
-edge. See the `memory-model` skill for the rationale.
-
-A counter read is a snapshot of independent values. Two counters read in one
-pass are not consistent with each other. Do not derive an invariant from a
-ratio of two relaxed counters.
+Read [references/embedded-telemetry-surface.md](references/embedded-telemetry-surface.md)
+when you implement or change the event queue, the snapshot entry point, or
+readiness, golden-test a snapshot, or work on the telemetry side of panic
+reporting or on stall detection. It has the ring code and queue contract, the
+snapshot key-order and scrub-path rules, and the heartbeat.
 
 ## Production metrics and distributed context
 
@@ -251,178 +346,19 @@ the domain result.
 
 Read
 [references/production-metrics-and-propagation.md](references/production-metrics-and-propagation.md)
-before you add a production metric, propagate OpenTelemetry context, or change
-an exporter.
-
-## Snapshot polling, not per-event callbacks
-
-Keep the telemetry surface coarse-grained and pull-based. The host polls one
-serialized snapshot that carries the counters and the drained queue.
-
-Never call across the FFI boundary per item or per telemetry event. The
-per-call cost is the whole budget on a hot path.
-
-One deliberate exception is readiness. A one-shot readiness callback beats
-polling for a sentinel, because it removes the latency of the next poll
-interval. Keep readiness registration and its generation token separate from
-the periodic snapshot. Never reintroduce a readiness flag that only becomes
-visible on the next poll.
-
-See [references/embedded-telemetry-surface.md](references/embedded-telemetry-surface.md)
-for the snapshot entry point, panic reporting, and stall detection.
-
-## Deterministic ordering
-
-Two properties, both testable.
-
-**Emission must not change results.** Run the same operation twice in one
-process: once with no subscriber, once with a subscriber at the most verbose
-level. Byte-compare every output artifact. Add a negative control, so a pass
-cannot be vacuous — mutate one input and assert that the comparison fails.
-
-**Serialized telemetry must be stable across runs.** Goldens compare snapshots.
-
-```rust
-use serde::Serialize;
-use serde_json::ser::{PrettyFormatter, Serializer};
-
-fn to_golden_json<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
-    let mut buf = Vec::new();
-    let mut ser = Serializer::with_formatter(&mut buf, PrettyFormatter::with_indent(b"  "));
-    value.serialize(&mut ser)?;
-    Ok(String::from_utf8(buf).expect("valid UTF-8"))
-}
-```
-
-`serde_json` does not sort keys. Get a stable order in one of three ways:
-
-- Derive `Serialize` on a struct and keep the field order alphabetical.
-- Use `BTreeMap<String, T>` instead of `HashMap`.
-- Post-process the value through a sorting step before you compare.
-
-Scrub the volatile fields before the diff. Keep the list in one file next to the
-goldens.
-
-```json
-{
-  "scrub_paths": [
-    "$.events[*].timestamp_ms",
-    "$.events[*].request_id",
-    "$.counters.uptime_ms"
-  ]
-}
-```
-
-Any tool or reviewer that classifies a golden diff as semantic or volatile reads
-that file. Do not restate the list anywhere else.
-
-## Privacy floor
-
-Diagnostic emission must not carry:
-
-- Device or network identifiers, raw or hashed. A salted hash still supports
-  correlation and dictionary attacks. Emit only aggregate counts or a local
-  non-identifying category.
-- Hardware and subscriber identifiers under any encoding.
-- Addresses that identify a user's device or its location.
-- Secrets, key material, or handshake payload bytes.
-- Message or packet payloads. Counters and sizes are allowed. An opaque flow
-  identifier must be random, short-lived, and scoped to one process or session.
-  Never derive it from a forbidden value. Bytes are not allowed.
-
-Audit before every release.
-
-```bash
-rg -i 'bssid|ssid|imei|imsi|raw_ip|latitude|longitude' \
-  . --type rust -n | grep -v '// allow:'
-```
-
-The grep is a floor, not a proof. See the reference for the two leaks that no
-regex finds.
-
-## "It emits nothing"
-
-Work down this list before you suspect the instrumentation.
-
-| Check | Symptom when it is the cause |
-|-------|------------------------------|
-| Is a sink registered at all? | With no sink the dispatcher's level ceiling is off, and `enabled` rejects every callsite by design. |
-| Was this callsite emitted before the first sink was registered? | The subscriber cached `Interest::never()` from the empty registry. Return `Interest::sometimes()` for a mutable registry, or rebuild the interest cache after each mutation. |
-| Did the one-time dispatcher install fail? | Another global subscriber won. Report the bootstrap error; do not retry from each boundary. |
-| Did sink registration fail? | The dispatcher is unavailable or the sink ID is already registered. Inspect the distinct registration status. |
-| Is the sink's level above the emission's level? | Higher-severity events still arrive; the quiet ones do not. |
-| On a host, is the env filter set and valid? | An invalid filter is reported on stderr and leaves diagnostics off. |
-| Is the instrumented function on the path you exercise? | Unit tests pass, the CLI prints nothing. See step 4 of *Add an emission*. |
-| Is the emission in a `#[cfg(test)]` module? | The release build drops it. |
-| Is the crate target in the filter? | `RUST_LOG=debug` is not the same as `RUST_LOG=my_crate=debug` when a dependency floods the output. |
-
-## Gates and lints
-
-Run these before you push.
-
-```bash
-cargo test -p <observability-crate>
-cargo clippy --workspace --all-targets -- -D warnings
-```
-
-Add a repository gate that reads the field tables from the observability crate
-rather than repeating them, so the gate and the runtime visitor cannot disagree.
-The gate rejects:
-
-- a `?` or `%` sigil in an emission,
-- `format!` inside an emission,
-- `#[instrument]` without `skip_all`,
-- a field name that is not declared in the vocabulary,
-- a crate whose declared coverage state disagrees with the coverage record.
-
-Give the gate a `--self-test` mode that runs it against one known-bad fixture per
-rule, and run that mode first. A gate with no self-test rots into a no-op after
-the first refactor of its patterns.
-
-Deny stdio macros in every workspace.
-
-```toml
-# clippy.toml
-allow-print-in-tests = true
-```
-
-```rust
-// crate root: lib.rs or main.rs
-#![deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
-```
-
-Stdio bypasses the redacting visitor. On a mobile or embedded target it reaches
-no reader at all. Grant exemptions as inner attributes with a written reason, in
-host-side tools only. Use `allow-print-in-tests` for test code that lives inside
-`src/`, where a path rule cannot see it.
-
-## Review checklist
-
-- [ ] Every `#[instrument]` has `skip_all` and names its fields.
-- [ ] No sigil and no `format!` in any emission that can reach an embedded sink.
-- [ ] Every new field name exists in the vocabulary tables.
-- [ ] The instrumented entry point is the one the boundary actually calls.
-- [ ] No log macro on a per-item or per-byte path.
-- [ ] Only one bootstrap path installs the dispatcher. Boundary initializers
-      only register sinks in its fan-out registry.
-- [ ] A mutable fan-out returns `Interest::sometimes()`, or every mutation
-      rebuilds the callsite interest cache after it releases the registry lock.
-- [ ] The same callsite emits before registration and reaches the new sink after
-      registration in a process-level test.
-- [ ] No library crate depends on `tracing-subscriber`.
-- [ ] Counters use `Relaxed`. The drop counter is exposed.
-- [ ] The queue is bounded, drops the oldest, and counts the drop.
-- [ ] The determinism test still passes, with its negative control.
-- [ ] No correlation identifier is derived from a forbidden value.
-- [ ] A panic hook emits only bounded structured fields. It never formats raw
-      `PanicHookInfo`, its payload, or a backtrace.
+when you add a production metric, propagate OpenTelemetry context, change an
+exporter, or upgrade the `opentelemetry` crates. It has the Rust SDK traps: the
+version pairing, the millisecond-scaled default histogram buckets, the
+thread-based batch processors, and provider shutdown.
 
 ## Related skills
 
 - `memory-model` — why `Relaxed` is correct for counters.
 - `rust-async-internals` — `broadcast` `Lagged` handling, task shutdown.
-- `rust-security` — what must not leave the process.
-- `rust-panic-safety` — panic hooks and unwinding across a boundary.
+- `rust-security` — `cargo deny` policy and advisory triage.
+- `rust-panic-safety` — the redacted panic report, hook ownership, unwinding.
+- `rust-debugging` — reading logcat, tombstones, and a live process.
+- `rust-serde` — `serde_json` map order and feature unification.
 - `rust-jni` — FFI call cost, thread naming for readable logs.
 - `ffi-error-progress-cancel` — error kinds, progress, cancellation at a boundary.
 - `rust-lints` — enforcing the clippy configuration above.
