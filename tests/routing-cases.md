@@ -149,9 +149,9 @@ wrong skill, and put the phrase in the right description in the same change.
 | @MainActor Rust callback | rust-swift-ffi |
 | AsyncStream over a C callback | rust-swift-ffi |
 | clippy.toml | rust-lints |
-| deny.toml | rust-lints |
 | rustfmt.toml | rust-lints |
 | workspace.lints | rust-lints |
+| unfulfilled_lint_expectations | rust-lints |
 | tracing | rust-observability |
 | telemetry snapshot | rust-observability |
 | production metrics | rust-observability |

@@ -1,13 +1,17 @@
 # `[workspace.lints]` templates
 
-Two levels of the same table: the strict target, and the baseline an existing workspace
-can adopt today. Both belong in the workspace root manifest, and every member crate
-inherits them with `[lints] workspace = true`.
+- [Strict template](#strict-template): the target for a new workspace.
+- [Notes on the strict template](#notes-on-the-strict-template)
+- [Pragmatic baseline](#pragmatic-baseline-for-an-existing-workspace): the start for an
+  existing workspace with a backlog.
 
-This is the target policy for a workspace that wants machine-generated code
-rejected early. Start here for a new workspace. For an existing workspace with
-a large backlog, start from the [pragmatic baseline](#pragmatic-baseline-for-an-existing-workspace)
-and climb.
+Both tables belong in the workspace root manifest. Every member inherits them with
+`[lints] workspace = true`.
+
+## Strict template
+
+Start here for a new workspace. For an existing workspace with a large backlog, start from the
+[pragmatic baseline](#pragmatic-baseline-for-an-existing-workspace) and climb.
 
 ```toml
 [workspace.lints.rust]
@@ -17,11 +21,12 @@ unused_lifetimes             = "warn"
 unreachable_pub              = "warn"
 elided_lifetimes_in_paths    = "warn"
 let_underscore_drop          = "deny"   # catches `let _ = guard;` swallowing Drop
+dropping_references          = "deny"   # drop(&guard) does nothing; only drop(guard) releases
 unconditional_recursion      = "deny"   # warn by default; catches a body that calls only itself
 non_ascii_idents             = "deny"
 trivial_numeric_casts        = "warn"
 unused_must_use              = "deny"
-# unsafe_code              = "forbid"   # set per crate, not workspace-wide (see below)
+# unsafe_code              = "forbid"   # set per crate in lib.rs, never here (SKILL.md, Crate-level attributes)
 
 [workspace.lints.clippy]
 # Group activations. priority = -1 lowers the group below the individual
@@ -31,7 +36,7 @@ pedantic                     = { level = "warn",  priority = -1 }
 nursery                      = { level = "warn",  priority = -1 }
 cargo                        = { level = "warn",  priority = -1 }
 
-# Highest-value promotions for machine-generated code.
+# Highest-value promotions. An explicit entry keeps the lint on if its group is relaxed later.
 mem_forget                   = "deny"   # forget on a Drop type is data loss
 undocumented_unsafe_blocks   = "deny"   # every unsafe block needs a // SAFETY: comment
 multiple_unsafe_ops_per_block = "deny" # one SAFETY: comment per operation, not per block
@@ -39,7 +44,7 @@ missing_safety_doc           = "deny"   # a # Safety section on every pub unsafe
 missing_panics_doc           = "warn"
 missing_errors_doc           = "warn"
 unwrap_used                  = "warn"   # promote to deny per crate when the backlog is clear
-expect_used                  = "warn"
+# expect_used is not here: `.expect("<invariant>")` is allowed in non-test code. Add it per crate.
 panic                        = "warn"
 todo                         = "warn"
 unimplemented                = "warn"
@@ -62,7 +67,7 @@ assigning_clones             = "warn"   # pedantic: `a = b.clone()` becomes `a.c
 redundant_clone              = "warn"   # nursery
 or_fun_call                  = "warn"   # nursery: `ok_or(build())` becomes `ok_or_else(build)`
 unnecessary_lazy_evaluations = "warn"   # style: the reverse error, a closure that should stay eager
-needless_collect             = "warn"   # nursery: return `impl Iterator<Item = T>`, not `Vec<T>`
+needless_collect             = "warn"   # nursery: a collect() the same body only iterates or counts
 needless_pass_by_value       = "warn"
 ptr_arg                      = "warn"   # style, NOT perf: `&Vec<T>` becomes `&[T]`
 ref_option                   = "warn"
@@ -80,41 +85,35 @@ arithmetic_side_effects      = "warn"   # catches unchecked integer arithmetic
 modulo_arithmetic            = "warn"
 unwrap_in_result             = "warn"
 
-[workspace.lints.rustdoc]
+[workspace.lints.rustdoc]                   # only `cargo doc` enforces these; clippy never runs them
 broken_intra_doc_links       = "deny"
 private_intra_doc_links      = "warn"
 missing_crate_level_docs     = "warn"
 bare_urls                    = "warn"
 ```
 
-Notes on this set:
+## Notes on the strict template
 
-- `clippy::string_to_string` was removed in clippy 1.86. `implicit_clone`
-  covers the same ground. Do not re-add it.
-- Add the async lints only when the workspace actually runs an async runtime.
-  A synchronous, compute-bound workspace gains nothing from
-  `await_holding_lock`. See `references/lint-catalog.md`.
-- Add the pointer and FFI lints only in a workspace that contains `unsafe`
-  pointer work. See `references/lint-catalog.md`.
-- `unsafe_code = "forbid"` belongs in each crate's `lib.rs`, not in the
-  workspace table. Otherwise the one crate that owns `unsafe` cannot opt out.
+- Under `-D warnings`, `warn` and `deny` both fail the gate. `deny` also stops a local
+  `cargo build`, so it suits lints that are never acceptable, even for a moment.
+- `clippy::string_to_string` was deprecated in clippy 1.91; `implicit_clone` covers it. Clippy
+  0.1.98 reports `lint clippy::string_to_string has been removed`. Do not re-add it.
+- Add the async lints only when the workspace runs an async runtime, and the pointer and FFI
+  lints only when it contains `unsafe` pointer work. Both blocks are in
+  [lint-catalog.md](lint-catalog.md).
 - `unconditional_recursion` is warn-by-default, so the strict template must
   promote it. An inherent method that carries a trait method's name resolves
   first, so `fn into_iter(self) -> Owned { self.into_iter() }` inside
   `impl IntoIterator` calls the inherent method and passes review. Delete that
   inherent method in a later cleanup and the same body calls itself. rustc
   still only warns and the binary links. A debug build then dies with `fatal
-  runtime error: stack overflow, aborting` and exit code 134. A release build
+  runtime error: stack overflow, aborting` and exit code 134 (1.98.1). A release build
   is worse: LLVM turns the tail call into an infinite loop, so the process
   hangs with no diagnostic at all.
-- Most of the performance lints above are not in the `perf` group.
-  `assigning_clones` is `pedantic`; `redundant_clone`, `or_fun_call` and
-  `needless_collect` are `nursery`; `ptr_arg` and `unnecessary_lazy_evaluations`
-  are `style`. Only `large_enum_variant` and `result_large_err` come from
-  `perf`. A config that enables `clippy::perf` alone gets those two and nothing
-  else. See `references/lint-catalog.md`.
+- Most of the performance lints above are not in the `perf` group;
+  [lint-catalog.md](lint-catalog.md#clippy-lint-groups) gives the group of each.
 
-### Pragmatic baseline for an existing workspace
+## Pragmatic baseline for an existing workspace
 
 An existing workspace with thousands of files cannot land the strict set in one
 commit. Use group levels first, then cherry-pick the pedantic lints that pay
@@ -144,14 +143,12 @@ trivially_copy_pass_by_ref          = "warn"
 unused_self                         = "warn"
 default_trait_access                = "warn"
 match_wildcard_for_single_variants  = "warn"
+should_panic_without_expect         = "warn"   # pin the expected panic message
+ignore_without_reason               = "warn"   # #[ignore = "why"]
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 ```
 
 This baseline is a starting point, not a destination. Record which strict lints
-are still off and why. Then follow [Tighten a lint safely](../SKILL.md#tighten-a-lint-safely).
-
-Write down the level that is actually deployed. A skill or a README that
-describes an aspirational level as if it were enforced is worse than no
-document: reviewers stop checking what the compiler is not checking either.
+are still off and why. Then follow [Add or tighten a lint](../SKILL.md#add-or-tighten-a-lint).
