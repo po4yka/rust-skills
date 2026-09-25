@@ -68,6 +68,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | embedded-hal | rust-embedded-no-std |
 | Embassy | rust-embedded-no-std |
 | probe-rs | rust-embedded-no-std |
+| thumbv6m | rust-embedded-no-std |
+| portable-atomic | rust-embedded-no-std |
 | Rust CLI | rust-cli |
 | clap arguments | rust-cli |
 | CLI exit codes | rust-cli |
