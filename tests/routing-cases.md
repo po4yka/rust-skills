@@ -105,6 +105,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | shutdown hang | rust-async-internals |
 | re-export | rust-code-style |
 | import grouping | rust-code-style |
+| unreachable_pub | rust-code-style |
 | E0382 | rust-compiler-errors |
 | E0499 | rust-compiler-errors |
 | E0282 | rust-compiler-errors |

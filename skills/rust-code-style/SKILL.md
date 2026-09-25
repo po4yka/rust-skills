@@ -1,73 +1,87 @@
 ---
 name: rust-code-style
-description: Use when you create a module or crate, move a source file, choose visibility, clean up imports, or review structure and readability. Covers Rust source layout and readability rules, module file layout, lib.rs re-export policy, visibility levels, item order, import grouping, function structure, error-handling crate choice, and naming.
+description: Use when laying out Rust modules and source files, choosing visibility (pub, pub(crate), pub(super)), writing lib.rs re-exports or a prelude, ordering items, fixing import grouping, choosing thiserror or anyhow, writing rustdoc Errors and Panics sections, or reviewing a diff for layout and readability. Triggers on mod.rs, re-export, unreachable_pub, Iterator for_each, or flat_map over a Result.
 license: BSD-3-Clause
 ---
 
 # Rust Code Style
 
-## Purpose
+This skill holds the layout and readability decisions that `rustfmt` cannot make. `rustfmt`
+owns line width, brace placement, wrapping, and the sort order inside each contiguous block of
+`mod` declarations or `use` imports. The `rust-lints` skill owns `clippy.toml`, `rustfmt.toml`,
+and the workspace lint tables. The `rust-crate-architecture` skill owns crate boundaries and
+dependency direction.
 
-Code is technical writing for future readers. Lead with the most important details. Keep
-related things close together.
+Most rules here are catalog defaults, not Rust facts. Each one carries its reason, so a team can
+override it on purpose. The `flat_map` and `lines()` rules are exceptions: they prevent lost
+errors and hangs, so they hold everywhere.
 
-Use this skill when you:
+## Checks
 
-- Create a new crate or a new module.
-- Add, split, or move a source file.
-- Decide the visibility of an item.
-- Order items inside a file, or clean up imports.
-- Review a diff for structure and readability.
+Use the tool where one exists. Review the rest by hand with the [checklist](#review-checklist).
 
-This skill covers the decisions `rustfmt` cannot make for you. `rustfmt` owns line width,
-brace placement, and wrapping. Lint tables, `clippy.toml`, and `rustfmt.toml` live in
-`rust-lints`. Crate boundaries and dependency direction live in `rust-crate-architecture`.
+| Rule | Check |
+| --- | --- |
+| Formatting, and the order inside each `mod` or `use` block | `cargo fmt --all --check` |
+| No `pub` item that the crate root cannot reach | rustc `unreachable_pub` (allow by default; set it to `warn` in the workspace lint table) |
+| An inline `#[cfg(test)] mod tests` is the last item | `clippy::items_after_test_module` (warn by default; needs the test cfg, as in `cargo clippy --all-targets`) |
+| `# Errors` and `# Panics` doc sections | `clippy::missing_errors_doc`, `clippy::missing_panics_doc` (pedantic) |
+| `# Safety` doc section | `clippy::missing_safety_doc` (warn by default) |
+| Broken intra-doc links, public docs that link private items | The `cargo doc` gate in the `rust-lints` skill. It passes `--document-private-items`, so it also checks the links in private docs |
+| Doc examples compile and pass | `cargo test --locked --workspace --doc` (library targets only) |
+| No `Iterator::for_each` | `disallowed-methods` in `clippy.toml` |
+| No `filter_map(Result::ok)` or `flatten()` on `io::Lines` | `clippy::lines_filter_map_ok` (warn by default) |
 
----
+No tool checks import groups, the rest of the item order, caller-before-callee order, the depth
+exception for `mod.rs`, or the early-return rule. A green run proves nothing about them.
 
 ## Module layout
 
-Use `name.rs` next to a `name/` directory for every module that has children. Use `mod.rs` only
-three levels deep or more, and never mix the two patterns at one directory level.
+Use `name.rs` next to a `name/` directory for every module that has children. This is the
+default because the module root then sits next to its children, and every editor tab has a
+distinct name. Use `mod.rs` only three levels deep or more. Do not mix the two patterns at one
+directory level: a reader then cannot predict where a module root is.
 
 `lib.rs` declares the modules first, then re-exports the public API item by item, with no glob.
-A `pub mod prelude` is the one module a caller may glob-import. Keep it short. Avoid `#[path]`.
+A glob re-export makes every new `pub` item public API with no review. A `pub mod prelude` is
+the one module that a caller may glob-import. Keep it short, and build it from explicit
+`pub use` items. Avoid `#[path]`.
 
-The file tree, the `lib.rs` example, the prelude collision (E0659), and the `build.rs`
-exception are in [references/module-layout.md](references/module-layout.md).
-
----
+Read [references/module-layout.md](references/module-layout.md) when you create `lib.rs` or a
+prelude, when a downstream crate reports E0659, E0034, or "`X` is ambiguous" after a prelude
+change, when you enforce the layout with a lint, or when you include `build.rs` output.
 
 ## Visibility
 
-Use three levels only. Nothing else.
+| Level | Use it for |
+| --- | --- |
+| private (default) | An implementation detail of one module |
+| `pub(super)` | A helper that only the parent module calls |
+| `pub(crate)` | An item that other modules of the same crate use |
+| `pub` | The public API, re-exported from `lib.rs` |
 
-| Level | When to use |
-|-------|-------------|
-| private (default) | An implementation detail inside one module |
-| `pub(crate)` | An item shared between modules of the same crate |
-| `pub` | The crate public API, re-exported from `lib.rs` |
+Start private. Widen one step only when a concrete caller in another module needs the item.
+Remove the widening when the caller goes away.
 
-Start private. Widen one step only when a concrete caller in another module needs the
-item. Delete the widening when the caller goes away.
+`pub(super)` follows the module tree, so check its callers again when you move the module. Do
+not write `pub(in path)` without a written reason: it names a module path, and a module move
+breaks the build.
 
-Never use `pub(super)` or `pub(in path)`. Both couple the item to the current module
-hierarchy. A move of the module silently changes the set of callers of a `pub(super)`
-item, and it breaks the build for a `pub(in path)` item.
+`unreachable_pub` flags a `pub` item that no path from the crate root reaches, and suggests
+`pub(crate)`. Fix the item; do not suppress the lint.
 
-Do not widen visibility for a test. A child `mod tests` inside the same file already reads
-the private items of its parent module. If a test needs an item from another module, the
-item is either part of `pub(crate)` API, or the test belongs in the module that owns it.
-
----
+Do not widen visibility for a test. A child `mod tests` in the same file already reads the
+private items of its parent. If a test needs an item from another module, the item is part of
+the `pub(crate)` API, or the test belongs in the module that owns the item.
 
 ## File structure order
 
-Inside any `.rs` file, place the items in this order:
+Inside a `.rs` file, place the items in this order:
 
-1. Crate and module attributes (`#![forbid(unsafe_code)]`, `#![allow(...)]`).
-2. `mod` declarations: private first, then `pub mod`. The `#[cfg(test)] mod tests`
-   declaration is the exception; it goes at the bottom with the other test items.
+1. Crate and module attributes (`#![forbid(unsafe_code)]`,
+   `#![doc = include_str!("../README.md")]`).
+2. `mod` declarations: private first, then `pub mod`, with a blank line between the two groups.
+   The `#[cfg(test)] mod tests` declaration goes at the bottom (step 10).
 3. `use` imports (see [Import style](#import-style)).
 4. `pub use` re-exports.
 5. Constants and statics.
@@ -75,30 +89,21 @@ Inside any `.rs` file, place the items in this order:
 7. Trait definitions.
 8. `impl` blocks: inherent first, then trait impls.
 9. Free functions: public first, then private helpers.
-10. `#[cfg(test)] mod tests` at the very bottom.
+10. `#[cfg(test)] mod tests`.
 
-### Public before private
+Put a blank line between steps 3 and 4 too. rustfmt (`reorder_modules` and `reorder_imports`,
+stable and on by default) sorts each contiguous block of `mod` or `use` lines by name and
+ignores visibility. Without the blank lines, `cargo fmt` mixes `mod` with `pub mod`, and moves
+`pub use crate::...` above `use std::...` (rustfmt 1.9.0, Rust 1.98.1).
 
-Inside each group, public items come before private items. The file then reads as a table
-of contents: the reader sees the API surface before the internals.
-
-### Types before implementations
-
-Show the struct or enum definition before its `impl` block. The reader must understand the
-data shape before the methods make sense.
-
-### Inherent impls before trait impls
-
-Associated functions are the core API. Trait implementations add to it. Show the core
-first.
-
----
+Steps 2 to 4 set their own order. Inside each of steps 5 to 9, put public items before private
+items. The file then reads as a table of contents: the API surface comes before the internals.
+Put a type before its `impl` blocks, because the reader needs the data shape before the
+methods. Put inherent impls before trait impls, because the inherent methods are the core API.
 
 ## Import style
 
-### Group order
-
-Separate the imports into groups. Put one blank line between the groups:
+Separate the imports into four groups, with one blank line between the groups:
 
 ```rust
 use std::collections::HashMap;
@@ -107,133 +112,83 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use protocol_types::FrameKind;
-use telemetry_core::SpanId;
+use app_protocol::FrameKind;
+use app_telemetry::SpanId;
 
 use crate::types::SharedState;
 use crate::util::format_duration;
 ```
 
-The order is: `std` → external crates → workspace crates → `crate::`, `self::`, `super::`.
+The order is: `std` (and `core`, `alloc`), then external crates, then workspace crates, then
+`crate::`, `self::`, and `super::`.
 
-A stable-toolchain `rustfmt` sorts imports inside a group, but it does not move an import
-between groups. Keep the groups by hand.
+Stable `rustfmt` sorts the imports inside a group. It does not move an import between groups,
+because `group_imports` is unstable. Keep the groups by hand, and keep the `pub use` block
+apart from them with a blank line (see [File structure order](#file-structure-order)).
 
-### Compound braces for two or more items
+The sort order inside a group depends on the style edition. Style edition 2024 uses version
+sorting and puts `u8` before `u16`; style editions 2015 to 2021 put them the other way round
+(rustfmt 1.9.0, Rust 1.98.1). A direct `rustfmt` call, for example from a pre-commit hook, can
+therefore disagree with `cargo fmt`, and `cargo fmt --check` then fails in CI. The `rust-lints`
+skill owns the `edition` and `style_edition` keys in `rustfmt.toml`. The `cargo-workflows` skill
+says when to change them during an edition migration.
 
-```rust
-// Good. One compound import for several items of the same module.
-use std::sync::{Arc, Mutex};
+Use one braced import for two or more items of one module: `use std::sync::{Arc, Mutex};`.
+Stable `rustfmt` does not merge imports, because `imports_granularity` is unstable.
 
-// Good. A single item needs no braces.
-use std::collections::HashMap;
-```
-
-### Limit the imports
-
-Import the items and traits you use often. For a rarely used item, write the fully
-qualified path at the call site instead:
-
-```rust
-// Used once in the file. No import.
-let elapsed = std::time::Instant::now().duration_since(start);
-```
-
-Fewer imports means less import churn and fewer merge conflicts.
-
----
+Import the items and traits that the file uses often. Write the full path at the call site for
+an item that the file uses once, such as `std::time::Instant::now()`. This default keeps the
+import block short and reduces merge conflicts.
 
 ## Function rules
 
 ### Caller before callee
 
-Place a calling function before the functions it calls. The reader then follows the code
-top-down:
-
-```rust
-pub fn process_request(req: &Request) -> Response {
-    let validated = validate(req);
-    build_response(validated)
-}
-
-fn validate(req: &Request) -> ValidatedRequest {
-    // ...
-}
-
-fn build_response(data: ValidatedRequest) -> Response {
-    // ...
-}
-```
-
-### Group related statements
-
-Use blank lines to build paragraphs of related statements inside a function:
-
-```rust
-fn connect(config: &Config) -> Result<Connection> {
-    let addr = config.resolve_address()?;
-    let timeout = config.connect_timeout();
-
-    let stream = TcpStream::connect_timeout(&addr, timeout)?;
-    stream.set_nodelay(true)?;
-
-    let tls = setup_tls(config)?;
-    tls.connect(stream)
-}
-```
-
-Each paragraph does one thing. A function that needs more than four or five paragraphs is
-a candidate for a split.
+Place a calling function before the functions it calls. The reader then follows the code from
+top to bottom.
 
 ### Iterator chains and collectors
 
-Never mix a side effect and a pure expression in one statement. Keep every closure in a
-`.map()`, `.filter()`, or `.collect()` chain pure. Write a side effect as a `for` loop, and ban
-`Iterator::for_each` through `disallowed-methods` in `clippy.toml`. See `rust-lints`.
+Keep every closure in a `.map()`, `.filter()`, or `.collect()` chain pure. Write a side effect
+as a `for` loop.
 
-Never `flat_map` over a `Result`. `Err` yields zero items, so the failure disappears with no
-diagnostic. Use `collect` into a `Result` to stop at the first error, `partition` to keep both
-halves, and `filter_map` with `.ok()` when the drop is the intent.
+Ban `Iterator::for_each` through `disallowed-methods` in `clippy.toml`. This is a catalog
+default, not a Rust rule: a `for` loop covers every side-effecting use and shows the effect in
+plain sight. `clippy::needless_for_each` (pedantic) is a lighter built-in check, but it does not
+fire on a chain such as `.filter(..).for_each(..)`. The `rust-lints` skill holds the
+`clippy.toml` entry.
 
-The examples and the collector rules are in
-[references/iterator-style.md](references/iterator-style.md).
+Never `flat_map` or `flatten` over a `Result`. `Err` yields zero items, so the failure
+disappears, and no lint or type error reports it. Use `collect` into a `Result` to stop at the
+first error, or `partition` to keep both halves. Use `filter_map` with `.ok()` only when the drop
+is the intent.
 
-### Business logic uses `if`/`else` and `match`
+Never skip the errors of `BufRead::lines()` with `filter_map`, `flat_map`, or `flatten`: the
+read can hang. A reader that fails on every call, such as a directory opened as a file on Unix,
+makes `lines()` yield `Err` forever, so the first `next()` never returns. Collect into
+`io::Result<Vec<String>>` to propagate the error. Use `map_while(Result::ok)` only when a silent
+stop at the first error is the intent.
 
-Keep an early return for bookkeeping only: a null check, a handle check, a permission
-guard. Use `if`/`else` and `match` for mutually exclusive business paths, so the control
-flow shows the shape of the domain:
+Read [references/iterator-style.md](references/iterator-style.md) when you judge whether an
+expression or closure hides a side effect, choose a collector for fallible items, or see a
+benchmark that argues for `for_each`.
 
-```rust
-// Good. Every business path is visible in one place.
-match backend {
-    Backend::Memory => load_from_memory(key),
-    Backend::Disk => load_from_disk(key),
-    Backend::Remote => load_from_remote(key, endpoint),
-}
+### Business paths use `if`/`else` and `match`
 
-// Good. An early return for bookkeeping.
-if handle == 0 {
-    return Err(Error::InvalidHandle);
-}
-```
-
-A chain of early returns for business paths hides the alternatives. The reader must hold
-every previous condition in memory to know when the last line runs.
-
----
+Keep a guard return (`return`, `let ... else`) for bookkeeping: a null check, a handle check, a
+permission guard. This rule does not limit `?`, which propagates an error. Write mutually
+exclusive business paths as `if`/`else` or `match`. This is a catalog default: one `match`
+shows every alternative in one place, while a chain of early returns makes the reader hold
+every earlier condition to know when the last line runs.
 
 ## Error handling
 
-| Context | Crate | Pattern |
-|---------|-------|---------|
-| Library error types | `thiserror` | `#[derive(thiserror::Error)]` |
-| Binary and CLI errors | `anyhow` | `anyhow::Result`, `.context()` |
-| Test assertions | `anyhow` | `#[test] fn foo() -> anyhow::Result<()>` |
-| Propagation | `?` operator | Never `.unwrap()` in non-test code |
-| Crates that need no `unsafe` | `#![forbid(unsafe_code)]` | The default for every such crate |
-
-### Library crates use `thiserror`
+| Context | Default | Pattern |
+| --- | --- | --- |
+| Library error type | `thiserror` | `#[derive(Debug, thiserror::Error)]` on an enum |
+| Binary or CLI | `anyhow` | `anyhow::Result`, `.context()`, `.with_context()` |
+| Test | `.expect("<what should have happened>")` | On the value under test. The `rust-tdd` skill owns test design |
+| Propagation | `?` | `.unwrap()` in tests and examples only |
 
 A library returns a typed error, so the caller can match on the variant:
 
@@ -251,43 +206,37 @@ pub enum SessionError {
 }
 ```
 
-Never put `anyhow::Error` in the public signature of a library crate. It erases the
-variants, so the caller can only print the message.
+Do not put `anyhow::Error` in the public signature of a library crate. It erases the variants,
+so the caller can only print the message.
 
-### Binaries use `anyhow`
-
-A binary or a CLI reports the error to a human. Add context at each layer:
+A binary reports the error to a person. Add context at each layer:
 
 ```rust
 use anyhow::Context as _;
 
-fn load(path: &std::path::Path) -> anyhow::Result<Config> {
+fn load(path: &std::path::Path) -> anyhow::Result<String> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read the config file {}", path.display()))?;
-    let config = toml::from_str(&text).context("failed to parse the config file")?;
-    Ok(config)
+    anyhow::ensure!(!text.trim().is_empty(), "the config file {} is empty", path.display());
+    Ok(text)
 }
 ```
 
-### Propagate with `?`
-
-`.unwrap()` and `.expect()` belong in tests only. In non-test code, return the error with
-`?` and let the caller decide. For panic policy at a boundary, and for the rules on
-`catch_unwind`, see `rust-panic-safety`. For error mapping across an FFI boundary, see
-`ffi-error-progress-cancel`.
-
----
+Propagate with `?` and let the caller decide. In non-test code, `.expect("<invariant>")` is
+acceptable only for a documented, unconditional invariant. The `rust-discipline` skill owns that
+rule and the lock-poisoning policy. The `rust-panic-safety` skill owns panic policy at a
+boundary. The `ffi-error-progress-cancel` skill owns error mapping across an FFI boundary.
 
 ## Rustdoc contract
 
-A doc comment on a public item is part of the API. Three sections carry information the
-signature cannot, and `cargo doc` gives each one a heading, so a reader finds them in the same
+A doc comment on a public item is part of the API. Three sections carry information that the
+signature cannot. `cargo doc` renders each one as a heading, so a reader finds it in the same
 place every time.
 
 | Section | Required on | States |
 | --- | --- | --- |
-| `# Errors` | Every public `fn` returning `Result` | Which variants occur, and what causes each |
-| `# Panics` | Every public `fn` that can panic | The exact condition. "Never panics" is worth writing when a reader would assume otherwise |
+| `# Errors` | Every public `fn` that returns `Result` | Which variants occur, and what causes each one |
+| `# Panics` | Every public `fn` that can panic | The exact condition. Write "Never" when a reader would expect a panic |
 | `# Safety` | Every public `unsafe fn` | What the caller must guarantee. See the `rust-unsafe` skill |
 
 ```rust
@@ -311,26 +260,21 @@ pub fn read_config(path: &Path) -> Result<String, ConfigError> {
 }
 ```
 
-`clippy::missing_errors_doc` and `clippy::missing_panics_doc` enforce the first two. Turn both
-on for a published crate; see the `rust-lints` skill.
+Turn on `missing_errors_doc` and `missing_panics_doc` for a published crate.
+`missing_safety_doc` is on by default.
 
 ### Link with intra-doc links, not URLs
 
-Write `[`ConfigError::NotFound`]` and let rustdoc resolve it. The link then follows a rename, and
-`cargo doc` reports it when the target disappears. A hand-written URL to docs.rs pins a version
-and rots silently.
-
-Add `--document-private-items -D warnings` to catch a broken link in CI:
-
-```bash
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
-```
+Write ``[`ConfigError::NotFound`]`` and let rustdoc resolve it. The link then follows a rename,
+and `cargo doc` reports it when the target disappears. A hand-written URL to docs.rs pins a
+version and breaks silently. The `cargo doc` gate in [Checks](#checks) fails on an unresolved
+link and on public docs that link a private item.
 
 ### Doc examples are tests
 
-Every example in a doc comment is compiled and run by `cargo test`. That makes them the one kind
-of documentation that cannot drift. Use `?` in them by returning a `Result`, and hide the
-scaffolding with a leading `#`:
+`cargo test` compiles and runs every doc example in a library target. A binary target runs no
+doc examples. Use `?` in an example by returning a `Result`, and hide the scaffolding with a
+leading `#`:
 
 ```text
 /// ```
@@ -342,78 +286,59 @@ scaffolding with a leading `#`:
 /// ```
 ```
 
-Lines starting with `# ` are compiled but not shown. Use `no_run` for an example that must
-compile but must not execute, and `ignore` only when it cannot compile at all — `ignore` hides
-the example from the test run entirely, so it is where stale examples accumulate.
+Rustdoc compiles a line that starts with `# ` but does not show it. Use `no_run` for an example
+that must compile but must not run. Use `ignore` only when the example cannot compile at all.
+`ignore` skips compilation, so nothing reports the example when it goes stale.
 
 ## Naming
 
-| Item | Case |
-|------|------|
-| Functions, variables, modules | `snake_case` |
-| Types, traits, enum variants | `PascalCase` |
-| Constants and statics | `SCREAMING_SNAKE_CASE` |
-
-- Name a test function after the behavior it proves:
-  `fn decoder_rejects_truncated_frame()`. The failure output then reads as a sentence.
-- Use no abbreviation in a public API name. An abbreviation in a local binding is fine
-  when the context is clear.
-- Write a crate name with hyphens in `Cargo.toml` (`protocol-types`), because that is the
-  Cargo convention. The module path then uses underscores (`protocol_types`).
-- Give the crates of one workspace a single shared prefix, so an import shows at a glance
-  whether the item comes from the workspace or from a third party.
-
----
-
-## Common mistakes
-
-| Mistake | Fix |
-|---------|-----|
-| `pub(super)` or `pub(in path)` | Use `pub(crate)`, or restructure the modules |
-| Glob re-export from `lib.rs` (`pub use types::*`) | List the items: `pub use types::{Foo, Bar}` |
-| `.for_each()` with a side effect | Use a `for` loop |
-| `.unwrap()` in non-test code | Use `?` with a proper error type |
-| Mutation and computation in one expression | Split into separate statements |
-| `mod.rs` for a new top-level module | Use `name.rs` plus a `name/` directory |
-| A rarely used item imported at the top of the file | Write the fully qualified path inline |
-| A private helper before the public function | Public items first, then private ones |
-| `anyhow` in the error type of a library crate | Use `thiserror` for a library error |
-| No blank line between import groups | Separate std, external, workspace, and crate |
-| `#[path]` on a hand-written module | Use the standard module lookup rules |
-| Visibility widened so a test can call the item | Move the test, or keep it in the same file |
-
----
+- The rustc lints `non_snake_case`, `non_camel_case_types`, and `non_upper_case_globals` enforce
+  the case rules. Do not suppress them, except on names that a foreign ABI fixes (bindgen
+  output, a hand-typed `Java_*` export on jni 0.21). Suppress those on the smallest item, with a
+  reason (the `rust-lints` skill). On jni 0.22, `#[jni_mangle]` generates the `Java_*` symbol
+  from a snake_case function (the `rust-jni` skill).
+- Name a test function after the behavior it proves: `fn decoder_rejects_truncated_frame()`.
+  The failure output then reads as a sentence.
+- Do not abbreviate a public API name. An abbreviation in a local binding is fine when the
+  context is clear.
+- Write a crate name with hyphens in `Cargo.toml` (`app-protocol`). The path in code then uses
+  underscores (`app_protocol`).
+- Give the crates of one workspace one shared prefix, so an import shows at a glance whether the
+  item comes from the workspace or from a third party.
 
 ## Review checklist
 
-Run this list against every file a diff touches.
+Use this list when you review a diff for layout and readability.
 
-- [ ] A new module uses `name.rs` plus `name/`, not `mod.rs`.
+- [ ] A new module with children uses `name.rs` plus `name/`, not `mod.rs`.
 - [ ] `lib.rs` declares the modules first, then re-exports item by item, with no glob.
-- [ ] Every new `pub` item is reachable from `lib.rs` and belongs in the public API.
-- [ ] No `pub(super)` and no `pub(in path)`.
-- [ ] The items in each file follow the ten-step order.
-- [ ] Public items come before private ones inside each group.
-- [ ] A type definition comes before its `impl` blocks, and inherent impls come first.
+- [ ] A prelude uses explicit `pub use` items.
+- [ ] Every new item has the narrowest visibility that its callers need. `unreachable_pub` is
+      clean.
+- [ ] No `pub(in path)` without a written reason.
+- [ ] Each file follows the ten-step order, with public items before private ones in steps 5 to
+      9, and a blank line after the private `mod` block and before the `pub use` block.
 - [ ] The imports are in four groups, separated by blank lines.
-- [ ] A caller function is placed before the function it calls.
-- [ ] No closure in an iterator chain has a side effect.
-- [ ] Business branches use `if`/`else` or `match`, not a chain of early returns.
+- [ ] A caller function comes before the functions it calls.
+- [ ] No closure in an iterator chain has a side effect, and no `for_each` appears.
+- [ ] No `flat_map` or `flatten` over a `Result`, and no `filter_map`, `flat_map`, or `flatten`
+      on `lines()`.
+- [ ] Business paths use `if`/`else` or `match`, not a chain of early returns.
 - [ ] Library errors use `thiserror`; `anyhow` stays out of the library public API.
-- [ ] No `.unwrap()` and no `.expect()` outside a test.
-- [ ] A crate that needs no `unsafe` carries `#![forbid(unsafe_code)]`.
-
----
+- [ ] No `.unwrap()` outside tests and examples. Each `.expect()` states a real invariant.
+- [ ] A crate with no hand-written `unsafe` carries `#![forbid(unsafe_code)]`.
+- [ ] Each public `Result`, panicking, or `unsafe` function has its rustdoc section.
 
 ## Related skills
 
+Use these skills when they are installed.
+
 | Skill | Use it for |
-|-------|------------|
+| --- | --- |
 | `rust-lints` | `clippy.toml`, `rustfmt.toml`, workspace lint tables, `disallowed-methods` |
-| `rust-crate-architecture` | Crate splits, dependency direction, and public API surface |
-| `rust-discipline` | Signature review, API anti-patterns, and error propagation depth |
+| `rust-crate-architecture` | Crate splits, dependency direction, and the crate public API surface |
+| `rust-discipline` | Signature review, `.expect` policy, and API anti-patterns |
 | `rust-panic-safety` | Panic policy, unwind safety, and `catch_unwind` |
-| `cargo-workflows` | Workspace manifests, features, and build commands |
-| `rust-unsafe` | The rules for a crate that cannot use `#![forbid(unsafe_code)]` |
+| `rust-unsafe` | Crates that cannot use `#![forbid(unsafe_code)]`, and `# Safety` contracts |
 | `ffi-error-progress-cancel` | Error translation across an FFI boundary |
 | `rust-tdd` | Test placement and the test-first loop |
