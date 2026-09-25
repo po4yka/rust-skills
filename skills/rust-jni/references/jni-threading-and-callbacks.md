@@ -1,22 +1,32 @@
 # JNI threading and callbacks
 
 Deep material for calling from Rust threads back into the JVM. The summary
-rules are in [../SKILL.md](../SKILL.md); this file holds the lifetimes, the
-destructor pattern, and the two callback wirings.
+rules are in [../SKILL.md](../SKILL.md).
 
-## Capture the JavaVM once
+Contents:
+
+- Build the load-time cache
+- Attach and detach
+- Threads attached outside the crate
+- Callback from an async task
+- Ask the JVM to act on a native socket
+- Local reference frames
+- Name every thread
+
+## Build the load-time cache
 
 The env handle (`Env` on `jni` 0.22, `JNIEnv` on 0.21) is per-thread and
-frame-scoped. `JavaVM` is process-wide and `Clone + Send + Sync`. Store it in
-the same immutable cache as the global classes and IDs. Publish that cache once:
+frame-scoped. `JavaVM` is process-wide, `Clone + Send + Sync`, one pointer wide,
+and has no `Drop`. Store it in the same immutable cache as the global classes
+and IDs, and publish that cache once:
 
 ```rust
-use std::{panic::AssertUnwindSafe, sync::OnceLock};
+use std::sync::OnceLock;
 
 use jni::{
     Env, JavaVM, NativeMethod, jni_sig, jni_str, native_method,
     objects::{Global, JClass, JMethodID},
-    sys::{JNI_ERR, JNI_VERSION_1_6, jint},
+    sys::jint,
 };
 
 struct JniCache {
@@ -49,7 +59,8 @@ fn build_cache(vm: &JavaVM) -> jni::errors::Result<JniCache> {
         let listener_class = env.new_global_ref(&listener)?;
 
         let bindings = env.find_class(jni_str!("com/example/app/NativeBindings"))?;
-        // SAFETY: NativeBindings.nativePing is static and has signature ()I.
+        // SAFETY: `native_method!` checked the descriptor, and nativePing is a
+        // static method of NativeBindings.
         unsafe { env.register_native_methods(&bindings, &[PING_METHOD])? };
 
         Ok(JniCache {
@@ -60,41 +71,28 @@ fn build_cache(vm: &JavaVM) -> jni::errors::Result<JniCache> {
     })
 }
 
-#[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
-pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) -> jint {
-    let init = std::panic::catch_unwind(AssertUnwindSafe(|| -> Result<(), ()> {
-        let cache = build_cache(&vm).map_err(|_| ())?;
-        JNI_CACHE.set(cache).map_err(|_| ())?;
-        Ok(())
-    }));
-
-    match init {
-        Ok(Ok(())) => JNI_VERSION_1_6,
-        Ok(Err(())) => JNI_ERR,
-        Err(payload) => {
-            discard_panic_payload(payload);
-            JNI_ERR
-        }
-    }
+fn publish_cache(vm: &JavaVM) -> jni::errors::Result<()> {
+    let cache = build_cache(vm)?;
+    // `set` fails only when the library loads twice in one process: fail that load.
+    JNI_CACHE
+        .set(cache)
+        .map_err(|_| jni::errors::Error::FieldAlreadySet("JNI_CACHE".to_owned()))
 }
 ```
 
-`JNI_OnLoad` receives a `JavaVM`, not an env handle, so `EnvUnowned::with_env`
-is not available there. Use raw `catch_unwind`. A panic that escapes this
-function aborts the process, exactly like any other panic that reaches an
-`extern "system"` export.
+Use the `JNI_OnLoad` template in [../SKILL.md](../SKILL.md). Replace the
+`vm.with_local_frame(..)` expression in its closure with `publish_cache(&vm)`.
+The template then logs a failed lookup, returns `JNI_ERR` for any error or
+panic, and returns `JNI_VERSION_1_6` only after the cache is published.
 
 Build all global references and IDs in a local `JniCache`. Register all native
 methods. Run any fallible logger or process setup in the same builder. Call
-`OnceLock::set` once, check its result, and return success only after it succeeds.
-An error before publication drops the local cache and its global references.
+`OnceLock::set` once, check its result, and return success only after it
+succeeds. An error before publication drops the local cache and its global
+references.
 
-If another part of the crate needs its own handle, call `vm.clone()`.
-`jni::JavaVM` is `Clone + Send + Sync`, it is one pointer wide, and it has no
-`Drop`, so a clone can never reach `DestroyJavaVM`. Do not rebuild the handle
-with `unsafe { JavaVM::from_raw(vm.get_raw()) }`: the safe `Clone` impl already
-does it, and an `Arc` around a pointer-sized handle only adds an indirection.
+Other code gets a VM handle from the cache with `vm.clone()`, or from
+`JavaVM::singleton()` on 0.22.
 
 ## Attach and detach
 
@@ -105,17 +103,17 @@ The API differs by crate version. Pick the form that matches your lockfile.
 ```rust
 let vm = &JNI_CACHE.get().expect("JNI_OnLoad must populate JNI_CACHE").vm;
 
-// Long-lived worker: attach once. The thread-local guard detaches at thread
-// exit, and later calls take the cheap "already attached" path.
-let count: Result<i32, jni::errors::Error> =
-    vm.attach_current_thread(|env| -> jni::errors::Result<i32> {
+// Long-lived worker: attach once. The crate detaches at thread exit, and later
+// calls take the cheap "already attached" path.
+let updated: Result<(), jni::errors::Error> =
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
         env.call_method(
             &listener,
             jni::jni_str!("onUpdate"),
-            jni::jni_sig!("(I)I"),
+            jni::jni_sig!("(I)V"),
             &[jni::objects::JValue::Int(update)],
         )?
-        .i()
+        .v()
     });
 
 // One-shot caller: detach as soon as the closure returns.
@@ -130,10 +128,18 @@ Choose between the two by call rate:
 | Worker shape | Form | Reason |
 |--------------|------|--------|
 | Dedicated thread, many callbacks | `attach_current_thread` | One attach for the life of the thread. |
-| Occasional one-shot callback | `attach_current_thread_for_scope` | The thread is never left attached, so it cannot block JVM teardown. |
-| Occasional callback on a pooled thread that keeps running | `attach_current_thread` | A scoped attach on a reused thread pays the attach cost every call. |
+| Occasional one-shot callback on a thread you do not reuse | `attach_current_thread_for_scope` | The thread is never left attached, so it cannot block JVM exit. |
+| Occasional callback on a pooled thread that keeps running | `attach_current_thread` | A scoped attach on a reused thread pays attach and detach every call. |
 
-`jni` 0.22 has no daemon attach variant.
+Each 0.22 attach call pushes a new local frame for the closure, so references
+that the closure creates do not pile up in the thread's base frame. An exception
+that the closure leaves pending is cleared and returned as
+`Error::CaughtJavaException`. `jni` 0.22 has no daemon attachment, so a
+permanent attachment can block `DestroyJavaVM` on a desktop or server JVM. The
+`java` launcher calls `DestroyJavaVM` after `main` returns, and it waits for
+every non-daemon thread. Shut down the Rust runtime
+(`Runtime::shutdown_timeout`) and join every attached thread before `main`
+returns. Android never destroys the VM.
 
 ### jni 0.21: bind the RAII guard
 
@@ -145,74 +151,86 @@ env.call_method(&listener, "onUpdate", "(I)V", &[update.into()])?;
 // Drop of `_guard` calls DetachCurrentThread.
 ```
 
-Failure modes:
-
 | Mistake | Result |
 |---------|--------|
 | `vm.attach_current_thread()?;` with no binding | The temporary guard drops at the end of the statement. The thread is detached before the next JNI call. |
 | `let _ = vm.attach_current_thread()?;` | Same. `let _` drops immediately; it is not a binding. |
-| Thread exits while attached | `JNI WARNING: native thread exiting without DetachCurrentThread`, and a fatal abort on some Android configurations. |
-| Attaching per call in a hot loop | Roughly 5-15 microseconds each on Android. Attach once for the life of the worker instead. |
+| A scoped guard per call in a hot loop | Each call pays attach and detach. Attach once for the life of the worker instead. |
 
-For a long-lived worker that makes many JNI calls on 0.21, use
-`attach_current_thread_as_daemon`. A daemon attachment does not block JVM
-shutdown while the thread is still running.
+For a long-lived worker on 0.21, use `attach_current_thread_permanently`. The
+crate detaches that thread at exit. Do not use `attach_current_thread_as_daemon`:
+0.22 removed it because its semantics are poorly defined. A move from daemon to
+permanent attachment can make a desktop or server JVM hang at exit; apply the
+exit rule above.
 
-## Pure pthread workers
+## Threads attached outside the crate
 
-If a worker is a raw pthread that you do not own the exit path of, register a
-thread-local destructor that detaches:
+Both crate versions detach a thread that attached through the crate's API. Do
+not add a second detach for those threads.
 
-```rust
-// Runs on the worker thread at exit; `vm` comes from the process-wide handle.
-extern "C" fn detach_destructor(_value: *mut libc::c_void) {
-    // JNI_CACHE.get().unwrap().vm.detach_current_thread();
-}
+ART logs these lines at exit for a thread that is still attached:
 
-// Once at startup.
-let mut key: libc::pthread_key_t = 0;
-unsafe { libc::pthread_key_create(&mut key, Some(detach_destructor)) };
+```text
+Native thread exiting without having called DetachCurrentThread (maybe it's going to use a pthread_key_create destructor?)
+Native thread exited without calling DetachCurrentThread
 ```
 
-Set a non-null value for that key on each worker thread after it attaches, so
-the destructor runs at thread exit.
+The first line is a warning: a thread-local destructor can still detach the
+thread after it. The second line is `FATAL` and aborts the process on every
+Android configuration.
 
-Tokio worker threads do not need this. On 0.22 the attach closure owns the
-detach; on 0.21 bind the `AttachGuard` inside the task or the worker closure and
-let `Drop` do the work.
+A thread that C or C++ code attached through raw `AttachCurrentThread` must
+detach itself. If that code cannot control the thread's exit path, it registers
+a `pthread_key_create` destructor that calls `DetachCurrentThread`, and sets a
+non-null key value on each attached thread so that the destructor runs. This is
+the pattern the Android JNI tips describe. Prefer the crate API for every thread
+that Rust owns.
 
 ## Callback from an async task
 
-The task must not capture an env handle. It captures a `JavaVM` clone and a
-global reference, and attaches when it is ready to report:
+Use the env synchronously, extract owned data, then spawn. A JVM thread that
+calls a native method is not a Tokio runtime thread, so spawn through a
+`Handle` that the load-time cache holds. The task captures a `JavaVM` clone and
+a global reference:
 
 ```rust
-// jni 0.22.
-fn handle(env: &mut Env<'_>, vm: JavaVM, listener: Global<JObject<'static>>) {
+use jni::objects::{Global, JObject};
+use jni::{Env, JavaVM};
+use tokio::runtime::Handle;
+
+fn handle(env: &mut Env<'_>, rt: &Handle, vm: JavaVM, listener: Global<JObject<'static>>) {
     let payload = extract_payload(env); // synchronous use of env
 
-    tokio::spawn(async move {
+    rt.spawn(async move {
         do_async_work(&payload).await;
-        let _ = vm.attach_current_thread_for_scope(|env| -> jni::errors::Result<()> {
+        // Tokio reuses worker threads: attach permanently, once per worker.
+        let result = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
             env.call_method(&listener, jni::jni_str!("onComplete"), jni::jni_sig!("()V"), &[])?;
             Ok(())
         });
+        if let Err(error) = result {
+            log::warn!("onComplete callback failed: {error}");
+        }
     });
 }
+
+fn extract_payload(_env: &mut Env<'_>) -> String {
+    todo!()
+}
+
+async fn do_async_work(_payload: &str) {}
 ```
 
-Rules:
+Log the callback error; do not `unwrap` it. The JVM may already be tearing the
+thread down during shutdown. Rules for the global reference:
 
-- Create the global reference on the JVM thread that received the listener
-  object, with `env.new_global_ref(obj)`. A local reference is invalid outside
-  its frame.
-- Drop the global reference when the session is destroyed. A leaked global
-  reference pins the Java object for the life of the process.
-- Wrap the global-reference handle in a type that is not `Copy`. A `Copy`
-  wrapper lets safe code drop `DeleteGlobalRef` twice.
+- Create it on the JVM thread that received the listener object, with
+  `env.new_global_ref(obj)`. A local reference is invalid outside its frame.
+- Drop it when the session is destroyed. A leaked global reference pins the Java
+  object for the life of the process.
+- Wrap a raw global-reference handle in a type that is not `Copy`. A `Copy`
+  wrapper lets safe code call `DeleteGlobalRef` twice.
 - Wrap the callback in a local frame if it creates JNI objects in a loop.
-- Never `unwrap` a JNI error in a path that can run during shutdown. The JVM may
-  already be detaching the thread.
 
 ## Ask the JVM to act on a native socket
 
@@ -250,7 +268,10 @@ fn protect_socket(uds: &mut UnixStream, fd: RawFd) -> io::Result<()> {
 ```
 
 The JVM side reads the descriptor, performs the platform call, and replies `'1'`
-on success.
+on success. An abstract socket name has no filesystem permission, so any local
+process can connect to it. Before it calls `protect`, the JVM side accepts only
+a peer with `socket.peerCredentials.uid == android.os.Process.myUid()` and
+closes every other connection.
 
 ### Option B: direct JNI callback
 
@@ -282,19 +303,20 @@ fn protect_socket(
 }
 ```
 
-Cost: the attachment alone is roughly 5-15 microseconds on Android. Acceptable
-for control-plane sockets. Unacceptable for per-flow socket creation at scale.
+A scoped attach pays attach and detach on every call. That is acceptable for
+control-plane sockets. Measure it before you use it for per-flow sockets.
 
 ## Local reference frames
 
 Every `env.find_class`, `env.get_field`, `env.new_string`, and `env.call_method`
 that returns a `JObject` consumes a local-reference slot. The JNI specification
-guarantees only 16 slots per frame. A VM may offer more, but Android aborts the
-process when its local-reference table overflows. Never assume the frame you
-are in holds more than 16; push your own frame with the capacity you need.
+guarantees only 16 slots per frame. Android before 8.0 (API < 26) caps the table
+and aborts on overflow; Android 8.0 and later has no cap, so a leak shows as
+memory growth. Do not assume the current frame holds more than 16; push your own
+frame with the capacity you need.
 
 ```rust
-// BAD: one local ref per iteration; aborts once the table is full.
+// BAD: one local ref per iteration, all held until the native method returns.
 for client in &clients {
     let s = env.new_string(&client.host)?;
     notify_listener(env, s)?;
@@ -313,17 +335,12 @@ for client in &clients {
 Wrap every loop that creates JNI objects. When the loop fills an array or an
 object that must outlive the loop, create that object in the outer frame and
 wrap only the loop body; a reference created inside the frame dies when the
-frame pops. Size the frame at the element count plus a small margin for the
-references the JNI calls allocate internally.
+frame pops. Size the frame at the number of local references that one iteration
+creates, plus a small margin for the references the JNI calls allocate
+internally.
 
-For a single object with a short scope, `env.auto_local(obj)` (`jni` 0.21) or an
-explicit `delete_local_ref` is enough.
-
-A local reference is valid only inside the frame that created it. To keep a
-Java object between JNI calls, promote it to a global reference with
-`env.new_global_ref(obj)` and drop that reference when the owner dies. Do not
-make the wrapper type `Copy`: a `Copy` handle lets safe code drop
-`DeleteGlobalRef` twice.
+For a single object with a short scope, `obj.auto()` (`jni` 0.22),
+`env.auto_local(obj)` (0.21), or an explicit `delete_local_ref` is enough.
 
 ## Name every thread
 

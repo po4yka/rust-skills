@@ -9,10 +9,10 @@ are in [../SKILL.md](../SKILL.md).
 |---------------|----------|---------------------------|------------------|
 | `Int` | `jint` | `jint` (`i32`) | `i32` |
 | `Long` | `jlong` | `jlong` (`i64`) | `i64` |
-| `Boolean` | `jboolean` | `jboolean` (`u8`) | `bool` |
+| `Boolean` | `jboolean` | 0.22: `jboolean` is `bool`; 0.21: `u8` | `bool` |
 | `String` | `jstring` | 0.22: `s.mutf8_chars(env)?.to_str()`; 0.21: `env.get_string(&s)?` | `String` |
 | `String?` | `jstring` | return `std::ptr::null_mut()` for `None` | `Option<String>` |
-| `ByteArray` | `jbyteArray` | `JByteArray` -> `Vec<u8>`; 0.21 uses `env.convert_byte_array` | `Vec<u8>` |
+| `ByteArray` | `jbyteArray` | `JByteArray`; `env.convert_byte_array(&array)?` copies it into a `Vec<u8>` | `Vec<u8>` (copies); a `&[u8]` argument takes a direct `ByteBuffer` (0.32+) |
 | `LongArray` | `jlongArray` | `JLongArray` | `Vec<i64>` |
 | `Array<String>` | `jobjectArray` | `JObjectArray<JString>`, one element per `set_element` | `Vec<String>` |
 
@@ -42,14 +42,16 @@ match env.throw_new(class.borrowed(), message.borrowed()) {
 let _ = env.throw_new("java/io/IOException", err.to_string());
 ```
 
-Return a default value in the same arm. The exception becomes visible to the
-JVM only after the native function returns. After you call any Java method from
-Rust, check `env.exception_check()` before you use the result; a pending
-exception makes most later JNI calls illegal. To read and clear a pending
-exception, use `env.exception_occurred()` and `env.exception_clear()`.
+On 0.22, `throw_new` returns `Err(Error::JavaException)` after it throws. The
+match above accepts that value, because the pending exception is the intended
+result. Return a default value in the same arm, and make no further JNI call.
+The JVM sees the exception when the native function returns. The pending-exception
+rules for other calls are in [../SKILL.md](../SKILL.md). To inspect a pending
+exception, use `env.exception_occurred()` and then `env.exception_clear()`; on
+0.22, `env.exception_catch()` does both and returns `Error::CaughtJavaException`
+with the class name, message, and stack.
 
-Strip internal detail from the message in release builds. An exception message
-crosses into the app and can reach a log or a bug report:
+Strip internal detail from the message in release builds:
 
 ```rust
 fn user_message(detail: &str, user_message: &str) -> String {

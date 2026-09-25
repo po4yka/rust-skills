@@ -4,6 +4,10 @@ Read this reference when Rust must resolve or call an application class from a
 thread that Rust created. Thread attachment and detachment stay in
 [jni-threading-and-callbacks.md](jni-threading-and-callbacks.md).
 
+Contents: why `FindClass` fails; build one complete startup cache; dynamic
+features and custom loaders; preserve names through R8; test the supported
+worker path; failure triage.
+
 ## Why `FindClass` fails
 
 `FindClass` normally uses the loader of the managed method at the top of the

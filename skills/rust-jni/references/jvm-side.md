@@ -1,8 +1,8 @@
 # The JVM half of the boundary
 
-The Kotlin class that declares the `external fun` is part of the same contract as the
-Rust export. The symbol name is derived from this class character for character, so the
-two files change together or the app fails at run time with `UnsatisfiedLinkError`.
+The Kotlin class that declares the `external fun` is part of the same contract
+as the Rust side. The rules for it are in [../SKILL.md](../SKILL.md); this file
+holds the worked class and the session-handle contract.
 
 ```kotlin
 class NativeBindings : Bindings {
@@ -24,13 +24,37 @@ class NativeBindings : Bindings {
 }
 ```
 
-Rules for this side:
+The class name, the package, and each method's parameter and return types form
+the name and descriptor that the Rust side registers or exports. Change them in
+the same patch as the Rust side.
 
-- Load the library exactly once, from a `companion object` initializer or a
-  shared loader object. A loader object is better when several binding classes
-  share one `.so`.
-- Keep the `external fun` declarations `private` and expose a plain interface.
-  The interface is what tests fake; the `external fun` cannot be faked.
-- Serialize every call that touches a session handle (`mutex.withLock`) unless
-  the Rust side documents itself as thread-safe for that handle. A use-after-free
-  of a handle is a native abort, not an exception.
+- Load the library once, from a `companion object` initializer, or from one
+  shared loader object when several binding classes share one `.so`.
+- Keep `external fun` declarations `private` behind a plain interface
+  (`Bindings` above). Tests fake the interface; they cannot fake an
+  `external fun`.
+
+## Session-handle lifecycle
+
+The common raw-JNI surface is a handle-based session. Write the contract down,
+because the blocking behaviour of each call is part of it:
+
+| Function | Parameters | Returns | Contract |
+|----------|------------|---------|----------|
+| `nativeCreate` | config `String` (often JSON) | `jlong` handle, `0` on failure | Allocates native state. |
+| `nativeStart` | handle, optional `jint` fd | `jint` status or void | State whether it blocks. Blocking versus non-blocking is a compatibility contract. |
+| `nativeStop` | handle | void | Graceful shutdown. Safe to call twice. |
+| `nativePoll*` | handle | `String?` or array | Returns `null` when nothing is pending. Never blocks. |
+| `nativeDestroy` | handle | void | Frees native state. Every later call with that handle is a bug. |
+
+Registry rules:
+
+- Encode a non-zero slot index and a generation in the `jlong` key. On each
+  call, check the slot bounds and the generation under the registry lock before
+  you access the session. Return a Java exception or the documented
+  invalid-handle status when either check fails.
+- On `nativeDestroy`, remove the session and increment the slot generation
+  before you reuse that slot. This rejects a stale handle even when a later
+  session occupies the same slot. Never issue `0`; keep it as the failure value.
+- Surface setup failures as Java exceptions, not as magic return values, unless
+  the return value is already documented as a status code.

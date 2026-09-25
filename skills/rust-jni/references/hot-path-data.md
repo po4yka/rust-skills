@@ -3,6 +3,9 @@
 Deep material for moving bytes between the JVM and Rust. The decision rule is in
 [../SKILL.md](../SKILL.md); this file holds the code and the safety arguments.
 
+Contents: rank the options by copy count; file-descriptor handoff;
+DirectByteBuffer; `JByteArray` and array elements.
+
 ## Rank the options by copy count
 
 | Option | Copies per payload | Use it for |
@@ -14,15 +17,24 @@ Deep material for moving bytes between the JVM and Rust. The decision rule is in
 
 ## File-descriptor handoff
 
-Transfer ownership of the descriptor once, as a `jint`, at session start. Rust
-then reads and writes the device or the socket directly, and the payload never
-crosses JNI again. This is the only option that removes the boundary from the
-data path completely.
+Hand the descriptor over once, as a `jint`, at session start. Rust then reads
+and writes the device or the socket directly, and the payload never crosses JNI
+again. This is the only option that removes the boundary from the data path
+completely.
+
+Decide which side owns the descriptor. Exactly one side closes it:
+
+- The Java side transfers ownership (`ParcelFileDescriptor.detachFd()`): wrap
+  the `jint` in an `OwnedFd` at once (`unsafe { OwnedFd::from_raw_fd(fd) }`),
+  and let Rust close it. Do not duplicate it: nothing would close the original.
+- The Java side keeps ownership (`ParcelFileDescriptor.getFd()`): the JVM side
+  can close the original at any time. Duplicate it inside the call, before any
+  use that outlives the call
+  (`unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()`, which sets
+  `FD_CLOEXEC`), and close only the duplicate.
 
 Rules:
 
-- Duplicate the descriptor (for example with `nix::unistd::dup`) before you use
-  it asynchronously. The JVM side can close or revoke the original.
 - Document who closes the descriptor. A double close is a hard-to-attribute
   failure in an unrelated part of the process, because the number is reused.
 - Do not send the same descriptor twice. Send it at create or at start, and
@@ -58,10 +70,11 @@ Do not widen the returned lifetime or store the slice after the JNI call.
 
 The memory belongs to the JVM. The slice is valid only while a Java reference to
 that buffer is alive. If Rust must retain the buffer after the current call,
-store a `GlobalRef` with the native owner. Do not store a borrowed slice in the
+store a global reference (`Global<JByteBuffer<'static>>` on 0.22, `GlobalRef` on
+0.21) with the native owner. Do not store a borrowed slice in the
 owner. Recreate the slice from the retained buffer only inside a method that
 borrows the owner, and do not let the slice escape that borrow. Drop the slice
-before you drop the `GlobalRef`.
+before you drop the global reference.
 
 The `no other thread writes it concurrently` half of that SAFETY comment is a
 contract with the JVM side, not something Rust can check. Write it down in the
@@ -90,6 +103,10 @@ fn process_config(_bytes: &[u8]) {}
 If a per-packet path already uses `JByteArray`, treat the change to a descriptor
 handoff or a direct buffer as a throughput fix, not a style fix. The copy
 couples throughput to the boundary.
+
+On 0.22, `JPrimitiveArray::get_region(env, start, buf)` replaces the deprecated
+`env.get_byte_array_region`, and `JPrimitiveArray::get_elements` replaces
+`env.get_array_elements`.
 
 Raw `GetByteArrayElements` is different. The VM can return a copy or pin the
 array, and `isCopy` reports that choice. Pair every successful get with

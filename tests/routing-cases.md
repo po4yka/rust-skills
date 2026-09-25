@@ -142,6 +142,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | GlobalRef | rust-jni |
 | FindClass | rust-jni |
 | Android ClassLoader | rust-jni |
+| JNI_OnLoad | rust-jni |
 | Swift calls Rust through a C ABI | rust-swift-ffi |
 | hand-written Swift FFI | rust-swift-ffi |
 | opaque Rust handle in Swift | rust-swift-ffi |
