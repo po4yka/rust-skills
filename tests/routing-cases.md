@@ -298,7 +298,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | shared mutable state | rust-event-loop-state |
 | god object | rust-event-loop-state |
 | system and world | rust-event-loop-state |
-| E0499 in my dispatch loop | rust-event-loop-state |
+| E0499 in a dispatch loop | rust-event-loop-state |
 | coroutine resume | rust-event-loop-state |
 
 ## Phrases that must not reach another skill

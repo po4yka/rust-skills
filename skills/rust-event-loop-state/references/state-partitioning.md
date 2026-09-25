@@ -1,19 +1,38 @@
 # State partitioning for an event loop
 
-Deep material for `SKILL.md`: the runnable versions of the examples it compresses, the
-generic-state registry in full, and the ECS trade in detail.
+Deep material for `SKILL.md`: the full diagnostics and runnable versions of the examples it
+compresses, the generic-state registry in full, and the ECS trade in detail.
 
-Every example was run on rustc 1.97.0, edition 2024, aarch64-apple-darwin. The `bevy_ecs`
-figures come from 0.19.1.
+- [Migration: the handlers already live in the state](#migration-the-handlers-already-live-in-the-state)
+- [Queue drain diagnostic](#queue-drain-diagnostic)
+- [Key-holding handler](#key-holding-handler), with the `E0499` of a `&mut`-holding handler
+- [Capability traits: cutting the god object](#capability-traits-cutting-the-god-object), with the blanket-impl `E0119` and the `?Sized` state
+- [Static plus dynamic state: three versions](#static-plus-dynamic-state-three-versions)
+- [ECS trade](#ecs-trade): the `bevy_ecs` reproduction, the repair, and the test rule
+
+Every `rust,run` block here compiles and runs on rustc 1.98.1, edition 2024. The two
+`bevy_ecs` blocks are not checked automatically. Their output comes from a manual run of
+bevy_ecs 0.19.1 on rustc 1.98.1.
 
 ## Migration: the handlers already live in the state
 
-`SKILL.md` says to take the collection out for the duration of the tick. This is the whole
-pattern, including the trap. A handler may register a new handler while the tick runs. Those
-newcomers land in `st.handlers`, which `mem::take` left empty, so a plain `st.handlers = hs`
-at the end throws them away. Append first.
+The `compile_fail` block in `SKILL.md` (handlers as a field of `State`, dispatched from
+`st.handlers.iter_mut()`) gives:
 
-```rust
+```text
+error[E0499]: cannot borrow `*st` as mutable more than once at a time
+6 |     for h in st.handlers.iter_mut() {
+  |              ----------------------
+  |              first mutable borrow occurs here / first borrow later used here
+7 |         h.handle(st, &ev);
+  |                  ^^ second mutable borrow occurs here
+```
+
+This is the whole `mem::take` pattern, including the trap. A handler may register a new
+handler while the tick runs. Those newcomers land in `st.handlers`, which `mem::take` left
+empty, so a plain `st.handlers = hs` at the end throws them away. Append first.
+
+```rust,run
 struct Event(u32);
 trait Handler { fn handle(&mut self, st: &mut State, ev: &Event); }
 
@@ -52,19 +71,49 @@ fn main() {
 `mem::take` needs `Vec<Box<dyn Handler>>: Default`, which every `Vec` has. It is a pointer
 swap and allocates nothing. Two limits to know before you keep it:
 
-- A panic between the take and the put-back loses the whole handler set. Wrap the loop body,
-  or move the field out for good.
+- A panic between the take and the put-back loses the whole handler set. This matters when
+  anything uses the state after the panic: `catch_unwind`, a poisoned `Mutex` recovered with
+  `PoisonError::into_inner`, or a thread that outlives a panicking worker. Move the field out
+  for good in that case.
 - A handler that reads `st.handlers.len()` sees an empty or partial list during the tick.
 
 Treat this as a migration step. The end state is a `State` with no handler field.
 
-## The runnable key-holding handler
+## Queue drain diagnostic
 
-`SKILL.md` shows the `E0499` that a `&mut`-holding handler produces. This is the shape that
-works. The handler is constructed without touching the state, so the same registry serves
-every tick:
+`while let Some(ev) = st.queue.front() { handle(st, ev); }` keeps the reference from
+`front()` live across the dispatch call, so the whole state stays borrowed:
 
-```rust
+```text
+error[E0502]: cannot borrow `*st` as mutable because it is also borrowed as immutable
+8 |     while let Some(ev) = st.queue.front() {
+  |                          -------- immutable borrow occurs here
+9 |         handle(st, ev);
+  |         ------^^^^^^^^
+  |         mutable borrow occurs here / immutable borrow later used by call
+```
+
+## Key-holding handler
+
+A handler built from a field of the state carries that borrow into every dispatch.
+`struct Caching<'a> { cache: &'a mut Cache }`, constructed as
+`Caching { cache: &mut st.caches[0] }` and then dispatched with `h.handle(st)`, gives:
+
+```text
+error[E0499]: cannot borrow `*st` as mutable more than once at a time
+10 |     let mut h = Caching { cache: &mut st.caches[0] };
+   |                                       --------- first mutable borrow occurs here
+11 |     h.handle(st);
+   |       ------ ^^ second mutable borrow occurs here
+   |       first borrow later used by call
+```
+
+This is the shape that works. The handler is constructed without touching the state, so the same registry serves
+every tick. A handler that needs two slots at once resolves both keys with one
+`get_disjoint_mut` call (Rust 1.86+). An overlapping or out-of-range pair returns `Err`
+instead of a panic:
+
+```rust,run
 struct Cache { hits: u32 }
 struct State { caches: Vec<Cache> }
 
@@ -77,13 +126,25 @@ impl Handler for Caching {
         st.caches[self.slot].hits += n;
     }
 }
+struct Transfer { from: usize, to: usize }
+impl Handler for Transfer {
+    fn handle(&mut self, st: &mut State) {
+        let Ok([from, to]) = st.caches.get_disjoint_mut([self.from, self.to]) else { return };
+        to.hits += from.hits;
+        from.hits = 0;
+    }
+}
 
 fn main() {
     let mut st = State { caches: vec![Cache { hits: 0 }, Cache { hits: 0 }] };
-    let mut handlers: Vec<Box<dyn Handler>> = vec![Box::new(Caching { slot: 0 })];
+    let mut handlers: Vec<Box<dyn Handler>> = vec![
+        Box::new(Caching { slot: 0 }),
+        Box::new(Transfer { from: 0, to: 1 }),
+        Box::new(Transfer { from: 1, to: 1 }),   // overlapping keys: skipped, no panic
+    ];
     for h in handlers.iter_mut() { h.handle(&mut st); }
-    assert_eq!(st.caches[0].hits, 2);
-    println!("hits={}", st.caches[0].hits);   // hits=2
+    assert_eq!((st.caches[0].hits, st.caches[1].hits), (0, 2));
+    println!("hits={} {}", st.caches[0].hits, st.caches[1].hits);   // hits=0 2
 }
 ```
 
@@ -94,8 +155,9 @@ two slots change meaning and the old last index goes out of bounds. Two repairs,
 preference:
 
 - Never remove. Replace the slot content with a tombstone and reuse the slot.
-- Store a generational key: `struct Key { slot: u32, gen: u32 }`, and bump `gen` in the slot
-  on every reuse. A `handle` that finds a generation mismatch returns without writing.
+- Store a generational key: `struct Key { slot: u32, generation: u32 }`, and bump the slot's
+  generation on every reuse. A `handle` that finds a generation mismatch returns without
+  writing. Do not name the field `gen`: it is a reserved keyword in edition 2024.
 
 ## Capability traits: cutting the god object
 
@@ -111,7 +173,7 @@ capability trait per group of fields a handler needs together:
 
 Three handlers with three different bounds, all in one registry, dispatched together:
 
-```rust
+```rust,run
 struct Mouse;
 
 trait TimeState { fn now(&mut self) -> u64; }
@@ -147,8 +209,25 @@ fn main() {
 }
 ```
 
-The three impls monomorphise to the same `dyn Handler<App>` vtable at the registration site.
-Nothing is dynamic at run time except the handler dispatch itself.
+The three impls monomorphize to `Handler<App>` at the registration site, and each concrete
+type gets its own `dyn Handler<App>` vtable. Nothing is dynamic at run time except the
+handler dispatch itself.
+
+### The blanket impl and `E0119`
+
+`impl<S> Handler<S> for Standalone` overlaps every concrete state, and stable Rust has no
+specialization. Adding `impl Handler<App> for Standalone` later gives:
+
+```text
+error[E0119]: conflicting implementations of trait `Handler<App>` for type `Standalone`
+ 5 | impl<S> Handler<S> for Standalone {
+   | --------------------------------- first implementation here
+10 | impl Handler<App> for Standalone {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting implementation for `Standalone`
+```
+
+`impl<S: TimeState> Handler<S> for Standalone` gives the same `E0119` while
+`App: TimeState` holds.
 
 ### `?Sized` when the state is a trait object
 
@@ -156,7 +235,7 @@ Add `S: ?Sized` to the trait and to every impl when the loop wants to pass a `&m
 Capability` rather than a concrete state. Without it, `S` carries an implicit `Sized` bound
 and the trait-object state is rejected:
 
-```rust
+```rust,run
 struct Mouse;
 
 trait TimeState { fn now(&mut self) -> u64; }
@@ -185,12 +264,12 @@ fn main() {
 because it relaxes a bound. Those impls stay `Sized`-only, so a trait-object state still does
 not work until every impl is relaxed as well. Write it once, when you write the trait.
 
-## Static plus dynamic state: both versions
+## Static plus dynamic state: three versions
 
 The `DerefMut` version is rejected. `&mut ctx.frame` goes through `deref_mut`, which takes
 `&mut self` on the whole wrapper, so the second accessor has nothing left to borrow:
 
-```rust,compile_fail
+```rust,compile_fail,E0499
 struct World { entities: Vec<u32> }
 struct Static { frame: u64 }
 struct Ctx<S> { statics: S, world: World }
@@ -219,13 +298,11 @@ error[E0499]: cannot borrow `*ctx` as mutable more than once at a time
    |                            --- first mutable borrow occurs here
 18 |     let w: &mut World = ctx.world_mut();
    |                         ^^^ second mutable borrow occurs here
-19 |     w.entities.push(*f as u32);
-   |                     -- first borrow later used here
 ```
 
 Plain fields compile, because each field borrow names a different place:
 
-```rust
+```rust,run
 struct World { entities: Vec<u32> }
 struct Static { frame: u64 }
 struct Ctx<S> { statics: S, world: World }
@@ -249,7 +326,7 @@ fn main() {
 When the fields must stay private, give the wrapper one method that returns both halves.
 Two accessors, one per half, cannot work: the borrow checker sees two `&mut self` calls.
 
-```rust
+```rust,run
 struct World { entities: Vec<u32> }
 struct Static { frame: u64 }
 struct Ctx<S> { statics: S, world: World }
@@ -273,11 +350,11 @@ fn main() {
 }
 ```
 
-## The ECS trade in full
+## ECS trade
 
 | Property | Plain struct plus handler registry | ECS-shaped dynamic world |
 | --- | --- | --- |
-| Aliasing detection | Compile time, `E0499` and `E0502` | Run time, when the schedule initialises the system parameters |
+| Aliasing detection | Compile time, `E0499` and `E0502` | Run time, when the schedule initializes the system parameters |
 | Adding a component or field | Edit the state struct. Every crate that names it recompiles | Register a new component type. No shared struct to edit |
 | Component set decided by | The crate that defines the state | Plugins, scripts, save files, an editor |
 | Cost of a wrong access pattern | The build fails | The process panics, in the first run of the schedule that holds that system |
@@ -316,23 +393,44 @@ fn main() {
 Default features:
 
 ```text
-thread 'main' panicked at .../bevy_ecs-0.19.1/src/query/state.rs:216:13:
+thread 'main' (<tid>) panicked at .../bevy_ecs-0.19.1/src/query/state.rs:216:13:
 error[B0001]: <Enable the debug feature to see the name> in system <Enable the debug feature
 to see the name> accesses component(s) <Enable the debug feature to see the name> in a way
 that conflicts with a previous system parameter. Consider using `Without<T>` to create
-disjoint Queries or merging conflicting Queries into a `ParamSet`.
+disjoint Queries or merging conflicting Queries into a `ParamSet`. See:
+https://bevy.org/learn/errors/b0001
 ```
 
 With `bevy_ecs = { version = "0.19.1", features = ["debug"] }`:
 
 ```text
-thread 'main' panicked at .../bevy_ecs-0.19.1/src/query/state.rs:216:13:
-error[B0001]: Query<'_, '_, &mut Health> in system app::bad_system accesses component(s)
-Health in a way that conflicts with a previous system parameter.
+thread 'main' (<tid>) panicked at .../bevy_ecs-0.19.1/src/query/state.rs:216:13:
+error[B0001]: Query<&mut Health> in system app::bad_system accesses component(s) Health in a
+way that conflicts with a previous system parameter. Consider using `Without<T>` to create
+disjoint Queries or merging conflicting Queries into a `ParamSet`. See:
+https://bevy.org/learn/errors/b0001
 ```
 
-Turn the debug feature on in the dev profile of any workspace that uses this engine. The
-default message names neither the system, nor the query, nor the component.
+The default message names neither the system, nor the query, nor the component. Enable the
+debug feature for tests through a dev-dependency. Resolver 2 and later activate a
+dev-dependency's features only for targets that need dev-dependencies, so every `cargo test`
+gets the names with no flag, and `cargo build` and `cargo run` stay unchanged:
+
+```toml
+[dependencies]
+bevy_ecs = "0.19.1"
+
+[dev-dependencies]
+bevy_ecs = { version = "0.19.1", features = ["debug"] }
+```
+
+Edition 2024 selects resolver 3. A virtual workspace has no edition, so set `resolver = "3"`
+in its root manifest. Resolver 1 applies the dev-dependency features to every build.
+
+For names in `cargo run` during development, declare a feature of your own,
+`ecs-debug = ["bevy_ecs/debug"]` under `[features]`, and run `cargo run --features ecs-debug`.
+With the `bevy` crate instead of `bevy_ecs`, write `bevy/debug` in both places. `bevy_ecs/debug`
+is an error there, because `bevy_ecs` is not a direct dependency.
 
 ### The repair
 
@@ -364,10 +462,11 @@ cover different entities: `Query<&mut Health, With<Player>>` plus
 `Query<&mut Health, Without<Player>>` have disjoint access sets, so no parameter set is
 needed and both queries stay live at once.
 
-### The CI rule
+### The test rule
 
-The panic fires when the schedule initialises the system parameters, before the system body
+The panic fires when the schedule initializes the system parameters, before the system body
 runs. A run condition that returns false does not hide the conflict, and an empty world does
-not hide it. Only a schedule that never runs hides it. Add one test that builds every real
-schedule and runs each once against an empty world. It costs one frame and it converts the
-whole class of conflicts back into a build-time failure.
+not hide it: `bad_system.run_if(|| false)` in a schedule run once against `World::new()`
+panics with the same `B0001`. Only a schedule that never runs hides it. Add one test that
+builds every real schedule and runs each once against an empty world. It costs one frame,
+and it turns the whole class of conflicts into a test failure.
