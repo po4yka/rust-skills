@@ -201,6 +201,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | custom_newtype | uniffi-boundary |
 | UDL | uniffi-boundary |
 | XCFramework | uniffi-packaging-versioning |
+| XCFramework | rust-ios-build |
+| xcodebuild -create-xcframework | rust-ios-build |
 | RustBuffer | uniffi-packaging-versioning |
 | checksum mismatch | uniffi-packaging-versioning |
 | mobile support matrix | uniffi-packaging-versioning |
