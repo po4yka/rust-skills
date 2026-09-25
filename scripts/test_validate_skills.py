@@ -102,14 +102,17 @@ license: BSD-3-Clause
         self.assertIsNotNone(validate_skills.NAME_RE.fullmatch("rust-example"))
         self.assertIsNone(validate_skills.NAME_RE.fullmatch("rust--example"))
 
-    def run_skill(self, frontmatter: str) -> list[str]:
+    def run_skill(self, frontmatter: str, body: str = "", files: dict[str, str] | None = None) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             skill = root / "skills" / "rust-example"
             skill.mkdir(parents=True)
             (skill / "SKILL.md").write_text(
-                f"---\n{frontmatter}\n---\n# Example\n", encoding="utf-8"
+                f"---\n{frontmatter}\n---\n# Example\n{body}", encoding="utf-8"
             )
+            for name, content in (files or {}).items():
+                (skill / name).parent.mkdir(parents=True, exist_ok=True)
+                (skill / name).write_text(content, encoding="utf-8")
             original_root = validate_skills.ROOT
             try:
                 validate_skills.ROOT = root
@@ -194,6 +197,42 @@ license: BSD-3-Clause"""
         found = self.run_skill(frontmatter)
         self.assertEqual(len(found), 1)
         self.assertIn("must start with 'Use when '", found[0])
+
+    VALID = """name: rust-example
+description: Use when you need a sufficiently detailed example for link and file size validation.
+license: BSD-3-Clause"""
+
+    def test_skill_over_the_line_limit_fails(self):
+        found = self.run_skill(self.VALID, body="line\n" * validate_skills.MAX_SKILL_LINES)
+        self.assertEqual(len(found), 1)
+        self.assertIn("lines, the limit is", found[0])
+
+    def test_links_resolve_from_the_file_that_holds_them(self):
+        found = self.run_skill(
+            self.VALID,
+            body="Read [a](references/a.md) when needed.\n",
+            files={
+                "references/a.md": "See [b](b.md#part) and [back](../SKILL.md) and [web](https://example.com).\n",
+                "references/b.md": "# B\n",
+            },
+        )
+        self.assertEqual(found, [])
+
+    def test_missing_sibling_reference_fails(self):
+        found = self.run_skill(self.VALID, files={"references/a.md": "See [b](b.md).\n"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("missing file: b.md", found[0])
+
+    def test_link_into_another_skill_fails(self):
+        # An install of one skill has no sibling skill directories.
+        found = self.run_skill(self.VALID, body="See [x](../rust-other/SKILL.md).\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("outside its skill directory", found[0])
+
+    def test_repository_path_to_a_skill_fails(self):
+        found = self.run_skill(self.VALID, body="See `skills/rust-other/references/x.md`.\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("repository path", found[0])
 
     def test_unclosed_rust_fence_fails(self):
         validate_skills.check_rust_fences("# Example\n\n```rust\nfn main() {}\n", "example.md")

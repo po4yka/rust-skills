@@ -101,6 +101,9 @@ NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_NAME = 64
 MAX_DESCRIPTION = 1024
 MIN_DESCRIPTION = 80
+# The Agent Skills spec recommends a SKILL.md under 500 lines. Longer material
+# belongs in references/, which the agent opens only when it needs it.
+MAX_SKILL_LINES = 500
 MAX_COMPATIBILITY = 500
 
 failures: list[str] = []
@@ -195,6 +198,9 @@ def check_skill(skill_dir: Path) -> None:
         return
 
     text = skill_md.read_text(encoding="utf-8")
+    lines = len(text.splitlines())
+    if lines > MAX_SKILL_LINES:
+        fail(where, f"SKILL.md has {lines} lines, the limit is {MAX_SKILL_LINES}; move material to references/")
     fields = split_frontmatter(text, where)
     if fields is None:
         return
@@ -276,11 +282,24 @@ def check_skill(skill_dir: Path) -> None:
         rel = str(markdown.relative_to(ROOT))
         text = markdown.read_text(encoding="utf-8")
         check_rust_fences(text, rel)
-        targets = set(re.findall(r"\]\((references/[^)#]+)\)", text))
-        targets |= set(re.findall(r"`(references/[^`]+\.md)`", text))
+        targets = set(re.findall(r"`(references/[^`]+\.md)`", text))
         for target in sorted(targets):
             if not (skill_dir / target).is_file():
                 fail(rel, f"points at a missing reference file: {target}")
+        # A Markdown link resolves from the file that holds it. An installed
+        # skill carries only its own directory, so a link that leaves it, or a
+        # repository path to another skill, is dead after `npx skills add`.
+        for target in sorted(set(re.findall(r"\]\(([^)\s]+)\)", text))):
+            path = target.split("#", 1)[0]
+            if not path or re.match(r"[a-z][a-z0-9+.-]*:", path):
+                continue
+            resolved = (markdown.parent / path).resolve()
+            if not resolved.is_relative_to(skill_dir.resolve()):
+                fail(rel, f"links outside its skill directory: {target}; name the other skill instead")
+            elif not resolved.exists():
+                fail(rel, f"points at a missing file: {target}")
+        for span in sorted(set(re.findall(r"`(skills/[a-z0-9-]+/[^`]*)`", text))):
+            fail(rel, f"names a repository path: {span}; name the skill, or use a path relative to this file")
 
 
 def check_routing_cases(descriptions: dict[str, str]) -> None:
