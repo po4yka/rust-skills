@@ -1,27 +1,16 @@
 ---
 name: rust-variance
-description: Use when a lifetime coercion is refused and you must decide whether a type constructor is covariant, contravariant, or invariant, or when you add a lifetime parameter to a public type. Covers three one-line probes that settle any variance question in one rustc run, the variance of &T, &mut T, *const T, *mut T, Box, Vec, function parameters, Cell, Mutex, dyn Trait and every PhantomData form, why traits match their parameters and associated types by equality so a fn item returning &'static str fails resize_with with E0597, the three fixes for a producer whose output lives too long, unbounded lifetimes from a raw-pointer deref, and why adding interior mutability to a published struct is a breaking change. Triggers on "variance", "covariant", "contravariant", "subtyping", "lifetime may not live long enough" on a coercion, "is invariant over the parameter", "borrowed for 'static", "resize_with", "unbounded lifetime", "phantomdata variance", "dyn fn lifetime", "&mut is invariant", or "sender is invariant".
+description: Use when a lifetime coercion is refused ("is invariant over the parameter", "borrowed for 'static", "lifetime may not live long enough" on a return or argument), when deciding whether a type is covariant, contravariant, or invariant, or when adding a lifetime parameter, a PhantomData variance marker, or interior mutability to a public type. Also for subtyping questions such as a fn item that fails a trait bound (resize_with), dyn Fn lifetime parameters, and an unbounded lifetime from a raw pointer. Triggers on "variance", "phantomdata variance", "&mut is invariant", "sender is invariant".
 license: BSD-3-Clause
 ---
 
 # Rust variance
 
-## Purpose
+The question: does a value that holds `'b` fit where the compiler asks for `'a`, given
+`'b: 'a`? The type constructor around the lifetime decides, not the lifetime. Variance belongs to
+type constructors only: a trait bound matches by equality, so nothing coerces through it.
 
-This skill answers one question: does a value that holds `'b` fit where the compiler asks for
-`'a`, given `'b: 'a`. The answer comes from the type constructor around the lifetime, not from
-the lifetime.
-
-Do not get this sentence wrong: **variance belongs to type constructors only.** A trait matches
-its parameters and its associated types by equality, so nothing coerces through a trait bound.
-A named function *item* that returns `&'static str` therefore does not satisfy
-`F: FnMut() -> &'a str`. Its `fn` pointer type does satisfy it, because the pointer type itself
-subtypes. See fix 3 below.
-
-Every diagnostic below is copied from rustc 1.97.0, edition 2024, aarch64-apple-darwin.
-
-Raw-pointer soundness belongs to `rust-unsafe`. Reading E0597 and E0521 in general belongs to
-`rust-compiler-errors`. This skill covers only the coercion decision.
+Every quoted diagnostic comes from rustc 1.98.1, edition 2024, aarch64-apple-darwin.
 
 ## Route the symptom to a section
 
@@ -30,19 +19,21 @@ Raw-pointer soundness belongs to `rust-unsafe`. Reading E0597 and E0521 in gener
 | You must know the variance of a type you own | [Settle it with a probe](#settle-it-with-a-probe) |
 | `note: the struct X<T> is invariant over the parameter T` | [The variance table](#the-variance-table) |
 | `note: mutable references are invariant over their type parameter` | [Settle it with a probe](#settle-it-with-a-probe) |
+| An invariant type accepts a shorter lifetime through `dyn` or an array-to-slice change (a `&mut` unsize inside `Cell` needs 1.98; run `cargo +<msrv> check`) | [Settle it with a probe](#settle-it-with-a-probe) |
+| A raw-pointer deref returns `&'a T` with no `'a` in the inputs | [Unbounded lifetimes](#unbounded-lifetimes-come-from-a-raw-pointer) |
+| `note: raw pointer casts of trait objects cannot extend lifetimes` | [Unbounded lifetimes](#unbounded-lifetimes-come-from-a-raw-pointer) |
+| A `Sender`, handle, or queue refuses to coerce | [Coerce the message, not the handle](#coerce-the-message-not-the-handle) |
+| You add `Cell`, `RefCell`, or `Mutex` to a published struct (a breaking change; lock it with a `compile_fail` doctest and `cargo test --doc`) | [Variance is public API](#variance-is-public-api) |
 | `note: requirement that the value outlives 'static introduced here`, pointing at a trait bound | [Traits match by equality](#traits-match-their-parameters-by-equality) |
 | `error[E0597]` at `resize_with`, `map`, or any callback argument | [Traits match by equality](#traits-match-their-parameters-by-equality) |
 | `error[E0106]: missing lifetime specifier` on `fn() -> &str` | [Three fixes](#three-fixes-for-a-producer-whose-output-lives-too-long) |
 | `lifetime may not live long enough` on a `Box<dyn Fn(&'a T)>` field | [A free lifetime in `dyn Trait`](#a-free-lifetime-in-dyn-trait-makes-it-invariant) |
-| A `Sender`, handle, or queue refuses to coerce | [Coerce the message, not the handle](#coerce-the-message-not-the-handle) |
-| A raw-pointer deref returns `&'a T` with no `'a` in the inputs | [Unbounded lifetimes](#unbounded-lifetimes-come-from-a-raw-pointer) |
-| You add `Cell`, `RefCell`, or `Mutex` to a published struct | [Variance is public API](#variance-is-public-api) |
-| The full table, the traps, and the worked unsound channel | [references/variance-tables.md](references/variance-tables.md) |
+| `type annotation requires that ... is borrowed for 'static` at a `&mut` argument | [A `&mut` parameter](#a-mut-parameter-pins-the-callers-lifetime) |
+| You script probes, or need every exact note, or the worked unsound channel | Read [references/variance-tables.md](references/variance-tables.md) |
 
 ## Settle it with a probe
 
-Do not reason about variance. Compile these three one-line functions and read the result. This is
-the most reusable item in this skill.
+Do not reason about variance. Compile these three one-line functions and read the result.
 
 ```rust,ignore
 // probe.rs — replace `C` with the type under test, `S` with a type that has a lifetime.
@@ -63,20 +54,8 @@ rustc --edition 2024 --crate-type lib --emit=metadata probe.rs -o probe.rmeta
 | rejected | compiles | contravariant in `T` |
 | rejected | rejected | invariant in `T` |
 
-The covariant probe on `Vec<T>` compiles, so `Vec` accepts a longer-lived element:
-
-```rust
-fn cov<'a, 'b: 'a>(x: Vec<&'b u8>) -> Vec<&'a u8> { x }
-```
-
-The contravariant probe on `fn(T)` compiles, so a handler for a short-lived argument serves as
-a handler for a long-lived one:
-
-```rust
-fn con<'a, 'b: 'a>(x: fn(&'a u8)) -> fn(&'b u8) { x }
-```
-
-Both probes fail on `Cell<T>`, and rustc names the rule in a note:
+`Vec<T>` passes `cov`. `fn(T)` passes `con`, so a handler for a short-lived argument serves as a
+handler for a long-lived one. `Cell<T>` fails both, and rustc names the rule in a note:
 
 ```rust,compile_fail
 use std::cell::Cell;
@@ -90,7 +69,9 @@ error: lifetime may not live long enough
   = note: the struct `Cell<T>` is invariant over the parameter `T`
 ```
 
-One trap. Never write a `'static` outer reference into a probe. This compiles, and it proves
+Two traps make a probe lie.
+
+**A `'static` outer reference.** Never write one into a probe. This compiles, and it proves
 nothing, because `&'static mut` forces `&'b u8: 'static` and collapses both lifetimes:
 
 ```rust
@@ -100,6 +81,19 @@ fn degenerate<'a, 'b: 'a>(x: &'static mut &'b u8) -> &'static mut &'a u8 { x }
 Use a fresh outer lifetime instead: `fn p<'x, 'a: 'x, 'b: 'a>(x: &'x mut &'b u8) -> &'x mut &'a u8`.
 That form is rejected with `note: mutable references are invariant over their type parameter`, which
 is the true answer for `&mut T`.
+
+**An unsizing step.** The `{ x }` return is a coercion site. The trap applies when the outermost
+probe type is a std pointer or cell that implements `CoerceUnsized` (such as `&`, `&mut`,
+`*const`, `*mut`, `NonNull`, `Box`, `Rc`, `Arc`, `Pin`, `Cell`, `RefCell`, `UnsafeCell`) and it
+holds `dyn Trait + 'b`. An unsize coercion then shortens the lifetime even in an invariant
+position, so `Cell<Box<dyn Debug + 'b>>` coerces to `Cell<Box<dyn Debug + 'a>>`. Rust 1.98 adds
+an inner `&'b mut` to the coercions that do this. A compiles verdict then measures the
+coercion, not the variance. Wrap such a probe type in `Vec<...>`, which forwards no coercion. A
+rejected verdict needs no wrapper. A probe of a type you define needs none either, because a
+type of your own cannot implement `CoerceUnsized` on stable. Never let the output differ from
+the input in anything but the lifetime (array to slice, `T` to `dyn Trait`). Read
+[references/variance-tables.md](references/variance-tables.md) for the per-version table when
+code that passes through such a coercion compiles on one toolchain and fails on another.
 
 ## The variance table
 
@@ -122,14 +116,126 @@ is the true answer for `&mut T`.
 
 Two rules generate the whole table:
 
-- A struct or enum takes the **strictest** variance of its fields, computed per parameter. One
-  `Cell<T>` field makes the whole type invariant in `T`.
+- A struct or enum computes variance per parameter from its fields. Uses of one variance keep
+  it. Uses of different variances make the parameter **invariant**. One `Cell<T>` field makes the
+  whole type invariant in `T`, and so does a `fn() -> T` field next to a `fn(T)` field.
 - Everything built on `UnsafeCell<T>` is invariant in `T`, because a shared reference to it
-  permits a write. That is `Cell`, `RefCell`, `Mutex`, `RwLock`, the atomics, and every channel
+  permits a write. That is `Cell`, `RefCell`, `Mutex`, `RwLock`, `AtomicPtr`, and every channel
   handle in `std`.
 
-`references/variance-tables.md` has the exact rustc note for each invariant row, and the probe
-file that produced them.
+A parameter that no field stores needs a `PhantomData` that states the intent:
+`PhantomData<&'a T>` to borrow, `PhantomData<T>` to own, `PhantomData<fn(T)>` for
+contravariance, `PhantomData<*mut T>` or `PhantomData<Cell<T>>` for invariance.
+`PhantomData<fn(T)>` is sound only for a type that never stores or drops a `T`; see
+[Coerce the message](#coerce-the-message-not-the-handle). `PhantomData<fn(T) -> T>` also gives
+invariance and keeps `Send` and `Sync` for every `T`; `PhantomData<*mut T>` removes both. Read
+the `PhantomData` table in [references/variance-tables.md](references/variance-tables.md) when
+the auto traits matter.
+
+## Unbounded lifetimes come from a raw pointer
+
+An output lifetime that appears in no input is unbounded: every call site picks its own, and the
+compiler agrees to anything. A raw-pointer deref is the usual source. This compiles, reads
+freed memory at run time with an unpredictable result, and Miri (nightly 2026-05-15) reports
+`constructing invalid value of type &std::string::String: encountered a dangling reference (use-after-free)`:
+
+```rust
+// UB: `'a` is tied to no input, so `escaped` outlives `owned`.
+unsafe fn deref_unbounded<'a, T>(p: *const T) -> &'a T { unsafe { &*p } }
+
+fn main() {
+    let escaped: &String;
+    {
+        let owned = String::from("gone");
+        escaped = unsafe { deref_unbounded(&owned as *const String) };
+    }
+    println!("{escaped}");
+}
+```
+
+Borrowing the pointer variable is not enough. It proves that the pointer value is alive, not
+that its pointee is alive. Tie the output to the actual owner, or return a guard that keeps the
+allocation alive. An `unsafe` constructor must state and enforce the pointee-validity contract;
+a borrow of `*const T` cannot replace it. Read
+[references/variance-tables.md](references/variance-tables.md) when you need the exact-owner
+accessor, which needs no dereference.
+
+These std functions hand out an unbounded lifetime the same way: `<*const T>::as_ref`,
+`<*mut T>::as_mut`, `NonNull::as_ref` and `as_mut`, `as_ref_unchecked` and `as_mut_unchecked`
+(stable since 1.95), `slice::from_raw_parts`, and `CStr::from_ptr`. When no input carries the
+lifetime, take `&self` on a wrapper that owns the pointer, or return a guard. The `rust-unsafe`
+skill, when it is installed, owns the pointer-validity rules and the Miri workflow.
+
+Since Rust 1.94 a raw-pointer cast cannot extend the lifetime bound of a trait object, and old
+unsafe code that does fails with `note: raw pointer casts of trait objects cannot extend
+lifetimes`. Keep `'a` in the stored type. The longer bound can make a method with a
+`where Self: 'x` bound callable through a vtable that has no entry for it
+(rust-lang/rust#141402). Use `transmute` only when no method of the trait has a lifetime bound on
+`Self` and the owner outlives every use of the pointer, and state both facts in the `SAFETY`
+comment. Read [references/variance-tables.md](references/variance-tables.md) when you need the
+rejected cast and the exact `transmute` form.
+
+## Coerce the message, not the handle
+
+`std::sync::mpsc::Sender<T>` is invariant in `T`. Every clone is the same type, so the first call
+site that demands `'static` pins the whole channel, and every borrowed source fails with
+``error[E0597]: `storage` does not live long enough``.
+
+The message stays covariant even though the handle does not. Write each consumer as
+`Sender<Message<'_>>`, never `Sender<Message<'static>>`, and coerce at the send site. When a
+consumer moves the sender into `thread::spawn`, every producer needs `Message<'static>`, and no
+variance trick helps: make the element type own its data. Read
+[references/variance-tables.md](references/variance-tables.md) when you need the rejected and
+repaired pair.
+
+Never repair this with a hand-rolled contravariant handle. A `Sender<T>` whose only mention of
+`T` is `PhantomData<fn(T)>` compiles, coerces to `Sender<Message<'static>>`, escapes into a
+`'static` context with short-lived values still queued, and drops them after the borrow ends.
+Miri reports a use-after-free in the message destructor. The same reference holds the worked
+code and the exact Miri output.
+
+## Variance is public API
+
+Wrapping a field in `Cell`, `RefCell`, `Mutex`, `RwLock`, or any `UnsafeCell` flips the struct
+from covariant to invariant. Downstream code that shortened the lifetime stops compiling. Treat
+it as a breaking change and record it in the breaking-change section of the changelog.
+`ConfigV1<'a> { name: &'a str }` shortens from `'static` to `'a`. `ConfigV2<'a> { name:
+Cell<&'a str> }` refuses the same coercion with ``note: the struct `ConfigV2<'a>` is invariant
+over the parameter `'a` ``. Read [references/variance-tables.md](references/variance-tables.md)
+when you need that pair as code.
+
+Two more field changes break the same coercion. A `*mut T` field, or a `Box<dyn Fn(&'a T)>` field
+in place of `fn(&'a T)`, makes the struct invariant over `'a`. A `&'a mut T` field is different: it
+makes the struct invariant over `T`, and keeps it covariant over `'a`, so it breaks only a type
+coercion.
+
+Code that shortens a lifetime through a `&mut` unsize coercion inside `Cell`, `RefCell`, or
+`UnsafeCell` needs `rust-version = "1.98"`. Run `cargo +<msrv> check` when the MSRV is lower.
+
+Lock the variance of each public type with a lifetime parameter, so `cargo check` fails on the
+field change before a downstream crate does. Keep the covariant probe in the crate as a private
+function whose name starts with `_`, which keeps `dead_code` quiet:
+`fn _config_is_covariant<'a, 'b: 'a>(c: ConfigV1<'b>) -> ConfigV1<'a> { c }`.
+
+To lock intended invariance, put a `compile_fail` doctest on the type, in a library target, and
+run `cargo test --doc`. A doctest compiles as a separate crate, so the type must be public and
+the doctest must import it by its crate path. A `compile_fail` doctest passes on any compile
+error, a wrong path included, so keep a compiling twin with the same import:
+
+```rust
+use std::cell::Cell;
+
+/// ```
+/// use my_crate::ConfigV2;
+/// fn same<'a>(c: ConfigV2<'a>) -> ConfigV2<'a> { c }
+/// ```
+///
+/// ```compile_fail
+/// use my_crate::ConfigV2;
+/// fn cov<'a, 'b: 'a>(c: ConfigV2<'b>) -> ConfigV2<'a> { c }
+/// ```
+pub struct ConfigV2<'a> { pub name: Cell<&'a str> }
+```
 
 ## Traits match their parameters by equality
 
@@ -155,25 +261,14 @@ error[E0597]: `service` does not live long enough
 6 |     names.resize_with(10, service_name);
   |     ----------------------------------- argument requires that `service` is borrowed for `'static`
 note: requirement that the value outlives `'static` introduced here
-    --> library/alloc/src/vec/mod.rs:3174:23
-3174 |         F: FnMut() -> T,
+    --> .../library/alloc/src/vec/mod.rs
+     |         F: FnMut() -> T,
 ```
 
 Read the `note:`. It points at the bound that made the demand, not at the caller. The same shape
-appears for any trait of your own, with the note on your own bound:
-
-```rust,compile_fail
-trait Sink<T> { fn put(&self, v: T); }
-
-fn feed<'a, S: Sink<&'a u8>>(s: &S, v: &'a u8) { s.put(v) }
-
-fn go<S: Sink<&'static u8>>(s: &S) {
-    let local = 5u8;
-    feed(s, &local);   // E0597: argument requires that `local` is borrowed for `'static`
-}
-```
-
-`S: Sink<&'static u8>` is not `S: Sink<&'a u8>`. No variance rule bridges the two.
+appears for any trait of your own, with the note on your own bound: `S: Sink<&'static u8>` is
+not `S: Sink<&'a u8>`, and no variance rule bridges the two. Read
+[references/variance-tables.md](references/variance-tables.md) when you need that shape as code.
 
 ## Three fixes for a producer whose output lives too long
 
@@ -195,8 +290,8 @@ fn main() {
 ```
 
 1. **Give the producer an unbounded output lifetime.** `fn any_name<'a>() -> &'a str` lets each
-   call site pick its own `'a`. Use this whenever you own the producer. Note that an unbounded
-   output lifetime is safe here only because the body returns a literal; see
+   call site pick its own `'a`. Use this whenever you own the producer. In safe code the compiler
+   checks the body for every `'a`. The same signature over `unsafe` code is the hazard in
    [Unbounded lifetimes](#unbounded-lifetimes-come-from-a-raw-pointer).
 2. **Wrap the call.** `|| static_name()` is a fresh closure, and inference gives its `Output` the
    short lifetime the bound asks for. Use this when the producer is in another crate.
@@ -204,42 +299,19 @@ fn main() {
    `fn() -> &'static str` is a subtype of `fn() -> &'a str`, and the coercion runs at the argument
    site. The `fn` *item* type has no such freedom.
 
-Fix 3 needs the lifetime written out. The elision rules for `fn` items do not apply to a `fn`
-pointer type, so `let f: fn() -> &str = static_name;` gives
-`error[E0106]: missing lifetime specifier`, with `^ expected named lifetime parameter` under the
-`&`.
+Fix 3 needs the lifetime written out, because `fn() -> &str` has no input lifetime for elision
+to use. `let f: fn() -> &str = static_name;` gives `error[E0106]: missing lifetime specifier`,
+with `^ expected named lifetime parameter` under the `&`.
 
 ## A free lifetime in `dyn Trait` makes it invariant
 
 `dyn Trait + 'a` is covariant in the `'a` that bounds the object. A lifetime written **inside**
-the trait's parameter list is a different thing: it is a trait parameter, so it matches by
-equality, and the object coerces in neither direction.
-
-A callback field as a function pointer is contravariant in the event lifetime:
-
-```rust
-pub struct Event<'a> { pub name: &'a str }
-pub struct HooksPtr<'a> { pub on: fn(&Event<'a>) }
-
-fn lengthen<'a>(h: HooksPtr<'a>) -> HooksPtr<'static> { h }   // compiles
-```
-
-Swap the field for a boxed closure over the same lifetime and the struct becomes invariant.
-Both directions now fail, and the change is invisible in review:
-
-```rust,compile_fail
-pub struct Event<'a> { pub name: &'a str }
-pub struct HooksBox<'a> { pub on: Box<dyn Fn(&Event<'a>)> }
-
-fn lengthen<'a>(h: HooksBox<'a>) -> HooksBox<'static> { h }
-```
-
-```text
-error: lifetime may not live long enough
-4 | fn lengthen<'a>(h: HooksBox<'a>) -> HooksBox<'static> { h }
-  |             -- lifetime `'a` defined here               ^ returning this value requires that `'a` must outlive `'static`
-  = note: the struct `HooksBox<'a>` is invariant over the parameter `'a`
-```
+the trait's parameter list is a trait parameter instead, so it matches by equality, and the
+object coerces in neither direction. A `fn(&Event<'a>)` field keeps a struct contravariant in
+`'a`. A `Box<dyn Fn(&Event<'a>)>` field makes it invariant, both directions
+fail with ``note: the struct `HooksBox<'a>` is invariant over the parameter `'a` ``, and the
+change is invisible in review. Read [references/variance-tables.md](references/variance-tables.md)
+when you need the two forms side by side.
 
 The fix is to keep the object higher-ranked. Elision inside `dyn Fn(&Event)` produces
 `for<'x>`, the struct loses its lifetime parameter, and the callback serves every caller:
@@ -259,174 +331,33 @@ Rule: write a free lifetime into a trait object's parameters only when you inten
 
 ## A `&mut` parameter pins the caller's lifetime
 
-`C` may be covariant and still be frozen by the `&mut` around it. The caller's type annotation
-then propagates into the argument:
-
-```rust,compile_fail
-fn push_str_ref<'a>(v: &mut Vec<&'a str>, s: &'a str) { v.push(s) }
-
-fn main() {
-    let mut v: Vec<&'static str> = vec!["a"];
-    let s = String::from("b");
-    push_str_ref(&mut v, &s);
-}
-```
-
-```text
-error[E0597]: `s` does not live long enough
-4 |     let mut v: Vec<&'static str> = vec!["a"];
-  |                ----------------- type annotation requires that `s` is borrowed for `'static`
-6 |     push_str_ref(&mut v, &s);
-  |                          ^^ borrowed value does not live long enough
-```
-
-Two repairs, both verified:
+`C` may be covariant and still be frozen by the `&mut` around it. With
+`fn push_str_ref<'a>(v: &mut Vec<&'a str>, s: &'a str)`, a caller that declares
+`let mut v: Vec<&'static str>` and pushes a borrowed `&s` gets
+``error[E0597]: `s` does not live long enough``, and the label on the annotation reads
+``type annotation requires that `s` is borrowed for `'static` ``. Two repairs:
 
 - Drop the `'static` from the caller's annotation. `let mut v: Vec<&str>` lets `'a` shorten to
   the body, and the same call compiles.
-- Take the container by value and give it back. The `&mut` disappears, so covariance applies and
-  a `Vec<&'static str>` coerces at the call:
+- Take the container by value and give it back:
+  `fn with_str_ref<'a>(mut v: Vec<&'a str>, s: &'a str) -> Vec<&'a str>`. The `&mut`
+  disappears, so covariance applies and a `Vec<&'static str>` coerces at the call.
 
-```rust
-fn with_str_ref<'a>(mut v: Vec<&'a str>, s: &'a str) -> Vec<&'a str> { v.push(s); v }
-
-fn main() {
-    let v: Vec<&'static str> = vec!["a"];
-    let s = String::from("b");
-    let v = with_str_ref(v, &s);
-    assert_eq!(v.len(), 2);
-}
-```
-
-Never take `&mut Container<&'a T>` in a public API when a caller may hold a longer-lived
-container. Take it by value, or make the element type owned.
-
-## Coerce the message, not the handle
-
-`std::sync::mpsc::Sender<T>` is invariant in `T`. Every clone is the same type, so the first call
-site that demands `'static` pins the whole channel. Every borrowed source then has to outlive
-`'static`, and rustc reports ``error[E0597]: `storage` does not live long enough``.
-
-The message stays covariant even though the handle does not. Write each consumer as
-`Sender<Message<'_>>`, never `Sender<Message<'static>>`, and coerce at the send site. The rejected
-pair and the repaired pair are in
-[references/variance-tables.md](references/variance-tables.md).
-
-What invariance costs the API: one lifetime serves the whole channel, so a consumer that moves
-the sender into `thread::spawn` forces `Message<'static>` on every producer. No variance trick
-reaches that case. Make the element type own its data.
-
-Do not repair this by hand-rolling a contravariant handle. A `Sender<T>` whose only mention of
-`T` is `PhantomData<fn(T)>` compiles, coerces to `Sender<Message<'static>>`, escapes into a
-`'static` context with short-lived values still in the queue, and runs their destructors after
-the borrow ends. Miri on that program reports `Undefined Behavior: constructing invalid value of
-type &str: encountered a dangling reference (use-after-free)`. Contravariance is sound only for
-a handle that consumes a `T` inside the call and never stores or drops one. The worked code is
-in [references/variance-tables.md](references/variance-tables.md).
-
-## Unbounded lifetimes come from a raw pointer
-
-An output lifetime that appears in no input is unbounded: every call site picks its own, and the
-compiler agrees to anything. A raw-pointer deref is the usual source. This compiles, prints
-nothing useful, and Miri reports `constructing invalid value of type &std::string::String:
-encountered a dangling reference (use-after-free)`:
-
-```rust
-// UB: `'a` is tied to no input, so `escaped` outlives `owned`.
-unsafe fn deref_unbounded<'a, T>(p: *const T) -> &'a T { unsafe { &*p } }
-
-fn main() {
-    let escaped: &String;
-    {
-        let owned = String::from("gone");
-        escaped = unsafe { deref_unbounded(&owned as *const String) };
-    }
-    println!("{escaped}");
-}
-```
-
-Borrowing the pointer variable is not enough. It proves that the pointer value
-is alive, not that its pointee is alive. Tie the output to the actual owner or
-to a guard that keeps the allocation alive. This exact-owner form needs no raw
-pointer dereference:
-
-```rust,run
-fn deref_tied<'a, T>(owner: &'a T, pointer: *const T) -> Option<&'a T> {
-    std::ptr::eq(owner, pointer).then_some(owner)
-}
-
-fn main() {
-    let owner = String::from("live");
-    let pointer = &owner as *const String;
-    assert_eq!(deref_tied(&owner, pointer).map(String::as_str), Some("live"));
-
-    let other = String::from("other");
-    assert!(deref_tied(&owner, &other).is_none());
-}
-```
-
-For a pointer into a larger allocation, make the wrapper borrow the allocation
-owner or return a guard that holds it. An `unsafe` constructor must state and
-enforce the pointee-validity contract; a borrow of `*const T` cannot replace it.
-
-`<*const T>::as_ref` and `NonNull::as_ref` both hand out an unbounded lifetime the same way. When
-no input carries the lifetime, take `&self` on a wrapper that owns the pointer, or return a
-guard. `rust-unsafe` owns the pointer-validity rules and the Miri workflow.
-
-## Variance is public API
-
-Wrapping a field in `Cell`, `RefCell`, `Mutex`, `RwLock`, or any `UnsafeCell` flips the struct
-from covariant to invariant. Downstream code that shortened the lifetime stops compiling. Treat
-it as a breaking change, and run the probe before you publish.
-
-```rust
-pub struct ConfigV1<'a> { pub name: &'a str }
-
-fn shorten<'a>(c: ConfigV1<'static>, _tie: &'a str) -> ConfigV1<'a> { c }
-```
-
-```rust,compile_fail
-use std::cell::Cell;
-
-pub struct ConfigV2<'a> { pub name: Cell<&'a str> }
-
-fn shorten<'a>(c: ConfigV2<'static>, _tie: &'a str) -> ConfigV2<'a> { c }
-```
-
-```text
-error: lifetime may not live long enough
-5 | fn shorten<'a>(c: ConfigV2<'static>, _tie: &'a str) -> ConfigV2<'a> { c }
-  |            -- lifetime `'a` defined here                              ^ returning this value requires that `'a` must outlive `'static`
-  = note: the struct `ConfigV2<'a>` is invariant over the parameter `'a`
-```
-
-Two more field changes break the same coercion. A `*mut T` field, or a `Box<dyn Fn(&'a T)>` field
-in place of `fn(&'a T)`, makes the struct invariant over `'a`. A `&'a mut T` field is different: it
-makes the struct invariant over `T`, and keeps it covariant over `'a`, so it breaks only a type
-coercion.
-
-## Checklist
-
-- Every public type with a lifetime parameter has a recorded variance, measured with the probe.
-- No public function takes `&mut Container<&'a T>` where a caller may hold a longer-lived container.
-- No trait object carries a free lifetime in its parameter list unless invariance is intended.
-- Every producer passed to an `F: FnMut() -> &'a T` bound declares an unbounded output lifetime,
-  or the call site wraps it in a closure.
-- Every `unsafe fn` that returns a reference names the lifetime in an input.
-- Every `PhantomData` states the intent: `&'a T` to borrow, `T` to own, `fn(T)` for
-  contravariance, `*mut T` or `Cell<T>` for invariance.
-- Adding interior mutability to a published struct goes in the breaking-change section of the
-  changelog.
-- A variance change is re-probed against the previous definition before release.
+In a public API whose callers may hold a longer-lived container, prefer taking the container by
+value, or an owned element type. Read
+[references/variance-tables.md](references/variance-tables.md) when you need the full rejected
+and repaired pair.
 
 ## Related skills
 
+Hand off to these skills when they are installed.
+
 | Skill | Boundary |
 | --- | --- |
-| `rust-unsafe` | Raw-pointer validity, `PhantomData` on FFI handles, and the Miri workflow behind the unbounded-lifetime example |
-| `rust-compiler-errors` | Reading E0597, E0521, and E0106 in general, beyond the variance shapes here |
+| `rust-unsafe` | Raw-pointer validity, `PhantomData` on FFI handles, the Miri workflow, and the proof for a manual `unsafe impl Send` or `Sync` |
+| `rust-compiler-errors` | E0597, E0521, and E0106 beyond the variance shapes here, and dyn compatibility (E0038) |
 | `rust-callback-bounds` | Choosing `Fn`, `FnMut`, `FnOnce`, or a `fn` pointer for a callback, once variance is settled |
-| `rust-type-erasure` | `Box<dyn Trait>` design: object safety, vtables, and the cost of the indirection |
-| `rust-send-sync` | The auto-trait half of the `PhantomData` table, and `unsafe impl Send` |
+| `rust-type-erasure` | `TypeId`-keyed stores, `dyn Any` downcasting and upcasting, and the `'static` bound of `Any` |
+| `rust-send-sync` | The auto-trait half of the `PhantomData` table |
 | `rust-discipline` | API review, including `PhantomData<fn() -> S>` on type-state tags and what counts as a breaking change |
 | `memory-model` | `UnsafeCell` and the atomics whose invariance this skill only cites |

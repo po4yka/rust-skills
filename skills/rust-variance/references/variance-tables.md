@@ -1,7 +1,17 @@
-# Variance tables, probe files, and the unsound contravariant channel
+# Variance tables, probe files, and worked repairs
 
-Deep material for `rust-variance`. Every result below comes from rustc 1.97.0, edition 2024,
-aarch64-apple-darwin, and Miri 0.1.0 on the matching nightly.
+Deep material for `rust-variance`. Every result below comes from rustc 1.98.1, edition 2024,
+aarch64-apple-darwin, and Miri 0.1.0 on nightly 2026-05-15.
+
+Contents:
+
+- The probe files: covariance, contravariance, and the note for each invariant type
+- Probe traps: the `'static` outer reference and the per-version unsize table
+- What each `PhantomData` form declares
+- The unsound contravariant channel
+- Worked pairs, rejected and repaired: the invariant `Sender`, a trait bound of your own, a free
+  lifetime in `dyn Trait`, a public type that turns invariant, and a `&mut` parameter
+- Raw pointers: the exact-owner accessor and the trait-object cast
 
 ## The probe files
 
@@ -32,7 +42,7 @@ fn p06<'a, 'b: 'a>(x: PhantomData<&'b u8>) -> PhantomData<&'a u8> { x }
 fn p07<'a, 'b: 'a>(x: PhantomData<fn() -> &'b u8>) -> PhantomData<fn() -> &'a u8> { x }
 fn p08<'a, 'b: 'a>(x: PhantomData<*const &'b u8>) -> PhantomData<*const &'a u8> { x }
 fn p09<'a, 'b: 'a>(x: PhantomData<&'b mut u8>) -> PhantomData<&'a mut u8> { x }
-fn p10<'a, 'b: 'a>(x: Box<dyn Debug + 'b>) -> Box<dyn Debug + 'a> { x }
+fn p10<'a, 'b: 'a>(x: Vec<Box<dyn Debug + 'b>>) -> Vec<Box<dyn Debug + 'a>> { x }
 fn p11<'a, 'b: 'a>(x: &'b mut u8) -> &'a mut u8 { x }
 fn p12<'a, 'b: 'a>(x: Own<&'b u8>) -> Own<&'a u8> { x }
 fn p13<'a, 'b: 'a>(x: Rc<&'b u8>) -> Rc<&'a u8> { x }
@@ -80,13 +90,30 @@ followed by the note rustc prints. All of them fail.
 | `fn(&'b u8) -> &'b u8` | no variance note |
 | `Box<dyn Fn(&'b u8)>` | no variance note |
 | `Box<dyn Fn() -> &'b u8>` | no variance note |
+| `mpsc::Receiver<&'b u8>` | the struct `std::sync::mpsc::Receiver<T>` is invariant over the parameter `T` |
+| `mpsc::SyncSender<&'b u8>` | the struct `SyncSender<T>` is invariant over the parameter `T` |
+| `AtomicPtr<&'b u8>` | the struct `Atomic<T>` is invariant over the parameter `T` |
+
+`AtomicPtr<T>` is an alias of `Atomic<*mut T>` in 1.98.1, so a script that greps for `AtomicPtr`
+misses its note.
+
+A parameter used both covariantly and contravariantly is invariant (Reference, "Variance"). rustc
+prints ``the struct `Mixed<T>` is invariant over the parameter `T` `` for this probe:
+
+```rust,compile_fail
+pub struct Mixed<T> { pub get: fn() -> T, pub put: fn(T) }
+
+fn cov<'a, 'b: 'a>(x: Mixed<&'b u8>) -> Mixed<&'a u8> { x }
+```
 
 Every row, the three `fn` and `dyn` rows included, prints
 `help: consider adding the following bound: 'a: 'b` under the error. Only a row that prints a
 variance note also prints
 `help: see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance`.
 The three `fn` and `dyn` rows print no variance note, so grep for the error text alone when you
-script this.
+script this. The type path inside a note follows the probe's imports: a glob import such as
+`use std::cell::*;` prints `std::cell::Cell<T>`. Match on `is invariant over the parameter`, not
+on the path.
 
 ## Probe traps
 
@@ -107,6 +134,37 @@ fn honest<'x, 'a: 'x, 'b: 'a>(x: &'x mut &'b u8) -> &'x mut &'a u8 { x }
 **A probe on a type parameter needs a lifetime inside it.** `C<u8>` cannot show variance,
 because `u8` has no subtypes. Always probe with `&'b u8`.
 
+**An unsize step turns the probe into a coercion test.** Each row is one probe
+`fn p<'a, 'b: 'a>(x: IN) -> OUT { x }`. Every row holds an invariant `Cell`, `Mutex`, or `*mut`;
+a row that compiles does so through an unsize coercion:
+
+| `IN` | `OUT` | 1.97.1 | 1.98.1 |
+| --- | --- | --- | --- |
+| `Cell<&'b u8>` | `Cell<&'a u8>` | rejected | rejected |
+| `Cell<&'b [u8]>` | `Cell<&'a [u8]>` | rejected | rejected |
+| `Cell<&'b u8>` | `Cell<&'a dyn Send>` | compiles | compiles |
+| `Cell<Box<dyn Debug + 'b>>` | `Cell<Box<dyn Debug + 'a>>` | compiles | compiles |
+| `Cell<&'b mut [u8; 3]>` | `Cell<&'a mut [u8]>` | rejected | compiles |
+| `Cell<&'b mut i32>` | `Cell<&'a mut dyn Send>` | rejected | compiles |
+| `Cell<&'b mut (dyn Send + 'b)>` | `Cell<&'a mut (dyn Send + 'a)>` | rejected | compiles |
+| `*mut (dyn Debug + 'b)` | `*mut (dyn Debug + 'a)` | compiles | compiles |
+| `Vec<Cell<Box<dyn Debug + 'b>>>` | `Vec<Cell<Box<dyn Debug + 'a>>>` | rejected | rejected |
+| `Mutex<&'b (dyn Debug + 'b)>` | `Mutex<&'a (dyn Debug + 'a)>` | rejected | rejected |
+
+The 1.98 rows come from rust-lang/rust#149219, which lets a `&mut` unsize coercion shorten its
+lifetime inside an invariant wrapper. Rust 1.88.0 gives the 1.97.1 result on every row. `RefCell` and `UnsafeCell` behave like `Cell` here.
+`Mutex`, `RwLock`, and `Vec` do not forward unsize coercions, so the `Mutex` and `Vec` rows stay
+rejected. Wrap a probe type in `Vec<...>` to keep the coercion out of the verdict. The CI
+toolchain type-checks the two rows that surprise most:
+
+```rust
+use std::cell::Cell;
+use std::fmt::Debug;
+
+fn via_dyn<'a, 'b: 'a>(x: Cell<Box<dyn Debug + 'b>>) -> Cell<Box<dyn Debug + 'a>> { x }
+fn via_mut_unsize<'a, 'b: 'a>(x: Cell<&'b mut i32>) -> Cell<&'a mut dyn Send> { x }
+```
+
 ## What each `PhantomData` form declares
 
 | Form | Variance in `T` | `Send` / `Sync` | Use it for |
@@ -116,7 +174,9 @@ because `u8` has no subtypes. Always probe with `&'b u8`.
 | `PhantomData<&'a mut T>` | invariant in `T`, covariant in `'a` | `Send` needs `T: Send`, `Sync` needs `T: Sync` | an exclusive borrow |
 | `PhantomData<fn() -> T>` | covariant | always both, whatever `T` is | a type-state tag that is never built |
 | `PhantomData<fn(T)>` | contravariant | always both, whatever `T` is | a consumer that never stores a `T` |
-| `PhantomData<*mut T>` | invariant | neither, whatever `T` is | a raw handle that must stay on one thread |
+| `PhantomData<fn(T) -> T>` | invariant | always both, whatever `T` is | an invariant tag that must stay `Send` and `Sync` |
+| `PhantomData<*const T>` | covariant | neither, whatever `T` is | a raw handle that must stay on one thread |
+| `PhantomData<*mut T>` | invariant | neither, whatever `T` is | a raw handle through which `T` is written, so it must also be invariant |
 | `PhantomData<Cell<T>>` | invariant | `Send` needs `T: Send`, never `Sync` | interior mutability held behind a pointer |
 
 The drop-check role of `PhantomData<T>` is real but is not observable on stable. With a plain
@@ -124,8 +184,8 @@ The drop-check role of `PhantomData<T>` is real but is not observable on stable.
 or not. The difference appears only under `#![feature(dropck_eyepatch)]` with
 `unsafe impl<#[may_dangle] T> Drop`. Do not look for a stable reproduction.
 
-`rust-unsafe` covers the same markers from the FFI side, and `rust-discipline` covers
-`PhantomData<fn() -> S>` on type-state APIs.
+The `rust-unsafe` skill, when it is installed, covers the same markers from the FFI side, and
+the `rust-discipline` skill covers `PhantomData<fn() -> S>` on type-state APIs.
 
 ## The unsound contravariant channel
 
@@ -195,11 +255,10 @@ The program compiles with no warning and no `unsafe` at the call sites that matt
 ```text
 $ cargo run
 block over
-dropping message:
+dropping message: <freed bytes>
 $ cargo +nightly miri run
 error: Undefined Behavior: constructing invalid value of type &str: encountered a dangling reference (use-after-free)
-    --> library/core/src/fmt/mod.rs:2872:71
-     = note: stack backtrace:
+     = note: stack backtrace (excerpt):
              <Message<'_> as std::ops::Drop>::drop
              drop_as::<Message<'_>>
              <Queue as std::ops::Drop>::drop
@@ -264,3 +323,147 @@ fn main() {
     let _ = tx.send(Message { description: &storage });
 }
 ```
+
+## A trait bound of your own matches by equality
+
+The `note:` points at your own bound. `S: Sink<&'static u8>` is not `S: Sink<&'a u8>`:
+
+```rust,compile_fail
+trait Sink<T> { fn put(&self, v: T); }
+
+fn feed<'a, S: Sink<&'a u8>>(s: &S, v: &'a u8) { s.put(v) }
+
+fn go<S: Sink<&'static u8>>(s: &S) {
+    let local = 5u8;
+    feed(s, &local);   // E0597: argument requires that `local` is borrowed for `'static`
+}
+```
+
+## A free lifetime in `dyn Trait`, both forms
+
+A callback field as a function pointer is contravariant in the event lifetime:
+
+```rust
+pub struct Event<'a> { pub name: &'a str }
+pub struct HooksPtr<'a> { pub on: fn(&Event<'a>) }
+
+fn lengthen<'a>(h: HooksPtr<'a>) -> HooksPtr<'static> { h }   // compiles
+```
+
+Swap the field for a boxed closure over the same lifetime and the struct becomes invariant.
+Both directions now fail:
+
+```rust,compile_fail
+pub struct Event<'a> { pub name: &'a str }
+pub struct HooksBox<'a> { pub on: Box<dyn Fn(&Event<'a>)> }
+
+fn lengthen<'a>(h: HooksBox<'a>) -> HooksBox<'static> { h }
+```
+
+```text
+error: lifetime may not live long enough
+4 | fn lengthen<'a>(h: HooksBox<'a>) -> HooksBox<'static> { h }
+  |             -- lifetime `'a` defined here               ^ returning this value requires that `'a` must outlive `'static`
+  = note: the struct `HooksBox<'a>` is invariant over the parameter `'a`
+```
+
+## A public type that turns invariant
+
+The first version shortens its lifetime:
+
+```rust
+pub struct ConfigV1<'a> { pub name: &'a str }
+
+fn shorten<'a>(c: ConfigV1<'static>, _tie: &'a str) -> ConfigV1<'a> { c }
+```
+
+A `Cell` field breaks the same function for every downstream caller:
+
+```rust,compile_fail
+use std::cell::Cell;
+
+pub struct ConfigV2<'a> { pub name: Cell<&'a str> }
+
+fn shorten<'a>(c: ConfigV2<'static>, _tie: &'a str) -> ConfigV2<'a> { c }
+```
+
+```text
+error: lifetime may not live long enough
+5 | fn shorten<'a>(c: ConfigV2<'static>, _tie: &'a str) -> ConfigV2<'a> { c }
+  |            -- lifetime `'a` defined here                              ^ returning this value requires that `'a` must outlive `'static`
+  = note: the struct `ConfigV2<'a>` is invariant over the parameter `'a`
+```
+
+## A `&mut` parameter, rejected and repaired
+
+The caller's type annotation propagates into the argument through the invariant `&mut`:
+
+```rust,compile_fail
+fn push_str_ref<'a>(v: &mut Vec<&'a str>, s: &'a str) { v.push(s) }
+
+fn main() {
+    let mut v: Vec<&'static str> = vec!["a"];
+    let s = String::from("b");
+    push_str_ref(&mut v, &s);
+}
+```
+
+```text
+error[E0597]: `s` does not live long enough
+4 |     let mut v: Vec<&'static str> = vec!["a"];
+  |                ----------------- type annotation requires that `s` is borrowed for `'static`
+6 |     push_str_ref(&mut v, &s);
+  |                          ^^ borrowed value does not live long enough
+```
+
+Take the container by value and give it back. The `&mut` disappears, so covariance applies and a
+`Vec<&'static str>` coerces at the call:
+
+```rust
+fn with_str_ref<'a>(mut v: Vec<&'a str>, s: &'a str) -> Vec<&'a str> { v.push(s); v }
+
+fn main() {
+    let v: Vec<&'static str> = vec!["a"];
+    let s = String::from("b");
+    let v = with_str_ref(v, &s);
+    assert_eq!(v.len(), 2);
+}
+```
+
+## Raw pointers: the exact-owner accessor and the trait-object cast
+
+This exact-owner form ties the output to the owner and needs no raw pointer dereference:
+
+```rust,run
+fn deref_tied<'a, T>(owner: &'a T, pointer: *const T) -> Option<&'a T> {
+    std::ptr::eq(owner, pointer).then_some(owner)
+}
+
+fn main() {
+    let owner = String::from("live");
+    let pointer = &owner as *const String;
+    assert_eq!(deref_tied(&owner, pointer).map(String::as_str), Some("live"));
+
+    let other = String::from("other");
+    assert!(deref_tied(&owner, &other).is_none());
+}
+```
+
+For a pointer into a larger allocation, make the wrapper borrow the allocation owner or return a
+guard that holds it.
+
+Since Rust 1.94 a raw-pointer cast cannot extend the lifetime bound of a trait object. Older
+unsafe code that erases a bound this way fails with
+`note: raw pointer casts of trait objects cannot extend lifetimes`:
+
+```rust,compile_fail
+pub trait Tr {}
+
+fn erase<'a>(p: *mut (dyn Tr + 'a)) -> *mut (dyn Tr + 'static) { p as _ }
+```
+
+The longer bound can make a method with a `where Self: 'x` bound callable through a vtable that
+has no entry for it (rust-lang/rust#141402). Prefer to keep `'a` in the stored type. Use
+`transmute::<*mut (dyn Tr + 'a), *mut (dyn Tr + 'static)>` only when no method of `Tr` has a
+lifetime bound on `Self` and the owner outlives every use of the pointer. State both facts in
+the `SAFETY` comment.
