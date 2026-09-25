@@ -1,17 +1,16 @@
 # Review checklist
 
-The pre-merge checklist for `rust-discipline`. Every rule it names is stated in full in
-[`../SKILL.md`](../SKILL.md) or in one of the other reference files.
+The full-pass checklist for `rust-discipline`. Run it when a review request or a merge gate asks
+for a full pass over a Rust diff. For one changed signature, apply the API design group only.
+Every rule it names is stated in full in [`../SKILL.md`](../SKILL.md), in one of the other
+reference files, or in the skill named on the question.
 
-## Apply it to every changed API
-
-Apply this checklist to every changed `pub` or `pub(crate)` API, and to every Rust pull
-request.
+If the answer to any question is yes, revise the change before you merge it.
 
 **API design**
 
-1. Any `&String`, `&Vec<T>`, or `&PathBuf` parameter? Use `&str`, `&[T]`, `&Path`, or
-   `impl AsRef<...>`.
+1. Any `&String`, `&Vec<T>`, or `&PathBuf` parameter? Use `&str`, `&[T]`, `&Path`, or a named
+   `<P: AsRef<..>>` generic.
 2. Any `&'a mut Trait` stored in a struct field? Use a generic `H: Trait`, plus forwarding impls
    that carry `+ ?Sized` and delegate through `H::method(self, ..)`.
 3. Any callback without `for<'a>` where the caller must not keep the reference? Add the HRTB.
@@ -21,70 +20,78 @@ request.
    registry that drops registrations silently?
 6. Any `Fn` bound picked from the `move` keyword instead of the body? Any callback method whose
    lifetime sits on the `impl` block instead of the method?
+7. Any published concrete parameter made generic? Ship it in a major version. A reference
+   parameter (`&str`, `&Path`, `&[T]`) then breaks every caller that coerces the function to a
+   `fn(&T)` pointer or passes it to an `Fn(&T)` bound. Any parameter can break type inference at a
+   call site. cargo-semver-checks flags neither.
+8. Any new `pub unsafe fn` where a safe wrapper can hold the invariant? Keep the `unsafe fn`
+   `pub(crate)` and export the safe wrapper. A `pub unsafe fn` moves the soundness proof to every
+   caller. [`rust-unsafe`]
 
 **Panics, errors, and resources**
 
-7. Any new `.unwrap()`, or any bare `.expect()` with no invariant in the message, outside
-   tests?
-8. Any `Box<dyn std::error::Error>` returned from a library crate?
-9. Any raw `i32` file descriptor held across an error path? Any `Drop` impl with no documented
-   ordering?
-10. Any `_ =>` arm in a match over an internal enum? Any `downcast_ref` chain over a closed set
-    of types?
+9. Any new `.unwrap()` outside tests and `examples/`, any `.expect()` whose message states no
+   invariant, or any `.lock()` with no stated poisoning policy?
+10. Any `Box<dyn std::error::Error>` returned from a library crate? [`rust-code-style`]
+11. Any raw `i32` file descriptor held across an error path? Any `Drop` impl with no documented
+    field order?
+12. Any `_ =>` arm in a match over a crate-private enum? Any `downcast_ref` chain over a closed
+    set of types?
 
-**Performance and concurrency**
+**Concurrency, unsafe, FFI, and lints** (owner skills in brackets)
 
-11. Any allocation inside an event-loop tick, a per-item decode loop, or a parser hot path?
-12. Any lock held across `.await`? Any `RwLock` that protects a write-heavy field? Any `rayon`
-    parallel iterator mixed with async code? Any `Condvar::wait` outside a predicate loop or a
-    `wait_while` call?
-13. Any new atomic with no `// Ordering:` comment? Any `Relaxed` on a publish/subscribe flag?
-14. Any blocking syscall inside async with no `spawn_blocking` and no dedicated thread? Any
-    blocking I/O inside a `rayon` task?
-
-**Unsafe, FFI, and lints**
-
-15. Any internal `unsafe fn` with no `# Safety` rustdoc section? Any `unsafe` block with no
-    `// SAFETY:` comment?
-16. Any FFI entry point that can panic instead of mapping a typed Rust error to
-    an ABI-safe status, sentinel, out-parameter, or foreign exception?
-17. Any new `#[allow(clippy::correctness | suspicious)]`? Any new `deny.toml` ignore with no
-    tracking issue and no expiry?
+13. Any allocation inside an event-loop tick, a per-item decode loop, or a parser hot path?
+    [`rust-hot-path`]
+14. Any blocking-lock guard (`std::sync::Mutex` or `RwLock`, `parking_lot`) held across
+    `.await`? `clippy::await_holding_lock` finds them. Any blocking syscall inside async code with
+    no `spawn_blocking` and no dedicated thread? [`rust-async-internals`]
+15. Any `Condvar::wait` outside a `wait_while` call or a predicate loop? Any nested lock
+    acquisition that breaks the documented lock order?
+16. Any new atomic ordering with no comment that names the data it publishes? Any `Relaxed` on a
+    publish/subscribe flag? [`memory-model`]
+17. Any `unsafe` block with no `// SAFETY:` comment, or any `unsafe fn` with no `# Safety`
+    section? [`rust-unsafe`]
+18. Any FFI entry point that can panic instead of mapping a typed Rust error to an ABI-safe
+    status, sentinel, out-parameter, or foreign exception? [`rust-panic-safety`,
+    `ffi-error-progress-cancel`]
+19. Any new `#[allow]` where `#[expect(lint, reason = "...")]` works? Any suppressed
+    `clippy::correctness` or `clippy::suspicious` finding? [`rust-lints`] Any new `deny.toml`
+    exception with no reason? [`rust-security`]
 
 **Trait and type-system traps** (details in
 [`type-and-trait-traps.md`](type-and-trait-traps.md),
 [`trait-resolution.md`](trait-resolution.md), and
 [`data-shape-traps.md`](data-shape-traps.md))
 
-18. Any `impl Drop` on a struct where a field must be consumed? Use a dedicated guard type
-    with `ManuallyDrop`.
-19. Any `fn(T) -> T` that takes a struct past the target's inline-copy boundary (128 bytes on
-    x86_64, 256 on aarch64) on a hot path?
-20. Any custom `PartialEq` with no matching custom `Hash`, or the reverse, on a `HashMap` or
-    `HashSet` key?
-21. Any `#[derive(Clone)]` on a struct that contains `Arc<T>` where the caller might expect an
+20. Any `impl Drop` on a struct where a field must be consumed? Move `Drop` onto a one-field guard
+    that holds an `Option`. Use `ManuallyDrop` only when `size_of` proves a saving.
+21. Any `fn(T) -> T` that takes a struct past the target's inline-copy boundary on a hot path?
+    [`rust-hot-path`]
+22. Any manual `PartialEq` next to a derived `Hash`, or two manual impls that normalize
+    differently, on a `HashMap` or `HashSet` key? Any manual `PartialOrd` that does not return
+    `Some(self.cmp(other))` on a type that also implements `Ord`?
+23. Any `#[derive(Clone)]` on a struct that contains `Arc<T>` where the caller might expect an
     isolated copy?
-22. Any `Deref` impl on a newtype that is not a smart pointer? Any `Deref` relied on to satisfy
+24. Any `Deref` impl on a newtype that is not a smart pointer or a read-only `[T]` or `str`
+    view of a collection newtype? Any `Deref` relied on to satisfy
     a trait bound or a `dyn Trait` coercion? Neither one walks the deref chain.
-23. Any migration from `std::sync::Mutex` to `parking_lot` or `tokio::sync::Mutex` that relied
+25. Any migration from `std::sync::Mutex` to `parking_lot` or `tokio::sync::Mutex` that relied
     on poison detection?
-24. Any unchecked arithmetic on a value derived from untrusted input?
-25. Any `Arc<T>` that points back to its parent container?
-26. Any function that takes `&'a T` and also writes references into a storage parameter that
+26. Any unchecked arithmetic on a value derived from untrusted input?
+27. Any `Arc<T>` that points back to its parent container?
+28. Any function that takes `&'a T` and also writes references into a storage parameter that
     shares the same `'a`? Split the lifetimes, or store owned data.
-27. Any `impl<T: ...> PubTrait for T` on a public trait that is not sealed? Seal the trait, or
+29. Any `impl<T: ...> PubTrait for T` on a public trait that is not sealed? Seal the trait, or
     write explicit per-type impls. The same blanket impl also makes every pointer-forwarding
     impl `E0119`, and blocks every later concrete impl on the same `Self` type.
-28. Any foreign trait implemented for `Rc<Local>`, `Arc<Local>`, or `Vec<Local>`? Only `&T`,
-    `&mut T`, and `Box<T>` are `#[fundamental]`; the rest is `E0117`. Newtype the wrapper.
-29. Any `Box::new([T; N])`, or any return of `[T; N]` by value, for `N` over 16 KiB? Use
-    `Vec::into_boxed_slice` or `Box::new_uninit_slice`. `into_boxed_slice` may cost a full copy
-    when capacity is meaningfully above length; collect into `Box<[T]>` directly when the length
-    is exact.
-30. Any extension-trait method whose name already exists on the type, or on a type in its deref
+30. Any foreign trait implemented for `Rc<Local>`, `Arc<Local>`, or `Vec<Local>`? Only `&T`,
+    `&mut T`, `Box<T>`, and `Pin<P>` are `#[fundamental]`; the rest is `E0117`. Newtype the
+    wrapper.
+31. Any `Box::new([T; N])`, or any return of `[T; N]` by value, where the array is larger than
+    16 KiB (`size_of::<[T; N]>()`)? Build it
+    with `vec![x; n].into_boxed_slice()`, or collect an exact-length iterator into `Box<[T]>`.
+32. Any extension-trait method whose name already exists on the type, or on a type in its deref
     chain? The shadowing is silent, and adding the method to a published trait breaks downstream
     builds with `E0034`.
-31. Any `impl From<X> for Y` beside an `impl TryFrom<X> for Y`? The `core` blanket impl makes
+33. Any `impl From<X> for Y` beside an `impl TryFrom<X> for Y`? The `core` blanket impl makes
     the pair `E0119`, and the choice between them is permanent.
-
-If the answer to any item is yes, revise the change before you merge it.

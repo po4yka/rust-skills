@@ -1,11 +1,22 @@
 # Type-level API techniques
 
 Ways to move a check from run time to compile time. Each entry states what the technique buys,
-what it costs, and when the cost is not worth paying. Every example compiles on rustc 1.97,
+what it costs, and when the cost is not worth paying. Every example compiles on rustc 1.98.1,
 edition 2024.
 
 The order is by how often the technique is the right answer. Read the first two before the rest;
 they cover most cases, and the later ones are easy to over-apply.
+
+Contents:
+
+- Newtype for an invariant
+- `#[non_exhaustive]` on anything a downstream crate matches
+- Sealed trait
+- Typestate
+- `const fn` and const generics
+- Assert an invariant at compile time
+- Let the compiler narrow control flow
+- When not to reach for any of these
 
 ## Newtype for an invariant
 
@@ -292,8 +303,8 @@ Gate the assertion on the target whose layout you measured. A size that depends 
 passes on a 64-bit host fails the build with E0080 when the same file is cross-compiled to
 `i686-unknown-linux-gnu`.
 
-This costs nothing at run time and needs no dependency. `size_of` and `align_of`
-are not in the prelude, so qualify them with `std::mem::` or import them. Put one
+This costs nothing at run time and needs no dependency. `size_of` and `align_of` are in the
+prelude since Rust 1.80. On an older MSRV, qualify them with `std::mem::`. Put one
 assert next to every type whose size or alignment another language depends on.
 See the `rust-unsafe` skill for the layout rules these assertions protect.
 
@@ -310,7 +321,7 @@ pub fn parse_port(text: &str) -> u16 {
     value
 }
 
-// let chains (edition 2024): bind and test in one condition, no nesting.
+// let chains (edition 2024, rustc 1.88+): bind and test in one condition, no nesting.
 pub fn difference(left: Option<u32>, right: Option<u32>) -> u32 {
     if let Some(a) = left
         && let Some(b) = right
@@ -323,8 +334,8 @@ pub fn difference(left: Option<u32>, right: Option<u32>) -> u32 {
 }
 ```
 
-Let chains need edition 2024. Under edition 2021 the same code fails with `let chains are only
-allowed in Rust 2024 or later`, so a crate that has not migrated must keep the nested form.
+Let chains need edition 2024 and rustc 1.88+. The `rust-pattern-semantics` skill, when it is
+installed, has the gate errors and the fallback.
 
 ## When not to reach for any of these
 

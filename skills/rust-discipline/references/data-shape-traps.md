@@ -1,10 +1,18 @@
 # Data-shape traps
 
-Read this file when a diff adds a `HashMap` or `HashSet` key type, reverses or truncates text, or
-builds a fixed-size array for heap residence. Each trap is silent on an ASCII fixture or a small
-value, and appears with real data or on a constrained stack.
+Read this file when a diff adds a `HashMap` or `HashSet` key type, an `Ord` or `PartialOrd` impl,
+reverses or truncates text, or builds a fixed-size array for heap residence. Each trap is silent
+on an ASCII fixture or a small value, and appears with real data, on a constrained stack, or after
+a toolchain upgrade.
 
 Each item states a severity, a wrong example, a correct example, and a rule.
+
+Contents:
+
+- `Hash` and `PartialEq` contract violation
+- `PartialOrd` and `Ord` disagree
+- `chars().rev()` corrupts combining marks and ZWJ sequences
+- Large stack arrays and the `Box::new([0u8; N])` pitfall
 
 ---
 
@@ -12,9 +20,11 @@ Each item states a severity, a wrong example, a correct example, and a rule.
 
 **Severity: CRITICAL**
 
-The standard library requires that `k1 == k2` implies `hash(k1) == hash(k2)`. If you write
-`PartialEq` by hand and derive `Hash`, or the reverse, `HashMap` and `HashSet` return silently
-incorrect results.
+The standard library requires that `k1 == k2` implies `hash(k1) == hash(k2)`. The contract breaks
+when `eq` treats two values as equal that `hash` feeds differently. `HashMap` and `HashSet` then
+return silently incorrect results. Two shapes do this: a manual `PartialEq` next to a derived
+`Hash`, and two manual impls that normalize differently. A derived `PartialEq` next to a manual
+`Hash` over the same fields is safe.
 
 ```rust
 // BUG: the derived Hash uses the original case; the manual PartialEq ignores case.
@@ -29,8 +39,50 @@ impl Eq for Tag {}
 // HashSet<Tag> stores "Foo" and "foo" as two different entries.
 ```
 
+Clippy's `derived_hash_with_manual_eq` (correctness, deny by default) rejects the first shape
+with `you are deriving 'Hash' but have implemented 'PartialEq' explicitly`. No lint sees the
+second. Measured on clippy 1.98.1.
+
 Rule: when you write a custom `PartialEq`, write a matching custom `Hash` that hashes the same
 normalized form. Add a test that inserts through one form and looks up through the other.
+
+---
+
+## `PartialOrd` and `Ord` disagree
+
+**Severity: WARNING**
+
+`PartialOrd` and `Ord` must agree. Since Rust 1.98, `derive(PartialOrd)` next to `derive(Ord)` on
+a type with no generic or lifetime parameters calls `Ord::cmp` (rust-lang/rust#155598). A field
+whose manual `PartialOrd` and `Ord` disagree therefore changes `<`, `>`, and `sort()` results on
+the toolchain upgrade, with no diagnostic from rustc. A generic type keeps the old derived code.
+
+```rust,run
+use std::cmp::Ordering;
+
+// BUG: `cmp` sorts descending, `partial_cmp` sorts ascending.
+#[derive(PartialEq, Eq)]
+struct Rank(u8);
+impl Ord for Rank {
+    fn cmp(&self, other: &Self) -> Ordering { other.0.cmp(&self.0) }
+}
+impl PartialOrd for Rank {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.0.cmp(&other.0)) }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct Entry(Rank);
+
+fn main() {
+    assert!(Rank(1) < Rank(2));
+    // Rust 1.97 gives `true` here; 1.98 routes the derived `<` through `Rank::cmp`.
+    assert!(!(Entry(Rank(1)) < Entry(Rank(2))));
+}
+```
+
+Rule: make every manual `PartialOrd` on an `Ord` type return `Some(self.cmp(other))`. Clippy's
+`non_canonical_partial_ord_impl` (suspicious, warn by default) flags any other body. Measured on
+clippy 1.98.1. It cannot see a disagreement inside a dependency's type.
 
 ---
 
@@ -75,34 +127,40 @@ do not reorder text and are not affected.
 
 `Box::new([0u8; N])` does not allocate `N` bytes directly on the heap. The expression first
 builds `[0u8; N]` on the caller's stack, then `Box::new` copies it into a heap allocation. A
-debug build performs no placement optimization, so the stack copy is always materialized. It
-overflows a constrained thread stack — mobile and embedded targets commonly give a thread
-about 1 MiB to 2 MiB — at roughly `N >= 256 KiB`. A release build sometimes removes the copy
-through NRVO, but that optimization is fragile. Any intermediate
+debug build performs no placement optimization, so it materializes one full stack copy. It
+overflows once `N` approaches the thread's stack size, and mobile and embedded targets commonly
+give a thread about 1 MiB to 2 MiB. Measured on rustc 1.98.1 debug, aarch64-apple-darwin, in a
+1 MiB thread: `N = 1000 KiB` passes, `N = 2 MiB` overflows. A release build sometimes removes
+the copy through NRVO, but that optimization is fragile. Any intermediate
 `let buf = Box::new([0u8; N]);` can materialize the stack copy again.
 
 ```rust
-// BAD: overflows the stack in debug; relies on brittle NRVO in release.
-let buf: Box<[u8; 1024 * 1024]> = Box::new([0u8; 1024 * 1024]);
+// BAD: builds the array on the stack first, then copies it to the heap.
+let on_stack: Box<[u8; 1024 * 1024]> = Box::new([0u8; 1024 * 1024]);
 
 // BAD: returning a large array by value forces a memcpy through the stack.
 fn make_buf() -> [u8; 1024 * 1024] { [0u8; 1024 * 1024] }
 
-// GOOD: allocate on the heap from the start.
-let buf: Box<[u8]> = vec![0u8; 1024 * 1024].into_boxed_slice();
+// GOOD: allocate on the heap from the start. `vec!` allocates zeroed memory
+// directly, and the capacity equals the length, so nothing is copied.
+let heap: Box<[u8]> = vec![0u8; 1024 * 1024].into_boxed_slice();
 
-// GOOD (Rust 1.82 or later): allocate directly, with no zeroed stack temporary.
-let buf: Box<[u8]> = unsafe {
-    let mut b = Box::<[u8]>::new_uninit_slice(1024 * 1024);
-    std::ptr::write_bytes(b.as_mut_ptr().cast::<u8>(), 0, 1024 * 1024);
-    b.assume_init()
-};
+// GOOD: the same allocation, typed as a fixed-size array.
+let heap_array: Box<[u8; 1024 * 1024]> = vec![0u8; 1024 * 1024]
+    .into_boxed_slice()
+    .try_into()
+    .expect("the length is exactly 1 MiB");
 ```
 
-Rule: build any array larger than 16 KiB for heap residence with `Vec::into_boxed_slice` or
-`Box::new_uninit_slice`. Never write `Box::new([T; N])` for a large `N`, and never return
-`[T; N]` by value for a large `N`. Hot-path code additionally falls under the no-allocation
-rule in the main skill.
+Rule: build any array larger than 16 KiB for heap residence with `vec![x; n].into_boxed_slice()`,
+or collect an exact-length iterator into `Box<[T]>`. Use `Box::new_uninit_slice` only when you
+write every element yourself. Never write `Box::new([T; N])` for a large `N`, and never return
+`[T; N]` by value for a large `N`. Hot-path code also falls under the allocation rules of the
+`rust-hot-path` skill.
+
+Enable `clippy::large_stack_arrays` (pedantic) as the mechanical check. Its default
+`array-size-threshold` is 16384 bytes, the same limit. Measured on clippy 1.98.1, it flags
+`Box::new([0u8; 20000])` with `allocating a local array larger than 16384 bytes`.
 
 `Vec::into_boxed_slice` is not free. It calls `shrink_to_fit` whenever capacity exceeds length,
 which issues a `realloc` that may move the buffer. Measured with a `Vec<u32>` at length 3:

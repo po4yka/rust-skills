@@ -7,7 +7,21 @@ makes for you. Three of them are silent: the code compiles and calls the wrong m
 itself. The rest are hard build breaks that arrive in downstream code.
 
 Each item states a severity, the rule, the failing shape with its exact error, and the working
-shape. Measured on rustc 1.97.0, edition 2024.
+shape. Measured on rustc 1.97.0, edition 2024, unless a section names rustc 1.98.1.
+
+Contents:
+
+- Method lookup walks the deref chain; trait solving does not
+- `Deref` gives method reuse, never substitutability
+- `DerefMut` turns a field borrow into a whole-`self` borrow
+- A pointer-forwarding impl needs `?Sized` and a body that names the inner impl
+- The method receiver decides which pointers can forward
+- An extension trait shadows silently in both directions
+- Two traits with one method name kill the dot call
+- A downcast chain is a match with the exhaustiveness check removed
+- `impl From<X> for Y` forecloses `impl TryFrom<X> for Y` for ever
+- A blanket impl forecloses every other impl on the same `Self`
+- `#[fundamental]` decides which wrappers can carry a foreign trait
 
 ---
 
@@ -79,7 +93,7 @@ fn main() {
 Both lines below fail on the same types, with
 `error[E0277]: the trait bound 'Wrapper: Speak' is not satisfied`:
 
-```rust,compile_fail
+```rust,compile_fail,E0277
 use std::ops::Deref;
 struct Inner;
 trait Speak { fn speak(&self) -> &'static str; }
@@ -119,11 +133,11 @@ These three sites keep failing after you add `Deref`:
 | `let d: &dyn Trait = &wrapper;` | E0277, unsizing needs a real impl |
 | `Vec<Wrapper>` passed where `Vec<Target>` is expected | E0308, no coercion inside a generic |
 
-Rule: implement `Deref` only on a smart pointer, as
-[`type-and-trait-traps.md`](type-and-trait-traps.md) states. When you want a wrapper to carry
-the target's trait impls, write delegating impls, or generate them with a macro. Count the
-delegating impls before you commit: if the target has 30 trait impls, `Deref` looks cheap and
-still gives you none of them at a bound.
+Rule: implement `Deref` only on a smart pointer, or as the read-only `[T]` or `str` view of a
+collection newtype that [`type-and-trait-traps.md`](type-and-trait-traps.md) allows. When you
+want a wrapper to carry the target's trait impls, write delegating impls, or generate them with
+a macro. Count the delegating impls before you commit: if the target has 30 trait impls, `Deref`
+looks cheap and still gives you none of them at a bound.
 
 ---
 
@@ -136,7 +150,7 @@ impl removes that split for every field it reaches. `&mut ctx.frame` compiles to
 `DerefMut::deref_mut(&mut ctx).frame`, which borrows all of `ctx`, so a second accessor on a
 disjoint field is rejected:
 
-```rust,compile_fail
+```rust,compile_fail,E0499
 use std::ops::{Deref, DerefMut};
 struct Static { frame: u64 }
 struct World { entities: Vec<u32> }
@@ -190,20 +204,19 @@ borrow.
 `impl<H: Handler> Handler for &mut H` carries an implicit `H: Sized`. `dyn Handler` is unsized,
 so `&mut dyn Handler: Handler` and `Box<dyn Handler>: Handler` never hold — and that is the only
 case the forwarding pattern exists to serve. The impl itself compiles. The failure lands at a
-distant call site, and it blames `Sized` rather than the impl:
+distant call site. Measured on rustc 1.98.1:
 
 ```text
 error[E0277]: the trait bound `&mut dyn Handler: Handler` is not satisfied
-   |
-20 |     process_request(h, Request);
-   |     --------------- ^ the trait `Sized` is not implemented for `dyn Handler`
+  |     process_request(h, Request);
+  |     --------------- ^ the trait `Sized` is not implemented for `dyn Handler`
+help: the trait `Handler` is conditionally implemented for `&mut H`
+  | impl<H: Handler> Handler for &mut H {
+  |      - unsatisfied requirement introduced here: `dyn Handler: Sized`
 note: required for `&mut dyn Handler` to implement `Handler`
-   |
- 7 | impl<H: Handler> Handler for &mut H {
-   |      -           ^^^^^^^     ^^^^^^
-   |      |
-   |      unsatisfied trait bound implicitly introduced here
 ```
+
+The fix is `+ ?Sized` on the impl, never a `Sized` bound on the caller.
 
 The body is the second trap. Inside `impl<H: Handler + ?Sized> Handler for &mut H`, `self` has
 type `&mut &mut H`, which is exactly the self type of that impl. Method probing tries the
@@ -260,6 +273,12 @@ macro_rules! impl_handler_for_refs {
 
 Rule: set `unconditional_recursion` to `deny` at the crate root as soon as a forwarding impl
 lands. It is warn-by-default, and this is the bug it exists for.
+
+With a forwarding impl in scope, do not take the same trait by value (`impl Handler`) in a
+recursive method: each level adds one `&mut`, and `cargo build` fails with `reached the recursion
+limit while instantiating` after `cargo check` and `cargo clippy` pass. Take `&mut W` with
+`W: Handler + ?Sized`. The `rust-callback-bounds` skill, when it is installed, has the failing
+example.
 
 ---
 
@@ -377,7 +396,7 @@ Rust has no method overloading. Two traits in scope that both define `render` fo
 make `id.render()` ambiguous. The call fails with `error[E0034]: multiple applicable items in
 scope`, and it names every candidate:
 
-```rust,compile_fail
+```rust,compile_fail,E0034
 struct Id(u64);
 
 trait Pretty { fn render(&self) -> String; }
@@ -450,36 +469,9 @@ three-variant enum above is 24 bytes inline, sized by its widest variant, so one
 grows every element. Keep `dyn Trait` when a downstream crate supplies implementors, because no
 downstream crate can add a variant to your enum.
 
-When you must keep `dyn Trait` and still need the concrete type back, make `Any` a supertrait.
-Do not write a `fn as_any(&self) -> &dyn Any` method on every impl: the compiler upcasts
-`&dyn Shape` to `&dyn Any` for you.
-
-```rust
-use std::any::Any;
-
-// `Any` as a supertrait. No `fn as_any(&self) -> &dyn Any` on every impl.
-trait Shape: Any {
-    fn area(&self) -> f64;
-}
-
-struct Sq(f64);
-impl Shape for Sq {
-    fn area(&self) -> f64 { self.0 * self.0 }
-}
-
-fn main() {
-    let shapes: Vec<Box<dyn Shape>> = vec![Box::new(Sq(2.0))];
-    for s in &shapes {
-        let any: &dyn Any = s.as_ref(); // trait upcast, built in
-        if let Some(sq) = any.downcast_ref::<Sq>() {
-            assert_eq!(sq.area(), 4.0);
-        }
-    }
-}
-```
-
-`Any` adds a `'static` bound to the trait, so no implementor can hold a non-`'static`
-reference. Check that first.
+When `dyn Trait` must stay and the concrete type must come back, make `Any` a supertrait and
+upcast `&dyn Trait` to `&dyn Any` (Rust 1.86 or later). The `rust-type-erasure` skill, when it is
+installed, has the recipe and the `.type_id()`-on-a-smart-pointer pitfall.
 
 When the value set is genuinely open, or the values borrow and `Any` therefore cannot key them
 at all, the store is a design problem and not a taste problem. See `rust-type-erasure` for the
@@ -495,7 +487,7 @@ three-rung ladder and for the `'static` bound that `Any` puts on your caller.
 generates a `TryFrom` impl with `Error = Infallible`. A hand-written `TryFrom` for the same
 pair collides with it:
 
-```rust,compile_fail
+```rust,compile_fail,E0119
 struct Celsius(f64);
 struct Kelvin(f64);
 
@@ -566,7 +558,7 @@ every impl you might want later on the same `Self` type is `E0119`. Two shapes h
 **A bridge blanket impl excludes pointer forwarding.** `impl<T: Sink> Handler for T` and
 `impl<H: Handler + ?Sized> Handler for &mut H` cannot coexist:
 
-```rust,compile_fail
+```rust,compile_fail,E0119
 struct Request;
 trait Handler { fn handle(&mut self, r: Request); }
 trait Sink { fn send(&mut self, r: Request); }
@@ -588,7 +580,7 @@ and `Box<h>`. An `Arc<h>` cannot forward an `&mut self` receiver; use `Arc` only
 **A blanket impl over a parameter blocks every later concrete impl.** `impl<S> Handler<S> for X`
 is a one-way door for `X`:
 
-```rust,compile_fail
+```rust,compile_fail,E0119
 struct Mouse;
 struct ConcreteState;
 struct Standalone;
@@ -617,21 +609,25 @@ says the concrete type can never implement that capability. Use a distinct
 
 **Severity: WARNING**
 
-The orphan rule treats `&T`, `&mut T`, and `Box<T>` as transparent, because they are
-`#[fundamental]`. `&Local` therefore counts as a local type and the impl is legal. `Rc`, `Arc`,
-`Vec`, and every other container are ordinary foreign types, so `Rc<Local>` is a foreign type and
-the impl is an orphan.
+The orphan rule treats `&T`, `&mut T`, `Box<T>`, and `Pin<P>` as transparent, because they are
+`#[fundamental]` (Rust Reference, glossary). `&Local` therefore counts as a local type and the impl
+is legal. `Rc`, `Arc`, `Vec`, and every other container are ordinary foreign types, so `Rc<Local>`
+is a foreign type and the impl is an orphan. Measured on rustc 1.98.1:
 
-```rust
+```rust,run
 use std::fmt;
+use std::pin::Pin;
 use std::rc::Rc;
 pub struct Local(i32);
 
-// ALLOWED: `&T`, `&mut T` and `Box<T>` are #[fundamental], so they count as local.
+// ALLOWED: `&T`, `&mut T`, `Box<T>`, and `Pin<P>` are #[fundamental], so they count as local.
 impl fmt::Display for &Local {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
 }
 impl fmt::Display for Box<Local> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+impl fmt::Display for Pin<&mut Local> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
 }
 
@@ -644,23 +640,28 @@ impl fmt::Display for SharedLocal {
 fn main() {
     assert_eq!(format!("{}", &Local(1)), "1");
     assert_eq!(format!("{}", Box::new(Local(3))), "3");
+    let mut pinned = Local(4);
+    assert_eq!(format!("{}", Pin::new(&mut pinned)), "4");
     assert_eq!(format!("{}", SharedLocal(Rc::new(Local(5)))), "5");
 }
 ```
 
+`Pin` has one extra trap. `std` already forwards `Display`, `Debug`, and `fmt::Pointer` from the
+pointer inside it (`impl<P: Display> Display for Pin<P>`). Once `Box<Local>: Display` exists,
+`impl Display for Pin<Box<Local>>` is E0119, not E0117.
+
 `Rc<Local>`, `Arc<Local>`, and `Vec<Local>` each give the same rejection:
 
 ```text
-error[E0117]: only traits defined in the current crate can be implemented for types defined
-              outside of the crate
- --> src/lib.rs:5:1
+error[E0117]: only traits defined in the current crate can be implemented for types defined outside of the crate
   |
-5 | impl fmt::Display for Rc<Local> {
-  | ^^^^^^^^^^^^^^^^^^^^^^---------
+  | impl fmt::Display for Arc<Local> {
+  | ^^^^^^^^^^^^^^^^^^^^^^----------
   |                       |
-  |                       `Rc` is not defined in the current crate
+  |                       `Arc` is not defined in the current crate
   |
   = note: impl doesn't have any local type before any uncovered type parameters
+  = note: for more information see https://doc.rust-lang.org/reference/items/implementations.html#orphan-rules
   = note: define and implement a trait or new type instead
 ```
 

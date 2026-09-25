@@ -1,58 +1,30 @@
 # Type-system and trait traps
 
-Read this file when a diff adds a trait impl, a `Drop` impl, a newtype, or a lifetime parameter.
+Read this file when a diff adds a trait impl, a newtype, or a lifetime parameter.
 Each trap is silent: the code compiles, and the defect appears later at run time, at a downstream
 consumer, or on a different target.
 
 Each item states a severity, a wrong example, a correct example, and a rule. Traps that come from
 the shape of the data — hash keys, text reversal, and large arrays — live in
 [data-shape-traps.md](data-shape-traps.md). What each parameter bound accepts and rejects lives in
-[argument-shapes.md](argument-shapes.md). The full cost of `impl Drop` lives in
-[drop-and-raii.md](drop-and-raii.md).
+[argument-shapes.md](argument-shapes.md). `impl Drop` makes every move of a non-`Copy` field
+E0509; [drop-and-raii.md](drop-and-raii.md) has the full cost and the guard pattern.
 
----
+Contents:
 
-## `impl Drop` blocks partial moves
-
-**Severity: WARNING**
-
-When a struct implements `Drop`, Rust forbids a move of any field out of it. The restriction
-applies inside `Drop::drop` itself. This surprises you when you want to consume a `Vec<T>`
-field after you signal completion.
-
-```rust
-// BAD: impl Drop prevents a move out of `data`
-struct Sink {
-    data: Vec<u8>,
-}
-impl Drop for Sink {
-    fn drop(&mut self) {
-        let owned = std::mem::take(&mut self.data); // forced to use take()
-    }
-}
-
-// GOOD: a dedicated guard type keeps `data` moveable
-#[repr(transparent)]
-struct SinkGuard(std::mem::ManuallyDrop<Vec<u8>>);
-impl Drop for SinkGuard {
-    fn drop(&mut self) {
-        // SAFETY: the value is taken exactly once, here, and never used again.
-        let owned = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
-        flush(owned);
-    }
-}
-```
-
-Rule: before you add `impl Drop` to a struct, check whether downstream code, or `Drop::drop`
-itself, must consume a field. If yes, move the `Drop` onto a dedicated one-field guard type and
-keep the aggregate `Drop`-free. Reach for the `unsafe` `ManuallyDrop` + `#[repr(transparent)]` form
-only after `size_of` shows it saves a word. Measured on rustc 1.97.0: a payload with a niche —
-`Box`, `NonNull`, `&T`, `NonZero*` — makes `T`, `Option<T>` and `ManuallyDrop<T>` all 8 bytes, so
-the safe `Option` guard costs nothing and the `unsafe` rewrite buys nothing.
-
-[drop-and-raii.md](drop-and-raii.md) holds the rest: the eight error codes `impl Drop` turns on
-with their exact messages, the E0507 that `if let Some(x) = self.field` gives inside `Drop::drop`,
-the four escape hatches, drop order, and the two ways `impl Drop` changes the borrow checker.
+- Value-passing performance trap
+- `#[derive(Clone)]` on resource-backed types
+- `Deref` on a non-pointer type causes method collision
+- `parking_lot` and `tokio` mutexes do not poison on panic
+- Integer overflow panics in debug and wraps in release
+- `Arc` reference cycles without `Weak` leak permanently
+- A `Weak` registry never reaps dead slots
+- Lifetime laundering across input and storage
+- A `Cow` field infects the struct with a lifetime
+- A blanket impl in a public API is a semver hazard
+- A blanket impl on an empty trait is not a bound alias
+- A `Clone` supertrait or a `-> Self` method destroys dyn compatibility
+- A trait bound on a struct definition is viral and guarantees nothing
 
 ---
 
@@ -60,18 +32,17 @@ the four escape hatches, drop order, and the two ways `impl Drop` changes the bo
 
 **Severity: WARNING on hot paths**
 
-`fn(T) -> T` copies the value in and out. Once `T` crosses the target's inline-copy boundary,
-each call emits a `memcpy` call. rustc does not rewrite it into `&mut T` mutation. This is not a
-panic-safety restriction, and no build setting removes it.
-
-The boundary is target-dependent. Measured on rustc 1.97.0 at `-O`, with a
-`#[derive(Clone, Copy)] struct T([u8; N])` copied through a function: `x86_64-unknown-linux-gnu`
-emits no `memcpy` call up to and including 128 bytes, and one call from 129 bytes up.
-`aarch64-apple-darwin` emits none up to and including 256 bytes, and one from 257 bytes up. At
-`-C opt-level=0` the boundary is 32 and 33 bytes on both targets, so a debug build cannot probe
-the release boundary.
+`fn(T) -> T` copies the value in and out. Above the target's inline-copy boundary, each move is a
+`memcpy` call that `#[inline]` and `panic = "abort"` do not remove, and rustc does not rewrite it
+into `&mut T` mutation. The `rust-hot-path` skill, when it is installed, has the boundary per
+target and the probe that measures it.
 
 ```rust
+struct BigState {
+    payload: [u8; 1024],
+    counter: u64,
+}
+
 // BAD on a hot path: forces a memcpy in and a memcpy out
 fn transform(mut state: BigState) -> BigState {
     state.counter += 1;
@@ -91,51 +62,12 @@ fn transform(state: &mut BigState) {
 }
 ```
 
-Three repairs look plausible and none of them works. Measured on rustc 1.97.0,
-`aarch64-apple-darwin`, `-C opt-level=3`, with a 1032-byte state mutated in a loop:
+Do not keep the `fn(T) -> T` shape through a `take_mut`-style `ptr::read` + closure + `ptr::write`
+helper. That helper adds a copy, and a panic inside the closure aborts the process.
 
-| Form | `memcpy` calls per iteration | Instructions | Stack frame |
-| --- | --- | --- | --- |
-| `fn evolve_mut(&mut BigState)` | 0 | 14 | none |
-| `#[inline] fn evolve(BigState) -> BigState` | 2 | 27 | 1040 bytes |
-| the same, rebuilt with `-C panic=abort` | 2 | 27 | 1040 bytes |
-| `take_mut`-style `ptr::read` + closure + `ptr::write` | 3 | 42 | 2080 bytes |
-
-`#[inline]` and `#[inline(always)]` both leave the two `memcpy` calls in place: the move into the
-callee's argument slot and back out of its return slot are MIR-level copies, and LLVM hands them to
-a stack temporary. `-C panic=abort` produces a body that is identical instruction for instruction,
-so `panic = "abort"` in the release profile buys nothing here.
-
-The `take_mut` rewrite is the worst of the three. It adds a copy instead of removing one, and it
-turns any panic inside the closure into an unconditional abort:
-
-```rust
-// ANTI-PATTERN: more copies than the plain value-passing call, and it aborts on panic.
-pub fn take<T, F: FnOnce(T) -> T>(mut_ref: &mut T, closure: F) {
-    unsafe {
-        let old = std::ptr::read(mut_ref);
-        let new = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| closure(old)))
-            .unwrap_or_else(|_| std::process::abort());
-        std::ptr::write(mut_ref, new);
-    }
-}
-```
-
-Measured: a panic inside the closure exits the process with status 134 (`128 + SIGABRT`), and an
-enclosing `catch_unwind` never returns. The abort is forced by construction — the closure consumed
-a bitwise copy and may have dropped it, so unwinding past `take` would leave the original for a
-second drop. Write `fn evolve_mut(&mut BigState)` instead.
-
-Use `fn(T) -> T` only in two cases:
-
-- A state-machine transition where the ownership transfer is the semantic. A builder method
-  `fn set_foo(mut self) -> Self` is the standard example.
-- A type that stays under the boundary of every target you ship. 128 bytes clears both targets
-  measured above.
-
-Profile with `cargo-flamegraph` or Criterion before you choose value-passing on any path that
-runs per item. `skills/rust-hot-path/references/type-size-reduction.md` holds the probe recipe
-that measures the boundary on your own target, and the ways to shrink a type below it.
+Use `fn(T) -> T` only when the ownership transfer is the semantic, as in a state-machine transition
+or a builder method `fn set_foo(mut self) -> Self`, or when the type stays under the boundary on
+every target you ship.
 
 The builder receiver shape is the case where the choice is not about copy cost. The three shapes
 are not interchangeable, and the receiver decides where the builder can live:
@@ -219,6 +151,8 @@ often expect an isolated copy.
 Document the sharing on the type:
 
 ```rust
+pub struct Pool;
+
 /// Cloning shares the underlying connection pool.
 #[derive(Clone)]
 pub struct Client {
@@ -253,7 +187,10 @@ impl std::ops::Deref for UserId {
 the chain, trait-bound solving and unsizing to `dyn Trait` do not.
 
 Rule: implement `Deref` only on a smart pointer. For a domain newtype, write explicit accessor
-methods, or implement `AsRef` and `From`. For polymorphism, declare a trait and implement it on
+methods, or implement `AsRef` and `From`. Exception: a collection newtype may implement
+`Deref<Target = [T]>` or `Deref<Target = str>` as a read-only view, as `Vec` and `String` do.
+Never add `DerefMut` to it, and never target the owning collection. The `rust-iterator-impl`
+skill uses this shape. For polymorphism, declare a trait and implement it on
 each type: `Vec<Box<dyn T>>`, a `&dyn T` parameter, and a generic bound each need the impl, and
 none of them accepts a `Deref` in its place. The compiler reports nothing at the point the mistake
 is made, only at the first polymorphic use site, by which time the rewrite is a full API change.
@@ -274,6 +211,34 @@ still assume that poisoning protects it.
 Rule: when you use a `parking_lot` or `tokio` mutex, do not rely on poison detection. If a
 panicking writer can leave the guarded data inconsistent, either validate the invariant on the
 reader side, or stay on `std::sync::Mutex` and handle `PoisonError` deliberately.
+
+On `std::sync::Mutex`, state the policy at each `lock()`. This probe shows both halves: the panic
+under the guard poisons the lock, and a counter whose value stays valid recovers the guard.
+
+```rust,run
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
+
+fn main() {
+    let total = Arc::new(Mutex::new(0u32));
+    let worker = Arc::clone(&total);
+    let joined = thread::spawn(move || {
+        let _guard = worker.lock().expect("total mutex poisoned");
+        panic!("worker fails while it holds the guard");
+    })
+    .join();
+    assert!(joined.is_err());
+    // The panic poisoned the mutex. A bare `unwrap` here would panic too.
+    assert!(total.lock().is_err());
+    // Policy for this counter: the value stays valid, so recover the guard.
+    let value = *total.lock().unwrap_or_else(PoisonError::into_inner);
+    assert_eq!(value, 0);
+}
+```
+
+Size is not speed. `parking_lot` 0.12.5 locks are smaller than or the same size as `std::sync`
+locks (measured on rustc 1.98.1, aarch64-apple-darwin: `Mutex<()>` is 1 byte against 16). Only a
+contention measurement justifies the switch.
 
 ---
 
@@ -312,12 +277,16 @@ Reference counting cannot break a cycle. Two `Arc`s that point at each other are
 deallocated. Nothing panics and nothing errors. The process simply grows.
 
 ```rust
+use std::sync::Arc;
+
 // CYCLE: pool -> connection -> pool. Neither value is ever dropped.
 struct Pool { connections: Vec<Arc<Connection>> }
 struct Connection { pool: Arc<Pool> }
 ```
 
 ```rust
+use std::sync::{Arc, Weak};
+
 // FIX: Weak for the child-to-parent direction. The count never holds the cycle.
 struct Pool { connections: Vec<Arc<Connection>> }
 struct Connection { pool: Weak<Pool> }
@@ -362,10 +331,9 @@ impl Subject {
         // Reap first, or the Vec grows for the life of the subject.
         self.observers.retain(|slot| slot.strong_count() > 0);
         let state = self.state;
-        self.observers
-            .iter()
-            .filter_map(Weak::upgrade)
-            .for_each(|observer| observer.observe(state));
+        for observer in self.observers.iter().filter_map(Weak::upgrade) {
+            observer.observe(state);
+        }
     }
 }
 ```
@@ -382,7 +350,7 @@ to one subject type. Take the subject as a plain method argument.
 
 ## Lifetime laundering across input and storage
 
-**Severity: CRITICAL**
+**Severity: WARNING**
 
 A function that takes `&'a T` and writes derived references into a long-lived
 `HashMap<_, &'a U>` looks elegant. The shared `'a` forces every call site to pick a single
@@ -441,7 +409,7 @@ rg "fn .+<'[a-z]+>.*HashMap.*&'[a-z]+" --type rust -n
 The same failure family as the section above, from one field. A `Cow<'a, str>` field puts `'a` on
 the struct and on every signature that touches it, exactly like a `&'a mut T` field.
 
-`skills/rust-copy-on-write/SKILL.md` holds the whole decision: the E0515 and E0521 shapes, the
+The `rust-copy-on-write` skill holds the whole decision: the E0515 and E0521 shapes, the
 `into_static` exit, and the hit rate that decides whether the field is worth a lifetime at all.
 
 ---
@@ -457,6 +425,8 @@ downstream compilation breaks. The error appears in the consumer's CI, months af
 the change.
 
 ```rust
+use std::fmt::Display;
+
 // HAZARD: a downstream `impl Bar for MyType where MyType: Display`
 // can conflict with this on a future version bump.
 pub trait Bar { fn bar(&self) -> String; }
@@ -466,6 +436,8 @@ impl<T: Display> Bar for T {
 ```
 
 ```rust
+use std::fmt::Display;
+
 // SAFE: the trait is sealed, so no downstream impl can ever exist,
 // and the blanket impl is therefore free of conflict risk.
 mod private { pub trait Sealed {} }
@@ -561,15 +533,17 @@ impl Render for Dot {
 }
 
 fn draw_all(items: &[Box<dyn Render>]) {
-    items.iter().for_each(|item| item.draw());
+    for item in items {
+        item.draw();
+    }
 }
 ```
 
 Rule: never put `Clone` in the supertrait list of a trait you intend to use behind `dyn`, and add
 `where Self: Sized` to every method that names `Self` in return position. That clause has a cost:
-the method cannot be called through `dyn Trait` at all. `skills/rust-compiler-errors/SKILL.md`
-holds the E0038 triage — the five shapes that remove the vtable, the `...because` note that names
-which one you hit, and the `clone_box` replacement for a `Clone` supertrait.
+the method cannot be called through `dyn Trait` at all. The `rust-compiler-errors` skill
+holds the E0038 triage — a table of the shapes that remove the vtable, the `...because` note that
+each one prints, and the `clone_box` replacement for a `Clone` supertrait.
 
 ---
 
@@ -606,7 +580,10 @@ impl<T: Featured> Container<T> {
 }
 ```
 
-Rule: declare the type parameter bare, and put each bound on the impl block that needs it. One case
-does need the bound on the definition: a `where` clause that an associated type or a const generic
-expression depends on. Do not remove such a bound blindly. Removing a bound from a published struct
-is not a breaking change; adding one is.
+Rule: declare the type parameter bare, and put each bound on the impl block that needs it. Three
+cases need the bound on the definition. First, a `where` clause that an associated type or a const
+generic expression depends on. Second, a type whose `Drop` impl needs the bound: E0367 rejects a
+`Drop` impl with bounds that the struct lacks. Third, a closure-typed field such as
+`struct S<F: Fn(&str) -> usize> { f: F }`: the bound gives the closure its signature at the struct
+literal, and without it `S { f: |s| s.len() }` is E0282. Do not remove such a bound blindly.
+Removing a bound from a published struct is not a breaking change; adding one is.

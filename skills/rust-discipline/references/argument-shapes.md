@@ -1,10 +1,26 @@
 # Argument shapes
 
 Read this file when you choose the parameter type for a `pub` or `pub(crate)` function that takes
-text, a path, or a sequence. `SKILL.md` gives the default (`&str`, `&[T]`, `&Path`). This file
-gives the acceptance set of every competing shape, so you can tell which caller you lock out.
+text, a path, a sequence, or a callback. `SKILL.md` gives the default (`&str`, `&[T]`, `&Path`).
+This file gives the acceptance set of every competing shape, so you can tell which caller you lock
+out.
 
-Every result below is from rustc 1.97.0, edition 2024, `aarch64-apple-darwin`.
+Measured on rustc 1.97.0, edition 2024, `aarch64-apple-darwin`, unless a section names rustc 1.98.1.
+
+Contents:
+
+- Acceptance matrix: text parameters
+- Acceptance matrix: path parameters
+- `Borrow<T>` is a map-key bound, never an argument bound
+- `impl Into<String>` is narrower than `&str`
+- Deref coercion never reaches a slice's elements
+- `impl Trait` in argument position deletes the caller's turbofish
+- A generic bound breaks fn-pointer coercion
+- Callback bounds past the plain borrow
+- Monomorphisation cost, and the firewall
+- When `&String` and `&Vec<T>` are correct
+- The receiver is an argument too
+- Triage
 
 ---
 
@@ -139,8 +155,8 @@ error[E0308]: mismatched types
 
 The caller's only repair without a generic is
 `.iter().map(String::as_str).collect::<Vec<_>>()` — one allocation plus one pointer write per
-element, on every call. Never write `&[&str]` or `&[&T]` in a signature. Take `&[S]` under
-`S: AsRef<str>`:
+element, on every call. Do not put `&[&str]` or `&[&T]` in a public signature: it forces every
+caller that holds owned strings to build a temporary `Vec`. Take `&[S]` under `S: AsRef<str>`:
 
 ```rust
 use std::borrow::Cow;
@@ -199,7 +215,7 @@ not interchangeable in a public API; only one of them can be annotated by a call
 ## A generic bound breaks fn-pointer coercion
 
 Changing a published `fn f(s: &str)` into `fn f(s: impl AsRef<str>)` or `fn f<S: AsRef<str>>(s: S)`
-breaks every caller that passes `f` as a value:
+breaks every caller that coerces `f` to a `fn(&str)` pointer:
 
 ```text
 error[E0308]: mismatched types
@@ -210,8 +226,10 @@ error[E0308]: mismatched types
 ```
 
 A monomorphised fn item carries one concrete lifetime, never a higher-ranked one, so it cannot
-satisfy `for<'a> fn(&'a str)`. Turbofishing the named form does not help: `generic2::<&str>` pins
-`&'_ str` to a single inferred lifetime and gives the same E0308. Only a wrapper closure works.
+satisfy `for<'a> fn(&'a str)`. An `Fn(&str)` bound is higher-ranked too, and fails with
+`implementation of 'Fn' is not general enough` and no error code. Turbofishing the named form does
+not help: `generic2::<&str>` pins `&'_ str` to a single inferred lifetime and gives the same E0308.
+Only a wrapper closure works.
 
 ```rust
 fn generic(s: impl AsRef<str>) -> usize {
@@ -228,8 +246,52 @@ fn main() {
 }
 ```
 
+The break needs a reference parameter and a higher-ranked target. `iter.map(f)` over `&str` items
+still compiles, because each item has one concrete lifetime. A by-value parameter made generic,
+`u8` to `T: Add<Output = T>`, still coerces to `fn(u8) -> u8`. Measured on rustc 1.98.1.
+
 Rule: treat a change from a concrete parameter to any generic bound as a source-breaking change,
-and ship it in a major version.
+and ship it in a major version. This rule is stricter than the Cargo SemVer guide, which lists
+"generalizing a function to use generics (supporting original type)" as a minor change and accepts
+the type-inference failures it can cause. This rule counts two breakages: the fn-pointer and
+`Fn`-bound breakage of a reference parameter, which the guide does not mention, and the inference
+breakage of any parameter, which the guide accepts. cargo-semver-checks 0.50.0 does not flag the
+change (measured on rustc 1.98.1). The `rust-crate-release` skill owns the final version-bump
+decision.
+
+---
+
+## Callback bounds past the plain borrow
+
+`SKILL.md` gives the two base rules: `for<'a>` when the callback must not keep the reference, and
+`for<'a> Fn(&'a T) -> &'a K` with `K: ?Sized` when it returns a borrow of its argument. This
+section holds the rest. Measured on rustc 1.98.1.
+
+**Pick the bound from three separate axes.** `move` decides the capture mode. The body decides
+the trait: a read-only body gives `Fn` even under `move`, and a body that moves a non-`Copy`
+capture out gives `FnOnce`, whose second call fails with `E0382`. The captured types decide the
+lifetime. A closure coerces to `fn` only with an empty capture set; one captured `i32` blocks it
+with `E0308`.
+
+**Declare a method lifetime on the method, or elide it.** `impl<'a> Doc { fn view(&'a self) ->
+View<'a> }` is early bound, so `Doc::view` fails a `for<'x>` bound with `implementation of 'Fn' is
+not general enough`: no error code, no suggested fix. `impl Doc { fn view(&self) -> View<'_> }` is
+late bound and passes. A direct call compiles under both forms, so test the bound by passing the
+method path itself.
+
+**An output that stays a type parameter over `'a` needs a trait with a GAT.** Write
+`type Out<'a>: Bound where Self: 'a, T: 'a;` and put the output bound on the GAT in the trait
+definition. Two other shapes compile at the definition and fail at the first call with an element
+type that borrows:
+
+- a use-site bound `for<'a> K::Out<'a>: Bound`;
+- a lifetime parameter on the trait (`for<'a> K: Proj<'a, T>`) together with an impl that states
+  `'s: 'a`. Without that outlives bound the impl works.
+
+Both give `error[E0597]: ... does not live long enough` with `note: due to a current limitation of
+the type system, this implies a 'static lifetime`. Test the consumer with an element type that
+borrows, because a `'static` element hides the failure. The `rust-callback-bounds` skill, when it
+is installed, has the worked example.
 
 ---
 
@@ -266,7 +328,7 @@ a function longer than a few lines.
 ## When `&String` and `&Vec<T>` are correct
 
 The rule "never take `&String` or `&Vec<T>`" is stated as absolute and it is not. Two of the three
-usual justifications for it are wrong, and one exception is real.
+usual justifications for it are wrong, and two exceptions are real.
 
 **Wrong justification 1: "my callers all own a `Vec`, so `&Vec<T>` costs them nothing."** Owning a
 `Vec` does not mean wanting to pass all of it. A caller who owns the exact vector still cannot pass
@@ -393,5 +455,7 @@ are in [type-and-trait-traps.md](type-and-trait-traps.md).
 | `E0283: cannot infer type for type parameter 'impl AsRef<str>'` | `impl Trait` argument plus an empty literal | declare `<S: AsRef<str>>` |
 | `E0107: 'impl Trait' cannot be explicitly specified as a generic argument` | caller tried to turbofish an `impl Trait` argument | declare `<S: AsRef<str>>` |
 | `E0308: one type is more general than the other`, `found fn item` | generic fn passed where a `fn` pointer is expected | wrap in a closure, or keep the concrete parameter |
+| `implementation of 'Fn' is not general enough` on a method path | method lifetime declared on the `impl` block (early bound) | declare it on the method, or elide it |
+| `E0597` with `this implies a 'static lifetime` at a generic callback | use-site `for<'a>` bound on a GAT, or a trait lifetime tied by `'s: 'a` | put the output bound on the GAT in the trait definition |
 | `E0507: cannot move out of 'self.cfg' which is behind a mutable reference` | consuming setter called on a field | `std::mem::take`, or a `&mut self` setter |
 | `E0599: no method named 'capacity' found for reference '&[u32]'` | the body needs the owned type | keep `&Vec<T>` and write down why |
