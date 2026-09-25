@@ -200,8 +200,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | path traversal | rust-security |
 | decompression bomb | rust-security |
 | red-green-refactor | rust-tdd |
-| golden-contract | rust-tdd |
 | fault-injection | rust-tdd |
+| test-first | rust-tdd |
 | cargo-mutants | rust-test-tools |
 | proptest | rust-test-tools |
 | cargo-fuzz | rust-test-tools |

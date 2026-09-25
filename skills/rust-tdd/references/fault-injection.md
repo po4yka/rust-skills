@@ -1,7 +1,10 @@
 # Fault Injection Queue
 
-Extended reference for the `rust-tdd` skill. Read this when you test error paths, retry
-logic, or cancellation.
+Extended reference for the `rust-tdd` skill. Read this when you write a fake, or when you
+test error paths, retry logic, or cancellation.
+
+Contents: why a queue, reference implementation, target enum, a fake that consults the queue,
+outcome selection, scope rules, asserting that the fault fired.
 
 ## Why a queue
 
@@ -62,13 +65,13 @@ impl<T> Default for FaultQueue<T> {
 
 impl<T: PartialEq> FaultQueue<T> {
     pub fn enqueue(&self, spec: FaultSpec<T>) {
-        self.specs.lock().unwrap().push_back(spec);
+        self.specs.lock().expect("fault queue lock poisoned").push_back(spec);
     }
 
     /// Returns the first outcome that matches `target`, in enqueue order.
     /// A `OneShot` entry is removed. A `Persistent` entry stays.
     pub fn take(&self, target: &T) -> Option<FaultOutcome> {
-        let mut specs = self.specs.lock().unwrap();
+        let mut specs = self.specs.lock().expect("fault queue lock poisoned");
         let index = specs.iter().position(|spec| &spec.target == target)?;
         let outcome = specs[index].outcome.clone();
         if specs[index].scope == FaultScope::OneShot {
@@ -82,7 +85,7 @@ impl<T: PartialEq> FaultQueue<T> {
     where
         T: Clone,
     {
-        let mut specs = self.specs.lock().unwrap();
+        let mut specs = self.specs.lock().expect("fault queue lock poisoned");
         let index = specs.iter().position(|spec| &spec.target == target)?;
         let spec = specs[index].clone();
         if spec.scope == FaultScope::OneShot {
@@ -92,11 +95,11 @@ impl<T: PartialEq> FaultQueue<T> {
     }
 
     pub fn clear(&self) {
-        self.specs.lock().unwrap().clear();
+        self.specs.lock().expect("fault queue lock poisoned").clear();
     }
 
     pub fn is_empty(&self) -> bool {
-        self.specs.lock().unwrap().is_empty()
+        self.specs.lock().expect("fault queue lock poisoned").is_empty()
     }
 }
 ```
@@ -122,6 +125,47 @@ pub enum TransportFault {
 Do not use a string as the target. A typo in a string silently disables the fault and the
 test passes for the wrong reason.
 
+## A fake that consults the queue
+
+The fake counts every call, records the last arguments, and asks the queue for an outcome
+before it does its normal work.
+
+```rust
+pub trait Transport: Send + Sync {
+    fn start(&self) -> Result<(), TransportError>;
+    fn send(&self, frame: &[u8]) -> Result<usize, TransportError>;
+}
+
+#[derive(Default)]
+pub struct FakeTransport {
+    pub start_calls: AtomicUsize,
+    pub send_calls: AtomicUsize,
+    pub last_frame: Mutex<Option<Vec<u8>>>,
+    pub faults: FaultQueue<TransportFault>,
+}
+
+impl Transport for FakeTransport {
+    fn start(&self) -> Result<(), TransportError> {
+        self.start_calls.fetch_add(1, Ordering::Relaxed);
+        match self.faults.take(&TransportFault::Start) {
+            Some(FaultOutcome::Error) => Err(TransportError::Io),
+            Some(FaultOutcome::Timeout) => Err(TransportError::Timeout),
+            Some(FaultOutcome::Panic) => panic!("simulated fault: transport start"),
+            _ => Ok(()),
+        }
+    }
+
+    fn send(&self, frame: &[u8]) -> Result<usize, TransportError> {
+        self.send_calls.fetch_add(1, Ordering::Relaxed);
+        *self.last_frame.lock().expect("fake lock poisoned") = Some(frame.to_vec());
+        match self.faults.take(&TransportFault::Send) {
+            Some(FaultOutcome::Error) => Err(TransportError::Io),
+            _ => Ok(frame.len()),
+        }
+    }
+}
+```
+
 ## Outcome selection
 
 Match the outcome to the real failure mode of the seam. A test that injects the wrong
@@ -142,8 +186,8 @@ bad data. They find a different class of defect than `Error`, because they exerc
 decode path instead of the error path.
 
 Use `Panic` with care. It is the right tool to prove that a boundary contains a panic — an
-FFI export, a thread body, a task — and the wrong tool everywhere else. See the
-`rust-panic-safety` skill for containment rules.
+FFI export, a thread body, a task. It is the wrong tool everywhere else. The
+`rust-panic-safety` skill, when it is installed, has the containment rules.
 
 ## Scope rules
 
