@@ -1,12 +1,17 @@
 # Inlining and codegen inspection
 
-Measured inlining thresholds, the compile-time price of `#[inline]`, the bounds-check probes,
-and the commands that show what the compiler did. It serves the Inlining and Bounds checks
-sections of `skills/rust-hot-path/SKILL.md`, which give the four attribute forms and the rule
-that every attribute needs a number.
+Measured inlining thresholds, the compile-time price of `#[inline]`, the vectorization and
+bounds-check probes, and the commands that show what the compiler did. It serves the Inlining
+and Bounds checks sections of [SKILL.md](../SKILL.md), which give the four attribute forms and
+the rule that every attribute needs a number.
 
-All figures come from rustc 1.97.0. The host is `aarch64-apple-darwin` unless the text names
-another target.
+All figures come from rustc 1.97.0 unless the text names 1.98.1. The host is
+`aarch64-apple-darwin` unless the text names another target.
+
+Sections: where the inliner stops and how to probe it; the compile-time price of `#[inline]`;
+what each attribute becomes; `#[cold]` and `cold_path`; IR, symbol, and assembly checks;
+proving the win; the hot and cold split, and outlining; special-casing small sizes;
+vectorization and SIMD; bounds-check probes; triage.
 
 ## Where the inliner actually stops
 
@@ -14,20 +19,27 @@ A crate boundary is the barrier. A codegen-unit boundary inside one crate is not
 
 | Callee | Build | Symbol left in the caller crate |
 | --- | --- | --- |
-| 8-statement `pub fn`, no attribute | `lto = false`, `codegen-units = 16` | None. Inlined |
-| 60-statement `pub fn`, no attribute | `lto = false`, `codegen-units = 16` | `declare noundef i32 @_RNvCs..._3dep5plain` plus a call |
-| 60-statement `pub fn`, `#[inline]` | `lto = false`, `codegen-units = 16` | None. Inlined |
-| 60-statement `pub fn`, no attribute | `lto = true` | None. Inlined |
-| 60-statement generic `pub fn`, no attribute | `lto = false`, `codegen-units = 16` | None. Inlined |
-| 60-statement private `fn` in another module of the same crate | `lto = false`, `codegen-units = 16` | None. Inlined |
+| 8-line `pub fn`, no attribute | `lto = false`, `codegen-units = 16` | None. Inlined |
+| 60-line `pub fn`, no attribute | `lto = false`, `codegen-units = 16` | `declare noundef i32 @_RNvCs..._3dep5plain` plus a call |
+| 60-line `pub fn`, `#[inline]` | `lto = false`, `codegen-units = 16` | None. Inlined |
+| 60-line `pub fn`, no attribute | `lto = true` | None. Inlined |
+| 60-line generic `pub fn`, no attribute | `lto = false`, `codegen-units = 16` | None. Inlined |
+| 60-line private `fn` in another module of the same crate | `lto = false`, `codegen-units = 16` | None. Inlined |
+
+The 60-line row reproduces on 1.98.1 with a body of `x = x + k` and `x = x ^ k` lines on a
+`u32`: `--emit=mir` counts 121 statements plus the return, over the budget of rule 1, and `nm`
+shows the symbol. The first 8 of those lines count 17 plus the return, under the budget.
 
 Read the table as four rules.
 
-1. A small non-generic `pub fn` crosses a crate boundary with no attribute. The budget is the
-   one `-Z cross-crate-inline-threshold` sets, and it defaults to 100 MIR cost units. A
-   statement count is not the unit: three measurements of a straight-line `u32` body put the
-   boundary anywhere between 15 and 99 statements, because the cost of a statement depends on
-   what the statement does. Probe your own function instead of counting its lines.
+1. A small non-generic `pub fn` crosses a crate boundary with no attribute when rustc infers it
+   cross-crate-inlinable. At the 1.98.1 tag
+   (`compiler/rustc_mir_transform/src/cross_crate_inline.rs`) the function's optimized MIR must
+   hold no call (intrinsics excepted), no drop of a non-trivial value, no unwind cleanup or
+   resume, and at most 100 statements plus terminators. `StorageLive`, `StorageDead`, and `Nop`
+   do not count. The budget is `-Z cross-crate-inline-threshold`, default 100. Count MIR, not
+   source lines: each `x = x + k` line lowers to two MIR statements. The MIR probe below gives
+   the count.
 2. `#[inline]` is the switch that ships the MIR of a large non-generic function to downstream
    crates. Nothing else does, short of LTO.
 3. `#[inline]` on a generic function is redundant for this purpose. The downstream crate
@@ -38,10 +50,16 @@ Read the table as four rules.
 The last row matters when a fix looks like a no-op. Splitting a hot function into two modules of
 the same crate does not add a barrier. Moving it into its own crate does.
 
+Rule 1 depends on the build. rustc skips the inference in incremental builds and at
+`opt-level = 0`. The MIR inliner, which removes small calls such as `u32::wrapping_mul` before
+the check, runs only at `opt-level` 2 and 3 in a non-incremental build. Measured on 1.98.1: a
+leaf built from operators, `(x ^ 0x5555) >> 3`, crossed at opt-level 1, 2, 3, `"s"`, and
+`"z"`. A leaf that calls `x.wrapping_mul(31)` crossed only at 2 and 3.
+
 ### Probe one function
 
-A body that fits the budget is instantiated per caller, so it leaves no symbol in its own rlib.
-That makes the defining crate alone enough to answer the question:
+A body that qualifies is instantiated per caller, so it leaves no symbol in its own rlib. That
+makes the defining crate alone enough to answer the question:
 
 ```bash
 cargo build --release -p dep
@@ -49,17 +67,43 @@ nm -g target/release/libdep.rlib | grep '_R'
 ```
 
 No line for the function: the body crosses the boundary already, and `#[inline]` buys nothing.
-A line for the function: the body is over the budget, and only `#[inline]` or LTO gets it
-across. Run the probe again after each edit to the body.
+A line for the function: the body does not qualify, and only `#[inline]` or LTO gets it across.
+Run the probe again after each edit to the body. `target/` is the default target directory;
+use yours when `CARGO_TARGET_DIR` or `build.target-dir` moves it.
+
+When the symbol stays, count the function's MIR in the same profile to see why:
+
+```bash
+touch dep/src/lib.rs
+cargo rustc --release -p dep -- --emit=mir=dep.mir
+```
+
+Find `fn <name>(` in `dep.mir` and read its `bb` blocks. A terminator of the form
+`_2 = helper(move _1) -> [return: bb1, ...]` is a call, and a call to anything but an intrinsic
+disqualifies the function. Otherwise count every line in the blocks except `StorageLive`,
+`StorageDead`, and `nop`, terminators included. More than 100 disqualifies it. rustc writes
+`dep.mir` in the workspace root, and it writes nothing when the crate is fresh, so keep the
+`touch`.
+
+Run the probe in the profile you ship. Measured on 1.98.1:
+
+| Build | What the probe shows |
+| --- | --- |
+| `--release` with the default `incremental = false` | The true answer |
+| `CARGO_INCREMENTAL=1`, or the `dev` profile | A symbol for every function, so every helper reads as too large |
+| A release profile with LTO, on macOS | Xcode `nm` fails with `Unknown attribute kind`: the rlib holds bitcode from a newer LLVM |
+
+The last case needs no answer, because LTO ignores the boundary (rule 4). Probe it with
+`--config 'profile.release.lto=false'`.
 
 ## The compile-time price of `#[inline]`
 
 `#[inline]` makes every downstream crate compile the body again. It does not make the defining
 crate slower: the attribute switches the function to per-caller instantiation, so the defining
-crate stops emitting it. A 60-statement `#[inline] pub fn` left no symbol in its own rlib at
+crate stops emitting it. A 60-line `#[inline] pub fn` left no symbol in its own rlib at
 all.
 
-Measured on a dependency with 40 `pub fn` of 60 statements each, and one downstream crate that
+Measured on a dependency with 40 `pub fn` of 60 lines each, and one downstream crate that
 calls all 40. rustc invoked directly, minimum of 9 runs, `aarch64-apple-darwin`:
 
 | Build | Defining crate | Downstream rebuild |
@@ -88,8 +132,7 @@ nothing, look at the callees first.
 
 ## `#[cold]` and the branch weight
 
-`#[cold]` is stable on 1.97.0. It lowers to a function attribute on the definition, not to a
-call-site attribute:
+`#[cold]` lowers to a function attribute on the definition, not to a call-site attribute:
 
 ```text
 attributes #1 = { cold mustprogress nofree norecurse nosync nounwind willreturn memory(none) ... }
@@ -108,18 +151,51 @@ cold edge out of line:
 
 So one attribute on the definition biases every caller.
 
+### `cold_path` marks one branch
+
+`core::hint::cold_path()` (Rust 1.95) marks a branch cold without a separate function. Call it
+as the first statement of the rare arm:
+
+```rust
+pub fn parse_digits(bytes: &[u8]) -> Result<u32, usize> {
+    let mut total = 0u32;
+    for (i, &c) in bytes.iter().enumerate() {
+        if !c.is_ascii_digit() {
+            core::hint::cold_path();
+            return Err(i);
+        }
+        total = total.wrapping_mul(10).wrapping_add(u32::from(c - b'0'));
+    }
+    Ok(total)
+}
+```
+
+Measured on 1.98.1 at `-O`, the branch into that arm carries the weight:
+
+```text
+!5 = !{!"branch_weights", i32 4000000, i32 4001}
+```
+
+The arm's code stays in the function. Use `cold_path` when only the branch layout matters. Use
+`#[cold]` with `#[inline(never)]` when the rare code must leave the hot function.
+
 ## Show what the compiler did
 
 ### LLVM IR is the cheapest check
 
 ```bash
-# Writes one .ll per codegen unit under target/release/deps/.
 touch src/main.rs
-cargo rustc --release -p app -- --emit=llvm-ir
+cargo rustc --release -p app -- --emit=llvm-ir=app.ll -C codegen-units=1
 
 # Did the dependency's code survive as a call?
-grep -nE '^(declare|define).*_3dep' target/release/deps/app*.ll
+grep -nE '^(declare|define).*_3dep' app.ll
 ```
+
+rustc writes `app.ll` relative to the directory cargo runs it in, the workspace root. Keep
+`-C codegen-units=1`: with more than one unit rustc prints `ignoring emit path because multiple
+.ll files were produced` and leaves one file per unit in the build directory, a Cargo-internal
+path that moves with `build.build-dir`. One unit does not change the cross-crate answer,
+because a codegen-unit boundary is not an inlining barrier.
 
 Read the result with three rules:
 
@@ -142,24 +218,17 @@ cargo build --release
 nm target/release/app | grep '_R'
 ```
 
-A function that was inlined everywhere leaves no symbol. In the 60-statement test above, `nm`
+A function that was inlined everywhere leaves no symbol. In the 60-line test above, `nm`
 printed exactly one line for the dependency, and it was the function with no attribute.
 
-**Expect `_R`, not `_ZN`.** rustc 1.97.0 uses the v0 mangling scheme by default. Passing
-`-C symbol-mangling-version=v0` is a no-op, and asking for the old scheme now fails:
-
-```text
-error: `-C symbol-mangling-version=legacy` requires `-Z unstable-options`
-```
-
-Mach-O adds one more leading underscore, so the same symbol reads `__RNv...` from `nm` on macOS
-and `_RNv...` on ELF. Grep for `_R` to match both. Any script or profile filter written against
-`_ZN` finds nothing.
+**Expect `_R`, not `_ZN`.** v0 mangling is the default since 1.97. Mach-O adds one leading
+underscore, so the same symbol reads `__RNv...` on macOS and `_RNv...` on ELF; grep `_R` to
+match both. The `rust-debugging` skill covers mangling and demanglers.
 
 ### Assembly for one function
 
 ```bash
-cargo install cargo-show-asm
+cargo install --locked cargo-show-asm
 cargo asm --release --lib bounds::sum_sliced      # a function in the library target
 cargo asm --release --bin my_bin some::function   # a function in a binary target
 ```
@@ -191,49 +260,20 @@ the body.
 
 ## Prove the change is a win
 
-### Criterion baselines
+Benchmark setup, Criterion baselines, and CI regression gates live in the `rust-performance`
+skill. One point is specific to inline attributes: they move code layout, and a layout shift
+moves wall-clock time by an amount unrelated to the change. That shift repeats on every run of
+the same build, so Criterion can report it as significant. Confirm a small wall-clock win with
+instruction counts (Gungraun on Linux) before you keep the attribute.
 
-`--save-baseline` and `--baseline` are Criterion flags, not libtest flags. The default bench
-harness parses the argument first and rejects it:
+## Split hot from cold, and outline the rare path
 
-```text
-error: Unrecognized option: 'save-baseline'
-```
+When one call site of a large function is hot, keep the body in an `#[inline(always)]` function,
+and give the cold call sites an `#[inline(never)]` wrapper around it. They then pay no code
+bloat.
 
-The working setup needs an explicit bench target with the default harness off:
-
-```toml
-[[bench]]
-name = "hot_path"
-harness = false
-```
-
-```bash
-cargo bench --bench hot_path -- --save-baseline before
-# apply the inline attribute
-cargo bench --bench hot_path -- --baseline before
-```
-
-Name the bench target on the command line. Without `--bench hot_path`, cargo also builds the
-libtest bench targets and the same error returns.
-
-### Wall clock is the worst metric available
-
-A small change in memory layout moves wall-clock time by an amount unrelated to the change. The
-shift is systematic inside one build, so it repeats on every run: reproducible and wrong.
-Criterion reports it as significant at p < 0.05.
-
-Instruction counts and cycle counts have far lower variance. `gungraun` 0.19.4 wires
-Valgrind-grade measurement into `cargo bench`. It is the rename of `iai-callgrind`, which is
-still published separately at 0.16.1, so pin one name on purpose.
-
-Keep wall clock as the final check that the change helps the product. Gate the pull request on
-instruction counts.
-
-## Outlining is the other half of inlining
-
-Inlining pulls a callee in. Outlining pushes a rare path out, so the hot function gets small
-enough for the inliner to accept it.
+Outlining is the reverse form. Inlining pulls a callee in; outlining pushes a rare path out, so
+the hot function gets small enough for the inliner to accept it.
 
 ```rust
 pub struct Cache {
@@ -297,9 +337,32 @@ requires.
 
 ## When inlining is not the answer
 
-A loop that the compiler will not vectorize does not get faster from an attribute. Reach for
-`core::arch`, which is stable and works in `no_std`. Baseline features of the target need no
-nightly and no `#[target_feature]`. Verified on stable 1.97.0, aarch64:
+A loop that the compiler will not vectorize does not get faster from an attribute.
+
+Check the optimization level first. SKILL.md *Bounds checks* states the opt-level rule. Its
+source is `compiler/rustc_codegen_ssa/src/back/write.rs` at the 1.98.1 tag. Measured on 1.98.1
+with a `zip` loop that adds two `u32` slices: 5 NEON vector instructions at 2 and 3, and 0 at 1,
+`"s"`, and `"z"`.
+
+```bash
+rustc -C opt-level=3 --emit asm --crate-type=lib vec.rs -o vec.s
+grep -cE '\.4s|\.16b|\.2d' vec.s      # aarch64 NEON arrangement suffixes
+```
+
+```bash
+rustc --target x86_64-unknown-linux-gnu -C opt-level=3 --emit asm --crate-type=lib vec.rs -o vec.s
+grep -cE '^\s+v?padd[bwdq]' vec.s   # x86_64 packed integer adds; match the op to the element type
+```
+
+Do not count `%xmm` registers: they also move plain copies. Measured on 1.98.1: 2 `paddd` at 2
+and 3, 0 at 1, `"s"`, and `"z"`.
+
+A count of 0 at 1, `"s"`, or `"z"` is the profile, not the code.
+
+When the loop stays scalar at `opt-level` 3 as well, `core::arch` is the next step. It is stable
+and works in `no_std`. Measured on 1.98.1, a `vaddq_u32` function gave 1 NEON instruction at 1,
+2, 3, `"s"`, and `"z"`. Baseline features of the target need no nightly and no
+`#[target_feature]`. Verified on stable 1.97.0, aarch64:
 
 ```rust
 #[cfg(target_arch = "aarch64")]
@@ -318,25 +381,27 @@ pub fn splat_seven() -> [u8; 16] {
 Two traps sit on the path past that point.
 
 **A non-baseline feature needs the attribute at every level.** Enabling the feature in the build
-configuration does not remove the requirement. The compiler says so:
+configuration does not remove the requirement. The compiler says so (x86_64 shown; `dotprod` on
+aarch64 fails the same way, measured on 1.98.1):
 
-```rust,compile_fail
-#[target_feature(enable = "dotprod")]
+```rust,compile_fail,E0133
+#[target_feature(enable = "avx2")]
 pub fn dot(a: u32) -> u32 {
     a
 }
 
 // error[E0133]: call to function `dot` with `#[target_feature]` is unsafe
-//   = note: the dotprod target feature being enabled in the build
-//     configuration does not remove the requirement to list it in
-//     `#[target_feature]`
+//   and requires unsafe block
+// With -C target-feature=+avx2 the error adds:
+//   = note: the avx2 target feature being enabled in the build configuration
+//     does not remove the requirement to list it in `#[target_feature]`
 pub fn caller(a: u32) -> u32 {
     dot(a)
 }
 ```
 
 Mark the caller with the same `#[target_feature]`, or call it from an `unsafe` block that a
-runtime `is_aarch64_feature_detected!` guard protects.
+runtime `is_x86_feature_detected!` guard (`is_aarch64_feature_detected!` on aarch64) protects.
 
 **Portable SIMD is still nightly.** `std::simd` needs a feature gate, and the gate fails on
 stable with E0554:
@@ -350,22 +415,14 @@ use std::simd::u8x16;
 Write the intrinsics per architecture behind `#[cfg(target_arch = ...)]`, and keep a plain scalar
 fallback for every other target.
 
-## Bounds checks: probe the assembly, do not guess
+## Bounds checks: the probe evidence
 
-An index expression is checked unless the compiler can prove the index is in range. The check
-is cheap; the branch it adds is what blocks vectorization. Compile one file to assembly and
-count the panic call:
-
-```bash
-rustc -O --emit asm --crate-type=lib probe.rs -o out.s
-grep -c 'panic_bounds_check' out.s
-```
-
-Mark every probe function `#[inline(never)]`. A small non-generic `pub fn` with no caller is
-never emitted at `-O`, because it fits the cross-crate-inline budget above and is instantiated
-per caller instead. The naive probe below then produces a 54-byte file that holds two
-directives, and `grep -c` prints 0. That reads exactly like a removed bounds check. With
-`#[inline(never)]` the same source emits the body and `grep -c` prints 1.
+SKILL.md *Verify and pin the win* gives the assembly probe and the `#[inline(never)]` rule. The
+evidence follows. A small non-generic `pub fn` with no caller is never emitted at `-O`, because it
+qualifies for cross-crate inlining (rule 1 above) and is instantiated per caller instead. Without
+the attribute, the `naive` probe below produces a 54-byte file that holds two directives, and
+`grep -c` prints 0. With `#[inline(never)]` the same source emits the body and `grep -c` prints
+1.
 
 Measured on 1.97.0, aarch64-apple-darwin, each function compiled alone with
 `#[inline(never)]`: `naive` printed 1, and the three shapes below printed 0.
@@ -404,10 +461,34 @@ pub fn iterated(v: &[u32]) -> u32 {
 }
 ```
 
-Reach for `get_unchecked` only when all three shapes fail and a benchmark justifies it. It is
-`unsafe` and it needs a SAFETY comment that proves the bound; see `rust-unsafe`. Clippy's
-`missing_asserts_for_indexing` finds the sites mechanically. It is in the `restriction` group,
-so it is off under every default.
+SKILL.md *Bounds checks* gives `as_chunks::<N>()` as a fourth shape, with the Clippy rule. The
+lint suggests `as_chunks::<N>().0`, and the `.1` half is the leftover that `remainder()` used to
+return. Below a `rust-version` of 1.88 Clippy stays silent and `as_chunks` is not available, so
+keep `chunks_exact`. For a size known only at run time, `chunks_exact` stays, and its leftover
+keeps asymmetric names: `remainder()` on `chunks_exact`, `into_remainder()` on
+`chunks_exact_mut`:
+
+```rust,run
+fn main() {
+    let data = [1u32, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let (chunks, rest) = data.as_chunks::<4>();
+    let mut sum = 0;
+    for c in chunks {
+        sum += c[0] + c[1] + c[2] + c[3];
+    }
+    assert_eq!((sum, rest), (36, &[9, 10][..]));
+
+    // A size known only at run time: chunks_exact stays.
+    let n = std::hint::black_box(4);
+    assert_eq!(data.chunks_exact(n).remainder(), &[9, 10]);
+    let mut buf = [0u8; 10];
+    let mut it = buf.chunks_exact_mut(n);
+    for c in &mut it {
+        c[0] = 1;
+    }
+    assert_eq!(it.into_remainder().len(), 2);
+}
+```
 
 ## Triage
 
@@ -415,10 +496,14 @@ so it is off under every default.
 | --- | --- | --- |
 | A bounds-check probe finds nothing, and the function is small | The `pub fn` was never emitted | Add `#[inline(never)]` to the probe |
 | `#[inline(always)]` measured as no change | The attribute is not transitive; the callee still stands | Mark the callee too, and confirm with `nm` |
-| A dependency function shows in a profile after a refactor | The code moved into its own crate, and the body is over the threshold | Add `#[inline]`, or turn on LTO |
+| A dependency function shows in a profile after a refactor | The code moved into its own crate, and the body does not qualify for cross-crate inlining | Add `#[inline]`, or turn on LTO |
+| Every function in the rlib keeps a symbol | Incremental or `dev` build: rustc skips the inference | Probe with `--release` and `incremental = false` |
+| A helper crosses at `opt-level = 3` and stops at `"s"` or `"z"` | The MIR inliner does not run at opt-level 1, `"s"`, or `"z"`, so a small call stays in the body | `#[inline]` on the helper, or `opt-level = 3` for that crate |
+| `nm` prints `Unknown attribute kind` on an rlib | Xcode `nm` reads LTO bitcode from a newer LLVM | Probe with `--config 'profile.release.lto=false'` |
 | Adding `#[inline]` made no difference at all | The build already uses `lto = true` | Remove the attribute and keep the compile time |
-| `cargo rustc -- --emit=llvm-ir` writes no `.ll` | The crate was fresh, so rustc never ran | `touch` a source file and repeat |
-| A grep for `_ZN` in a profile finds nothing | v0 mangling is the default on 1.97.0 | Grep `_R`, and allow the extra Mach-O underscore |
-| `cargo bench -- --save-baseline x` fails with `Unrecognized option` | The libtest harness parsed the flag | Add `[[bench]] harness = false` and pass `--bench <name>` |
-| A benchmark shows a large, repeatable, unexplainable win | Wall clock moved with the code layout | Re-measure with instruction counts |
-| `cargo asm` is not a command | The installed crate is `cargo-asm`, not `cargo-show-asm` | `cargo install cargo-show-asm` |
+| `cargo rustc -- --emit=llvm-ir=app.ll` writes no `.ll` | The crate was fresh, so rustc never ran | `touch` a source file and repeat |
+| `ignoring emit path because multiple .ll files were produced` | More than one codegen unit | Add `-C codegen-units=1` |
+| A grep for `_ZN` in a profile finds nothing | v0 mangling is the default since 1.97.0 | Grep `_R`, and allow the extra Mach-O underscore |
+| A loop has no vector instructions in the release build | `opt-level` 1, `"s"`, or `"z"` disables the loop vectorizer | `opt-level = 3` for that crate, or `core::arch` intrinsics |
+| A benchmark shows a large, repeatable, unexplainable win | Wall clock moved with the code layout | Re-measure with instruction counts; see the `rust-performance` skill |
+| `cargo asm` is not a command | The installed crate is `cargo-asm`, not `cargo-show-asm` | `cargo install --locked cargo-show-asm` |

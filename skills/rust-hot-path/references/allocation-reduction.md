@@ -1,12 +1,16 @@
 # Allocation reduction
 
-Allocation patterns that `skills/rust-hot-path/SKILL.md` names but does not develop: `HashMap`
-capacity, `collect` exactness, zero-filled buffers, inline-capacity types, reference counting,
-`format!` in a loop, and eager arguments. SKILL.md holds the `Vec` growth ladder,
-`reserve_exact`, `clone_from`, and the workhorse-buffer rule. Read those first; this file does
-not repeat them.
+Allocation patterns that [SKILL.md](../SKILL.md) names but does not develop. SKILL.md holds the
+`Vec` growth ladder, `reserve_exact`, `clone_from`, and the workhorse-buffer rule. Read those
+first; this file does not repeat them.
 
-All figures were measured on rustc 1.97.0, aarch64-apple-darwin, release profile.
+Sections: symptom routing; `HashMap` capacity; `collect` exactness; zero-filled buffers;
+inline capacity (`SmallVec`, `ArrayVec`); inline strings; measuring the length distribution;
+`Rc` and `Arc`; `format!` and `format_into` in a loop; eager arguments; `shrink_to_fit`; pinning
+an allocation count with `dhat`; lints.
+
+All figures were measured on rustc 1.97.0, aarch64-apple-darwin, release profile, unless the
+text names 1.98.1.
 
 ## Route a symptom to a fix
 
@@ -75,9 +79,10 @@ the rounding; see the `Lookups` section of SKILL.md for the hasher decision.
 `filter` reports `(0, Some(1000))`. The lower bound is 0 because a predicate can reject
 everything, so the reserve is 0 and the first push starts at capacity 4. `chars` reports
 `(3, Some(11))` for an 11-byte string: the lower bound is `len.div_ceil(4)`, the byte length
-divided by 4 and rounded up, because 4 is the maximum width of one UTF-8 code point. `flat_map`, `take_while`, `skip_while`, `scan`, `map_while`, and
-every adaptor placed after one of them lose exactness too. `scan` over a 1000-item range keeps
-all 1000 elements and still lands at capacity 1024.
+divided by 4 and rounded up, because 4 is the maximum width of one UTF-8 code point.
+`flat_map`, `take_while`, `skip_while`, `scan`, `map_while`, and every adaptor placed after one
+of them lose exactness too. `scan` over a 1000-item range keeps all 1000 elements and still
+lands at capacity 1024.
 
 These adaptors keep exactness and need no fix: `map`, `rev`, `copied`, `cloned`, `enumerate`,
 `skip`, `take`, `step_by`, `chain`, and `zip`.
@@ -95,7 +100,12 @@ fn evens(limit: u32) -> Vec<u32> {
 // limit 1000: length 500, capacity 500, one allocation.
 ```
 
-For a hand-written iterator, implement `size_hint` instead. SKILL.md holds that example.
+For a hand-written iterator, implement `size_hint` instead. SKILL.md states the rule, and the
+`rust-iterator-impl` skill holds the impl.
+
+Do not `collect` only to iterate again. Return `impl Iterator<Item = T>` instead of `Vec<T>`. On
+edition 2024 this needs no lifetime bound, because RPIT captures in-scope lifetimes by default.
+The lint is `needless_collect`, in clippy's `nursery` group.
 
 ## Zero-filled buffers: keep the `calloc`
 
@@ -125,7 +135,7 @@ The rule holds only for a zero fill. `vec![0xFFu8; n]` has no `calloc` to lose.
 An inline-capacity type stores the first N elements in the struct itself. It trades bytes for
 allocations, and the trade is only worth making when the collection is almost always short.
 
-Sizes on 64-bit, smallvec 1.15.2 and arrayvec 0.7.8:
+Sizes on 64-bit, smallvec 1.16.1 and arrayvec 0.7.8:
 
 | Type | Bytes | Note |
 | --- | --- | --- |
@@ -185,11 +195,12 @@ fixed.extend([2, 3, 4]);
 assert!(fixed.try_push(5).is_err());   // full: no spill, no allocation
 ```
 
-smallvec 2.0 is at 2.0.0-alpha.12. Pin the full version: `cargo add smallvec@2` fails with
-"could not be found in registry index". It changes the type form to `SmallVec<T, N>` and packs
-the value into a union, so it inlines 8 more bytes at the same width: `SmallVec<u32, 4>` measures
-24 bytes against 32 for `SmallVec<[u32; 4]>` in 1.15.2. The width still rounds by 8, so measure it
-there too.
+smallvec 2.0 is a pre-release, 2.0.0-beta.1 as of 2026-09. Pin the full version: `cargo add
+smallvec@2` fails with "could not be found in registry index". It changes the type form to
+`SmallVec<T, N>` and packs the value into a union, so it inlines 8 more bytes at the same width.
+Measured on beta.1 with rustc 1.98.1: `SmallVec<u32, 4>` is 24 bytes against 32 for
+`SmallVec<[u32; 4]>` in 1.16.1, and a push past N still jumps to capacity 8. The width still
+rounds by 8, so measure it there too.
 
 ## Inline strings
 
@@ -206,7 +217,7 @@ Prefer `compact_str`. It inlines one more byte and it is maintained. Measured al
 counts confirm both thresholds: at length 24, `CompactString` allocates 0 times and
 `SmartString` allocates 2.
 
-```rust,ignore
+```rust
 let key = compact_str::CompactString::from("content-length");
 assert!(!key.is_heap_allocated());
 ```
@@ -242,7 +253,9 @@ The reverse is the mistake worth naming. Wrapping a value in `Rc` or `Arc` moves
 heap. A value that is rarely shared therefore gains an allocation it did not have. Reach for
 reference counting when the sharing is real, not to make a clone cheaper.
 
-`Arc::make_mut` and `Rc::make_mut` give clone-on-write. Both require `T: Clone`.
+`Arc::make_mut` and `Rc::make_mut` give clone-on-write. Both take a sized `T: Clone`, and since
+Rust 1.81 also unsized values such as `Arc<str>` and `Arc<[T]>`. The real bound is
+`T: ?Sized + CloneToUninit`, an unstable trait that std implements for those types.
 
 | Handles outstanding | `make_mut` behaviour | `T::clone` calls |
 | --- | --- | --- |
@@ -259,6 +272,9 @@ let second = Arc::clone(&shared);
 Arc::make_mut(&mut shared).push(5);       // second strong handle: clones
 assert_eq!(second.len(), 4);
 assert_eq!(shared.len(), 5);
+
+let mut name: Arc<str> = Arc::from("id");
+Arc::make_mut(&mut name).make_ascii_uppercase();   // unsized, since 1.81
 ```
 
 The third row is a trap. `make_mut` skips the clone, and it silently disassociates every
@@ -305,6 +321,28 @@ signature changes with the fix.
 
 To hand a formatted value to a callee that takes `fmt::Arguments`, use `format_args!`. It
 borrows its arguments and allocates nothing.
+
+For one integer, skip `fmt` entirely. `format_into` (Rust 1.98) writes the digits into a stack
+`NumBuffer` and returns a `&str` that borrows it: no allocation, no `write!`, no `itoa`
+dependency. On 1.98 the type exists only at `core::fmt::NumBuffer`; `use std::fmt::NumBuffer`
+fails with E0432. The buffer is generic over the integer type, so declare one per type: passing
+a `NumBuffer<u32>` to `i64::format_into` fails with E0308 (1.98.1).
+
+```rust,run
+use core::fmt::NumBuffer;
+
+fn main() {
+    let mut buf = NumBuffer::new();
+    let mut total = 0;
+    for id in [7u32, 42, 1000] {
+        total += id.format_into(&mut buf).len(); // a &str inside buf
+    }
+    assert_eq!(total, 1 + 2 + 4);
+    assert_eq!((-15i64).format_into(&mut NumBuffer::new()), "-15");
+}
+```
+
+The `&str` borrows the buffer, so copy it out before the next call reuses `buf`.
 
 ## Eager arguments allocate on the path that discards them
 
@@ -355,14 +393,40 @@ let _ = before;
 ```
 
 Two consequences. It makes any raw pointer held across the call unusable, which matters at an FFI
-boundary; see `rust-unsafe`. The address can come back unchanged, so a pointer comparison does not
-tell you the buffer stayed put. It also turns a zero-allocation reuse loop into one allocation per
-iteration, which SKILL.md states under the workhorse buffer. Call it once, when a long-lived
-structure reaches its final size, and never inside a loop.
+boundary. Take `as_ptr()` again after any call that can reallocate (`push`, `reserve`,
+`shrink_to_fit`, `into_boxed_slice`). A pointer taken before that call dangles, even when the
+address comes back unchanged. It also turns a zero-allocation reuse loop
+into one allocation per iteration, which SKILL.md states under the workhorse buffer. Call it
+once, when a long-lived structure reaches its final size, and never inside a loop.
+
+## Pin an allocation count with `dhat`
+
+The `dhat` crate runs on stable. SKILL.md *Verify and pin the win* states the placement rule:
+one heap test per integration test file, and no `#[global_allocator]` in `src/`. One test per
+file is needed because dhat panics when two profilers run at once, and libtest runs tests in
+parallel. A file with one test runs it alone, and no harness thread adds to the count.
+
+```rust
+// tests/parse_allocs.rs: one heap test per file.
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
+#[test]
+fn parse_allocates_once() {
+    let _profiler = dhat::Profiler::builder().testing().build();
+    let parsed = my_crate::parse("key=value");
+    let stats = dhat::HeapStats::get();
+    dhat::assert_eq!(stats.total_blocks, 1);
+    std::hint::black_box(parsed);
+}
+```
+
+If several heap tests must share one file, run that target with `-- --test-threads=1`.
+`dhat::assert_eq!` panics outside testing mode, so reach it only under a testing profiler.
 
 ## Lints that mechanize this file
 
-Groups verified on clippy 0.1.97.
+Groups verified on clippy 0.1.98.
 
 | Lint | Group | On by default | Catches |
 | --- | --- | --- | --- |
@@ -374,5 +438,5 @@ Groups verified on clippy 0.1.97.
 | `needless_collect` | `nursery` | no | A `collect` that is only iterated again |
 
 Only the first two run under a plain `cargo clippy`. Enable the other four per lint rather than
-by group; `pedantic` and `nursery` bring hundreds of unrelated lints with them. See
-`rust-lints` for the workspace `[lints.clippy]` table.
+by group; `pedantic` and `nursery` bring hundreds of unrelated lints with them. The `rust-lints`
+skill holds the workspace `[lints.clippy]` table.

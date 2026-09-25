@@ -1,8 +1,12 @@
 # Hashing and I/O
 
-Reference for `skills/rust-hot-path/SKILL.md`. It holds the full hasher measurements, the
-HashDoS mechanism, the byte-wise hash derives, the buffered I/O numbers, and the line-reading
-loop behind that skill's Lookups, Allocation rate, and I/O sections.
+Reference for [SKILL.md](../SKILL.md). It holds the full hasher measurements, the HashDoS
+mechanism, the byte-wise hash derives, the buffered I/O numbers, and the line-reading loop
+behind the Lookups, Allocation rate, and I/O sections.
+
+Sections: 1-7 hashers (cost, `ahash` on aarch64, the seeding check, the collision failure
+mode, crate choice, workspace enforcement, rustc's own history); 8 byte-wise hashing; 9-11
+buffered output and capacity; 12-13 line reading; 14 triage.
 
 ## 1. What each hasher costs
 
@@ -19,9 +23,8 @@ loop behind that skill's Lookups, Allocation rate, and I/O sections.
   string keys. The win shrinks as the key grows, because a longer key spends more time in
   the compression loop of every hasher.
 - `fnv` costs about 2.1x `FxHasher` on integers. On 18-byte strings it beats SipHash by only
-  1.2x, 117-123 ms against 143-149 ms. That is the pair SKILL.md states as slower than
-  `FxHasher` on integers and only level with SipHash on strings. `fnv` gives up the
-  per-process seed and returns no margin that pays for the loss. Do not pick it.
+  1.2x, 117-123 ms against 143-149 ms. `fnv` gives up the per-process seed and returns no
+  margin that pays for the loss. Do not pick it.
 - `ahash` is the only fast hasher here with a per-process seed. It costs about 1.7x
   `FxHasher` on integers and about 1.2x on strings. Pay that when the keys are untrusted.
 
@@ -94,10 +97,24 @@ is hot and fed from the network keeps a seeded hasher.
 | Fast and seeded | `ahash` 0.8.12 | Keep default features. See section 2 |
 | Identity hash | `nohash-hasher` 0.2.0 | Types `IntMap<K, V>` and `IntSet<K>`. There is no `NoHashMap` |
 
+`FxHashMap::new` and `FxHashMap::with_capacity` fail with E0599 (SKILL.md *Lookups*). These two
+constructors build:
+
+```rust
+use rustc_hash::{FxBuildHasher, FxHashMap};
+use std::collections::HashMap;
+
+let mut empty: FxHashMap<u32, u32> = FxHashMap::default();
+let mut sized: HashMap<u32, u32, FxBuildHasher> =
+    HashMap::with_capacity_and_hasher(64, FxBuildHasher);
+empty.insert(1, 1);
+sized.insert(2, 2);
+```
+
 `nohash-hasher` needs a marker impl on any newtype key. Without it the map has no `insert`
 method at all:
 
-```rust,ignore
+```rust
 use nohash_hasher::{IntMap, IsEnabled};
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
@@ -173,7 +190,7 @@ that into a compile error. Both derives sit behind a non-default `derive` featur
 
 | Crate | Derive | Also requires | Padding gives |
 | --- | --- | --- | --- |
-| zerocopy 0.8.56 | `#[derive(ByteHash)]` | `Immutable`, `IntoBytes` | E0277 |
+| zerocopy 0.8 | `#[derive(ByteHash)]` | `Immutable`, `IntoBytes` | E0277 |
 | bytemuck 1.25.2 | `#[derive(ByteHash)]` | `NoUninit`, which implies `Copy` | E0080 |
 
 The two errors, verbatim:

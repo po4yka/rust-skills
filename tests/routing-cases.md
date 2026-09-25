@@ -213,7 +213,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | which hasher | rust-hot-path |
 | FxHashMap | rust-hot-path |
 | bounds check | rust-hot-path |
-| inline always | rust-hot-path |
+| inline(always) | rust-hot-path |
 | cold path | rust-hot-path |
 | BufWriter | rust-hot-path |
 | clone_from | rust-hot-path |
@@ -224,7 +224,6 @@ wrong skill, and put the phrase in the right description in the same change.
 | print-type-sizes | rust-hot-path |
 | ThinVec | rust-hot-path |
 | memcpy | rust-hot-path |
-| workhorse | rust-hot-path |
 | macro_rules | rust-macros |
 | write a derive macro | rust-macros |
 | proc macro | rust-macros |
