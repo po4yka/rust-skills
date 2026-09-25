@@ -1,58 +1,111 @@
 # Storing callables and shaping generic parameters
 
-Deep material for `SKILL.md`. Every diagnostic, size, and allocation count comes from rustc
-1.97.0, edition 2024, on aarch64-apple-darwin.
+Deep material for [SKILL.md](../SKILL.md). Every quoted diagnostic comes from rustc 1.98.1,
+edition 2024, on aarch64-apple-darwin. The size and allocation claims are runnable probes: copy
+one into a scratch binary and run it. Read only the section that matches the task.
 
-## A custom trait supplies no closure-signature expectation
+- [A generic callable field cannot be named](#a-generic-callable-field-cannot-be-named)
+- [Declare your own callable trait](#declare-your-own-callable-trait)
+- [Arc and Rc of `dyn Fn` do not implement `Fn`](#arc-and-rc-of-dyn-fn-do-not-implement-fn)
+- [Field sizes are measurable](#field-sizes-are-measurable)
+- [`Box<dyn Fn>` allocates for a non-zero-sized closure value](#boxdyn-fn-allocates-for-a-non-zero-sized-closure-value)
+- [By-value `impl Trait` plus a delegating impl is a monomorphization bomb](#by-value-impl-trait-plus-a-delegating-impl-is-a-monomorphization-bomb)
+- [`impl Trait` in argument position is not a named generic parameter](#impl-trait-in-argument-position-is-not-a-named-generic-parameter)
+- [Unstable escape hatches for a callable field](#unstable-escape-hatches-for-a-callable-field)
+- [Composite outputs: RPITIT](#composite-outputs-rpitit)
+- [Composite outputs: GAT against a lifetime on the trait](#composite-outputs-gat-against-a-lifetime-on-the-trait)
+- [Repeat the opaque return type in an RPITIT impl](#repeat-the-opaque-return-type-in-an-rpitit-impl)
 
-`SKILL.md` states the rule. This is the worked example. The bound is higher-ranked and it lives on
-a user trait, not on `Fn*`, so no closure form is accepted. A named `fn` item is:
+## A generic callable field cannot be named
 
-```rust
-trait FnOutput<In> { type Output; fn call(&mut self, i: In) -> Self::Output; }
-impl<F, In, Out> FnOutput<In> for F where F: FnMut(In) -> Out {
-    type Output = Out;
-    fn call(&mut self, i: In) -> Out { self(i) }
-}
-struct Order { country: String }
+`SKILL.md` states the rule. These are the three compile-checked examples.
 
-fn sort_by_key<T, F>(arr: &mut [T], mut key: F)
-where
-    for<'a> F: FnOutput<&'a T>,
-    for<'a> <F as FnOutput<&'a T>>::Output: Ord,
-{
-    for i in 0..arr.len() {
-        for j in (i + 1)..arr.len() {
-            if key.call(&arr[j]) < key.call(&arr[i]) { arr.swap(i, j); }
-        }
-    }
-}
+A function item has no surface syntax. In type position the parser reads the path as a const
+generic argument, so the diagnostic is about constants:
 
-// Accepted: a `fn` item's lifetimes are late bound at declaration, so the
-// item type is already higher-ranked.
-fn country(x: &Order) -> &str { &x.country }
-fn ok(orders: &mut [Order]) { sort_by_key(orders, country); }
+```rust,compile_fail,E0747
+struct DropGuard<T, F: FnOnce(T)>(T, F);
+fn report(_: u32) {}
+struct Gadget { not_used: DropGuard<u32, report> }
 ```
-
-Three closure forms against that same bound, three failures:
 
 ```text
-// sort_by_key(orders, |o| &o.country)
-error[E0282]: type annotations needed
-   |                          ^   - type must be known at this point
-   = help: consider giving this closure parameter an explicit type
-
-// sort_by_key(orders, |o: &Order| &o.country)
-error: lifetime may not live long enough
-   |         -     - ^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
-
-// sort_by_key(orders, |o: &Order| -> &str { &o.country })
-error: lifetime may not live long enough
-   |         -          -      ^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
+error[E0747]: constant provided when a type was expected
+3 | struct Gadget { not_used: DropGuard<u32, report> }
+  |                                          ^^^^^^
+  = help: `report` is a function item, not a type
+  = help: function item types cannot be named directly
 ```
 
-Annotating the return type does not help. Wrap the closure in `hrtb_ref(..)` from `SKILL.md`, or
-pass a named `fn`.
+Returning `-> Gadget<impl Fn(u32)>` only defers the problem. The value flows on into generic
+positions, but the caller can never *name* it, so a field type that must be written is E0562:
+
+```rust,compile_fail,E0562
+struct Gadget<F: Fn(u32)> { f: F }
+fn new_gadget() -> Gadget<impl Fn(u32)> { Gadget { f: |x| { let _ = x; } } }
+struct Holder { g: Gadget<impl Fn(u32)> }
+```
+
+```text
+error[E0562]: `impl Trait` is not allowed in field types
+3 | struct Holder { g: Gadget<impl Fn(u32)> }
+  |                           ^^^^^^^^^^^^
+  = note: `impl Trait` is only allowed in arguments and return types of functions and methods
+```
+
+What the generic parameter does **not** block is `dyn`. Erasure happens at your trait, not at the
+struct, so every monomorphisation gets a vtable:
+
+```rust
+struct Gadget<F: Fn(u32)> { f: F }
+trait Run { fn run(&self); }
+impl<F: Fn(u32)> Run for Gadget<F> { fn run(&self) { (self.f)(1) } }
+
+fn main() {
+    let a = Gadget { f: |x| assert_eq!(x, 1) };
+    let b = Gadget { f: |x| assert!(x > 0) };
+    // E0308: `a` and `b` come from different closure expressions.
+    let v: Vec<Box<dyn Run>> = vec![Box::new(a), Box::new(b)];
+    for g in &v { g.run(); }
+}
+```
+
+## Declare your own callable trait
+
+This is the shape for a public generic type that stores user-supplied behaviour. One method, plus
+a blanket impl over `FnOnce`. Callers keep passing closures. A caller who needs a nameable,
+zero-sized callable declares one:
+
+```rust,run
+pub trait DropBehavior<T> { fn on_drop(self, val: T); }
+
+impl<T, F: FnOnce(T)> DropBehavior<T> for F {
+    fn on_drop(self, val: T) { self(val) }
+}
+
+pub struct DropGuard<T, B: DropBehavior<T>> {
+    val: std::mem::ManuallyDrop<T>,
+    beh: std::mem::ManuallyDrop<B>,
+}
+
+// A downstream crate can name this. A closure type has no name.
+pub struct ReportNotUsed;
+impl DropBehavior<u32> for ReportNotUsed {
+    fn on_drop(self, v: u32) { assert_eq!(v, 7); }
+}
+
+fn main() {
+    assert_eq!(size_of::<DropGuard<u32, ReportNotUsed>>(), size_of::<u32>());
+    assert_eq!(size_of::<DropGuard<u32, fn(u32)>>(), 2 * size_of::<usize>());
+    ReportNotUsed.on_drop(7u32);
+    (|v: u32| assert_eq!(v, 7)).on_drop(7u32);
+}
+```
+
+Coherence accepts the second impl, here and across a crate boundary, because `ReportNotUsed` does
+not satisfy `FnOnce(u32)` and rustc knows every impl a local type has. The `fn_traits` gate keeps
+this true: no crate can add the `FnOnce` impl that would create the overlap. The payoff is in the
+two `size_of` lines: one `u32` against two machine words.
 
 ## Arc and Rc of `dyn Fn` do not implement `Fn`
 
@@ -60,7 +113,7 @@ pass a named `fn`.
 or `Arc`. A shared callback stored as `Arc<dyn Fn(..)>` for cheap cloning therefore satisfies no
 `F: Fn(..)` bound:
 
-```rust,compile_fail
+```rust,compile_fail,E0277
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -80,7 +133,7 @@ fn main() {
 ```
 
 ```text
-error[E0277]: expected a `Fn()` closure, found `Arc<dyn Fn()>`
+error[E0277]: expected an `Fn()` closure, found `Arc<dyn Fn()>`
 13 |     takes(a);
    |     ----- ^ expected an `Fn()` closure, found `Arc<dyn Fn()>`
    = help: the trait `Fn()` is not implemented for `Arc<dyn Fn()>`
@@ -90,6 +143,26 @@ error[E0277]: expected a `Fn()` closure, found `Arc<dyn Fn()>`
 Two repairs. Take `Arc<dyn Fn(..)>` in the signature and call it directly, which is the honest
 form for a shared callback. Or follow the `note:` and wrap: `takes(move || a())`.
 
+## Field sizes are measurable
+
+The field sizes in the `SKILL.md` table are measurable. The coercion from a `fn` item to a `fn`
+pointer is silent (no warning, no lint) and adds one machine word:
+
+```rust,run
+use std::mem::{size_of, size_of_val};
+
+fn h(_: u64) {}
+
+fn main() {
+    let f = h;
+    assert_eq!(size_of_val(&f), 0);              // fn item: its own ZST
+    let g: fn(u64) = h;
+    assert_eq!(size_of_val(&g), size_of::<usize>()); // one machine word
+    assert_eq!(size_of::<Box<dyn Fn()>>(), 2 * size_of::<usize>()); // fat pointer
+    assert_eq!(size_of::<&dyn Fn()>(), 2 * size_of::<usize>());
+}
+```
+
 ## `Box<dyn Fn>` allocates for a non-zero-sized closure value
 
 A non-capturing closure is a ZST. A closure that captures only a zero-sized
@@ -97,7 +170,7 @@ value can also be a ZST. `Box` of either value does not call the allocator; it
 stores a dangling, well-aligned pointer. Measure the value size, not whether a
 capture exists:
 
-```rust
+```rust,run
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::mem::{size_of, size_of_val};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -141,22 +214,17 @@ fn main() {
 }
 ```
 
-The concrete closure size decides whether `Box` allocates. Capturing a non-ZST
-usually makes the closure non-zero-sized, but capture presence alone does not.
-The residual cost of a boxed ZST callback is two machine words inline and one
-indirect call.
+The residual cost of a boxed ZST callback is two machine words inline and one indirect call.
 
 ## By-value `impl Trait` plus a delegating impl is a monomorphization bomb
 
-`rust-discipline` recommends the delegating impl `impl<H: Handler + ?Sized> Handler for &mut H`
+The `rust-discipline` skill recommends the delegating impl `impl<H: Handler + ?Sized> Handler for &mut H`
 to stop a `&mut` field from infecting every signature with a lifetime. That recommendation is
 correct. It becomes a trap the moment a trait method takes the same trait **by value** and the
 body re-borrows into a recursive call: each level adds one `&mut`, and on a self-recursive data
 type the chain never terminates.
 
-`std::io::Write` already carries such a delegating impl, so this reproduces with no custom trait.
-The fence says `ignore` because the harness runs `cargo check`, which accepts this block; the
-failure arrives at monomorphization, as the note under it shows:
+`std::io::Write` already carries such a delegating impl, so this reproduces with no custom trait:
 
 ```rust,ignore
 use std::io::{Result, Write};
@@ -179,7 +247,7 @@ fn main() {
 }
 ```
 
-`cargo check` on this exits 0. `cargo build` fails:
+`cargo check` on this binary exits 0. `cargo build` fails, because `main` instantiates the method:
 
 ```text
 error: reached the recursion limit while instantiating `<Tree as Serialize>::ser::<&mut &mut &mut &mut &mut &mut &mut ...>`
@@ -189,13 +257,18 @@ error: reached the recursion limit while instantiating `<Tree as Serialize>::ser
 ```
 
 Two consequences for CI. First, a `cargo check`-only gate is blind to this class of failure, and
-so is `cargo clippy`; both stop before monomorphization. Run `cargo build` or `cargo test` on the
-same crate. Second, when the message is
+so is `cargo clippy`; both stop before monomorphization. A library-only `cargo build` also exits
+0, because the generic method has no instantiation in the library. Add a test or example that
+calls the method with a concrete writer, such as `t.ser(Vec::new())`, then run `cargo test` or
+`cargo build --all-targets`. Second, when the message is
 `error[E0275]: overflow evaluating the requirement ...` with a `help: consider increasing the
 recursion limit`, do not raise `#![recursion_limit]`. The chain is unbounded and a higher limit
 only moves the failure.
 
-Take the writer by reference instead. Then the type is fixed at every level:
+Take the writer by reference instead. Then the type is fixed at every level. `&mut dyn Write`
+also stops the chain, keeps the trait dyn compatible, and costs one indirect call per write. Its
+signature is `fn ser(&self, out: &mut dyn Write) -> Result<()>`. The generic form below keeps
+static dispatch:
 
 ```rust
 use std::io::{Result, Write};
@@ -243,7 +316,7 @@ They are semantically identical and syntactically distinct in two places that br
 A caller cannot turbofish an `impl Trait` parameter, because the function declares zero generic
 parameters:
 
-```rust,compile_fail
+```rust,compile_fail,E0107
 use std::io::Write;
 fn a(_: impl Write) {}
 fn b<W: Write>(_: W) {}
@@ -267,7 +340,7 @@ Declare `fn f<W: Trait>(w: W)` whenever a caller may need to pin the type: infer
 
 In a trait, the impl must repeat the declaration's spelling:
 
-```rust,compile_fail
+```rust,compile_fail,E0643
 pub trait Ser { fn ser(&self, out: impl std::io::Write); }
 impl Ser for u8 { fn ser<W: std::io::Write>(&self, _out: W) {} }
 ```
@@ -286,16 +359,18 @@ E0643 with `expected generic parameter, found impl Trait`. Switching a published
 between the two forms breaks every implementor, even though the two signatures mean the same
 thing. Pick one at publication and keep it.
 
-Two more consequences of `impl Trait` in a trait method's argument position: it is a hidden
-generic parameter, so it makes the trait not dyn-compatible, and a method *declaration* cannot
-bind it as `mut` — `fn ser(&self, mut out: impl Write);` fails with
-`patterns aren't allowed in functions without bodies`. The `mut` goes on the impl only.
+Two more consequences of `impl Trait` in a trait method's argument position. It is a hidden
+generic parameter, so it makes the trait not dyn compatible. A method *declaration* cannot bind
+it as `mut`: `fn ser(&self, mut out: impl Write);` reports `patterns aren't allowed in functions
+without bodies`. That is the deny-by-default future-incompatibility lint
+`patterns_in_fns_without_body`, not a hard error, so do not `#[allow]` it. Put the `mut` on the
+impl only.
 
 ## Unstable escape hatches for a callable field
 
-Do not plan a stable API around either of these. Both are nightly-gated on 1.97.0:
+Do not plan a stable API around either of these. Both are still nightly-gated on 1.98.1:
 
-```rust,compile_fail
+```rust,compile_fail,E0658
 trait DropBehavior { type OnDrop: FnOnce(u32); }
 struct NotUsed;
 impl DropBehavior for NotUsed {
@@ -313,14 +388,18 @@ error: unconstrained opaque type
   = note: `OnDrop` must be used in combination with a concrete type within the same impl
 ```
 
-`std::mem::DropGuard` is also unstable, `error[E0658]: use of unstable library feature
-'drop_guard'`, issue #144426. And `fn_traits` is nightly-gated, which is why no user type can
-implement `FnOnce` on stable — and why the blanket-impl pattern in `SKILL.md` is coherent.
+`std::mem::DropGuard` is also unstable: E0658 for the library feature `drop_guard`, issue
+#144426. And `fn_traits` is nightly-gated, which is why no user type can
+implement `FnOnce` on stable — and why the blanket-impl pattern in
+[Declare your own callable trait](#declare-your-own-callable-trait) is coherent.
 
 ## Composite outputs: RPITIT
 
 The shape `SKILL.md` names. The callback becomes a named unit struct, and the method returns
-`impl Ord` captured over `'a`:
+`impl Ord` captured over `'a`. `use<..>` in a trait needs Rust 1.87. Keep it: in every edition, an
+RPITIT without it also captures the anonymous `&mut self` lifetime, and
+`key.project(&arr[j]) < key.project(&arr[i])` then fails with
+`error[E0499]: cannot borrow key as mutable more than once at a time`.
 
 ```rust
 use std::cmp::Reverse;
@@ -396,9 +475,11 @@ fn main() {
 }
 ```
 
-Do not put the lifetime on the trait instead. `for<'a> K: KeyProjection<'a, T>` compiles while
-`T` is `'static` and silently forces `T: 'static` on every call site. With `Order<'s>` the same
-program fails:
+Do not put the lifetime on the trait instead. `for<'a> K: KeyProjection<'a, T>` quantifies over
+every `'a`, `'static` included, so it works only while no outlives bound ties the element
+lifetime to `'a`. The bare impl `impl<'a, 's> KeyProjection<'a, Order<'s>>` compiles, because
+`&'a Order<'s>` in the method signature already implies `'s: 'a`. Write `'s: 'a` on the impl, and
+the `for<'a>` turns it into `'s: 'static` at every call site. A borrowed `Order<'s>` then fails:
 
 ```text
 error[E0597]: `s1` does not live long enough
@@ -411,7 +492,9 @@ note: due to a current limitation of the type system, this implies a `'static` l
    |                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ```
 
-A GAT and a lifetime parameter on the trait are not interchangeable. Use the GAT.
+Put `In: 'a` on the trait instead, and the impl for `Order<'s>` fails at once with
+`error[E0478]: lifetime bound not satisfied`. The GAT states its outlives bounds per use
+(`where In: 'a`), so it has neither trap. Use the GAT.
 
 ## Repeat the opaque return type in an RPITIT impl
 
@@ -428,5 +511,9 @@ warning: impl trait in impl method signature does not match trait method signatu
    = note: `#[warn(refining_impl_trait_internal)]` (part of `#[warn(refining_impl_trait)]`) on by default
 ```
 
-Repeat `impl Ord + use<'a>` in the impl and the warning disappears. Do not silence it with
-`#[allow]` unless the concrete type really is part of your published API.
+The example is crate-private, so the lint reports `refining_impl_trait_internal`. A trait and
+type reachable from outside the crate report `refining_impl_trait_reachable`; both belong to the
+`refining_impl_trait` group. Repeat `impl Ord + use<'a>` in the impl and the warning disappears.
+When the concrete type really is part of your published API, put
+`#[expect(refining_impl_trait, reason = "...")]` on the impl method, not the `#[allow]` that the
+note suggests. The `rust-lints` skill owns the rule, when it is installed.

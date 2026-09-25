@@ -3,6 +3,11 @@
 Use this reference when `move`, a field projection, or a refactor changes the closure call
 trait, lifetime, `Send` status, size, or cleanup timing.
 
+- [`move` does not mean `FnOnce`](#move-does-not-mean-fnonce)
+- [Capture precision depends on the projection](#capture-precision-depends-on-the-projection)
+- [Do not depend on capture drop order](#do-not-depend-on-capture-drop-order)
+- [Edition review](#edition-review)
+
 ## `move` does not mean `FnOnce`
 
 The `move` keyword selects how the closure captures from its environment. It does not select the
@@ -37,11 +42,34 @@ projection still matters.
 | Expression shape | Review risk |
 | --- | --- |
 | Named struct field | The closure can capture only that field |
-| Array or slice index | The closure can capture the complete array or slice owner |
+| Array or slice index, sub-slice, or array pattern | The closure always captures the complete array or slice |
 | Field of a packed struct | The closure captures a safe prefix or the complete packed value to avoid an unaligned reference |
 | Dereference through `Box<T>` | The compiler can capture the boxed field precisely |
 | Dereference through `Rc<T>` or custom `Deref` | The closure captures the smart pointer, not an invented interior place |
 | Raw-pointer dereference | Unsafe access and capture ownership are separate proofs |
+| `match`, `if let`, `let .. else`, or `matches!` on an enum with more than one variant | The discriminant read captures the place by shared borrow, even when the pattern binds nothing |
+| Pattern on a `#[non_exhaustive]` enum, even with one variant | Shared-borrow capture. For an enum from another crate this was already so before Rust 1.95; for an enum in the same crate it is new in 1.95 |
+| `let Ok(v) = r` or a `match` on `Result<T, Infallible>`, or on another enum whose other variants are uninhabited | Shared-borrow capture of the discriminant since Rust 1.94; 1.93 and earlier did not capture it |
+
+A discriminant capture shows up as E0506, E0502, or E0505 when code assigns, mutably borrows, or
+moves the enum while the closure is alive. Two rows are new, so a closure that compiled before can
+fail after a toolchain bump: the uninhabited-variant row in 1.94, and the same-crate
+`#[non_exhaustive]` row in 1.95:
+
+```rust,compile_fail,E0506
+#[non_exhaustive]
+enum Reply { Ok(u32) }
+
+fn main() {
+    let mut reply = Reply::Ok(1);
+    let check = || { let Reply::Ok(_) = reply; }; // reads the discriminant
+    reply = Reply::Ok(2);                          // E0506 since Rust 1.95
+    check();
+}
+```
+
+End the closure's last use before the assignment, or compute the match result before the closure
+and capture that value.
 
 This can change whether the closure is `Send` or `'static`. Inspect the captured owner, not only
 the field type visible inside the body.
@@ -74,8 +102,14 @@ When order matters:
 ## Edition review
 
 A closure created in an edition 2018 crate can capture more of an owner than the same source in
-an edition 2021 or 2024 crate. During migration, run the compatibility lint and recheck closure
-size, `Send`, lifetime, and destructor-timing assertions.
+an edition 2021 or 2024 crate. During the 2018 to 2021 migration, run `cargo fix --edition`. It
+turns on the allow-by-default `rust_2021_incompatible_closure_captures` lint (part of
+`rust_2021_compatibility`) and inserts `let _ = &owner;` where the new capture changes drop order
+or an auto trait. For a report with no edits, set `rust_2021_incompatible_closure_captures = "warn"` in the `[lints.rust]`
+table and run `cargo check`. Do not pass the lint through `RUSTFLAGS` or
+`CARGO_ENCODED_RUSTFLAGS`: either variable replaces every config-file rustflags value. Then recheck
+closure size, `Send`, lifetime, and destructor-timing assertions. The `cargo-workflows` skill owns
+the edition-migration workflow, when it is installed.
 
 ## Checklist
 
