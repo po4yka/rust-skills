@@ -1,472 +1,323 @@
 ---
 name: rust-debugging
-description: Use when you debug a native Rust crash, panic, or hang across an FFI boundary. Covers host-first reproduction with RUST_BACKTRACE, rust-lldb and rust-gdb, Android logcat filtering, tombstone analysis, symbolication with llvm-addr2line and atos, LLDB attach from Android Studio and Xcode, panic hooks that work without RUST_BACKTRACE, catch_unwind at JNI exports, UniFFI panic and error propagation into Kotlin and Swift, tracing spans routed to logcat, tokio-console for async stalls, and a panic-to-cause triage table. Triggers on "native crash", "tombstone", "addr2line", "RUST_BACKTRACE", "lldb-server", "JNI panic", "UniFFI panic", "rust-gdb pretty-printers", or "debug async Rust".
+description: Use when debugging a Rust crash, panic, hang, or unreadable native stack trace, on the host or inside an Android or iOS app behind JNI or UniFFI. Triggers on RUST_BACKTRACE, SIGSEGV, SIGABRT, native crash, tombstone, logcat crash output, addr2line, ndk-stack, atos, dSYM, rust-lldb, rust-gdb, lldb-server, _RNv mangled frames, JNI panic, UniFFI panic, and tokio-console for async stalls. Not for slow code or profiling; use `rust-performance`.
 license: BSD-3-Clause
 ---
 
 # Rust Debugging (Host First, Then Android and iOS)
 
-## Purpose
+Reproduce on the host first. A CLI or a test that drives the same code gives you a debugger, a
+backtrace, sanitizers, and a fast loop. Move to a device only after the host repro fails. On a
+device, go from logs to the tombstone or crash report, then symbolicate, and attach LLDB last.
 
-Debug Rust libraries and binaries that crash, panic, or misbehave, including
-libraries that run behind an FFI boundary on mobile. Use one order of attack:
-
-1. **Host** (macOS or Linux) — the fastest path. Run a CLI or a test that drives
-   the same code, set `RUST_BACKTRACE=1`, attach `rust-lldb` or `rust-gdb`. No
-   device, no emulator, no bindings layer.
-2. **Android** — logcat, tombstones, `llvm-addr2line` against the `cdylib`, LLDB
-   from Android Studio.
-3. **iOS** — `atos` against the `.dSYM`, LLDB from Xcode against the `staticlib`.
-
-Move to a device only after you prove the bug does not reproduce on the host.
-A host repro gives you a debugger, a backtrace, a sanitizer, and a fast loop.
-
-## Decision Rule: Where To Debug
+## Where to start
 
 | Symptom | Start here |
 |---|---|
 | Panic message and a Rust backtrace are visible | Host. Write a test that calls the same function. |
-| Crash only under a specific input file or payload | Host. Feed the input to a CLI or a unit test. |
-| Crash only on device, no panic message | Android or iOS. Pull the tombstone or crash report. |
-| Signal 11 (SIGSEGV) with no Rust frames | Native memory bug. Symbolicate first, then see [rust-sanitizers-miri](../rust-sanitizers-miri/). |
-| Kotlin or Swift gets an error but Rust logs nothing | FFI boundary. See "Panics At The FFI Boundary". |
-| Process hangs, no CPU load | Async stall or deadlock. See "Async Debugging". |
-| Snapshot or golden test output changed | Not a crash. Diff the output before you open a debugger. |
+| Crash only under one input file or payload | Host. Feed the input to a CLI or a unit test. |
+| Crash only on device, no panic message | Android or iOS. Pull the tombstone or crash report (sections 3 and 4). |
+| SIGSEGV or SIGBUS with no Rust frames | Native memory bug. Symbolicate, then run the host repro under ASan, or the device build under HWASan or MTE (the `rust-sanitizers-miri` skill). |
+| Kotlin or Swift gets an error, Rust logs nothing | FFI boundary. See section 2. |
+| Process hangs | Deadlock or async stall. Backtrace every thread, then see section 5. |
+| Snapshot or golden output changed, no panic | Not a crash. Read the diff. Re-bless only in a commit that explains why (the `rust-test-tools` skill). |
 
----
+## Panic and signal triage
 
-## 1. Host Debugging
+| Signal or message | Likely cause | Next step |
+|---|---|---|
+| ``called `Option::unwrap()` on a `None` value`` | Unwrap on `None` | Find the optional field. Replace with `ok_or` plus `?`. |
+| ``called `Result::unwrap()` on an `Err` value`` | Unwrap on an error | Propagate with `?` and keep the source error. |
+| `index out of bounds: the len is N but the index is M` | Slice or `Vec` out of range | Check the index math against a length that came from input. |
+| `attempt to subtract with overflow` | Integer underflow with overflow checks on | Use `checked_sub` or `saturating_sub`. A release build wraps silently, so it is a bug either way. |
+| `attempt to multiply with overflow` | Overflow in size math | Use `checked_mul` before you allocate. |
+| `panic in a function that cannot unwind` | A panic reached an `extern "C"` or `extern "system"` export with no guard | Guard the export (section 2). |
+| Signal 6 (SIGABRT) | Double panic, `abort()`, `panic = "abort"` (the `Abort message` holds the panic text), or an unguarded export (no `Abort message`; a `panic_cannot_unwind` frame after symbolication) | Read the tombstone `Abort message` when it is present. Check the export guards, then reproduce on the host. |
+| Signal 11 (SIGSEGV) | Null or dangling pointer, use-after-free in `unsafe` or in a C dependency | Symbolicate, then run the host repro under ASan, or the device build under HWASan or MTE (the `rust-sanitizers-miri` skill). |
+| Signal 7 (SIGBUS) | Misaligned or invalid memory access, often a bad pointer cast | Audit the `unsafe` cast (the `rust-unsafe` skill). |
+| Process killed while it writes to a pipe or socket | SIGPIPE | Ignore SIGPIPE during init (section 2). |
+| Kotlin `InternalException`, or a Swift error outside your error enum | Rust panic caught by the UniFFI guard | Fix the panic. Do not add a catch-all variant. |
+| Swift fatal error on a non-throwing UniFFI call | Panic in a non-throwing export | Make the export panic-free, or return `Result`. |
+| `JNI DETECTED ERROR IN APPLICATION` in logcat | Wrong JNI usage: stale local ref, wrong signature, missing exception check | See the `rust-jni` skill. |
+| Frames print as `_RNv...` or `__RNv...` | The tool predates v0 mangling, the default since 1.97 | Upgrade the tool (binutils 2.36+, Linux perf 6.16+; the perf in Ubuntu 24.04 and Debian 13 is too old), or pipe through `rustfilt`. On macOS, use `c++filt -_`. |
+| A grep for `_ZN` finds nothing | v0 symbols start with `_R` (`__R` in Mach-O) | Grep `_R`. `#[no_mangle]` exports keep their literal names. |
+| Deadlock or hang, no CPU load | Lock ordering, or a channel with no sender | Attach the debugger and backtrace every thread. |
 
-### Run with backtraces
+## Before you say "cannot reproduce"
+
+- [ ] You tried a host repro with `RUST_BACKTRACE=1`, and under a debugger.
+- [ ] The build under test has debug info, and it is not stripped.
+- [ ] You symbolicated against the exact binary that crashed: same Build ID or UUID, not a rebuild.
+- [ ] Logging starts before the suspect code path runs, and one test `log::info!` reaches the sink.
+- [ ] You read the tombstone or crash report signal and `Abort message`, not only the app-level
+      message.
+- [ ] You ran the host repro under a sanitizer when the signal was 11 or 7.
+
+## 1. Host debugging
+
+### Backtraces
 
 ```bash
-# Backtrace on panic
-RUST_BACKTRACE=1 cargo run -p my-cli -- <args>
+# Short backtrace on panic
+RUST_BACKTRACE=1 cargo run --locked -p my-cli -- <args>
 
-# Full backtrace, including std and runtime frames (slow, most informative)
-RUST_BACKTRACE=full cargo run -p my-cli -- <args>
+# Every frame, with addresses and std internals
+RUST_BACKTRACE=full cargo run --locked -p my-cli -- <args>
 
-# Same for tests
-RUST_BACKTRACE=1 cargo test -p my-crate -- --nocapture
+# One test, with its output shown (--nocapture is deprecated since 1.88)
+RUST_BACKTRACE=1 cargo test --locked -p my-crate <test_name> -- --no-capture
+
+# Panic backtraces on, error-value backtraces off
+RUST_BACKTRACE=1 RUST_LIB_BACKTRACE=0 cargo run --locked -p my-cli -- <args>
 ```
 
-If your workspace root is not the crate root, pass the manifest explicitly:
+- `RUST_LIB_BACKTRACE` wins over `RUST_BACKTRACE` for `std::backtrace::Backtrace::capture`, which
+  `anyhow` calls when it creates an error. With `RUST_BACKTRACE=1` alone, every such error pays
+  for a capture. Set the variables before the process starts; std caches them at the first capture.
+- v0 mangling is the default since 1.97. `RUST_BACKTRACE=full` frames now carry crate hashes, for
+  example `std[5d97c59e5e5fafcc]::panicking::default_hook`. The hash changes with the toolchain and
+  the build configuration, so diff `RUST_BACKTRACE=1` output, not `full` output.
+- Since 1.91 the panic line carries the thread ID: `thread 'main' (6583488) panicked at
+  src/lib.rs:4:23:`. Grep for `panicked at`, not for `thread 'main' panicked`.
+
+### Debugger
+
+`rust-lldb` and `rust-gdb` are toolchain scripts (rustup runs them through its proxy) that load the
+Rust formatters, so `String`, `Vec`, `Option`, and `HashMap` print as Rust values instead of raw
+fields.
 
 ```bash
-RUST_BACKTRACE=1 cargo run --manifest-path path/to/Cargo.toml -p my-cli -- <args>
+cargo build --locked -p my-cli
+rust-lldb target/debug/my-cli -- <args>      # macOS, or Linux with LLDB
+rust-gdb --args target/debug/my-cli <args>   # Linux
 ```
-
-### Attach rust-lldb (macOS) or rust-gdb (Linux)
-
-`rust-lldb` and `rust-gdb` are rustup wrapper scripts that load the Rust
-pretty-printers, so `String`, `Vec`, `Option`, and `Result` print in Rust syntax
-instead of raw struct fields.
-
-```bash
-# Build a debug binary first
-cargo build -p my-cli
-
-# Launch under the debugger. Use absolute paths for input files to avoid
-# surprises from the debugger working directory.
-rust-lldb target/debug/my-cli -- <args>
-
-# Linux
-rust-gdb target/debug/my-cli
-```
-
-Essential commands inside the session:
 
 ```text
-# Break on panic
-(lldb) b rust_panic
-(gdb)  break rust_panic
-
-# Break on a function by full path
-(lldb) b my_crate::module::function_name
-(gdb)  break my_crate::module::function_name
-
-# Run, then inspect on the break
-(lldb) run
-(lldb) frame variable
-(lldb) p my_vec
-(lldb) thread backtrace all
-
-(gdb)  run <args>
-(gdb)  bt full
+(lldb) b rust_panic                    (gdb) break rust_panic
+(lldb) b my_crate::module::function    (gdb) break my_crate::module::function
+(lldb) run                             (gdb) run
+(lldb) frame variable                  (gdb) info locals
+(lldb) thread backtrace all            (gdb) thread apply all bt
 ```
 
-For the full command reference, including manual pretty-printer setup, closure
-and trait-method breakpoints, thread commands, CodeLLDB launch configurations,
-and symbol demangling, read
-[references/rust-gdb-pretty-printers.md](references/rust-gdb-pretty-printers.md).
+- In current toolchains (1.88 and later at least), the panic entry is `__rustc::rust_panic`.
+  `b rust_panic` still resolves in LLDB on 1.98.1. A tool that sets the breakpoint with a
+  legacy-name regex can miss it. In GDB, if `rust_panic` has no location, break on
+  `__rustc::rust_panic` or `core::panicking::panic_fmt`.
+- Confirm the formatters loaded before you trust a value. `(lldb) type category list` must show
+  `Rust (enabled)`. A `Vec` that prints as `buf` and `len` fields means no formatters.
+- Rust 1.98 removed `lib/rustlib/etc/lldb_commands`. Inside an IDE, where the wrapper does not
+  run, on Rust 1.98 and later, load the formatters with `command script import` of
+  `lldb_lookup.py` only. Older toolchains also need the `lldb_commands` line (see the reference).
 
-### The dbg! macro
+Read [references/rust-gdb-pretty-printers.md](references/rust-gdb-pretty-printers.md) when you
+load formatters by hand (Xcode, Android Studio, plain `gdb`), configure CodeLLDB, set a
+closure, trait-method, or conditional breakpoint, or demangle symbols.
 
-```rust
-let result = dbg!(decode(&data));
-// prints: [src/lib.rs:171] decode(&data) = Ok(Decoded { .. })
-```
+### Debug info
 
-`dbg!` writes to stderr and prints file, line, expression, and value. It is fine
-on the host. It is **not visible in logcat** on Android, and it is noise in a
-release build. Use `tracing::debug!` for anything that must survive on a device.
-Remove `dbg!` calls before you commit — `clippy::dbg_macro` catches leftovers
-(see [rust-lints](../rust-lints/)).
+A debugger needs variable-level debug info. Symbolication needs line tables and the exact
+unstripped binary.
 
-### Build for debugging
-
-```bash
-# Host debug build, fastest iteration
-cargo build -p my-cli
-
-# Release build. It carries debug info only with the profile settings below.
-cargo build --locked --release
-```
-
-A release build carries no debug info by default, which makes every device
-backtrace useless. Turn it on:
+- If `[profile.dev]` sets `debug = "line-tables-only"` or `debug = false`, the debugger shows no
+  variables. Override it for one build: `CARGO_PROFILE_DEV_DEBUG=true cargo build --locked -p my-cli`.
+- A release build has no debug info by default, so a device backtrace has no file or line.
+  Turn it on for the artifact that you archive:
 
 ```toml
-# Cargo.toml of the workspace
 [profile.release]
-debug = true          # emit DWARF in release
-strip = false         # do not strip symbols from the artifact you symbolicate
+debug = "line-tables-only"   # file:line for symbolication; use true to inspect variables
+strip = false                # keep symbols in the artifact that you archive
 ```
 
-Keep the unstripped artifact. Ship the stripped one, archive the unstripped one,
-and symbolicate against the archived copy. An address means nothing without the
-exact binary that produced it.
+- Ship the stripped artifact. Archive the unstripped one and symbolicate against the archived
+  copy. An address means nothing without the exact binary that produced it.
+- On macOS, Cargo defaults to `split-debuginfo = "unpacked"`: the DWARF stays in the object files
+  under `target/`, and the binary alone has no line info. To archive a macOS host binary, build
+  with `CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed` and archive the `.dSYM` next to it.
+- Verify the archive. On ELF, `llvm-readelf -S libmy_ffi.so | grep debug_line` prints a section.
+  On Apple, `dwarfdump --uuid` prints the same UUID for the binary and its `.dSYM`.
 
-### Structured logging with tracing
+### Logging
 
-A `tracing` span records entry, exit, and the fields you attach. That is what
-you need for a bug that only appears under concurrency or under one input.
+`dbg!`, `println!`, and the default panic hook write to stdout or stderr. An Android app process
+sends both to `/dev/null`, so none of them reach logcat. Use `tracing` for output that must
+survive on a device. Enable `clippy::dbg_macro` (restriction group, allow by default) to catch a
+leftover `dbg!`.
+
+For a host repro, install a subscriber that logs span timing. `EnvFilter` needs the `env-filter`
+feature of `tracing-subscriber`.
 
 ```rust
-use tracing::{debug, error, info, instrument, warn};
+use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan};
 
-#[instrument(skip(payload))]           // auto-trace entry and exit with arguments
-fn decode(payload: &[u8]) -> Result<Decoded, DecodeError> {
-    info!(len = payload.len(), "decoding");
-    if payload.is_empty() {
-        warn!("empty payload");
-    }
-    // ...
+fn main() {
+    // Host repro only. On a device, the application bootstrap owns the subscriber.
+    // The default writer is stdout; stderr keeps the program's stdout clean.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_span_events(FmtSpan::CLOSE)
+        .init();
 }
 ```
-
-`skip` the large arguments. A `#[instrument]` without `skip` formats every
-argument on every call, which is slow and floods the log.
-
-Filter at run time with `RUST_LOG`:
 
 ```bash
-RUST_LOG=my_crate=debug,my_other_crate=trace cargo run -p my-cli -- <args>
+RUST_LOG=my_crate=debug,my_other_crate=trace cargo run --locked -p my-cli -- <args>
 ```
 
-Add `tracing-subscriber` with the `env-filter` feature to make `RUST_LOG` work.
-See [rust-observability](../rust-observability/) for the full subscriber setup.
+- Without `with_span_events`, the `fmt` subscriber logs no span lifecycle. `#[instrument]` then
+  only adds context to events.
+- `FmtSpan::CLOSE` logs one event per closed span with `time.busy` and `time.idle`. High idle time
+  means the span waited. High busy time means it did the work.
+- Instrument a suspect function with `#[instrument(skip_all, fields(...))]`. The
+  `rust-observability` skill owns the field rules and the device subscriber setup.
 
----
+## 2. Panics at the FFI boundary
 
-## 2. Panics At The FFI Boundary
+The `rust-panic-safety` skill owns the guard and hook policy. The `rust-jni` skill owns JNI
+export patterns. This section maps what you see to the cause.
 
-**Rule: a Rust panic must never unwind across an `extern` boundary.** Unwinding
-into non-Rust frames is undefined behavior. On `extern "C"` and `extern "system"`
-functions the compiler inserts an abort, so the process dies with SIGABRT and you
-lose the Rust panic site unless the hook records it first.
-
-Two protections, and you need both:
-
-1. Catch the unwind at every export.
-2. Have the application-owned outermost Rust FFI bootstrap install one composed
-   panic hook that calls each component's redacted handler before the unwind
-   starts. A JVM or Swift host cannot call `set_hook` itself. Get the backtrace
-   from a local repro or crash artifact, not from shipped platform telemetry.
-
-### Catch the unwind at raw JNI exports
-
-Wrap the body of every `extern "system"` export:
-
-```rust
-use std::panic::{catch_unwind, AssertUnwindSafe};
-
-#[unsafe(no_mangle)]
-pub extern "system" fn JNI_OnLoad(_vm: JavaVM, _reserved: *mut c_void) -> jint {
-    match catch_unwind(|| {
-        ignore_sigpipe();
-        init_android_logging("my-native-tag");
-        // This cdylib is the application-owned outermost Rust bootstrap. It
-        // statically composes the handlers exported by its Rust components.
-        install_bootstrap_panic_hook();
-        jni::sys::JNI_VERSION_1_6
-    }) {
-        Ok(version) => version,
-        Err(payload) => {
-            discard_panic_payload(payload);
-            jni::sys::JNI_ERR
-        }
-    }
-}
-```
-
-For individual JNI methods, `jni` 0.22 gives you `jni::EnvUnowned::with_env`,
-which catches the panic and returns a `#[must_use]` `EnvOutcome`. Exit through
-`resolve`, which rebuilds an `Env` and lets an `ErrorPolicy` log and throw:
-
-```rust,ignore
-env.with_env(|env| { /* body */ })
-    .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
-```
-
-Write your own `ErrorPolicy` when an error and a caught panic need different
-log lines. `into_outcome()` gives the raw tri-state, but then nothing can throw.
-
-When you add a new JNI export, use `EnvUnowned::with_env` or wrap the body in
-`catch_unwind(AssertUnwindSafe(|| { ... }))`. There is no third option. See
-[rust-jni](../rust-jni/) and [rust-panic-safety](../rust-panic-safety/).
+- Since Rust 1.81, a panic that reaches an `extern "C"` or `extern "system"` function aborts the
+  process. This is defined behavior. On the host, stderr shows the panic, then `panic in a
+  function that cannot unwind` and `thread caused non-unwinding panic. aborting.`, and the
+  signal is SIGABRT. On Android, stderr goes nowhere and the panic text is lost. The tombstone
+  shows SIGABRT, and the symbolicated backtrace has `core::panicking::panic_cannot_unwind` above
+  the export.
+- Fix it at the export, not at the caller. On `jni` 0.22 use
+  `EnvUnowned::with_env(...).resolve::<Policy>()`. Otherwise wrap the body in `catch_unwind`.
 
 ### UniFFI panic and error propagation
 
-UniFFI generates the boundary scaffolding, so you do not write `catch_unwind`
-at each export. You still must know what the other side sees:
+UniFFI generates the boundary guard. You must still know what the foreign side sees:
 
 | Rust value | Kotlin | Swift |
 |---|---|---|
 | `Ok(v)` | the return value | the return value |
-| `Err(E)` where `E` is your `#[uniffi(flat_error)]` or exported error enum | a sealed exception hierarchy, one subclass per variant | `enum E: Error`, one case per variant |
-| `panic!(..)` caught by the scaffolding | UniFFI's own internal exception, **not** a subclass of your error type | UniFFI's own internal error, **not** a case of your error enum |
+| `Err(E)`, where `E` is an exported error enum | an exception subclass, one per variant | `enum E: Error`, one case per variant |
+| a panic in a throwing export | `InternalException` with the panic message, **not** a subclass of your error type | a private UniFFI error, **not** a case of your error enum |
+| a panic in a non-throwing export | `InternalException` | a fatal Swift error that no `catch` can handle; the app crashes |
 
-Consequences for triage:
+- An exception that is not one of your declared variants is a Rust panic, not a handled error.
+- The panic message rides in the Kotlin exception text, in the Swift error description, and in
+  the `try!` fatal-error message of a non-throwing Swift call. A crash reporter that records
+  one of them records the message.
+- Do not add an `Internal` variant and expect panics to arrive in it. They do not. Convert the
+  failure into a real `Err` on the Rust side when the caller must handle it. Keep a non-throwing
+  export panic-free. See the `uniffi-boundary` and `ffi-error-progress-cancel` skills.
 
-- An exception that is **not** one of your declared error variants means a Rust
-  panic, not a handled error. The panic message rides in the exception text.
-- Do not add an `Internal` variant to your boundary error enum and expect
-  panics to arrive in it. They do not. Convert the panic into a real `Err` on
-  the Rust side if the caller must handle it.
-- Keep the internal error type separate from the boundary error type. Map the
-  internal type to the boundary enum in the FFI crate, so the host never sees
-  internal variants and a new internal variant is not a breaking API change.
-  See [uniffi-boundary](../uniffi-boundary/) and
-  [ffi-error-progress-cancel](../ffi-error-progress-cancel/).
+### Panic reports on a device
 
-### Privacy-safe panic record for platform logs
+In a shipped build, report a panic only through the bootstrap's redacted hook: a closed site
+code plus the line and the column. The `rust-panic-safety` skill has the one copy of that hook. Never
+put the payload, a file path, or a backtrace into a shipped log, because panic text can hold input
+data, paths, or secrets. Get the message and the backtrace from a host repro, or symbolicate the
+crash offline.
 
-```rust
-#[derive(Clone, Copy)]
-enum PanicSite {
-    Boundary,
-    Engine,
-    Unknown,
-}
-
-fn classify_site(file: &str) -> PanicSite {
-    if file.starts_with("src/boundary/") {
-        PanicSite::Boundary
-    } else if file.starts_with("src/engine/") {
-        PanicSite::Engine
-    } else {
-        PanicSite::Unknown
-    }
-}
-
-pub fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
-    let (site, line, column) = info
-        .location()
-        .map(|location| {
-            (
-                classify_site(location.file()),
-                location.line(),
-                location.column(),
-            )
-        })
-        .unwrap_or((PanicSite::Unknown, 0, 0));
-
-    write_platform_panic("rust_panic", site, line, column);
-}
-```
-
-An embedded component exposes this handler. The application-owned outermost
-Rust FFI bootstrap depends on the components, composes their handlers, and
-installs the one process-global hook from its `JNI_OnLoad` or explicit init
-entry. A component must not call `set_hook` on its own.
-
-The event name and site are closed vocabulary values. The line and column are
-bounded integers. Unknown paths collapse to `Unknown`. Never format
-`PanicHookInfo`, inspect its payload, emit its file path, or capture a backtrace
-into a shipped platform log. Panic text can contain input data, paths,
-identifiers, or secrets.
-
-Call the hook from library init after the platform writer is ready. Keep the
-default stderr hook in a local host repro and set `RUST_BACKTRACE=full` there.
-For an app process, symbolicate its tombstone or crash report offline against
-the exact unstripped binary.
+On Android, `panic = "abort"` copies a `&str` or `String` panic payload into the tombstone `Abort
+message` line through `android_set_abort_message` (in `panic_abort` as of Rust 1.98.1). The line
+helps triage, and every crash report that uploads the tombstone also carries the panic text.
+Treat every panic message as a log line.
 
 ### SIGPIPE
 
-A Rust library inside an app process inherits the host process signal
-disposition. If a socket peer disconnects while you write, the default `SIGPIPE`
-handler kills the process with no Rust panic and no useful log. Restore the
-ignore disposition during init:
+A write to a pipe or a socket whose peer closed can raise SIGPIPE. Its default action kills the
+process with no Rust panic and no log. A host repro hides this. The Rust runtime of a binary or a
+test sets SIGPIPE to ignored before `main`, so the same write returns an error there:
+
+```rust,run
+use std::io::{ErrorKind, Write};
+
+fn main() {
+    let (reader, mut writer) = std::io::pipe().unwrap();
+    drop(reader);
+    // A Rust `main` starts with SIGPIPE ignored, so this is an error, not a kill.
+    let err = writer.write_all(b"x").unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::BrokenPipe);
+}
+```
+
+A `cdylib` or `staticlib` inside a JVM or Swift process gets no such setup. Let the application
+bootstrap set the ignore disposition during init, then handle `ErrorKind::BrokenPipe` like any
+other error:
 
 ```rust
 pub fn ignore_sigpipe() {
+    // SAFETY: `signal` with `SIG_IGN` installs no handler code. Call it from init only.
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
 }
 ```
 
-Then handle `ErrorKind::BrokenPipe` from the write call like a normal error.
-
----
-
-## 3. Android Debugging
+## 3. Android debugging
 
 Reach for the device only after the host attempt fails. The order that works:
 
-1. **Wire a log tag first.** A library that configures none prints nothing to logcat. The
-   crash channels (`DEBUG:*`, `libc:*`, `AndroidRuntime:E`) still fire, but they give a signal
-   and an address, not a panic message.
-2. **Read the bounded record and the signal.** `adb logcat | grep -E "rust_panic|SIGABRT|SIGSEGV"`.
-3. **Symbolicate.** A tombstone or crash report is addresses until `ndk-stack` or
-   `addr2line` maps them against the unstripped `.so` from the same build.
+1. **Wire logging first.** Without a logcat sink, nothing Rust prints reaches logcat. The crash
+   channels still fire, but they give a signal and an address, not a panic record.
+2. **Read the record and the signal.** `adb logcat | grep -E "rust_panic|SIGABRT|SIGSEGV"`, and
+   `adb logcat -b crash` for the crash dump.
+3. **Symbolicate.** A tombstone is addresses until `ndk-stack` or `llvm-addr2line` maps them
+   against the unstripped `.so` from the same build.
 4. **Attach LLDB** only when the log and the tombstone both fall short.
 
-[references/android-debugging.md](references/android-debugging.md) has the logcat filters, the
-tracing-to-logcat wiring, `RUST_BACKTRACE` on a device, tombstone decoding, the `addr2line`
-invocation, the device build flags, and the Android Studio LLDB path.
+Read [references/android-debugging.md](references/android-debugging.md) when you filter logcat,
+route tracing to logcat, need `RUST_BACKTRACE` on a device, read a tombstone, run `addr2line` or
+`ndk-stack`, or attach LLDB from Android Studio.
 
-## 4. iOS Debugging
+## 4. iOS debugging
 
-### Crash symbolication
+Use the same order as on Android: the crash report, then symbolication, then LLDB in Xcode.
 
-Frames from a Rust `staticlib` linked into the app binary appear unsymbolicated
-in Xcode Organizer or a crash-reporting service. Symbolicate against the `.dSYM`
-produced with the app binary:
+- Symbolicate against the `.dSYM` of the app build, because the linker moves the `staticlib` code
+  into the app binary. Its `dwarfdump --uuid` must match the image UUID in the crash report.
+- The Xcode ASan and TSan switches do not instrument a prebuilt Rust `staticlib`. Run the
+  sanitizers on a host target (the `rust-sanitizers-miri` skill).
+
+Read [references/ios-debugging.md](references/ios-debugging.md) when you symbolicate with `atos`,
+check that the `.dSYM` holds Rust lines, build for a device or the simulator, or break in Rust
+from Xcode.
+
+## 5. Async debugging
+
+Start with the `FmtSpan::CLOSE` span timing from section 1.
+
+`tokio-console` shows live task state. It needs `console-subscriber`, the tokio `tracing`
+feature, and the `tokio_unstable` cfg. It opens a local TCP port, so use it in a local debug
+build only and never ship it in a mobile or production build.
+
+1. Add `console-subscriber` to the binary crate, enable `features = ["full", "tracing"]` on
+   `tokio`, and call `console_subscriber::init()` first in `main`. `init()` installs the global
+   subscriber with its own `fmt` layer, and it panics when a subscriber is already set. Remove
+   the section 1 `fmt()...init()` call, or keep your subscriber and add
+   `console_subscriber::spawn()` to a `tracing_subscriber::registry()` as a layer.
+2. Add the cfg to the rustflags in `.cargo/config.toml`, not to `RUSTFLAGS`. The `RUSTFLAGS`
+   variable replaces every config-file rustflag. Matching `[target.<triple>]` rustflags replace
+   `[build]` rustflags, so add it to the table that the workspace already uses.
+
+Remove all four changes, the rustflags entry included, before you commit. A committed
+`tokio_unstable` flag reaches every CI and release build.
+
+```toml
+# .cargo/config.toml
+[build]
+rustflags = ["--cfg", "tokio_unstable"]
+```
 
 ```bash
-# One address from a crash report; -l is the load address of the image
-atos -arch arm64 -o MyApp.app.dSYM/Contents/Resources/DWARF/MyApp \
-    -l <load_address> <crash_address>
+cargo install --locked tokio-console
+cargo run --locked -p my-cli -- <args>
+tokio-console        # in a second terminal
 ```
 
-The `.dSYM` is the only reliable input for a crash address, because the linker
-moves the archive code into the app binary. Use `llvm-addr2line` against the
-unstripped static archive only for an offset that you already know is inside one
-archive member, for example an offset printed by your own code:
-
-```bash
-llvm-addr2line -Cfe target/aarch64-apple-ios/debug/libmy_ffi.a 0x12345
-```
-
-### Build for iOS
-
-```bash
-cargo build -p my-ffi --target aarch64-apple-ios       # device
-cargo build -p my-ffi --target aarch64-apple-ios-sim   # simulator (Apple silicon)
-```
-
-### LLDB via Xcode
-
-1. Open the app project or the SwiftPM package in Xcode. If the Rust library is
-   linked as an XCFramework binary target, breakpoints in Rust still resolve
-   through the DWARF in the linked slice.
-2. Product > Scheme > Edit Scheme > Run > Diagnostics — enable **Address
-   Sanitizer** or **Thread Sanitizer** when you chase a memory or race bug. Do
-   not enable both at once.
-3. Run on device or simulator with the debugger attached.
-4. Set breakpoints in the Rust source files, or from the LLDB console
-   (Debug > Activate Console):
-
-```text
-(lldb) b my_crate::module::function_name
-(lldb) b rust_panic
-(lldb) thread backtrace all
-```
-
-When you must debug only the Rust library, do not use Xcode. Run the same code
-from a host CLI under `rust-lldb` instead (section 1).
-
----
-
-## 5. Async Debugging
-
-Use `#[instrument]` spans first. The enter and exit events tell you which task
-stopped making progress, and with what arguments.
-
-`tokio-console` shows live task state, poll counts, and busy time. It needs the
-`tokio_unstable` cfg and it opens a TCP port, so treat it as a local development
-tool and never ship it in a mobile or production build:
-
-```bash
-# Add console-subscriber as a temporary dev dependency, then:
-RUSTFLAGS="--cfg tokio_unstable" cargo run -p my-cli
-tokio-console
-```
-
-Triage rules:
-
-- A task with a high poll count and near-zero busy time is spinning on a waker.
-- A task that never polls again after a known point is waiting on a channel or a
-  lock that no one releases.
-- Blocking work inside an async task starves the runtime. Move it to
-  `spawn_blocking`.
-
-See [rust-async-internals](../rust-async-internals/) for the poll and waker model
-behind these symptoms.
-
----
-
-## 6. Snapshot And Golden Test Failures
-
-A byte diff against the fixture means behavior changed: read the diff, and
-re-bless the fixture only in the same commit that explains why. A panic inside
-the test is a crash bug: leave the fixture alone and reproduce on the host with
-a debugger. See [rust-test-tools](../rust-test-tools/).
-
----
-
-## 7. Panic Triage Quick Reference
-
-| Signal or message | Likely cause | Next step |
+| tokio-console shows | Cause | Next step |
 |---|---|---|
-| `called Option::unwrap() on a None value` | Unwrap on `None` | Find the optional field. Replace with `ok_or` plus `?`. |
-| `called Result::unwrap() on an Err value` | Unwrap on error | Propagate with `?` and keep the source error. |
-| `index out of bounds: the len is N but the index is M` | Slice or `Vec` out of range | Check the index math against a length that came from untrusted input. |
-| `attempt to subtract with overflow` | Integer underflow, debug build | Use `checked_sub` or `saturating_sub`. The release build wraps silently, so this is a real bug either way. |
-| `attempt to multiply with overflow` | Integer overflow in size math | Use `checked_mul` before you allocate. |
-| Signal 6 (SIGABRT), no Rust frames | Abort: double panic, explicit `abort()`, `panic = "abort"` profile, or a panic that crossed an `extern` boundary | Verify the Rust bootstrap installed its composed hook, then reproduce. See section 2. |
-| Signal 11 (SIGSEGV) | Null or dangling pointer, use-after-free in `unsafe` or in a C dependency | Symbolicate, then run the host repro under ASan. See [rust-sanitizers-miri](../rust-sanitizers-miri/). |
-| Signal 7 (SIGBUS) | Misaligned or invalid memory access, often a bad pointer cast | Audit the `unsafe` cast. See [rust-unsafe](../rust-unsafe/). |
-| Process killed silently while writing to a socket | `SIGPIPE` | Call `ignore_sigpipe()` during init. See section 2. |
-| Host exception or error that is not one of your declared FFI error variants | Rust panic caught by the UniFFI scaffolding | The panic message is in the error text. Fix the panic; do not add a catch-all variant. |
-| `JNI DETECTED ERROR IN APPLICATION` in logcat | Wrong JNI usage: stale local ref, wrong signature, missing exception check | See [rust-jni](../rust-jni/). |
-| Deadlock or hang, no CPU load | Lock ordering or a channel with no sender | Attach the debugger and run `thread backtrace all`. |
+| `This task has lost its waker, and will never be woken again.` | A `poll` returned `Pending` and dropped every waker clone | Before `poll` returns `Pending`, store `cx.waker().clone()` where the event source can call `wake`. Replace the stored waker when `will_wake` returns `false` |
+| `This task has never yielded (...)`, threshold 1 s | Blocking work holds a worker thread | Move it to `spawn_blocking`. The `rust-async-internals` skill has the blocking-call table |
+| `This task has woken itself for more than 50% of its total wakeups` | A self-wake loop: the task busy-polls | Wait on a real event instead of waking itself |
+| An idle task, never polled again, no warning | A channel or a lock that nobody releases | Backtrace every thread and find the holder |
 
----
-
-## Checklist Before You Say "Cannot Reproduce"
-
-- [ ] You tried a host repro with `RUST_BACKTRACE=full`.
-- [ ] The build under test has `debug = true` and is not stripped.
-- [ ] A panic hook emits only a closed site code plus numeric line and column.
-- [ ] No shipped platform log contains a panic payload, file path, or backtrace.
-- [ ] Logging is initialized before the code path you suspect runs.
-- [ ] You symbolicated against the exact binary that crashed, not a rebuild.
-- [ ] You checked the tombstone or crash report signal, not only the app-level message.
-- [ ] You ran the host repro under a sanitizer if the signal was 11 or 7.
-
----
-
-## Related Skills
-
-- [rust-panic-safety](../rust-panic-safety/) — `catch_unwind`, unwind safety, abort profiles
-- [rust-jni](../rust-jni/) — JNI export patterns, local refs, exception handling
-- [uniffi-boundary](../uniffi-boundary/) — error enums and boundary type mapping
-- [ffi-error-progress-cancel](../ffi-error-progress-cancel/) — error, progress, and cancellation across FFI
-- [rust-unsafe](../rust-unsafe/) — `unsafe` review and raw-pointer FFI patterns
-- [rust-sanitizers-miri](../rust-sanitizers-miri/) — ASan, TSan, and Miri
-- [rust-async-internals](../rust-async-internals/) — `Future`, poll model, waker debugging
-- [rust-observability](../rust-observability/) — `tracing` subscriber and span design
-- [rust-android-build](../rust-android-build/) — NDK targets, ABI packaging, stripping
-- [rust-performance](../rust-performance/) — flamegraphs, `cargo-bloat`, Criterion
-- [rust-test-tools](../rust-test-tools/) — snapshot tests, fixtures, test harnesses
+On a device or a production build, where tokio-console cannot ship, read the stable
+`tokio::runtime::RuntimeMetrics` instead: `num_alive_tasks`, `global_queue_depth`, and the
+per-worker `worker_total_busy_duration` and `worker_park_unpark_count` (targets with 64-bit
+atomics only). The `rust-observability` skill
+covers how to export them.

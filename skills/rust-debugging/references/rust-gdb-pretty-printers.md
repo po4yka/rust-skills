@@ -1,194 +1,174 @@
-# Rust GDB/LLDB Pretty-Printers Reference
+# Rust GDB and LLDB reference
 
-Full command reference for debugging Rust with GDB and LLDB. The parent skill
-[SKILL.md](../SKILL.md) covers when to reach for a debugger; this file covers
-how to drive one.
+How to drive a debugger on Rust code. [SKILL.md](../SKILL.md) covers when to reach for one.
 
-## GDB Setup
+Contents: GDB setup, GDB commands, LLDB setup, LLDB commands, VS Code with CodeLLDB, symbol
+demangling.
 
-### Automatic via rust-gdb
+## GDB setup
 
-`rust-gdb` is a wrapper script installed with rustup. It starts GDB and sources
-the Rust pretty-printers, so `String`, `Vec`, `Option`, `Result`, and `HashMap`
-print in Rust syntax.
+### Automatic, through rust-gdb
+
+`rust-gdb` is a script in the toolchain, and rustup runs it through its proxy. It starts GDB
+with the toolchain's `lib/rustlib/etc` on the script path. GDB then auto-loads the pretty-printers
+that each Rust binary or library names in its `.debug_gdb_scripts` section, so `String`, `Vec`,
+`Option`, `Result`, and `HashMap` print as Rust values.
 
 ```bash
-# Find the wrapper
-which rust-gdb
-# ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rust-gdb
-
-# Use it against a debug binary
-rust-gdb target/debug/my-cli
+rust-gdb --args target/debug/my-cli <args>
 ```
 
 ### Manual ~/.gdbinit setup
 
-Use this when you must run plain `gdb`, for example inside an IDE or a container
-that does not ship the wrapper.
+Use this when you must run plain `gdb`, for example inside an IDE or a container that does not
+ship the wrapper. Source the loader that the toolchain ships. Do not call
+`gdb_lookup.register_printers(gdb.current_objfile())` yourself: in `~/.gdbinit` there is no
+current objfile, the call gets `None`, and it raises. The shipped loader falls back to the
+program space.
 
 ```python
 # ~/.gdbinit
 python
-import subprocess, sys
-import gdb
-
-# Find the rustc sysroot
-sysroot = subprocess.check_output(['rustc', '--print', 'sysroot']).decode().strip()
-sys.path.insert(0, f'{sysroot}/lib/rustlib/etc')
-
-import gdb_lookup
-# The import alone loads no printer. Register them, exactly as the shipped
-# gdb_load_rust_pretty_printers.py does.
-gdb_lookup.register_printers(gdb.current_objfile())
+import subprocess
+sysroot = subprocess.check_output(["rustc", "--print", "sysroot"], text=True).strip()
+gdb.execute(f"source {sysroot}/lib/rustlib/etc/gdb_load_rust_pretty_printers.py")
 end
 
-# Enable pretty-printing
 set print pretty on
-set print array on
 ```
 
-In `~/.gdbinit` there is no current objfile, so `gdb.current_objfile()` returns
-`None` and the printers register globally. That is what you want here.
+`rustc --print sysroot` names the toolchain that is active in the directory where GDB starts.
+Printers from another toolchain can misread the layout of std types.
 
-## GDB Commands for Rust
+## GDB commands for Rust
 
 ### Types and values
 
 ```gdb
-# Print the type of an expression
 (gdb) ptype my_var
 (gdb) whatis my_var
-
-# Inspect String
 (gdb) p my_string
 $1 = "hello world"
-
-# Inspect Vec<T>
 (gdb) p my_vec
-$2 = vec![1, 2, 3, 4, 5]
+$2 = Vec(size=5) = {1, 2, 3, 4, 5}
 (gdb) p my_vec.len
-
-# Inspect Option<T>
-(gdb) p my_option
-$3 = Some(42)
-
-# Inspect Result<T, E>
-(gdb) p my_result
-$4 = Ok(42)
-# or
-$4 = Err(DecodeError { .. })
-
-# Inspect HashMap
 (gdb) p my_map
-$5 = HashMap{...}
+$3 = HashMap(size=2) = {...}
+(gdb) info locals
 ```
 
-If a value prints as raw struct fields instead of Rust syntax, the
-pretty-printers are not loaded. Restart under `rust-gdb`, or fix `~/.gdbinit`.
+If a value prints as raw struct fields (`buf`, `len`, `ptr`) instead of these forms, the
+printers are not loaded. Restart under `rust-gdb`, or fix `~/.gdbinit`.
 
 ### Breakpoints in Rust
 
 ```gdb
-# Break on a function by full path (crate paths use underscores, not hyphens)
+# A function by full path (crate paths use underscores, not hyphens)
 (gdb) break my_crate::module::function_name
 
-# Break on a trait method: quote the whole symbol
+# A trait method: quote the whole symbol
 (gdb) break '<MyType as MyTrait>::method'
 
-# Break on a closure (closures get mangled names)
+# A closure (v0 names closures {closure#N})
 (gdb) break my_crate::module::function_name::{closure#0}
 
-# Break on panic
+# Every panic. Since 1.88 at least, the full name is __rustc::rust_panic.
 (gdb) break rust_panic
-(gdb) break std::panicking::begin_panic
+(gdb) break core::panicking::panic_fmt
 
-# Break on a file and line
+# A file and line
 (gdb) break src/lib.rs:171
 
-# Conditional break: stop only on the input that fails
-(gdb) break my_crate::decode if bytes.len() > 4096
+# Stop only on the input that fails. Use fields, not method calls: a slice has
+# `length`, a Vec has `len`. GDB calls only functions that exist in the binary,
+# and `len()` is usually inlined away.
+(gdb) break my_crate::decode if bytes.length > 4096
 (gdb) break my_crate::process if id == 100
 ```
 
-A conditional breakpoint on the argument that triggers the bug is faster than
-stepping through thousands of good iterations.
+If `break rust_panic` finds no location, set it on `__rustc::rust_panic`. Do not break on
+`std::panicking::begin_panic`: on 1.98.1 it exists only as generic instances, and LLDB resolves
+the plain path to no location.
 
-### Thread debugging
+A conditional breakpoint on the argument that triggers the bug is faster than stepping through
+thousands of good iterations.
+
+### Threads
 
 ```gdb
-# List all threads
 (gdb) info threads
-
-# Switch to a thread
 (gdb) thread 2
-
 # Backtrace every thread: the first command to run on a hang
 (gdb) thread apply all bt
-
 # Stop other threads from running while you step
 (gdb) set scheduler-locking on
 ```
 
-## LLDB Setup
+## LLDB setup
 
-### Automatic via rust-lldb
-
-```bash
-rust-lldb target/debug/my-cli
-```
-
-### Manual setup
+### Automatic, through rust-lldb
 
 ```bash
-# Find the Rust LLDB scripts
-rustc --print sysroot
-# ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu
-
-# Source the scripts inside an LLDB session
-(lldb) command script import ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/etc/lldb_lookup.py
-(lldb) command source ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/etc/lldb_commands
+rust-lldb target/debug/my-cli -- <args>
 ```
 
-Use the manual form inside Xcode and Android Studio, where the IDE starts LLDB
-itself and the `rust-lldb` wrapper never runs.
+The wrapper runs the toolchain's `lldb` if the toolchain ships one, and the system `lldb`
+otherwise. It passes one `command script import` of `lldb_lookup.py` before the target loads.
 
-## LLDB Commands for Rust
+### Manual setup (Xcode, Android Studio, plain lldb)
+
+Use this where the IDE starts LLDB itself and the wrapper never runs. Resolve the sysroot in a
+shell first, because LLDB does not expand `$(...)`:
+
+```bash
+echo "command script import \"$(rustc --print sysroot)/lib/rustlib/etc/lldb_lookup.py\""
+```
+
+Paste the printed line into the LLDB console, into `~/.lldbinit`, or into the IDE's LLDB
+startup commands. On Rust 1.98 and later that line is the whole setup: the script registers the
+`Rust` category when it loads. Rust 1.97 and earlier ship `lldb_commands` and need a second line,
+`command source <sysroot>/lib/rustlib/etc/lldb_commands`. That file does not exist in 1.98, and
+the `command source` line fails there.
+
+Check the result before you trust a printed value:
 
 ```lldb
-# Set a breakpoint by symbol or by file and line
+(lldb) type category list
+Category: Rust (enabled)
+```
+
+Apple's LLDB prints `This version of LLDB has no plugin for the language "rust"` at `run`. The
+warning is expected; the formatters still work. Expression evaluation of Rust syntax is limited,
+so inspect with `frame variable` rather than `expr`.
+
+## LLDB commands for Rust
+
+```lldb
+# Breakpoints by symbol, by file and line, and on every panic
 (lldb) b my_crate::module::function_name
 (lldb) b src/lib.rs:171
-
-# Break on panic
 (lldb) b rust_panic
+(lldb) b core::panicking::panic_fmt
 
-# Run with arguments (when the binary was launched without them)
+# Run with arguments, when the target was created without them
 (lldb) run <args>
 
-# Print a variable
+# Values. With formatters, a Vec prints as `v = size=5` plus its elements.
+(lldb) frame variable
 (lldb) frame variable my_var
-(lldb) p my_vec
-
-# Print a specific field
 (lldb) p my_struct.field
 
-# All locals in the current frame
-(lldb) frame variable
-
-# Thread list
+# Threads and backtraces
 (lldb) thread list
-
-# Backtrace
 (lldb) thread backtrace
 (lldb) thread backtrace all
 ```
 
-## VS Code / IDE Integration
+## VS Code with CodeLLDB
 
-### CodeLLDB extension
-
-CodeLLDB is the practical choice for Rust in VS Code: it ships its own LLDB and
-loads the Rust formatters.
+Since 1.11.0, CodeLLDB has no Rust formatters of its own. It uses the data formatters that
+`rustc` ships. With Rust 1.98 or later, use CodeLLDB 1.12.3 or later: older versions import the
+formatters only when `lldb_commands` exists, which 1.98 removed, and show raw structs.
 
 `.vscode/launch.json`:
 
@@ -208,7 +188,7 @@ loads the Rust formatters.
                 "RUST_LOG": "my_crate=debug,my_other_crate=trace"
             },
             "sourceMap": {
-                "/rustc/...": "${env:HOME}/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust"
+                "/rustc/<commit-hash>": "${env:HOME}/.rustup/toolchains/<toolchain>/lib/rustlib/src/rust"
             }
         },
         {
@@ -228,43 +208,44 @@ loads the Rust formatters.
 
 Notes:
 
-- `sourceMap` maps the `/rustc/<hash>/` paths baked into std debug info onto the
-  local rust-src component. Without it you cannot step into `std`. Install the
-  component with `rustup component add rust-src`.
-- The `cargo` block builds the test binary with `--no-run` and then launches the
-  produced executable, so you can debug a test without knowing its hashed path.
-- `args` in the test configuration is passed to the test harness, so it filters
-  which tests run.
+- `sourceMap` maps the `/rustc/<commit-hash>/` paths in std debug info onto the local rust-src
+  component. `rustc -Vv` prints the `commit-hash`. Install the sources with
+  `rustup component add rust-src`. Without the map you cannot step into `std`.
+- The `cargo` block builds the test binary with `--no-run` and launches the result, so you can
+  debug a test without knowing its hashed path.
+- `args` in the test configuration goes to the test harness, so it filters which tests run.
 
-## Symbol Demangling
+## Symbol demangling
 
-Tombstones, `perf` output, and linker errors show mangled Rust symbols. Demangle
-them before you read them.
+Rust 1.97 made v0 mangling the default. Symbols start with `_R` (`__R` in Mach-O `nm` output,
+which adds one underscore). `#[no_mangle]` and `#[export_name]` symbols keep their literal names.
 
 ```bash
-# Install rustfilt
-cargo install rustfilt
+cargo install --locked rustfilt
 
-# Demangle a single symbol. v0 is the default shape on rustc 1.97.0.
+# v0, the default shape
 echo '_RNvCsbhslDugC6KQ_2m211foo_bar_baz' | rustfilt
 # m2::foo_bar_baz
 
-# Legacy shape. Older artifacts and pre-v0 toolchains still carry it.
-echo '_ZN4core4fmt9Formatter9write_fmt17hb4f5d866d07ffa27E' | rustfilt
+# Legacy shape. Older artifacts and pre-1.97 toolchains carry it.
+echo '_ZN4core3fmt9Formatter9write_fmt17hb4f5d866d07ffa27E' | rustfilt
 # core::fmt::Formatter::write_fmt
 
-# The LLVM c++filt demangles v0 too
+# LLVM c++filt demangles v0. Mach-O names need -_ to drop the extra underscore.
 echo '_RNvCsbhslDugC6KQ_2m211foo_bar_baz' | c++filt
+echo '__RNvCsbhslDugC6KQ_2m211foo_bar_baz' | c++filt -_
 # m2::foo_bar_baz
 ```
 
-Grep for `_R`, not `_ZN`. On rustc 1.97.0 v0 is already the default, so a `_ZN` pattern
-matches no symbol in a current build and silently returns nothing. Measured on rustc
-1.97.0: `-C symbol-mangling-version=v0` changes no symbol, and
-`-C symbol-mangling-version=legacy` is rejected with "requires `-Z unstable-options`",
-which stable does not accept. Mach-O adds one leading underscore, so `nm` prints
-`__RNv...` on macOS.
+Grep for `_R`, not `_ZN`. A `_ZN` pattern matches no Rust symbol in a current build and returns
+nothing without an error. Measured on rustc 1.98.1: `-C symbol-mangling-version=v0` changes no
+symbol, and `-C symbol-mangling-version=legacy` fails with "requires `-Z unstable-options`",
+which stable does not accept. The panic entry demangles to `__rustc::rust_panic`; 1.88.0 already
+emits that name.
 
-`rustfilt` also filters a whole file or a stream, so you can pipe a log through
-it. `llvm-addr2line -C` and `llvm-symbolizer` demangle on their own; you do not
-need `rustfilt` after them.
+`rustfilt` also filters a whole file or a stream, so you can pipe a log or `nm` output through
+it. `llvm-addr2line -C` and `llvm-symbolizer` demangle v0 on their own; you do not need
+`rustfilt` after them. A debugger, profiler, or crash reporter that prints raw `_R` names
+predates v0 support: upgrade it, or pipe its output through `rustfilt`. GNU binutils demangles v0
+from 2.36. Linux perf demangles v0 from 6.16, so the perf in Ubuntu 24.04 (6.8) and Debian 13
+(6.12) prints raw `_R` names. Source: the v0 tracking issue, rust-lang/rust#60705.
