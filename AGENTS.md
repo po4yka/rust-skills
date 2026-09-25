@@ -11,19 +11,14 @@ identifiers.
 
 Layout is flat. One directory per skill:
 
-```
+```text
 skills/<name>/SKILL.md          the skill itself, always present
 skills/<name>/references/*.md   optional deep material, loaded on demand
-README.md                       the catalog table
-scripts/validate-skills.py      catalog structure checks
-scripts/test_validate_skills.py tests for the frontmatter rules themselves
+README.md                       the catalog table and the routing graph
+scripts/validate-skills.py      catalog structure checks (tests: scripts/test_validate_skills.py)
 tests/routing-cases.md          phrase -> skill, checked against every description
-checks/                         compile-check harness for the rust examples
-checks/test_gen.py              tests for executable-fence extraction
-checks/test_analyze.py          tests for the failure classifier itself
-checks/check.sh                 one command that reproduces CI
-research/                       primary-source findings and skill-gap decisions
-LICENSE                         BSD-3-Clause
+checks/                         compile-check harness for the rust examples; check.sh runs CI
+research/                       primary-source findings and catalog decisions
 ```
 
 There is no nesting below `skills/<name>/`, apart from `references/`. Do not add scripts,
@@ -37,7 +32,7 @@ Three keys, and nothing else by default:
 ```yaml
 ---
 name: rust-unsafe
-description: Use when you add or review any unsafe Rust block ... Triggers on "unsafe", "FFI", "transmute", or any soundness question.
+description: Use when adding or reviewing an unsafe block, a raw-pointer dereference, or a transmute ... Covers E0133, E0793, and unsafe attributes.
 license: BSD-3-Clause
 ---
 ```
@@ -45,9 +40,13 @@ license: BSD-3-Clause
 Rules:
 
 - `name` must equal the directory name. Use lowercase letters, digits, and hyphens.
-- `description` is one line, 1024 characters maximum. It must say **what** the skill covers and
-  **when** an agent must load it. Start with `Use when ...` and end with the trigger terms that
-  a user is likely to type.
+- `description` is one line, 1024 characters maximum. It is the only text an agent reads before
+  it decides to open the skill, and some runtimes keep only its start when many skills are
+  installed. Start with `Use when` and the task, then put the strongest trigger terms in the
+  first sentence. Say what the skill covers in one clause. Prefer categories of user intent over
+  keyword lists; keep exact tokens a user pastes (error codes, lint, tool, crate, and API names).
+  Aim for 300 to 600 characters. Do not write "you", a capability inventory, or a catch-all such
+  as "any Rust change". Add a "not for X" boundary only where a sibling skill is a likely misroute.
 - `license` is `BSD-3-Clause` for every skill in this repo.
 - Add no other frontmatter key unless a task asks for it.
 
@@ -60,13 +59,30 @@ The body starts at an `# Title` heading directly after the frontmatter.
 - Use the imperative for instructions. Write `Run cargo nextest run --no-fail-fast`, not
   `You may want to consider running the tests`.
 - Give concrete commands, flags, file names, and thresholds. Generic advice has no value in a
-  skill; the agent already knows it.
+  skill; the agent already knows it. Keep Rust-specific guardrails that prevent a correctness,
+  soundness, security, ABI, release, or tooling error, even when a strong model often knows them.
 - Remove every project-specific path, crate name, package name, and internal tool name. The
   skills must apply to any Rust workspace.
 - Tag every code block with a language: `rust`, `bash`, `toml`, `yaml`, `kotlin`, `swift`,
   `text`.
-- Keep `SKILL.md` near 400 lines. Move tables, long examples, and background to
-  `references/<topic>.md`, and link to them from `SKILL.md`.
+- Keep `SKILL.md` under 500 lines (the validator enforces it) and near 5,000 tokens. Put gotchas,
+  triage tables, verifier commands, and escalation rules first. Move conditional material, long
+  examples, and background to `references/<topic>.md`. Link each reference directly from
+  `SKILL.md` at the point of need with the condition to read it ("Read `references/x.md` when
+  ..."). A reference over 100 lines starts with a short contents list.
+- Do not add a "When to use this skill" section. The description does that job, and the body
+  loads only after the agent chose the skill.
+- Name another skill by its name only ("the `rust-security` skill, when it is installed"). An
+  install of one skill has no sibling directories, so a path into another skill is a dead link.
+- Give each rule one home in the catalog. Other skills point to the owner in one line.
+- State the verifier: which command proves which claim, when to run it, and what a green result
+  does not prove. Scale it to the risk. Do not add "double-check" or "verify again" steps.
+- Use "never", "always", "must", and severity labels only for a correctness, safety, data-loss,
+  or irreversible-release hazard, and give the reason. Mark a team preference as a default.
+- Skills run on many models and agents. Do not describe how a model behaves, and do not require
+  a harness feature (subagents, plan mode, nightly, a specific test runner) without a fallback.
+- Label a dated fact with its version or date ("as of Rust 1.98.1"). Do not write "at time of
+  writing". Re-run a measurement before you change its toolchain label.
 - Prefer a triage table (symptom, cause, fix) over prose for failure handling.
 - Compile any Rust example that is meant to be complete before you commit it. `bash
   checks/check.sh` does this for the whole catalog. A snippet that does not compile teaches the
@@ -83,20 +99,17 @@ The body starts at an `# Title` heading directly after the frontmatter.
   clean compilation, then builds and runs it on the native host. Keep it on the standard library.
   A run block cannot contain `TODO`, `FIXME`, `todo!()`, or `unimplemented!()`.
 - Tag ```` ```rust,ignore ```` only for code no `cargo check` can judge: a build-script
-  `include!`, a nightly-only feature, a failure that arrives at monomorphization. It is the one
-  way out of the gate, and nothing else removes a block from it. Prefer fixing the example.
+  `include!`, a nightly-only feature, a failure that arrives at monomorphization, or a crate the
+  harness cannot hold (the list is in `checks/Cargo.toml`). It is the one way out of the gate,
+  and nothing else removes a block from it. Prefer fixing the example.
 
 ## How to add a skill
 
-1. Create the directory:
-
-   ```bash
-   mkdir -p skills/<name>
-   ```
+1. Create `skills/<name>/`.
 
 2. Write `skills/<name>/SKILL.md` with the frontmatter above and a body that follows the
-   authoring conventions. Add `skills/<name>/references/*.md` only for material that does not
-   fit in the 400-line budget.
+   authoring conventions. Add `skills/<name>/references/*.md` only for material that is
+   conditional or does not fit in the size budget.
 
 3. Add one row to the catalog table in `README.md`, in the section that matches the subject.
    Link the name to `skills/<name>/SKILL.md`. Add one node to the routing diagram. Every skill
@@ -104,7 +117,8 @@ The body starts at an `# Title` heading directly after the frontmatter.
 
 4. Add at least one row to `tests/routing-cases.md`: a phrase a user is likely to type, and the
    new skill. The phrase must appear in the new `description`. A skill with no routing case
-   fails validation.
+   fails validation. The check is a regression lint, not proof that routing works: do not add a
+   keyword to a description only to satisfy it.
 
 ## How to verify a change locally
 
@@ -116,7 +130,8 @@ bash checks/check.sh
 
 A green run locally means a green run in CI. The one gate that can be missing is the skills-CLI
 discovery step, which needs `npx`; `check.sh` says so out loud when it has to skip it, and CI
-always runs it.
+always runs it. `check.sh` writes only under `checks/` and a temporary directory, so run and rerun
+it without asking.
 
 ### 1. Catalog structure
 
@@ -132,8 +147,9 @@ It checks, for every skill:
   characters;
 - every frontmatter value survives a real YAML parser unchanged: no `: `, no ` #`, no leading
   indicator character, because the skills CLI and the agent runtimes read the file with one;
-- every `references/*.md` a skill points at exists, whether the pointer is a Markdown link or
-  a bare code span;
+- `SKILL.md` is at most 500 lines;
+- every Markdown link resolves from the file that holds it and stays inside the skill directory,
+  every `references/*.md` code span exists, and no file names a `skills/<name>/` repository path;
 - every phrase in `tests/routing-cases.md` still appears in the description it routes to, and
   every skill has at least one routing case;
 - the README catalog lists exactly the skills that exist on disk;
@@ -141,20 +157,13 @@ It checks, for every skill:
 
 ### 2. Compile and behavior-check the examples
 
-```bash
-python3 checks/gen.py
-cd checks && cargo check --locked --examples --keep-going --message-format=json > check.json
-python3 analyze.py check.json                                 # coverage and detail
-python3 analyze.py check.json --check-baseline baseline.txt   # the gate
-```
-
-Every ` ```rust ` block in `skills/` is read, and its fence decides what happens to it. An
-untagged block is type-checked; most are fragments that name types the prose defines, and the
-analyzer buckets those and ignores them. A `rust,run` block must compile cleanly and then execute
-successfully on the native host within ten seconds. The gate fails on an example that never
-reached the compiler, a run block with any compile error, timeout, panic, or non-zero exit, a
-`compile_fail` block that compiled or missed the code its fence names, or a compile error the
-analyzer cannot attribute to an undefined symbol or to the extraction wrapper.
+`checks/README.md` lists the commands for each phase. Every ` ```rust ` block in `skills/` is
+read, and its fence decides what happens to it. An untagged block is type-checked; most are
+fragments that name types the prose defines, and the analyzer buckets those and ignores them. A
+`rust,run` block must compile cleanly and then run on the native host within ten seconds. The gate
+fails on an example that never reached the compiler, a failing run block, a `compile_fail` block
+that compiled or missed the code its fence names, or a compile error the analyzer cannot
+attribute to an undefined symbol or to the extraction wrapper.
 
 `checks/baseline.txt` is empty and should stay empty. When the gate reports a new suspect, fix
 the example. Add a baseline line only for a failure no fence tag can express, with a comment
@@ -168,12 +177,10 @@ nothing:
 npx skills add ./ --list
 ```
 
-Run it after any frontmatter edit. The repository validator splits a frontmatter line on the
-first colon; the CLI and the agent runtimes use a real YAML parser, and the two disagree on a
-value that needs quoting. A `: ` in a description has made a whole skill invisible to the CLI,
-and a ` #` has cut a description in half without a warning. `plain_scalar_problem` in
-`scripts/validate-skills.py` now rejects both, and `scripts/test_validate_skills.py` holds the
-rule in place, but the CLI is the only end-to-end proof.
+Run it after any frontmatter edit. The CLI and the agent runtimes parse frontmatter with a real
+YAML parser: a `: ` in a description once hid a whole skill, and a ` #` cut one in half.
+`plain_scalar_problem` in `scripts/validate-skills.py` rejects both, but the CLI is the only
+end-to-end proof.
 
 ### What `main` enforces
 
