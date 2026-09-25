@@ -1,7 +1,11 @@
 # Android Release Packaging
 
-Use this reference for the production release closure after the Rust `.so`
-passes the alignment, export, and size gates in the main skill.
+Read this file for the production release closure after the Rust `.so`
+passes the alignment, export, and size gates in [SKILL.md](../SKILL.md).
+
+Contents: artifact path; AGP native symbols; stripped and unstripped copies;
+exact release closure; installed release smoke; reusable SDK (AAR, Prefab);
+external action boundary; triage.
 
 ## Choose the artifact path
 
@@ -36,8 +40,9 @@ android {
 
 Use `FULL` when crash reports need file names and line numbers. Use
 `SYMBOL_TABLE` when function names are sufficient or the full archive exceeds
-the service limit. Keep the Rust profile at `strip = "none"`. If Cargo strips
-the input `.so`, AGP cannot recover the removed DWARF or symbol table.
+the 1.6 GB limit for the native debug symbols file. Keep the Rust profile at
+`strip = "none"`. If Cargo strips the input `.so`, AGP cannot recover the
+removed DWARF or symbol table.
 
 AGP includes configured native symbol metadata in an AAB. For an APK release,
 AGP writes a separate file at this version-dependent path:
@@ -137,12 +142,23 @@ Do not rebuild a `.so` to recreate lost symbols. A rebuild can produce a
 different build ID even at the same source revision. Retain the symbol inputs
 from the same build that produced the final package.
 
+The `rust-debugging` skill owns tombstone symbolication. Two facts depend on
+this closure. With NDK r29 or later, `ndk-stack -sym` accepts
+`native-debug-symbols.zip` and finds libraries by build ID, not by file name.
+Rust frames use v0 mangling (`_R` prefix) since Rust 1.97, and NDK r30
+`llvm-cxxfilt` demangles them; `#[unsafe(no_mangle)]` exports keep their names.
+
 ## Run the installed release smoke
 
 Test the signed release artifact, not a debug package and not the merged
 `jniLibs` directory. Keep one instrumentation test that calls
 `System.loadLibrary()` and invokes a stable JNI function with a deterministic
 result.
+
+On a 16 KB device or emulator image, run the device check in
+[SKILL.md](../SKILL.md) before the install: confirm `getconf PAGE_SIZE` prints
+`16384`, turn 16 KB backcompat mode off, and read both properties back.
+Otherwise the smoke can pass with a misaligned library.
 
 For a direct APK:
 

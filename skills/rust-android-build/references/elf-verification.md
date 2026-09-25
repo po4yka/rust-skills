@@ -1,9 +1,13 @@
 # Native Artifact Verification and Size Gate
 
-Deep material for `rust-android-build`: what to inspect in a built `.so`, in
-what order, and how to turn the checks into a release gate.
+Read this file when you write or change the release gate script for the Rust `.so` files, or when
+the size gate fails. It says what to inspect in each built library, in what order, how to audit a
+size regression, and how to wire the checks into CI.
 
-All commands use the NDK LLVM binaries. Resolve them once:
+Contents: check order; file and ELF header; LOAD alignment; `DT_NEEDED`; exported symbols; build
+ID; size gate, size audit, and linker size flags; CI wiring; triage.
+
+All commands use the NDK LLVM tools. Resolve them once:
 
 ```bash
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$(uname | tr '[:upper:]' '[:lower:]')-x86_64/bin"
@@ -11,25 +15,25 @@ NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$(uname | tr '[:upper:]' '[:
 
 Substitute your own library name for `libnative.so`.
 
-## What to verify, and in what order
+## Check order
 
-Run the checks in this order. Each one is cheaper than the next, and an early
-failure makes the later results meaningless.
+Run the checks in this order. Each one is cheaper than the next, and an early failure makes the
+later results meaningless.
 
 | Order | Check | Tool | Pass condition |
 |-------|-------|------|----------------|
 | 1 | The file exists for every shipped ABI | `test -f` | One `.so` per ABI directory |
 | 2 | The file is an ELF shared object for the right machine | `llvm-readelf -h` | `Type: DYN`, machine matches the ABI |
-| 3 | LOAD segment alignment | `llvm-readelf -lW` | Every LOAD segment aligns to `0x4000` |
-| 4 | Shared-library dependencies | `llvm-readelf -d` | Only NDK-provided libraries in `DT_NEEDED` |
-| 5 | Exported dynamic symbols | `llvm-objdump -T` | Only the allowlist |
-| 6 | Build ID present | `llvm-readelf -n` | A `GNU` build-id note exists |
-| 7 | Size against baseline | `stat` plus a baseline file | Inside the budget |
+| 3 | LOAD segment alignment | `llvm-readelf -lW` | `0x4000` or larger on 64-bit ABIs; 32-bit per project policy |
+| 4 | Shared-library dependencies | `llvm-readelf -d` | Only system libraries or libraries shipped in the same ABI directory |
+| 5 | Exported dynamic symbols | `llvm-readelf --dyn-syms` | Exactly the boundary allowlist |
+| 6 | Build ID present | `llvm-readelf -n` | A GNU build-ID note exists |
+| 7 | Size against baseline | `stat` plus the baseline file | Inside the budget |
 
-Point the checks at the merged native-library tree that the packaging step
-consumes. A check against one hand-picked build directory can pass while the
-packaged tree still holds a stale artifact. The gate inspects the merged JNI
-library tree; it does not open or validate an APK or AAB archive.
+Point the checks at the merged native-library tree that the packaging step consumes. A check
+against one hand-picked build directory can pass while the packaged tree still holds a stale
+artifact. This gate does not open an APK or AAB. The package and device checks in
+[SKILL.md](../SKILL.md) cover the final archive.
 
 ## 1-2. File presence and ELF header
 
@@ -48,9 +52,8 @@ Expected machine per ABI:
 | `x86_64` | `Advanced Micro Devices X86-64` |
 | `x86` | `Intel 80386` |
 
-A machine mismatch means a build wrote the wrong triple into the wrong ABI
-directory. That normally comes from a shared `CARGO_TARGET_DIR` across parallel
-per-ABI builds.
+A machine mismatch means that the copy step put the output of one Rust target into the directory
+of another ABI. Check the triple-to-ABI mapping in the Gradle task.
 
 ## 3. 16 KiB LOAD segment alignment
 
@@ -58,15 +61,15 @@ per-ABI builds.
 "$NDK_BIN/llvm-readelf" -lW <lib-dir>/arm64-v8a/libnative.so \
   | awk '/LOAD/ {print $NF}' \
   | sort -u
-# Expected: 0x4000
+# Expected on arm64-v8a and x86_64: 0x4000, or a larger power of two such as 0x10000
 ```
 
-The last column of a `readelf -lW` program-header line is the alignment.
-`sort -u` must print exactly one value, `0x4000`. More than one value means one
-segment kept the 4 KiB default.
+The last column of a `readelf -lW` program-header line is the alignment. Run the command once per
+file. The final link gives every LOAD segment of one file the same alignment, so `sort -u` prints
+one value. Two values mean that the command read more than one file.
 
-Run this for every shipped ABI, including the 32-bit ones. A uniform
-requirement gives you one assertion to write and one result to read.
+On `armeabi-v7a` and `x86`, the NDK default is `0x1000`. Require `0x4000` there only when the
+project policy applies the 16 KiB flag to 32-bit ABIs.
 
 ## 4. Shared-library dependencies
 
@@ -74,103 +77,103 @@ requirement gives you one assertion to write and one result to read.
 "$NDK_BIN/llvm-readelf" -d <lib-dir>/arm64-v8a/libnative.so | grep NEEDED
 ```
 
-Use this list to find the C dependency that broke alignment. A crypto backend
-with C sources is the usual offender. Rebuild that dependency with an explicit
-linker option. Use the linker channel that its build system provides, for
-example `LDFLAGS=-Wl,-z,max-page-size=16384` or CMake
-`target_link_options(... PRIVATE "-Wl,-z,max-page-size=16384")`. Do not put the
-option in `CFLAGS`; a compile-only invocation does not apply it to the final
-shared object.
+A Rust `cdylib` normally needs only system libraries such as `libc.so` and `libdl.so`. Any other
+entry is a prebuilt shared library. It must ship in the same ABI directory, or the load fails on a
+device and not on your machine. It also keeps its own LOAD alignment: run check 3 on it. A static
+C archive linked into the Rust `cdylib` is not listed here, and it takes the alignment of the
+final link.
 
-An entry that is not provided by the NDK or bundled in the same `jniLibs`
-directory fails at load time on a device, not on your machine.
+Rebuild a misaligned prebuilt with a linker option in its build system, for example
+`LDFLAGS=-Wl,-z,max-page-size=16384` or CMake
+`target_link_options(<target> PRIVATE "-Wl,-z,max-page-size=16384")`. A linker option in `CFLAGS`
+does not reach the final link.
 
 ## 5. Exported symbol allowlist
 
-Allowed:
+Use the allowlist diff from [SKILL.md](../SKILL.md): `llvm-readelf --dyn-syms --wide`, keep
+defined `GLOBAL` or `WEAK` symbols of type `FUNC` or `OBJECT`, and compare with the sorted
+expected set in both directions. Do not filter `llvm-objdump -T` output on ` DF `: that keeps
+functions only, so an exported `#[unsafe(no_mangle)] pub static` passes.
 
-- `JNI_OnLoad`, `JNI_OnUnload`
-- `Java_*`
-- `_init`, `_fini`, `__cxa_finalize`
-
-```bash
-"$NDK_BIN/llvm-objdump" -T <lib-dir>/arm64-v8a/libnative.so \
-  | awk '/ DF / && !/Java_/ && !/JNI_On/ && !/__cxa/ && !/_init/ && !/_fini/ {print}'
-# Expected output: empty
-```
-
-The ` DF ` filter selects dynamic function symbols. Any line that survives the
-filter is an exported Rust function that no caller on the Java side needs.
-
-Fix an unintended `#[unsafe(no_mangle)]` at the source first. Then enforce the
-public ABI with a checked-in linker version script:
-
-```text
-{
-  global:
-    JNI_OnLoad;
-    JNI_OnUnload;
-    Java_*;
-  local:
-    *;
-};
-```
-
-Pass it in the Android linker arguments with
-`-Wl,--version-script=<path>`. If the library uses `RegisterNatives`, omit
-`Java_*` and keep only the lifecycle symbols that the JVM resolves by name.
-Treat the script as defense in depth, not evidence. Run the dynamic-symbol
-allowlist against every final `.so` to prove that the link used it.
+rustc owns the `cdylib` export list and passes its own linker version script. A user version
+script does not hide a Rust export, and a user map that names an undefined symbol fails the link.
+Fix an unexpected export at its source: remove the `#[unsafe(no_mangle)]` or
+`#[unsafe(export_name)]` attribute, or turn off the dependency feature that adds it.
 
 ## 6. Build ID
 
 ```bash
-"$NDK_BIN/llvm-readelf" -n <lib-dir>/arm64-v8a/libnative.so | grep -A1 'GNU'
+"$NDK_BIN/llvm-readelf" -n <lib-dir>/arm64-v8a/libnative.so | sed -n 's/.*Build ID: //p'
 ```
 
-The build ID links a stripped shipped library to its unstripped sidecar. Without
-it, a crash report from the field cannot be symbolicated. The
-`-Wl,--build-id=sha1` rustflag produces it.
+The command must print one hex ID. The build ID links a stripped shipped library to its unstripped
+symbol input. Without it, a crash report from the field cannot be symbolicated reliably. The
+`-Wl,--build-id=sha1` flag produces it. A plain `--build-id` makes LLD write an 8-byte ID that the
+Android Studio LLDB does not recognize.
 
 ## 7. Size gate
 
-Keep a checked-in baseline file that maps library name and ABI to a byte count.
-Compare each build against it:
+Keep a checked-in baseline file that maps library name and ABI to a byte count. Apply the two
+thresholds from the release-gates section of [SKILL.md](../SKILL.md). The per-library limit catches
+one crate that ballooned, and the total limit catches many small increases that each pass the
+per-library limit.
 
-| Rule | Threshold |
-|------|-----------|
-| Growth of one tracked library | at most 128 KiB |
-| Total growth across all tracked libraries | the tighter of 2% or 256 KiB |
+Read byte counts from the baseline file, not from documentation. Update the baseline in a separate
+commit that states the reason. A baseline update inside a feature commit hides the growth from
+review.
 
-Two rules are needed. The per-library rule catches one crate that ballooned.
-The total rule catches many small increases that each pass the per-library rule.
+### Audit a regression
 
-Do not copy byte counts into documentation. Read them from the baseline file.
+`cargo bloat` builds with `cargo build` and accepts only bin, dylib, and cdylib targets. On a
+`crate-type = ["lib"]` package it stops with `only 'bin', 'dylib' and 'cdylib' crate types are
+supported`. Rank the symbols of the unstripped `.so` from the Gradle task instead:
 
-Update the baseline in a separate commit that states the reason. A baseline
-update mixed into a feature commit hides the growth from review.
+```bash
+"$NDK_BIN/llvm-nm" -S --size-sort --radix=d -C <unstripped>/libnative.so | tail -30
+```
+
+Or run `cargo bloat` on a thin shim package that declares `crate-type = ["cdylib"]` and holds
+`pub use <ffi_crate>;` in its `lib.rs`. Without that line, rustc does not link the FFI crate, and
+`cargo bloat` measures an empty library.
+
+```bash
+cargo bloat --locked --profile android-jni --target aarch64-linux-android -p <cdylib-shim> --crates -n 30
+cargo bloat --locked --profile android-jni --target aarch64-linux-android -p <cdylib-shim> -n 30   # by function
+```
+
+Common causes: a generic that monomorphizes into many copies (move the body into a non-generic
+inner function), a new transitive dependency (diff `cargo tree --locked -p <ffi-crate>`), or a
+build that selected a profile without fat LTO.
+
+### Linker size flags
+
+Do not add `-Wl,--gc-sections`: rustc already passes it for a `cdylib`. `-Wl,--icf=all` folds
+identical function bodies. Measure it, and use it only when no linked C or C++ code compares
+function addresses. `--icf=safe` needs `.llvm_addrsig` tables, which rustc 1.98.1 objects do not
+carry, so it folds little Rust code.
 
 ## Wiring the gate into CI
 
-1. Run the checks against the merged native-library tree, after the merge task
-   and before packaging.
-2. Fail the job on any check, do not warn. A warning in a native build gets
-   ignored until a store review rejects the release.
-3. Print the offending file, ABI, and measured value on failure. A gate that
-   prints only "failed" costs an extra debugging round trip.
-4. Run the complete declared shipping ABI matrix on the release path. A
-   pull-request job may verify one ABI to save runner time, but the release path
-   must verify all declared entries.
-5. Keep the gate script in the repository, not in the CI configuration. You
-   need to run it locally with the same logic that CI uses.
+1. Run the checks against the merged native-library tree, after the merge task and before
+   packaging.
+2. Fail the job on any check; do not warn. A warning in a native build is ignored until a store
+   review rejects the release.
+3. Print the file, the ABI, and the measured value on failure. A gate that prints only "failed"
+   costs an extra debugging round trip.
+4. Run the complete declared shipping ABI matrix on the release path. A pull-request job may check
+   one ABI to save runner time.
+5. Keep the gate script in the repository, not in the CI configuration, so that you run the same
+   logic locally.
 
 ## Triage table
 
 | Symptom | Cause | Action |
 |---------|-------|--------|
-| `sort -u` prints `0x1000` and `0x4000` | One object linked without the flag | Find it through `DT_NEEDED`, rebuild with the flag |
-| `Machine` is wrong for the directory | Parallel builds shared a target directory | Give each ABI its own `CARGO_TARGET_DIR` |
-| A new symbol appears in the allowlist check | A new `#[unsafe(no_mangle)]` item | Remove the attribute or move the item behind the JNI surface |
-| No build-id note | The `--build-id` rustflag is missing for that target | Add the flag to that target block |
+| `sort -u` prints `0x1000` and `0x4000` | The command read several files | Run it per file; the `0x1000` file is a separately linked `.so` or a 32-bit build |
+| A 64-bit prebuilt `.so` is `0x1000` | It was linked without the flag | Rebuild it with a linker option |
+| `Machine` is wrong for the directory | The copy step mapped a triple to the wrong ABI | Fix the triple-to-ABI mapping |
+| A new symbol appears in the allowlist check | A new `#[unsafe(no_mangle)]` item, possibly in a dependency | Remove the attribute, or the dependency feature that adds it |
+| Link fails with `version script assignment of 'global' to symbol ... failed: symbol not defined` | A user version script names an absent symbol | Remove the version script |
+| No build-ID note | The `--build-id=sha1` flag is missing, `RUSTFLAGS` replaced the config flags, or cargo ran outside the workspace root | Check the config tables, the environment, and the working directory |
 | Size grew on every ABI at once | LTO stopped applying, or the build used the dev profile | Confirm the profile that the build selected |
-| Size grew on one ABI only | A target-specific code path or an intrinsic fallback | `cargo bloat` for that target |
+| Size grew on one ABI only | A target-specific code path or an intrinsic fallback | `llvm-nm --size-sort` on that target's unstripped `.so`, or `cargo bloat` on a `cdylib` package |

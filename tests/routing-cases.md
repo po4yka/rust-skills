@@ -90,6 +90,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | NDK | rust-android-build |
 | native debug symbols | rust-android-build |
 | Prefab | rust-android-build |
+| 16 KB page size | rust-android-build |
 | Rust for iOS | rust-ios-build |
 | IPHONEOS_DEPLOYMENT_TARGET | rust-ios-build |
 | SwiftPM binaryTarget | rust-ios-build |
