@@ -154,6 +154,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | opaque Rust handle in Swift | rust-swift-ffi |
 | @MainActor Rust callback | rust-swift-ffi |
 | AsyncStream over a C callback | rust-swift-ffi |
+| SWIFT_DEFAULT_ACTOR_ISOLATION | rust-swift-ffi |
 | clippy.toml | rust-lints |
 | deny.toml | rust-security |
 | rustfmt.toml | rust-lints |
