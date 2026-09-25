@@ -3,8 +3,20 @@
 Deep material for rung three of the ladder in `../SKILL.md`. Read that first. Rung three is
 exotic; take it only when the value set is open **and** the values borrow.
 
-All output below comes from rustc 1.97.0, edition 2024, aarch64-apple-darwin, with Miri 0.1.0
-on nightly.
+Contents:
+
+- [The complete store](#the-complete-store): `get_mut`, and the parts that look optional
+- [The Miri verdict](#the-miri-verdict): the commands, and what a clean run misses
+- [Drop runs through an empty marker trait](#drop-runs-through-an-empty-marker-trait)
+- [Attacks that the trait pair defeats](#attacks-that-the-trait-pair-defeats), and two it does not
+- [The extractor exploit, in full](#the-extractor-exploit-in-full): the layer not to build
+- [The helper bound, with its diagnostic](#the-helper-bound-with-its-diagnostic): the rustc
+  suggestion not to apply
+- [Shipping it as a library](#shipping-it-as-a-library): E0117, the impls to ship, and the newtype
+  workaround
+
+Quoted rustc output comes from rustc 1.98.1, edition 2024, aarch64-apple-darwin. Quoted Miri
+output comes from Miri 0.1.0 on nightly 2026-05-15.
 
 ## The complete store
 
@@ -85,16 +97,16 @@ Notes on the parts that look optional and are not:
   not decoration. Every other field is covariant, so without the marker `&AnyMap<'long>` coerces
   to `&AnyMap<'short>`. A user element type with interior mutability then breaks the store from
   safe code alone. Give `Cell<&'a u32>` a tag, hand `&AnyMap<'short>` to a function that calls
-  `c.set(short)`, and the long slot holds a dead reference. Measured on the covariant store:
-  `cargo run` prints `resurrected: 7` after the referent dies, and both borrow models report
+  `c.set(short)`, and the long slot holds a dead reference. Measured on the covariant store: the
+  native run prints a garbage value after the referent dies, and both borrow models report
   `error: Undefined Behavior: constructing invalid value of type &u32: encountered a dangling
   reference (use-after-free)`. Put the marker back and rustc rejects the same program with
   ``error[E0597]: `short` does not live long enough``.
 - `get` must keep its elided output lifetime. Nothing in the compiler enforces this. Write
   `fn get<E: Element<'a>>(&self) -> Option<&'a E>` and the store compiles with no diagnostic and
-  no warning, and returns a reference that outlives the map. Measured: the program prints a value
-  after the map is dropped, and both borrow models report `error: Undefined Behavior: constructing
-  invalid value of type &std::borrow::Cow<'_, str>: encountered a dangling reference
+  no warning, and returns a reference that outlives the map. Measured: the native run reads the
+  value after the map is dropped, and both borrow models report `error: Undefined Behavior:
+  constructing invalid value of type &std::borrow::Cow<'_, str>: encountered a dangling reference
   (use-after-free)`.
 - `Box<dyn AnyDrop + 'a>` supplies the `E: 'a` bound. Without the `+ 'a` the box would demand
   `'static` again and the whole design collapses.
@@ -102,13 +114,16 @@ Notes on the parts that look optional and are not:
 
 ## The Miri verdict
 
+Run the default Stacked Borrows model first, then Tree Borrows as additional evidence:
+
 ```bash
-cargo +nightly miri run
-MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri run
+cargo +nightly miri run --locked
+MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri run --locked
 ```
 
 Both run clean, with no diagnostics. That is a clean run on this program, not a proof for every
-program; see `rust-sanitizers-miri` on what a clean Miri run does not cover.
+program. The `rust-sanitizers-miri` skill, when it is installed, says what a clean Miri run does
+not cover.
 
 The property the run cannot show is the compile-time rejection of a borrow shorter than the map.
 Put a `Cow::from(&s2)` where `s2` dies inside an inner block, and the store refuses it:
@@ -124,40 +139,63 @@ error[E0597]: `s2` does not live long enough
 ## Drop runs through an empty marker trait
 
 `AnyDrop` has no method. A trait object's vtable carries a drop slot regardless, so the concrete
-`Drop` still runs, including on the value a `HashMap::insert` displaces.
+`Drop` still runs, including on the value a `HashMap::insert` displaces. The probe asserts the
+order:
 
-```rust
+```rust,run
 use std::any::TypeId;
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 trait AnyDrop {}
 impl<T> AnyDrop for T {}
 
+thread_local! { static LOG: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) }; }
+
 struct Noisy(&'static str);
 impl Drop for Noisy {
-    fn drop(&mut self) { println!("dropped {}", self.0); }
+    fn drop(&mut self) { LOG.with(|log| log.borrow_mut().push(self.0)); }
 }
 
 fn main() {
     let mut table: HashMap<TypeId, Box<dyn AnyDrop>> = HashMap::new();
     let key = TypeId::of::<Noisy>();
     table.insert(key, Box::new(Noisy("first")));
-    println!("about to overwrite");
-    table.insert(key, Box::new(Noisy("second")));
-    println!("about to drop the table");
+    table.insert(key, Box::new(Noisy("second")));   // the displaced "first" drops here
+    LOG.with(|log| assert_eq!(*log.borrow(), ["first"]));
+    drop(table);
+    LOG.with(|log| assert_eq!(*log.borrow(), ["first", "second"]));
 }
 ```
 
-Observed output, in order:
+## Attacks that the trait pair defeats
 
-```text
-about to overwrite
-dropped first
-about to drop the table
-dropped second
+Two `TypeId` keys that collide would let `get` cast to the wrong type. The trait pair makes a
+collision unconstructible, so the map needs no runtime type check. The compiler rejects each
+miswiring at the impl that writes it, not at a use site. A second tag that claims an element type
+that is already claimed:
+
+```rust,compile_fail,E0271
+trait Owner: 'static { type Element<'a>: Element<'a, Owner = Self>; }
+trait Element<'a>: 'a { type Owner: Owner<Element<'a> = Self>; }
+
+struct Payload<'a>(&'a str);
+struct TagA;
+struct TagB;
+impl Owner for TagA { type Element<'a> = Payload<'a>; }
+impl<'a> Element<'a> for Payload<'a> { type Owner = TagA; }
+
+impl Owner for TagB { type Element<'a> = Payload<'a>; }
 ```
 
-## Attacks that the trait pair defeats
+```text
+error[E0271]: type mismatch resolving `<Payload<'a> as Element<'a>>::Owner == TagB`
+10 | impl Owner for TagB { type Element<'a> = Payload<'a>; }
+   |                                          ^^^^^^^^^^^
+note: expected this to be `TagB`
+ 8 | impl<'a> Element<'a> for Payload<'a> { type Owner = TagA; }
+note: required by a bound in `Owner::Element`
+```
 
 Every one of these was attempted against the store above and rejected at compile time.
 
@@ -178,10 +216,50 @@ Two attacks the trait pair does **not** defeat. Both are author discipline, not 
 
 ## The extractor exploit, in full
 
-This is the layer to **not** build. It is reproduced here so a reviewer can recognise the shape.
-Both borrow models report use-after-free.
+This is the layer to **not** build. It is reproduced here so a reviewer can recognize the shape.
+The program is complete and compiles without error on rustc 1.98.1. Do not run it outside Miri.
 
-```rust,ignore
+```rust
+use std::any::TypeId;
+use std::cell::UnsafeCell;
+use std::collections::HashMap;
+use std::marker::PhantomData;
+use std::ops::Deref;
+
+trait AnyDrop {}
+impl<T> AnyDrop for T {}
+
+trait Owner: 'static { type Element<'a>: Element<'a, Owner = Self>; }
+trait Element<'a>: 'a { type Owner: Owner<Element<'a> = Self>; }
+
+// The sound store from the top of this file, without `get_mut`.
+#[derive(Default)]
+struct AnyMap<'a> {
+    invariant: PhantomData<UnsafeCell<&'a mut ()>>,
+    table: HashMap<TypeId, Box<dyn AnyDrop + 'a>>,
+}
+
+impl<'a> AnyMap<'a> {
+    fn put<E: Element<'a>>(&mut self, value: E) {
+        self.table.insert(TypeId::of::<E::Owner>(), Box::new(value));
+    }
+    fn get<E: Element<'a>>(&self) -> Option<&E> {
+        let boxed = self.table.get(&TypeId::of::<E::Owner>())?;
+        let erased: &(dyn AnyDrop + 'a) = Box::deref(boxed);
+        // SAFETY: `E: Element<'a>` pins `<E::Owner as Owner>::Element<'a> == E`.
+        unsafe {
+            (erased as *const (dyn AnyDrop + 'a)
+                    as *const <E::Owner as Owner>::Element<'a>).as_ref()
+        }
+    }
+}
+
+impl Owner for String { type Element<'a> = Self; }
+impl<'a> Element<'a> for String { type Owner = Self; }
+impl Owner for u32 { type Element<'a> = Self; }
+impl<'a> Element<'a> for u32 { type Owner = Self; }
+
+// The unsound layer: `from_world` returns `Self`, detached from `world`.
 trait Extractor {
     type Extracted: ExtractedType;
     unsafe fn from_world(world: &AnyMap) -> Self;
@@ -190,18 +268,8 @@ trait ExtractedType: 'static {
     type Extractor<'a>: Extractor<Extracted = Self>;
 }
 
-trait ArgsMarker { type RefErasedArgs: RefErasedArgs; }
-trait RefErasedArgs: 'static { type Args<'a>: ArgsMarker<RefErasedArgs = Self>; }
-
-impl<A1: Extractor, A2: Extractor> ArgsMarker for (A1, A2) {
-    type RefErasedArgs = (A1::Extracted, A2::Extracted);
-}
-impl<A1: ExtractedType, A2: ExtractedType> RefErasedArgs for (A1, A2) {
-    type Args<'a> = (A1::Extractor<'a>, A2::Extractor<'a>);
-}
-
 trait System { fn run(&mut self, world: &AnyMap); }
-struct FuncSystem<F, Args: RefErasedArgs>(F, PhantomData<Args>);
+struct FuncSystem<F, Args>(F, PhantomData<Args>);
 
 impl<F, A1: ExtractedType, A2: ExtractedType> System for FuncSystem<F, (A1, A2)>
 where F: for<'a> FnMut(A1::Extractor<'a>, A2::Extractor<'a>) {
@@ -210,6 +278,14 @@ where F: for<'a> FnMut(A1::Extractor<'a>, A2::Extractor<'a>) {
         let a1 = unsafe { A1::Extractor::<'_>::from_world(world) };
         let a2 = unsafe { A2::Extractor::<'_>::from_world(world) };
         (self.0)(a1, a2);
+    }
+}
+
+struct App<'w>(AnyMap<'w>);
+impl App<'_> {
+    fn add_system<A1: Extractor, A2: Extractor, F>(&self, f: F)
+    where F: FnMut(A1, A2), FuncSystem<F, (A1::Extracted, A2::Extracted)>: System {
+        FuncSystem(f, PhantomData::<(A1::Extracted, A2::Extracted)>).run(&self.0);
     }
 }
 
@@ -243,19 +319,16 @@ fn main() {
 }
 ```
 
-Observed:
+Observed: the native run reads freed memory, so its result varies by build (a garbage string or
+a segfault). Miri reports the same use-after-free under both borrow models:
 
 ```text
-$ cargo run -q
-resurrected: ""
-
 $ cargo +nightly miri run
 error: Undefined Behavior: constructing invalid value of type
 std::option::Option<&std::string::String>: at .<enum-variant(Some)>.0,
 encountered a dangling reference (use-after-free)
-   --> src/main.rs:137:35
     |
-137 |     println!("resurrected: {:?}", stash.unwrap());
+    |     println!("resurrected: {:?}", stash.unwrap());
     |                                   ^^^^^ Undefined Behavior occurred here
 
 $ MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri run
@@ -266,8 +339,12 @@ Two facts a reviewer usually gets wrong about this exploit:
 
 1. The malicious `from_world` body is identical to the reference implementation's own body. The
    attack is in the `ExtractedType` impl, where the GAT drops `'a`, not in the `unsafe` block.
-2. Adding the "optional" reverse constraint `type Extracted: ExtractedType<Extractor<'a> = Self>`
-   changes nothing. It compiles, and E0207 does not fire. This is the compiled proof:
+2. Adding the "optional" reverse constraint, `trait Extractor<'a>: 'a` with
+   `type Extracted: ExtractedType<Extractor<'a> = Self>`, changes nothing. The expected
+   `E0207: the lifetime parameter is not constrained` does not fire. E0207 asks only whether a
+   parameter appears in the impl's trait reference **or** self type, and
+   `impl<'a, S> Extractor<'a> for Evil<&'static S>` names `'a` in the trait reference. The GAT is
+   still a constant function of `'a`. This is the compiled proof:
 
 ```rust
 use std::marker::PhantomData;
@@ -287,22 +364,48 @@ fn main() {}
 ```
 
 The repair is a signature change, not a bound: make extraction return a lifetime-carrying
-associated type, `fn from_world<'w>(world: &'w AnyMap<'w>) -> Self::Out<'w>`, so the compiler
-ties the result to the world without any `unsafe`.
+associated type, `fn from_world<'w, 'm>(world: &'w AnyMap<'m>) -> Self::Out<'w>`, so the compiler
+ties the result to the world without any `unsafe`. Keep the two lifetimes apart: `&'w AnyMap<'w>`
+borrows the invariant map until its destructor runs, and every call site fails with `E0597`.
+
+## The helper bound, with its diagnostic
+
+A helper that reads the map but does not know the map's `'a` cannot write `T: 'static`. It must
+demand the element trait at every lifetime. Cut both `Evil` impl bounds in the exploit above to
+`S: 'static`, and rustc reports:
+
+```text
+error[E0277]: the trait bound `S: Element<'_>` is not satisfied
+   |         let s = world.get::<S>().expect("must be in world") as *const S;
+   |                       ---   ^ the trait `Element<'_>` is not implemented for `S`
+note: required by a bound in `AnyMap::<'a>::get`
+   |     fn get<E: Element<'a>>(&self) -> Option<&E> {
+help: consider further restricting type parameter `S` with trait `Element`
+   | impl<S: 'static + Element<'_>> Extractor for Evil<&'static S> {
+```
+
+Do not apply that `help:` line. `'_` is not allowed in an impl bound, and rustc then reports
+``error[E0637]: `'_` cannot be used here``. The bound that compiles is
+`S: 'static + for<'x> Element<'x>`, as the exploit uses. Adding `'static` alone does not help:
+`get` is quantified over the map's `'a`, which the helper impl never names.
 
 ## Shipping it as a library
 
-Two crates, `nsmap` (defines `Owner`, `Element`, `AnyMap`) and a user crate that depends on it.
-The user cannot register a foreign type:
+Two crates, `map_lib` (defines `Owner`, `Element`, `AnyMap`) and a user crate that depends on it.
+The user crate cannot register a foreign type:
 
 ```rust,ignore
-// user crate
 use std::borrow::Cow;
-use nsmap::{AnyMap, Element, Owner};
+use map_lib::{AnyMap, Element, Owner};
 
-// error[E0117]: only traits defined in the current crate can be implemented
-// for types defined outside of the crate
 impl<'a> Element<'a> for Cow<'a, str> { type Owner = MyCowTag; }
+```
+
+```text
+error[E0117]: only traits defined in the current crate can be implemented for types defined outside of the crate
+4 | impl<'a> Element<'a> for Cow<'a, str> { type Owner = MyCowTag; }
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^------------
+  |                          `Cow` is not defined in the current crate
 ```
 
 The newtype workaround compiles in the user crate, and the assertion holds. The block prints
@@ -324,5 +427,9 @@ fn main() {
 }
 ```
 
-So the map crate must ship the impls for the std types its users will store, and the users must
-newtype everything else. Budget for that before you publish.
+Consequences for a published map crate. Budget for them before you publish:
+
+- Ship `Owner` and `Element` impls for every std type users will store: `Cow<'a, str>`,
+  `Cow<'a, [u8]>`, `&'a str`, `&'a [u8]`, `String`, and the integers.
+- Document the newtype workaround above for everything else.
+- Do not offer a `register::<T>()` macro to hide the error. It does not remove it.

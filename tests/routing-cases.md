@@ -310,6 +310,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | anymap | rust-type-erasure |
 | extensions map | rust-type-erasure |
 | resource registry | rust-type-erasure |
+| type map | rust-type-erasure |
 | cannot be shared between threads safely | rust-send-sync |
 | MutexGuard is not Send | rust-send-sync |
 | auto trait | rust-send-sync |
