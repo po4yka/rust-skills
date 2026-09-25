@@ -205,6 +205,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | cargo-mutants | rust-test-tools |
 | proptest | rust-test-tools |
 | cargo-fuzz | rust-test-tools |
+| loom | rust-test-tools |
+| cargo-careful | rust-test-tools |
 | SAFETY comment | rust-unsafe |
 | repr(packed) | rust-unsafe |
 | improper_ctypes | rust-unsafe |

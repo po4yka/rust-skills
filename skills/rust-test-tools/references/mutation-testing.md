@@ -1,25 +1,25 @@
 # Mutation testing with cargo-mutants
 
-Deep reference for the mutation-testing section of the `rust-test-tools` skill.
+Deep reference for the cargo-mutants section of `SKILL.md`. Facts match cargo-mutants 27.1.0
+and the `mutants` crate 0.0.4.
 
-## What mutation testing reveals that coverage does not
+Contents:
 
-Coverage tells you which lines execute during the tests. It does not tell you whether the
-tests verify the behavior. A function with 100% coverage can have zero assertions.
-
-Mutation testing injects small semantic changes (mutants). It flips operators, it
-replaces return values, and it deletes calls. Then it reruns the test suite for each
-mutant. If the tests still pass after a mutation, that mutant "survived". A survived
-mutant means the tests execute the code but never check its correctness. Survived mutants
-point directly at weak assertions, missing edge-case tests, and untested error paths.
+- Running locally: full run, `--in-diff`, single package, parallelism, flags
+- Configuration: `.cargo/mutants.toml` and `#[mutants::skip]`
+- Interpreting results: `mutants.out` files and exit codes
+- Writing mutation-resistant tests
+- Common false positives
+- CI workflow
 
 ## Running locally
 
 ```bash
-cargo install cargo-mutants
+cargo install --locked cargo-mutants
 ```
 
-Run each command from the repository root. If the Rust workspace is not at the repository
+Run each command from the repository root. Each command passes `--cargo-arg=--locked`, because
+cargo-mutants runs cargo without `--locked`. If the Rust workspace is not at the repository
 root, add `--dir <workspace-dir>`, or `--manifest-path <workspace-dir>/Cargo.toml` for
 consistency with other Cargo commands.
 
@@ -28,6 +28,7 @@ consistency with other Cargo commands.
 ```bash
 cargo mutants \
   --test-tool nextest \
+  --cargo-arg=--locked \
   --output target/
 ```
 
@@ -41,11 +42,11 @@ tests each mutant there. Expect a full run to take minutes to hours.
 ```bash
 # Uncommitted work.
 git diff > /tmp/wip.diff
-cargo mutants --test-tool nextest --in-diff /tmp/wip.diff --output target/
+cargo mutants --test-tool nextest --cargo-arg=--locked --in-diff /tmp/wip.diff --output target/
 
 # The pull request against the base branch.
 git diff origin/main...HEAD > /tmp/pr.diff
-cargo mutants --test-tool nextest --in-diff /tmp/pr.diff --output target/
+cargo mutants --test-tool nextest --cargo-arg=--locked --in-diff /tmp/pr.diff --output target/
 ```
 
 `--in-diff` generates mutants only for changed lines, so a focused pull request produces
@@ -64,7 +65,7 @@ cargo mutants --test-tool nextest --in-diff /tmp/pr.diff --output target/
 ### Single package
 
 ```bash
-cargo mutants --test-tool nextest --package <crate> --in-diff /tmp/pr.diff
+cargo mutants --test-tool nextest --cargo-arg=--locked --package <crate> --in-diff /tmp/pr.diff
 ```
 
 Combine `--package` with `--in-diff` for the fastest feedback loop.
@@ -106,7 +107,7 @@ cargo-mutants reads its config from `.cargo/mutants.toml` in the source tree roo
 that file, so that a developer can run `cargo mutants` with no extra options.
 
 ```toml
-test_tool = "nextest"
+test_tool = "nextest"   # only when every developer and CI job has cargo-nextest
 timeout_multiplier = 5.0
 minimum_test_timeout = 30
 exclude_re = ["impl Debug", "impl Display", "::fmt"]
@@ -120,9 +121,14 @@ exclude_re = ["impl Debug", "impl Display", "::fmt"]
   20 seconds. Raise the floor on a fast suite that runs on a loaded CI machine.
 - `exclude_re` and `examine_re` — lists of regular expressions over the full mutant name.
 - `exclude_globs` and `examine_globs` — the same idea over file paths.
+- `additional_cargo_args` — extra arguments for every cargo call, for example
+  `["--locked"]`. Then drop `--cargo-arg=--locked` from the command line: the two lists are
+  appended, and cargo rejects a repeated `--locked`.
 
 For scalar options the command line wins over the config file. For list options the two
-sources are appended.
+sources are appended. cargo-mutants 27.0.0 made this change for `--file`, `--exclude`,
+`--examine-re`, and `--exclude-re`; an older version replaces the config list with the
+command-line list.
 
 By default cargo-mutants picks packages with the same heuristics as other Cargo commands.
 From the workspace root that means every workspace member is a mutation target. Prefer a
@@ -135,7 +141,7 @@ Use the attribute when the exclusion belongs to one function, not to a class of 
 ```toml
 # Cargo.toml — a normal dependency, not a dev-dependency.
 [dependencies]
-mutants = "0.0.3"
+mutants = "0.0.4"
 ```
 
 ```rust
@@ -148,7 +154,11 @@ fn should_stop() -> bool {
 
 The `mutants` crate is tiny and the attribute emits no code. cargo-mutants does not
 evaluate the `cfg_attr` condition; it honors the inner `mutants::skip` in every build.
-Place the attribute on a function, on an `impl` block, or on a module. Always add a
+On stable Rust, place the attribute on a function, an `impl` block, a `trait` block, or an
+inline `mod` block. The file-level `#![mutants::skip]` and the expression form need the
+nightly features `custom_inner_attributes` and `stmt_expr_attributes`; on stable they fail
+with E0658 in the test build that cargo-mutants runs. On stable, exclude a file with
+`exclude_globs` (or `--exclude`), and an expression's mutants with `exclude_re`. Add a
 comment that states why the item is skipped.
 
 ## Interpreting results
@@ -192,20 +202,14 @@ Gate CI on the exit code, not on a parsed report.
 | 3 | Some tests timed out. |
 | 4 | The baseline tests already fail or hang, so no mutant ran. |
 | 5 | The new side of the `--in-diff` diff does not match the tree. |
+| 6 | The `--in-diff` file is not a valid diff. |
+| 70 | Internal error in cargo-mutants. |
 
-Exit code 4 means your diagnosis stops here. Fix the normal test suite first.
+Exit code 4 means your diagnosis stops here. Fix the normal test suite first. Treat any code
+outside this table as a tool failure, not as a test result.
 
-## Triage workflow
-
-1. Open `mutants.out/missed.txt`.
-2. For each survived mutant, read the function and the mutation description. The matching
-   `diff/` file shows the exact change.
-3. Ask: "Must a test catch this?" If yes, write a targeted test.
-4. If the mutation is in genuinely untestable code (FFI glue, logging), exclude it. Use
-   `exclude_re` for a class of items and `#[mutants::skip]` for one item. Do not write a
-   meaningless test.
-
-Record the reason for every exclude. An undocumented exclude becomes permanent blindness.
+The triage steps for `missed.txt` are in `SKILL.md`. Record the reason for every exclude: an
+undocumented exclude hides that code from every later run.
 
 ## Writing mutation-resistant tests
 
@@ -255,6 +259,9 @@ not write low-value tests for them.
 - **Unreachable branches** — `unreachable!()` in a match arm that the type system already
   guards.
 - **Builder defaults** — the mutant survives only because every test overrides the field.
+- **Doctest-only behavior under nextest** — nextest does not run doctests, so under
+  `--test-tool nextest` a behavior that only a doctest checks shows as missed. Drop
+  `--test-tool nextest` for such a crate, or add a unit test.
 
 ## CI workflow
 
@@ -287,10 +294,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: taiki-e/install-action@v2
+      # Installs the toolchain that rust-toolchain.toml pins (rustup 1.28 and later).
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: cargo-nextest,cargo-mutants
       - name: Run selected mutation scope
@@ -300,7 +309,7 @@ jobs:
           IN_DIFF: ${{ inputs.in_diff }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          args=(--test-tool nextest --output target/)
+          args=(--test-tool nextest --cargo-arg=--locked --output target/)
           for package in $PACKAGES; do
             [[ "$package" =~ ^[A-Za-z0-9_-]+$ ]] || exit 2
             args+=(--package "$package")
@@ -312,7 +321,7 @@ jobs:
             args+=(--in-diff "$diff_file")
           fi
           cargo mutants "${args[@]}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: mutants-output
@@ -322,12 +331,16 @@ jobs:
 
 Key details:
 
-- Pin the Rust toolchain in the workflow. Keep the pin in sync with `rust-toolchain.toml`.
+- Pin every action to a full commit SHA with a version comment, and use node24 majors
+  (checkout v5 or later, upload-artifact v6 or later). GitHub runners removed Node 20 on
+  2026-09-23. The `cargo-workflows` skill owns these rules.
+- Install the Rust toolchain that `rust-toolchain.toml` pins, so that CI and local runs agree.
 - Install `cargo-nextest` and `cargo-mutants` from prebuilt binaries. A source install
   costs several minutes per run.
 - Give the job an explicit timeout. A runaway mutant run can burn the whole CI budget.
 - Upload the output directory as an artifact. The result files are the deliverable.
-  Use `if: always()`, because a survived mutant makes the step exit with code 2.
+  Use `if: always()`, because a survived mutant makes the step exit with code 2, and a
+  malformed diff exits with code 6.
 - Use a concurrency group that cancels an in-progress run on the same ref.
 - Discover the package list with `cargo metadata --locked` when a workflow input requests
   a subset. On a large workspace, rotate scheduled coverage over several shards so that
@@ -340,25 +353,3 @@ gh workflow run mutation-testing.yml \
   -f packages="my-parser my-codec" \
   -f in_diff=true
 ```
-
-## Optional: a wrapper script
-
-On a workspace with many crates, a single wrapper script keeps CI and local runs
-identical. Give it environment-variable inputs and pass extra arguments through to
-`cargo mutants`:
-
-```bash
-# scripts/run-mutants.sh — pattern
-#   MUTANTS_TEST_TOOL   test runner (default: nextest)
-#   MUTANTS_PACKAGES    space-separated subset (default: all workspace packages)
-#   MUTANTS_JOBS        parallel jobs (unset = cargo-mutants default)
-# Extra CLI arguments, for example --in-diff, pass straight through.
-
-bash scripts/run-mutants.sh                              # all crates
-MUTANTS_PACKAGES="my-parser" bash scripts/run-mutants.sh # one crate
-bash scripts/run-mutants.sh --in-diff /tmp/pr.diff       # incremental
-MUTANTS_JOBS=2 bash scripts/run-mutants.sh               # limit parallelism
-```
-
-Filter the requested package subset against `cargo metadata --locked` inside the script.
-A stale package name then fails fast instead of silently mutating nothing.

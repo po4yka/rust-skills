@@ -1,243 +1,186 @@
 ---
 name: rust-test-tools
-description: Use when you write or review tests for unsafe code, hand-rolled atomics, lock-free primitives, untrusted parsers, FFI boundaries, deterministic export pipelines, or a generated module that needs more than basic coverage. Covers dynamic checks beyond cargo test with cargo-nextest, cargo-careful, loom, proptest, cargo-fuzz, cargo-mutants with survived-mutant triage, and golden tests for deterministic output.
+description: Use when choosing, adding, or reviewing a Rust test tool beyond plain cargo test, such as loom for hand-rolled atomics and lock-free code, proptest and cargo-fuzz for parsers of untrusted bytes, cargo-careful as an extra lane beside a sanitizer for FFI code that Miri cannot run, cargo-mutants with survived-mutant triage for weak tests, golden or snapshot files for deterministic output, and a differential fuzz target for a port with a reference implementation. Not for the test-first cycle (rust-tdd) or Miri and sanitizer setup (rust-sanitizers-miri).
 license: BSD-3-Clause
 ---
 
 # Rust Test Tools
 
-## Purpose
+A green `cargo test` does not find undefined behavior (UB), atomic-ordering bugs, parser edge
+cases, weak assertions, or output drift. Pick the tool by the risk that the change adds. Run it
+on the crate that the change touches while you iterate. Run the full lane once before merge.
 
-`cargo test --locked` and `cargo nextest run --locked` are necessary but not sufficient.
-They do not find these failure modes:
+## Pick the tool
 
-- Undefined behavior (UB) in `unsafe` code.
-- Data races in lock-free atomics.
-- Missing edge cases in parsers and decoders.
-- Behavior changes that pass weak tests but break under exhaustive exploration.
-- Non-deterministic output from a pipeline that promises determinism.
+| The change adds | Run | A green run does not prove |
+|---|---|---|
+| Pure-Rust `unsafe`: raw pointers, `transmute`, `MaybeUninit`, `from_raw_parts` | Miri. The `rust-sanitizers-miri` skill owns the flags and the aliasing-model policy | UB freedom on paths that the tests do not reach |
+| `unsafe` next to foreign code: FFI, JNI, libc, syscalls | ASan on the host, or HWASan or MTE on a device; TSan when the code shares state across threads. cargo-careful is a cheap extra lane, not a substitute. Also Miri on the pure-Rust helpers, with the foreign calls stubbed under `#[cfg(miri)]`; the stub dereferences every pointer that the foreign side stores | UB freedom: a sanitizer does not know the Rust aliasing rules, and careful checks only a few UB classes |
+| Hand-rolled atomics, a spinlock, a lock-free structure, a publish flag | loom | freedom from bugs that need load buffering or more preemptions than the bound |
+| A parser, a decoder, or any function that reads untrusted bytes | proptest, then cargo-fuzz | freedom from bugs that the strategy or the corpus never reaches |
+| A port or a rewrite of code that has a reference implementation | a differential fuzz target | equivalence outside the inputs that the fuzzer reached |
+| A refactor of tested logic, or new tests for a critical change | cargo-mutants on the diff, or on the source files under test when the diff only adds tests | that the asserted values are the correct ones |
+| Output that must be deterministic: serialized records, generated code, reports, images | golden files | that the first blessed baseline is correct |
+| None of the above | the normal test run | behavior that no test asserts |
 
-This skill lists the dynamic toolkit beyond Miri. It tells you when to reach for each tool.
+Code that uses only `std::sync::Mutex` or `RwLock`, or data-parallel code (for example rayon)
+with no hand-rolled atomics, does not need loom.
 
-## Tool selection decision tree
+## Lanes and cadence
 
-```text
-Is there `unsafe` in the change?
-├── FFI / UniFFI / JNI / inline asm / syscalls / libc?
-│   └── YES → cargo-careful + sanitizers (ASan/TSan/MSan).
-│             Miri cannot model FFI. See `rust-sanitizers-miri` for ASan/TSan invocations.
-└── Pure-Rust unsafe (raw pointers, transmute, mem::* tricks)?
-    └── YES → Miri (primary) + cargo-careful (cheaper continuous check).
-              Use `MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-strict-provenance"`.
-
-Is the change a custom synchronization primitive
-(atomic-based flag, hand-rolled spinlock, lock-free queue, publish/subscribe pair)?
-├── YES → loom with a `cfg(loom)` test.
-│         Standard `Mutex` / `RwLock` does NOT need loom.
-│         Data-parallel code (for example rayon) with no hand-rolled atomics does not
-│         need loom either. Reach for loom only when a raw atomic crosses threads.
-
-Is the change a parser, a decoder, or any function that reads untrusted bytes?
-├── YES → proptest (input-space coverage) + cargo-fuzz (corpus-driven OOM/panic/UB hunting).
-
-Is the change a refactor or a rewrite of well-tested logic?
-├── YES → cargo-mutants on the changed file or crate. A mutation score below 80% means
-│         the tests do not constrain behavior. Add tests before you merge.
-
-Does the change affect deterministic output (rendered images, serialized documents,
-generated code, report files)?
-├── YES → golden tests against committed baselines. Diff at byte level where the
-│         producer is deterministic.
-
-None of the above?
-└── `cargo nextest run --locked` plus standard tests are sufficient.
-```
-
-## cargo-nextest — the baseline runner
-
-Use nextest as the default test runner. It runs each test in its own process, so a
-panic or an abort in one test does not hide the rest of the suite.
+If cargo-nextest is installed, use it as the runner. It runs each test in its own process, so
+one abort or segfault does not hide the rest of the suite. Nextest does not run doctests, so run
+them separately. Keep `--locked` so that a test run cannot rewrite `Cargo.lock`.
 
 ```bash
-cargo nextest run --locked
-cargo nextest run --locked --no-fail-fast      # see every failure, not only the first
-cargo nextest run --locked -p <crate>          # one crate
+cargo nextest run --locked -p <crate> --no-fail-fast
+cargo test --locked -p <crate> --doc
+
+# Without nextest.
+cargo test --locked -p <crate> --no-fail-fast
 ```
 
-Nextest profiles (for example `default` and `ci`) live in `.config/nextest.toml`.
-See the `cargo-workflows` skill for profile setup. Keep `--locked` in every command so
-that a run cannot silently update `Cargo.lock`.
+Run the tests for `unsafe` code in a debug build at least once. Since Rust 1.78, std checks unsafe
+preconditions (for example the null and alignment rules of `slice::from_raw_parts`) when debug
+assertions are on. A `--release` build removes these checks.
 
-Nextest is also the test tool for cargo-mutants (`--test-tool nextest`).
+| Lane | Command | When |
+|---|---|---|
+| Tests, proptest, golden files | `cargo nextest run --locked --workspace` and `cargo test --locked --workspace --doc` | every pull request |
+| cargo-careful | `cargo +nightly careful test --locked -p <ffi-crate> --no-fail-fast` | pull requests that touch `unsafe` or FFI crates |
+| Miri, sanitizers | the `rust-sanitizers-miri` skill | pull requests that touch `unsafe`, and on a schedule |
+| loom | `RUSTFLAGS="--cfg loom" cargo test --locked --release --test 'loom_*'` | pull requests that touch hand-rolled atomics |
+| cargo-fuzz | `cargo +nightly fuzz run <target> -- -max_total_time=900` for each `cargo fuzz list` entry | nightly or weekly schedule, not every pull request |
+| cargo-mutants | `--in-diff` run on demand, full run on a schedule | after a refactor, and weekly |
 
-## cargo-careful — the Miri fallback
+The `cargo-workflows` skill owns nextest profiles and the GitHub Actions rules (actions pinned to
+a commit SHA, node24 action majors).
 
-Miri is the gold standard for UB detection in pure Rust. But Miri runs 50–400× slower
-than normal tests, and Miri refuses FFI. `cargo-careful` rebuilds `std` with extra debug
-assertions (alignment checks, initialization tracking, and more) and runs your tests
-against that hardened `std`. The slowdown is about 2–3× versus normal tests. It finds a
-large subset of what Miri finds.
+## Review gate
 
-```bash
-# Install once.
-cargo install cargo-careful
+Before you approve a change, confirm each item that applies:
 
-# Run for crates that mix unsafe with FFI, where Miri is unavailable.
-cargo +nightly careful test --locked -p <ffi-crate> --no-fail-fast
+- [ ] New pure-Rust `unsafe` has a Miri run when a nightly toolchain with the `miri` component is
+      installed; otherwise the report names it as not checked by Miri. This includes `unsafe` helpers inside an FFI
+      crate, with the foreign calls stubbed under `#[cfg(miri)]`, and the stub dereferences
+      every pointer that the foreign side stores (the `rust-sanitizers-miri` skill has the
+      stub rules). A careful run alone is not UB evidence.
+- [ ] New `unsafe` across FFI has an ASan run on the host, or a HWASan or MTE run on a device,
+      and a TSan run when it shares state across threads.
+- [ ] Every new hand-rolled atomic or lock-free primitive has a loom test that calls the crate's
+      own type. The loom lane selects only the loom targets.
+- [ ] Every new parser or decoder has a never-panics property, a roundtrip property where a
+      roundtrip exists, and committed proptest regression files.
+- [ ] Every fuzz crash is a committed, minimized regression test.
+- [ ] A port with a reference implementation has a differential fuzz target.
+- [ ] A refactor of tested logic has a cargo-mutants run on the diff. Each missed mutant has a
+      test or a recorded exclusion.
+- [ ] Deterministic output has committed golden files. Each fixture change is a reviewed,
+      deliberate commit.
 
-# Or the whole workspace.
-cargo +nightly careful test --locked --workspace --no-fail-fast
-```
+## cargo-careful
 
-Use cargo-careful when:
+cargo-careful rebuilds the standard library with debug assertions and runs code that Miri cannot
+run (foreign calls, system calls). It is a cheap extra lane, not a UB proof: it does not check
+aliasing, general reads of uninitialized memory, use-after-free, or data races. A pure-Rust
+`unsafe` helper inside an FFI crate still needs a Miri run. The foreign paths still need an ASan
+run on the host, or a HWASan or MTE run on a device; the `rust-sanitizers-miri` skill owns that
+setup.
 
-- The crate crosses an FFI, UniFFI, JNI, or libc boundary and Miri's
-  `-Zmiri-disable-isolation` is not enough.
-- You want UB coverage on every pull request without the 50–400× cost of Miri.
-- A test reproduces a device-only or platform-only crash and you want a host-runnable
-  diagnosis path.
+Read [references/cargo-careful.md](references/cargo-careful.md) when you set up the lane (nightly
+and `rust-src`), need the list of checks, or a flag from `target.<triple>.rustflags` is missing
+in the careful run.
 
-## loom — the concurrency model checker
+## loom
 
-`loom` explores thread interleavings exhaustively for code under `#[cfg(loom)]`. It is a
-model checker, not a stress test. It proves the absence of races inside the bounded
-interleaving set. A stress test only fails to find one race in a finite run.
+loom runs a test body under every thread interleaving that the preemption bound allows, and
+it models the C11 memory orderings. A stress test samples a few schedules. loom enumerates
+them. Know its limits before you trust a result:
 
-Apply loom to:
+- loom checks only the operations on its own types. Gate the atomics and a shared `UnsafeCell`
+  to `loom::sync::atomic` and `loom::cell::UnsafeCell` under `cfg(loom)`, and spawn threads with
+  `loom::thread::spawn`. A data race on a `std` type is invisible to loom, so the run can pass.
+- loom treats `SeqCst` loads and stores as `AcqRel`. Code that needs `SeqCst` accesses can
+  fail under loom and still be correct. loom models `fence(SeqCst)` correctly.
+- loom does not explore load-buffering executions. A green loom run can hide such a bug.
+- The cost grows exponentially with the number of atomic operations and the preemption bound.
+  Test one primitive per test, with two or three threads.
+- loom's scheduler is not fair. Under `cfg(loom)`, every spin or retry loop must call
+  `loom::thread::yield_now()` (or `loom::hint::spin_loop()`). Otherwise the model fails with
+  "Model exceeded maximum number of branches" (`LOOM_MAX_BRANCHES`, default 1000).
 
-- Any new lock-free data structure or hand-rolled spinlock.
-- Atomic-based publish/subscribe flags, for example a cancellation flag that one thread
-  sets and another thread polls.
-- Any `Ordering::Relaxed` on a publish/subscribe pair. Each such site is a loom-test
-  candidate. See the `memory-model` skill.
+Declare loom under `[target.'cfg(loom)'.dependencies]`, because the library itself imports it,
+and add a `check-cfg` entry for `cfg(loom)`. Do not use a `loom` Cargo feature: `--all-features`
+turns it on, and every ordinary test that touches the primitive then panics. Make the loom test call the crate's own type, not a
+copy of the algorithm. Select only the loom targets (`--test 'loom_*'`). With `--tests` or a bare
+`cargo test`, every other test that touches the primitive runs outside `loom::model` and panics
+with "cannot access Loom execution state from outside a Loom model". Gate such tests with
+`#[cfg(not(loom))]` if they must share a run.
 
-Declare `loom` as a dependency that only exists under the `loom` cfg. A normal
-dependency entry pulls loom into every release build:
+Read [references/loom.md](references/loom.md) when you set up loom in a crate, gate a `static`
+atomic or an `UnsafeCell`, need a worked example with its failure output, or must bound a slow
+run.
 
-```toml
-# Cargo.toml
-[target.'cfg(loom)'.dependencies]
-loom = "0.7"
+## proptest
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
-```
-
-Put the lint entry in `[workspace.lints.rust]` instead when member crates use
-`[lints] workspace = true`. Cargo 1.80 and later checks custom cfg names even
-when they are inactive; registration keeps the ordinary `-D warnings` gate
-green.
-
-Gate the primitive so that the same code compiles against `loom` types and `std` types:
-
-```rust
-// src/lib.rs — gate the real and the loom implementation of the primitive.
-#[cfg(loom)]
-use loom::sync::atomic::{AtomicBool, Ordering};
-#[cfg(not(loom))]
-use std::sync::atomic::{AtomicBool, Ordering};
-```
-
-```rust
-// tests/loom_shutdown.rs
-#[cfg(loom)]
-#[test]
-fn shutdown_flag_publishes_to_reader() {
-    loom::model(|| {
-        let flag = loom::sync::Arc::new(AtomicBool::new(false));
-        let f2 = flag.clone();
-        let writer = loom::thread::spawn(move || {
-            f2.store(true, Ordering::Release);
-        });
-        let reader = loom::thread::spawn(move || {
-            while !flag.load(Ordering::Acquire) {
-                loom::thread::yield_now();
-            }
-        });
-        writer.join().unwrap();
-        reader.join().unwrap();
-    });
-}
-```
-
-Run:
-
-```bash
-RUSTFLAGS="--cfg loom" cargo test --locked --release --test loom_shutdown
-
-# Bound the search space if loom takes too long.
-LOOM_MAX_PREEMPTIONS=3 RUSTFLAGS="--cfg loom" cargo test --locked --release --test loom_shutdown
-```
-
-Cost is exponential in the number of atomic operations and in the preemption bound. Keep
-each loom test small. Test one primitive per test.
-
-## proptest — input-space property testing
-
-Write a `proptest` strategy for any function that takes bytes or a configuration value
-and produces a parsed or validated output. Assert invariants, not single examples.
-Proptest finds edge cases that example tests miss: zero-length input, all-zero and
-all-`0xFF` input, near-overflow lengths, malformed framing, and corrupt field encoding.
+Write properties for any function that takes bytes, text, or a configuration value and
+produces a parsed or validated result. Assert invariants, not single examples.
 
 ```rust
 use proptest::prelude::*;
 
 proptest! {
-    // Total function: never panics, never triggers UB, for any byte string.
+    // Total function: no panic for any byte string.
     #[test]
     fn parse_never_panics(buf in prop::collection::vec(any::<u8>(), 0..1024)) {
         let _ = Header::parse(&buf);
     }
 
-    // Roundtrip: parse then serialize must reproduce the consumed prefix.
+    // Roundtrip: serialize a parsed header and get the consumed prefix back.
     #[test]
     fn parse_then_serialize_roundtrips(buf in prop::collection::vec(any::<u8>(), 0..4096)) {
-        match Header::parse(&buf) {
-            Ok(hdr) => {
-                let mut out = Vec::new();
-                hdr.write_to(&mut out);
-                prop_assert_eq!(&out, &buf[..hdr.len()]);
-            }
-            // Parse errors are acceptable. A panic or UB is not.
-            Err(_) => {}
+        if let Ok(hdr) = Header::parse(&buf) {
+            let mut out = Vec::new();
+            hdr.write_to(&mut out);
+            prop_assert_eq!(&out, &buf[..hdr.len()]);
         }
     }
 
-    // Structured roundtrip: generate a valid value, encode it, decode it back.
+    // Structured roundtrip: generate a valid value, encode it, and decode it back.
     #[test]
     fn decode_roundtrips_valid_input(value in arb_valid_message()) {
-        let encoded = value.encode();
-        let decoded = decode(&encoded).expect("valid input must decode");
-        prop_assert_eq!(decoded.fields.len(), value.fields.len());
+        let decoded = decode(&value.encode()).expect("valid input must decode");
+        prop_assert_eq!(decoded, value);
     }
 
-    // Truncation tolerance for a reader over `Read + Seek`.
+    // Text: "(?s).*" also generates '\n'. ".*" and any::<String>() never do.
     #[test]
-    fn reader_tolerates_truncation(buf in prop::collection::vec(any::<u8>(), 0..8192)) {
-        let _ = read_header_and_metadata(std::io::Cursor::new(&buf[..]));
-    }
-
-    // Text input: arbitrary Unicode must not panic the parser.
-    #[test]
-    fn text_parser_never_panics(s in ".*") {
+    fn text_parser_never_panics(s in "(?s).*") {
         let _ = parse_document(&s);
     }
 }
 ```
 
-Treat any AI-generated parser without a proptest as incomplete.
+- Random bytes seldom get past a magic number or a checksum. The structured strategy reaches
+  the deeper code, so write one for every format with such a check.
+- A line-based parser tested with `".*"` or `any::<String>()` never sees a newline (probe on
+  proptest 1.11.0). Use `"(?s).*"`.
+- proptest saves each failing case and runs it first on the next run. A test in `src/` saves to
+  `proptest-regressions/` at the crate root. An integration test saves to
+  `tests/<name>.proptest-regressions`. Commit these files.
+- For a deeper local run, raise the case count:
+  `PROPTEST_CASES=10000 cargo test --locked -p <crate> parse_`.
 
-## cargo-fuzz — corpus-driven fuzzing
+A new parser without a never-panics property is incomplete.
 
-`proptest` finds bugs that a strategy can reach. Fuzzing finds bugs that a corpus plus
-coverage feedback can reach. Fuzzing reaches bugs proptest misses, above all in binary
-protocol and container decoders.
+## cargo-fuzz
+
+proptest finds the bugs that a strategy can reach. A coverage-guided fuzzer also finds the
+bugs that only a mutated corpus reaches, above all in binary protocol and container decoders.
 
 ```bash
-# Install once. cargo-fuzz needs a nightly toolchain to build a target.
-cargo install cargo-fuzz
-
-# One-time setup per crate. Run inside the crate directory.
+# Setup, once per crate. Building and running a target needs nightly.
+cargo install --locked cargo-fuzz
 cargo fuzz init
 cargo fuzz add parse_header
 ```
@@ -253,193 +196,158 @@ fuzz_target!(|data: &[u8]| {
 ```
 
 ```bash
-# Run for a fixed wall-clock budget.
 cargo +nightly fuzz run parse_header -- -max_total_time=600
-
-# List every target in the crate.
 cargo fuzz list
 
-# Reproduce a crash from a saved artifact.
+# Reproduce a crash from a saved artifact, then shrink it.
 cargo +nightly fuzz run parse_header fuzz/artifacts/parse_header/crash-<id>
-
-# Shrink a crashing artifact before you turn it into a regression test.
 cargo +nightly fuzz tmin parse_header fuzz/artifacts/parse_header/crash-<id>
 ```
 
-Pick fuzz targets by input shape:
+- Fuzz the outermost entry point that takes untrusted bytes: a frame or header decoder, an
+  archive reader, a decompressor, a document parser.
+- A length field that drives an allocation is the usual out-of-memory crash. Cap the length in
+  the parser, not in the fuzz target.
+- A recursive parser needs a nesting-depth limit. Deep nesting overflows the stack. The
+  report shows `AddressSanitizer: stack-overflow` in the default ASan build, or
+  `has overflowed its stack` without ASan. Cap the depth in the parser, not in the fuzz target.
+- Turn every crash into a regression test. Shrink it with `tmin`, commit the input (for example
+  under `tests/regressions/`), and add a test that feeds it to the entry point.
 
-| Input shape | Target the entry point | Why |
-|-------------|------------------------|-----|
-| Binary wire format or protocol header | `parse_header`, `decode_frame` | Adversarial bytes arrive from an untrusted peer |
-| Container or archive format | header reader, index reader, `open` | The file comes from the user or from a download |
-| Compressed or length-prefixed payload | the decompress or unframe step | Length fields drive allocation; OOM risk is real |
-| Text markup or document format | the top-level parse function | Deeply nested or malformed markup causes stack and recursion bugs |
-| Configuration or project JSON | `parse_validated`, `validate_json` | The document can come from an untrusted source |
+## Differential testing
 
-Run fuzzing nightly or weekly in CI, not on every pull request. Reduce every crash to a
-minimized regression test. Commit it under `tests/regressions/` so that the bug cannot
-return.
+When a change ports or rewrites code that has a reference implementation (a C library, the
+previous Rust version, a model of the spec), run a differential fuzz target. Feed the same bytes
+to both and compare the results. A port that is memory-safe and passes its own tests can still
+disagree with the reference.
 
-## cargo-mutants — mutation testing
+```rust
+// fuzz/fuzz_targets/decode_matches_reference.rs
+#![no_main]
+use libfuzzer_sys::fuzz_target;
 
-`cargo-mutants` changes your source code (it replaces a function body with
-`Default::default()`, it flips a comparison, it deletes a call) and reruns the tests for
-each change. If the tests still pass, the mutant "survived". A survived mutant means the
-tests execute the code but never check its correctness.
+fuzz_target!(|data: &[u8]| {
+    let ours = my_crate::decode(data).ok();
+    let reference = reference_impl::decode(data).ok();
+    assert_eq!(ours, reference, "decoders disagree on {data:?}");
+});
+```
 
-Coverage tells you which lines run. Mutation testing tells you which behavior the tests
-actually constrain. A function with 100% coverage can have zero assertions.
+- Compare acceptance and the value. Compare the error kind too when callers depend on it.
+- Seed `fuzz/corpus/<target>/` with non-ASCII text and invalid UTF-8: a lone continuation byte
+  (`0x80`), an overlong encoding (`0xC0 0xAF`), and a truncated 4-byte sequence. Ports often
+  differ on non-ASCII and invalid UTF-8 input.
 
-A mutation score below 80% is a strong signal that the test suite rubber-stamps the code.
+## cargo-mutants
+
+cargo-mutants changes the code (it replaces a function body with a default value, flips a
+comparison, or deletes a call) and reruns the tests for each change. A mutant that survives
+marks code that the tests run but do not check. It also exposes a new test that never calls the
+changed function; the `rust-tdd` skill owns that rule.
 
 ```bash
-cargo install cargo-mutants
+cargo install --locked cargo-mutants
 
-# Full workspace run with nextest as the test tool.
-cargo mutants --test-tool nextest --output target/
-
-# Only the lines that a diff changes. This is the fastest useful loop:
-# a focused pull request gives 10–50 mutants instead of thousands.
+# Fastest useful loop: only the lines that the branch changes.
 git diff origin/main...HEAD > /tmp/pr.diff
-cargo mutants --test-tool nextest --in-diff /tmp/pr.diff --output target/
+cargo mutants --test-tool nextest --cargo-arg=--locked --in-diff /tmp/pr.diff --package <crate> -j2 --output target/
 
-# One crate, with two parallel jobs.
-cargo mutants --package <crate> -j2 --output target/
+# One whole crate.
+cargo mutants --test-tool nextest --cargo-arg=--locked --package <crate> -j2 --output target/
 ```
 
-`--in-diff` takes a path to a diff file, not a shell command. The diff must use the
-`git diff` filename format (a `b/` prefix on the new name) or no prefix.
+Without cargo-nextest, drop `--test-tool nextest`; cargo-mutants then runs `cargo test`.
 
-Keep `-j` low. Start at `-j2` or `-j3`. `cargo build` and `cargo test` already use
-many cores, so a high job count makes the machine thrash.
+- A diff that only adds or changes tests gives no mutants, because `--in-diff` matches only the
+  code under test. For new tests of existing code, run
+  `cargo mutants --test-tool nextest --cargo-arg=--locked --file <source-file>` (or
+  `--package <crate>`).
+- cargo-mutants runs cargo without `--locked`. Pass `--cargo-arg=--locked`, or set
+  `additional_cargo_args = ["--locked"]` in `.cargo/mutants.toml`, not both: cargo rejects a
+  repeated `--locked`.
+- Results go to `<output>/mutants.out/`. Exit code 2 means some mutants survived. Exit code 4
+  means the tests fail before any mutation, so fix the suite first.
 
-If the Rust workspace is not at the repository root, add `--dir <workspace-dir>` or
-`--manifest-path <workspace-dir>/Cargo.toml` to each command.
+Triage `mutants.out/missed.txt`. It is the gate, not a score: cargo-mutants defines no
+threshold.
 
-cargo-mutants writes a `mutants.out/` directory inside the `--output` directory. The
-default output location is the source tree root. `mutants.out/missed.txt` lists the
-mutations that no test caught. That file is the actionable one.
+1. For each missed mutant, read the function and the change. `mutants.out/diff/` holds each
+   change as a diff.
+2. If a test must catch the change, write a test that asserts the exact value or side effect.
+3. If the code cannot be tested in a useful way (`Display` or `Debug` output, logging, FFI
+   glue), exclude it with `exclude_re` in `.cargo/mutants.toml` or with `#[mutants::skip]`.
+   Record the reason next to the exclusion. Do not write a meaningless test to raise the count.
 
-### Triage workflow for survived mutants
+Do not block every pull request on a full run: it takes minutes to hours, and some mutants are
+equivalent to the original code.
 
-1. Open `mutants.out/missed.txt`.
-2. For each survived mutant, read the named function and the mutation description.
-3. Ask: "Must a test catch this?" If yes, write a targeted test.
-4. If the mutation is in genuinely untestable code (FFI glue, logging, `Display`
-   formatting), exclude it. Use `exclude_re` in `.cargo/mutants.toml` for a class of
-   items, or `#[mutants::skip]` on one item. Do not write a meaningless test to raise
-   the score.
+Read [references/mutation-testing.md](references/mutation-testing.md) when you write
+`.cargo/mutants.toml`, pick `-j` or `--dir`, need the full flag or exit-code table, suspect a
+false positive (for example a doctest-only behavior under nextest), or set up the scheduled CI
+workflow.
 
-Run cargo-mutants after a refactor, or after an AI-generated rewrite of a well-tested
-module. Do not block the normal CI path on the mutation score. A full run takes minutes
-to hours, and it produces false-positive mutants from equivalent transformations.
+## Golden files
 
-For the full flag list, the `.cargo/mutants.toml` configuration, the exit codes, the
-output-file taxonomy, the patterns that make tests mutation-resistant, the known false
-positives, and the CI workflow, see
-[references/mutation-testing.md](references/mutation-testing.md).
+A golden test compares output with a committed file. Use it for output that another party
+reads: serialized records, exported reports, generated code, protocol frames, rendered images.
+Put the fixtures in `tests/golden/` of the crate that owns the output, and the test in
+`tests/golden_contracts.rs`. Cargo builds each `.rs` file directly under `tests/` as a test
+binary, and it skips a subdirectory that has no `main.rs`.
 
-## Golden tests — deterministic output verification
+```rust
+use std::path::Path;
 
-If a pipeline promises deterministic output (the same inputs always give the same
-rendered image, the same serialized document, or the same generated file), verify that
-promise with golden tests. Commit baseline artifacts. Diff each new run against them.
-
-Drive the golden run from one script so that CI and a developer machine execute the
-same steps. Give the script two modes, for example:
+/// Compares `actual` with `tests/golden/<name>`. `BLESS_GOLDENS=1` rewrites the file.
+fn assert_golden(name: &str, actual: &str) {
+    // env! resolves at compile time, so the path does not depend on the working directory.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(name);
+    if std::env::var("BLESS_GOLDENS").as_deref() == Ok("1") {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!("missing golden {}: {error}; bless it with BLESS_GOLDENS=1", path.display())
+    });
+    assert_eq!(actual, expected, "golden mismatch for {}", path.display());
+}
+```
 
 ```bash
-# Verify against the committed baselines. This must fail on any diff.
-bash tools/golden/run.sh
-
-# Regenerate the baselines after an intentional output change.
-bash tools/golden/run.sh --update
+cargo nextest run --locked -p <crate> --test golden_contracts                  # compare
+BLESS_GOLDENS=1 cargo nextest run --locked -p <crate> --test golden_contracts  # bless
+git diff -- tests/golden/                                                      # review
 ```
 
-Golden test policy:
-
-- Every new input fixture must have a matching committed baseline.
-- A baseline update needs a deliberate commit with a visual or textual diff in the
-  review. Never update baselines automatically.
-- Text and vector output: compare byte-exact, because the producer is deterministic.
-- Raster output: compare pixel-exact, or use a perceptual-hash tolerance of 1% or less.
-- Binary document output (for example PDF): compare byte-exact after you strip
-  metadata timestamps.
-
-## Cost and cadence summary
-
-| Tool | Cost vs `cargo test --locked` | Cadence | Catches |
-|------|------------------------------|---------|---------|
-| `cargo nextest run --locked` | baseline | every pull request | functional regressions |
-| `cargo-careful` | 2–3× | every pull request if FFI is present | uninit reads, misalignment, std debug-assert violations |
-| Miri | 50–400× | nightly, and on every `unsafe` pull request | UB, aliasing, provenance (pure Rust only) |
-| loom | exponential, bounded by preemptions | every pull request that touches custom atomics | data races, atomic reorderings |
-| proptest | minutes | every pull request that touches parsers | edge-case parse failures, roundtrip violations |
-| cargo-fuzz | hours to days | nightly or weekly | OOMs, panics, slow inputs, UB on adversarial bytes |
-| cargo-mutants | minutes to hours | manual, after a refactor; weekly in CI | weak assertions, untested branches |
-| golden tests | seconds to minutes | every pull request | non-deterministic or drifted output |
-| ASan / TSan / MSan | 2–10× | nightly on FFI crates | use-after-free, data races, uninit reads across FFI |
-
-## CI wiring
-
-```yaml
-# .github/workflows/dynamic-checks.yml — sketch
-jobs:
-  careful:
-    runs-on: ubuntu-latest
-    steps:
-      - run: rustup default nightly
-      - run: cargo install cargo-careful
-      - run: cargo +nightly careful test --locked --workspace --no-fail-fast
-
-  loom:
-    runs-on: ubuntu-latest
-    # Needed only if hand-rolled atomics exist. Skip the job otherwise.
-    steps:
-      - run: RUSTFLAGS="--cfg loom" cargo test --locked --release --tests
-
-  golden:
-    runs-on: ubuntu-latest
-    steps:
-      - run: bash tools/golden/run.sh
-
-  fuzz_nightly:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - run: cargo install cargo-fuzz
-      - run: |
-          for target in $(cargo fuzz list); do
-            cargo +nightly fuzz run "$target" -- -max_total_time=900
-          done
-```
-
-Miri, ASan, and TSan setup lives in `rust-sanitizers-miri`. This skill covers the rest.
-The scheduled mutation-testing workflow is in
-[references/mutation-testing.md](references/mutation-testing.md).
-
-## Review gate
-
-Before you approve a change, confirm each applicable item:
-
-- [ ] New `unsafe` in pure Rust has a Miri run. New `unsafe` across FFI has a
-      cargo-careful run.
-- [ ] Every new hand-rolled atomic or lock-free primitive has a loom test.
-- [ ] Every new parser or decoder has a `never_panics` proptest, and a roundtrip
-      proptest where a roundtrip exists.
-- [ ] Every fuzz crash is reduced to a committed regression test.
-- [ ] A refactor of well-tested logic has a cargo-mutants run on the changed files, and
-      each survived mutant is either fixed with a test or excluded with a reason.
-- [ ] Deterministic output has committed golden baselines, and any baseline change is a
-      deliberate commit.
+- Never set the bless variable in CI. A missing fixture must fail the run, and the helper
+  panics for that reason.
+- Bless only an intended output change. Read the fixture diff before you commit. Never bless to
+  turn a red run green.
+- Make the output deterministic before you compare it. Replace timestamps, generated IDs, ports,
+  temporary paths, and host names with placeholders. Iterate a `HashMap` or `HashSet` in sorted
+  order, or use a `BTreeMap`: std hash iteration order changes from one process to the next.
+- Do not build a golden file or an `insta::assert_debug_snapshot!` from `Debug` (`{:?}`)
+  output. std does not keep that format stable, and Rust 1.98 escapes more characters in
+  strings and chars. Serialize with the real output format instead.
+- Text: compare byte for byte. Add `**/tests/golden/** -text` to the root `.gitattributes` (or
+  `tests/golden/** -text` to a `.gitattributes` in the crate directory), so that a checkout
+  with `core.autocrlf` does not rewrite the line endings. A pattern with a slash is anchored
+  to the directory of its `.gitattributes` file.
+- Binary: compare the bytes from `std::fs::read`. For a PDF or an archive, remove the embedded
+  timestamps first.
+- Raster images: compare decoded pixels, exactly or with a stated per-channel tolerance. Do not
+  compare encoded PNG bytes: another encoder version or setting gives other bytes for the same
+  pixels.
+- If the crate already uses `insta`, use its macros and `cargo insta review`. Do not add a
+  second golden mechanism.
 
 ## Related skills
 
-- `rust-sanitizers-miri` — Miri as the primary UB path; ASan, TSan, MSan, and HWASan for FFI.
-- `memory-model` — atomic orderings; every Relaxed publish/subscribe site is a loom-test candidate.
-- `rust-unsafe` — `#[cfg(miri)]` stubbing for FFI; `ManuallyDrop` and `from_raw_parts` caution.
-- `rust-tdd` — test-first workflow that these tools reinforce.
-- `rust-panic-safety` — panic boundaries that proptest and fuzzing probe.
-- `rust-discipline` — allocation rules on hot paths; the `large_stack_frames` lint.
-- `rust-lints` — clippy lint configuration for the workspace.
-- `cargo-workflows` — workspace setup; nextest profiles (`default`, `ci`).
+These skills own the adjacent topics, when they are installed:
+
+- `rust-sanitizers-miri`: Miri flags and model policy; `#[cfg(miri)]` stubs for foreign calls;
+  ASan, TSan, MSan, and HWASan.
+- `memory-model`: the choice of atomic orderings that a loom test checks.
+- `rust-unsafe`: SAFETY contracts and the `unsafe` audit surface.
+- `rust-tdd`: the test-first cycle, and tests that call the changed code.
+- `cargo-workflows`: nextest profiles and CI workflow rules.
