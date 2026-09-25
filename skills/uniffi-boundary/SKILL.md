@@ -1,456 +1,282 @@
 ---
 name: uniffi-boundary
-description: Use when you author, change, or review a UniFFI boundary that generates Kotlin and Swift bindings from Rust. Covers proc-macro scaffolding versus UDL, Record/Object/Enum/Error derives, Send + Sync, Arc ownership, callback_interface and foreign traits, custom_newtype converters, versioned JSON payloads, coarse APIs, async exports, and mobile engine and callback ownership shape. Triggers on uniffi, uniffi::export, uniffi::constructor, setup_scaffolding, uniffi-bindgen, UDL, callback_interface, with_foreign, custom_newtype, foreign trait, or what may cross an FFI boundary.
+description: Use when authoring, changing, or reviewing the exported Rust surface of a UniFFI crate that generates Kotlin and Swift bindings, or when fixing a UniFFI macro or bindgen error. Includes the Record versus Object choice, foreign callback traits, custom types, and borrowed or async arguments. Not for packaging or version skew (uniffi-packaging-versioning) or for error, progress, and cancel semantics (ffi-error-progress-cancel). Triggers on uniffi::export, uniffi::Object, uniffi::Record, setup_scaffolding, UniFfiTag, export(foreign), callback_interface, with_foreign, custom_newtype, custom_type!, UnexpectedUniFFICallbackError, or UDL.
 license: BSD-3-Clause
 ---
 
 # UniFFI Boundary
 
-## Purpose
+A UniFFI boundary crate is a thin adapter. It declares the exported surface, and the
+bindings generator produces Kotlin and Swift from the same Rust signatures. This skill owns
+the shape of that surface. These skills, when installed, own the adjacent topics:
 
-Use this skill to design, author, and review a UniFFI boundary crate. A UniFFI boundary
-crate is a thin adapter: it declares the exported surface, and one bindings generator
-produces the Kotlin and the Swift side from the same Rust signatures.
+| Topic | Skill |
+|-------|-------|
+| Error taxonomy, progress delivery to `Flow` or `AsyncThrowingStream`, cancel, job registry | `ffi-error-progress-cancel` |
+| cdylib and staticlib, bindgen commands, header and modulemap, UniFFI version pins and skew | `uniffi-packaging-versioning` |
+| XCFramework assembly and SwiftPM `binaryTarget` | `rust-ios-build` |
+| Hand-written JNI or C ABI without UniFFI | `rust-jni`, `rust-swift-ffi` |
+| Unwind policy and the `panic` profile | `rust-panic-safety` |
+| Atomics behind a cancel or progress flag | `memory-model` |
+| A manual `unsafe impl Send` or `Sync`, raw pointers | `rust-unsafe` |
+| Crate split and dependency direction | `rust-crate-architecture` |
 
-This skill owns the *shape* of that surface:
+## Version floor
 
-- proc-macro scaffolding and the single-source-of-truth rule,
-- the Record versus Object decision,
-- `Send + Sync` on every exported interface,
-- `Arc`-based object references and ownership,
-- foreign callback traits,
-- custom-type converters and JSON-string contracts,
-- what is allowed to cross the boundary and what must stay in deeper crates.
+The examples target UniFFI 0.32.x. The proc-macro surface changes between minor versions.
+When `Cargo.lock` pins a `uniffi` version below the floor of a row, use the older form or
+upgrade. The `uniffi-packaging-versioning` skill owns the upgrade.
 
-This skill does **not** own the error, progress, and cancellation *semantics* — the error
-variant taxonomy, forward-compatible catch-all variants, progress mapping to Kotlin `Flow`
-or Swift `AsyncThrowingStream`, and cooperative cancel. Those are `ffi-error-progress-cancel`.
-It does not own packaging of the generated artifacts — cdylib, staticlib, XCFramework, and
-version skew. That is `uniffi-packaging-versioning` and `rust-android-build`. The atomics
-under a cancel flag are `memory-model`. Unsafe blocks and FFI safety invariants are
-`rust-unsafe`. Unwind policy is `rust-panic-safety`. General API-shape discipline is
-`rust-discipline`.
+| Form | Needs |
+|------|-------|
+| `uniffi::custom_type!(T, Bridge, { lower, try_lift })`. `UniffiCustomTypeConverter` is removed. | 0.29 |
+| `#[uniffi::export] impl` on a Record or an Enum (methods on data types) | 0.31 |
+| `#[uniffi::export(foreign)]` and `#[uniffi::export(rust, foreign)]`. Before 0.32, write `with_foreign`. | 0.32 |
+| `&[u8]` argument without a copy (Kotlin direct `java.nio.ByteBuffer`) | 0.32 |
+| `HashSet<T>`, `Box<T>` (parameters, enum variants, recursive types), `async_runtime` on a trait export | 0.32 |
 
-## When to use
+Kotlin consumers need 0.32.1 or later for the device checksum fixes. The
+`uniffi-packaging-versioning` skill owns version pins.
 
-- You add, remove, or change any `#[uniffi::export]` function, method, or trait.
-- You must decide whether a type is a UniFFI **Record** (by value, fields cross) or an
-  **Object** (opaque, behind `Arc`, methods cross).
-- You wire a foreign callback or listener that the platform implements and Rust calls.
-- You must pass a complex or versioned payload across the boundary and choose a
-  representation — JSON string versus exploded typed Record.
-- You review a change to the FFI surface for `Send + Sync`, `Arc`, panic, or fat-boundary
-  violations.
-- You triage a UniFFI codegen error about missing trait bounds, non-`Send` types, or an
-  unsupported signature.
+## Scaffolding: proc-macros, no UDL
 
-## Canonical sources
+1. Call `uniffi::setup_scaffolding!()` exactly once, at the top of the crate root (`lib.rs`).
+2. Annotate exported functions, `impl` blocks, and traits with `#[uniffi::export]`.
+3. Derive `uniffi::Record`, `uniffi::Object`, `uniffi::Enum`, or `uniffi::Error` on exported
+   types.
+4. Generate Kotlin and Swift from the compiled library of one build. The
+   `uniffi-packaging-versioning` skill has the commands.
 
-Read the docs for the UniFFI version pinned in your lockfile. The surface changes between
-minor versions.
+Do not add a `.udl` file to a proc-macro crate. Two declarations of one surface drift, and
+the generated Kotlin and Swift then disagree.
 
-| Topic | URL |
-|-------|-----|
-| Proc-macro guide: `#[uniffi::export]`, derives, `setup_scaffolding!` | <https://mozilla.github.io/uniffi-rs/latest/proc_macro/index.html> |
-| Interfaces (Objects): opaque types, `Arc`, methods, constructors | <https://mozilla.github.io/uniffi-rs/latest/types/interfaces.html> |
-| Object references: how `Arc` handles cross, lifecycle and ownership | <https://mozilla.github.io/uniffi-rs/latest/internals/object_references.html> |
-| Custom types: `custom_type!` and newtype passthrough | <https://mozilla.github.io/uniffi-rs/latest/types/custom_types.html> |
-| Async and futures: exporting `async fn` | <https://mozilla.github.io/uniffi-rs/next/futures.html> |
-| Foreign traits and callback interfaces | <https://mozilla.github.io/uniffi-rs/latest/types/interfaces.html#exposing-traits-as-interfaces> |
-
-## Scaffolding: proc-macro first, no UDL
-
-Use the **proc-macro** path exclusively for a new boundary crate:
-
-1. Call `uniffi::setup_scaffolding!()` **exactly once**, in the crate root (`lib.rs`).
-2. Annotate exported functions, methods, and traits with `#[uniffi::export]`.
-3. Annotate exported types with `#[derive(uniffi::Record)]`, `#[derive(uniffi::Object)]`,
-   `#[derive(uniffi::Enum)]`, or `#[derive(uniffi::Error)]`.
-4. Generate bindings with `uniffi-bindgen` against the compiled library, not against a
-   hand-written interface file.
-
-Do **not** add a `.udl` file to a proc-macro crate. Two declarations of the same surface
-drift. The Rust signatures must be the single source of truth so the generated Kotlin and
-the generated Swift stay in lockstep.
-
-Duplicate `setup_scaffolding!()` calls, or a missing call, produce confusing link and
-codegen failures rather than a clear error. Check the crate root first when the symbol
-table looks wrong.
-
-## Object versus Record: the core decision
+## Object or Record
 
 | | Object | Record |
 |---|---|---|
-| Derive | `#[derive(uniffi::Object)]` | `#[derive(uniffi::Record)]` |
-| Foreign representation | Opaque handle, reference counted | Plain data class or struct |
-| Crossing cost | Pointer, once | Every field, every call |
-| Identity | Preserved; the Rust value never moves | None; copied by value |
-| Exposed through | Its methods | Its fields |
-| Field requirement | Fields are private to Rust | Every field must itself be a UniFFI type |
-| Bounds | Must be `Send + Sync` | No thread bounds needed |
+| Derive | `uniffi::Object` | `uniffi::Record` |
+| Foreign form | Opaque reference-counted handle | Kotlin `data class`, Swift `struct` |
+| Crossing cost | One handle | Every field, on every call |
+| Identity | Kept; the Rust value never moves | None; copied by value |
+| Exposed through | Methods | Fields; since 0.31 also methods, which run on a copy |
+| Field rule | Fields stay private to Rust | Every field is a UniFFI type |
+| Thread bounds | `Send + Sync` | None |
 
-Rule of thumb: **state and behavior are an Object; messages and data are a Record.**
+State and behavior are an Object. Messages and data are a Record. An engine handle, a
+session, a connection pool, or anything with interior mutability is an Object. A request, a
+result, a summary, or an event payload is a Record.
 
-An engine handle, a session, a connection pool, or anything with interior mutability is an
-Object. A request, a result, a summary, or an event payload is a Record.
+Do not export a free function that reads hidden global state. Put the state in an Object:
+the platform then owns its lifetime, and a test can create a fresh one.
 
-```rust
-#[derive(uniffi::Object)]
-pub struct Engine {
-    // version metadata, plus a per-job cancel registry behind a Mutex
-}
-
-#[uniffi::export]
-impl Engine {
-    #[uniffi::constructor]
-    pub fn new() -> Arc<Self> {
-        // Infallible: building the handle allocates no external resource.
-        Arc::new(Self { /* … */ })
-    }
-
-    pub fn inspect(&self, path: String) -> Result<Inspection, EngineError> { /* … */ }
-}
-
-#[derive(uniffi::Record)]
-pub struct Inspection {
-    pub name: String,
-    pub size_bytes: u64,
-    pub warnings: Vec<String>,
-}
-```
-
-A constructor returns `Arc<Self>` when it is infallible. Fallible methods take `&self` and
-return `Result<_, E>`. The foreign side receives a reference-counted handle, never the Rust
-struct's bytes.
+Read `references/type-mapping.md` when you choose the type of a field or argument, add a
+custom type, or add a default argument. Read `references/interface-patterns.md` when you shape
+constructors, a long-running job, an async export, a versioned JSON payload, large data,
+crossing cost, a trait interface, or the content of the boundary crate.
 
 ## `Send + Sync` on every exported Object
 
-UniFFI requires an exported Object to be `Send + Sync`, because the foreign handle can be
-used from any thread. Android code calls it from a background dispatcher; Swift code calls
-it off the main actor.
+UniFFI rejects an Object that is not `Send + Sync`, because the foreign handle is used from
+any thread. Kotlin calls it from a dispatcher thread. Swift calls it from any task.
 
-Follow these rules:
+```rust,compile_fail,E0277
+uniffi::setup_scaffolding!();
 
-- Hold shared state in `Arc<…>` plus interior synchronization: `Mutex`, `RwLock`, or
-  lock-free atomics for a flag such as cancel. See `memory-model` for ordering choices.
-- Never expose a `Cell`, `RefCell`, `Rc`, raw pointer, or any `!Sync` field through an
-  exported Object.
-- If a type cannot be `Send + Sync`, it does **not** belong at the boundary. Keep it in a
-  deeper crate and expose a `Send + Sync` façade.
+mod counter {
+    #[derive(uniffi::Object)]
+    pub struct Counter {
+        hits: std::cell::Cell<u32>, // `Cell` is not `Sync`
+    }
+}
+```
 
-A missing bound shows up as a codegen or trait-bound error at the `#[uniffi::export]` site,
-not at the call site. Read the error against the struct, not against the method.
+The error names the field type at the derive, not at a call site. Here it is
+`` `Cell<u32>` cannot be shared between threads safely ``.
+
+- Hold shared state behind `Mutex`, `RwLock`, or an atomic.
+- If a type cannot be `Send + Sync`, keep it in a deeper crate and export a `Send + Sync`
+  facade.
+- Treat a manual `unsafe impl Sync` as a soundness review item for the `rust-unsafe` skill.
 
 ## Ownership across the boundary
 
-- **`Arc` identity, not bytes.** Returning an Object transfers one strong
-  reference into the foreign handle. Rust keeps another owner only when the
-  application explicitly clones or stores one. The value drops after the last
-  foreign handle and explicit Rust owner release it.
-- **Shared input borrows are call-scoped.** Proc-macro UniFFI supports top-level
-  shared input references whose type implements `LiftRef`, such as `&str`,
-  `&[u8]`, and shared references to supported records or objects. Generated glue
-  lifts an owned temporary and borrows it only for the Rust call. Do not return
-  or store that borrow. Do not assume `&mut T`, `Option<&T>`, a reference alias,
-  or another nested borrowed form works; verify the pinned UniFFI version. The
-  `&self` receiver is a call-scoped borrow of the foreign object handle.
-- **Records are copied.** Every Record field is serialized on every call. A large `Vec<T>`
+- **`Arc` identity, not bytes.** Returning an Object moves one strong reference into the
+  foreign handle. The value drops after the last foreign handle and the last Rust owner
+  release it.
+- **Kotlin frees a handle deterministically only on `close()`.** Generated Kotlin Object
+  classes implement `AutoCloseable`. Call `close()` or `use { }` on an Object that owns files,
+  threads, or large memory. Otherwise the Rust `Drop` waits for the JVM `Cleaner`. Swift frees
+  the handle in `deinit`.
+- **Borrowed arguments last for one call.** A top-level shared reference argument, such as
+  `&str`, `&[u8]`, `&Record`, or `&Object`, is valid only during the Rust call. Do not store it
+  or return it. A borrowed return fails with an unsatisfied `LowerReturn<UniFfiTag>` bound.
+  `&mut T`, `Option<&T>`, and nested references do not cross.
+- **`&[u8]` changes the Kotlin type.** In 0.32, a `&[u8]` argument becomes a direct
+  `java.nio.ByteBuffer` in Kotlin, and a heap buffer throws `IllegalArgumentException`. The
+  generated converter sends the base address of the buffer with `remaining()` bytes, so the
+  position must be 0: call `flip()` after `put()`, or pass `buf.slice()`. Otherwise Rust
+  silently reads the wrong bytes. Swift passes `Data`. `&[u8]` flows only from the foreign
+  side into Rust. It does not work in an async export or in a foreign-trait method.
+- **Records are copied.** Every Record field is converted on every call. A large `Vec<T>`
   field is a per-call cost, not a pointer handoff.
-- **Foreign objects are owned by the foreign side.** A callback object passed into Rust is
-  kept alive by the handle Rust holds. Drop that handle when the job ends, or the foreign
-  object leaks.
-- **Reference cycles cross the boundary.** A foreign object that holds the Rust Object, and
-  a Rust Object that holds the foreign callback, form a cycle that no runtime collects. Break
-  it: hold the callback for the duration of one call or one job, then release it.
+- **Cycles leak.** A foreign object that holds the Rust Object, and a Rust Object that holds
+  the foreign callback, form a cycle that no runtime collects. UniFFI does not detect it.
 
 ### Mobile ownership shape
 
-- Export engine Objects whose lifetimes are independent of UI owners. Multiple
-  engine Objects can hold isolated state and share one process execution provider. Do not
-  model an Android `Activity`, a `ViewModel`, a Swift view controller, or a Swift task as a
-  Rust Object.
-- Choose one execution model. Either export synchronous methods that the host runs on its
-  worker scheduler, or use one shared runtime or executor provider for the process. Never
-  create a runtime for each engine, call, screen, or job.
-- Make process runtime or provider initialization idempotent. Keep engine construction
-  instance-scoped. Mobile process death can skip every shutdown and destructor path.
-- Give a stored callback registration a unique token or generation. Release it with an
-  idempotent, non-blocking method. Do not expose a blocking `shutdown` or `join` method for a
-  UI owner to call from `onCleared` or `deinit`.
-- Keep UI-thread delivery, owner teardown, background deadlines, low-memory handling, and
-  callback release races in `ffi-error-progress-cancel`.
-
-## Foreign callbacks and listeners
-
-Deliver progress and events through a **foreign trait** that the platform
-implements and Rust calls. Declare the trait once and take it as a parameter.
-
-```rust
-use std::sync::Arc;
-
-#[derive(Debug, thiserror::Error, uniffi::Error)]
-pub enum ProgressCallbackError {
-    #[error("foreign progress callback failed")]
-    Unexpected,
-}
-
-impl From<uniffi::UnexpectedUniFFICallbackError> for ProgressCallbackError {
-    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
-        Self::Unexpected
-    }
-}
-
-#[uniffi::export(foreign)]
-pub trait ProgressListener: Send + Sync {
-    fn on_progress(&self, event: ProgressEvent) -> Result<(), ProgressCallbackError>;
-}
-
-#[uniffi::export]
-impl Engine {
-    pub fn run_job(
-        &self,
-        request: JobRequest,
-        listener: Arc<dyn ProgressListener>,
-    ) -> Result<JobResult, EngineError> {
-        listener
-            .on_progress(ProgressEvent::started(&request))
-            .map_err(EngineError::from)?;
-        self.execute(request, listener)
-    }
-}
-```
-
-`ProgressCallbackError` is a `#[derive(uniffi::Error)]` boundary type. Its
-`From<UnexpectedUniFFICallbackError>` implementation converts an undeclared
-foreign exception into `Err` instead of letting UniFFI panic. Also implement an
-exhaustive `From<ProgressCallbackError> for EngineError`. The generated foreign
-method translates a declared platform error into that `Result` channel, and
-`run_job` decides whether to stop, retry, or degrade. Do not use a unit-return
-callback and assume that a Kotlin or Swift implementation cannot throw.
-
-Use the current trait export forms and choose one consistently:
-
-| Form | Rust parameter type | Use it when |
-|------|--------------------|-------------|
-| `#[uniffi::export(foreign)]` | `Arc<dyn Trait>` | Only foreign implementations cross the boundary |
-| `#[uniffi::export(rust, foreign)]` | `Arc<dyn Trait>` | Both Rust and foreign implementations cross the boundary |
-
-`callback_interface` is the older `Box<dyn Trait>` form and is soft-deprecated.
-`with_foreign` is a deprecated alias for `rust, foreign`. Keep either only while
-migrating an existing surface pinned to an older UniFFI version.
-
-Rules for callback traits:
-
-- Add `Send + Sync` to the trait. Rust calls it from a worker thread, not from the thread
-  that made the FFI call.
-- Keep the trait **coarse**. One `on_progress(Event)` method, not a chatty per-item callback.
-  Every call crosses the FFI and re-enters the foreign runtime; a per-pixel or per-row
-  callback dominates the work it reports on.
-- Coalesce and rate-limit inside Rust before you call out.
-- Give every callback method a `Result<_, CallbackError>` return. The foreign
-  implementation can throw. Map the callback error into the exported
-  operation's typed error before it leaves Rust. Decide retry or degradation
-  policy in `ffi-error-progress-cancel`; this skill fixes the error channel.
-
-The mapping of these events to Kotlin `Flow` or Swift `AsyncThrowingStream` belongs to
-`ffi-error-progress-cancel`.
-
-## Versioned payloads cross as JSON strings
-
-When a payload is a versioned shared contract that both platforms and Rust agree on, pass it
-across the boundary as a JSON `String`, not as an exploded UniFFI Record.
-
-Why:
-
-- The FFI signature stays stable across contract versions. Adding a field to the contract
-  never reshapes the generated Kotlin or Swift and never breaks the ABI.
-- One validator. Rust owns `deserialize → validate → execute`, so both platforms get
-  byte-identical behavior.
-- The contract can be versioned, migrated, and tested independently of the binding
-  generation.
-
-Rules:
-
-- Validate and deserialize **inside** Rust with `serde`. Return a typed error variant for a
-  malformed or invalid payload.
-- Do **not** parse the JSON on the platform side to "help". Validation lives behind the
-  boundary. A platform-side parser is a second implementation that will disagree.
-- Use this for complex, evolving, nested specs. Do **not** use it for a small fixed payload —
-  a three-field Record is clearer and cheaper than a JSON round trip.
-
-Give the string a distinct foreign type name with a custom newtype when you want the
-generated API to be self-documenting:
-
-```rust
-pub struct SpecJson(pub String);
-
-uniffi::custom_newtype!(SpecJson, String);
-```
-
-For a type that needs real conversion logic rather than a transparent newtype, implement the
-custom-type converter form. See `references/type-mapping.md`.
-
-## Coarse boundary, large data by path
-
-The boundary is **coarse**. Expose whole operations, not fine-grained getters.
-
-- Good: `inspect(path)`, `render_preview(request)`, `run_job(request, listener)`,
-  `cancel_job(id)`.
-- Bad: `get_width()`, `get_height()`, `get_pixel(x, y)`, `set_option(key, value)` — each one
-  is a full boundary crossing plus a foreign runtime transition.
-
-Move large data by **file path or URL string**, not by byte array:
-
-- Never pass a raw `Vec<u8>` pixel buffer, decoded image, or multi-megabyte blob across the
-  boundary. It is copied on every crossing and it doubles peak memory.
-- Write the output file in Rust and return a small Record that describes it: output path,
-  byte size, and any summary metadata the caller needs.
-- Small `Vec<u8>` payloads — a hash, a signature, a short header — are fine.
-
-## Thin adapter: what belongs in the boundary crate
-
-The boundary crate is an adapter, not a place where work happens. It contains:
-
-- request and response Records,
-- the exported Object or Objects,
-- the callback traits,
-- error type and error mapping from inner crate errors,
-- `setup_scaffolding!()`.
-
-It contains **no** domain computation, parsing, rendering, or I/O logic. Those stay in the
-inner crates. If a change adds real computation to the boundary crate, the change is in the
-wrong crate.
-
-Dependency direction is one way: the boundary crate depends on the inner crates. No inner
-crate depends on the boundary crate, and no inner crate calls a platform API. See
-`rust-crate-architecture`.
-
-## Async surface
-
-Prefer **synchronous** exported methods that the platform runs off the main thread, bridged
-to `Flow` or `AsyncSequence` through the progress callback. This keeps the generated API
-small and keeps the threading policy on the platform side, where the scheduler lives.
-
-If you do export `async fn`:
-
-- Keep the same `Send + Sync` and JSON-string rules. Async changes nothing about the shape
-  rules.
-- Do not split one contract into many fine-grained awaitable calls. The awaitable version of
-  a chatty API is still chatty.
-- The returned future must be `Send`. A `!Send` future does not cross.
-- Check the futures documentation for your pinned UniFFI version before you add the first
-  `async fn`; the async export attributes have changed across versions.
+- Export engine Objects whose lifetimes are independent of UI owners. Several engine Objects
+  can hold isolated state and share one process execution provider. Do not model an Android
+  `Activity`, a `ViewModel`, a Swift view controller, or a Swift task as a Rust Object.
+- The `ffi-error-progress-cancel` skill owns the execution model, idempotent initialization,
+  and non-blocking callback release.
 
 ## Errors: the shape rule
 
-Full error semantics belong to `ffi-error-progress-cancel`. Two rules are enforced **here**,
-because they are shape rules:
+The `ffi-error-progress-cancel` skill owns error semantics. This skill enforces two shape
+rules:
 
-1. **Every fallible exported function returns `Result<_, E>`** where `E` is a
-   `#[derive(uniffi::Error)]` type. There is no other channel. A sentinel return value or an
-   out-parameter is not acceptable.
-2. **No panic reaches the foreign caller.** The generated scaffolding catches an unwind and
-   reports it as an internal error, outside your `#[derive(uniffi::Error)]` enum. The foreign
-   caller gets an opaque failure that it cannot match on, and the state after the panic is not
-   defined. A crate built with `panic = "abort"` kills the process instead. Convert every
-   failure into an error variant at the boundary, and catch what you cannot convert. See
-   `rust-panic-safety` for the unwind policy and the abort profile choice.
+1. Every fallible export returns `Result<_, E>`, and `E` derives `uniffi::Error`. Do not use a
+   sentinel return value or an out-parameter.
+2. No panic reaches the foreign caller. The scaffolding catches an unwind, but the foreign
+   side cannot match on the result:
 
-Audit for the usual panic sources in exported code paths: `unwrap`, `expect`, slice indexing,
-integer division, `Mutex` poisoning propagated by `lock().unwrap()`, and arithmetic overflow
-in a debug build.
+| Caller | Result of a Rust panic |
+|--------|------------------------|
+| Kotlin | `InternalException`, outside the declared error type |
+| Swift `throws` function | An internal error, outside the declared error type |
+| Swift non-throwing function | A fatal error that the app cannot catch; the process ends |
+| Any, with `panic = "abort"` | The process ends |
 
-## Codegen failure triage
+A non-throwing export, such as `cancel_job(&self, id: String)`, must therefore be panic-free by
+construction. The `rust-panic-safety` skill owns the unwind policy.
 
-| Symptom | Likely cause | Fix |
-|---------|--------------|-----|
-| Trait-bound error naming `Send` or `Sync` at an `#[uniffi::export]` site | The Object holds a `!Send` or `!Sync` field | Move the field behind `Arc<Mutex<…>>`, or keep the type out of the boundary crate |
-| "not supported" or unknown-type error on a Record field | The field type has no UniFFI mapping | Convert it to a UniFFI type in an explicit `From` impl; do not leak inner-crate types |
-| Lifetime or borrow error on an exported signature | The borrow is a return, nested reference, async input, mutable reference, or unsupported `LiftRef` input | Use a supported call-scoped shared input, or return an owned Record or `Arc` handle |
-| Undefined or duplicate scaffolding symbols at link time | `setup_scaffolding!()` missing, or called more than once | Call it exactly once, in the crate root |
-| Generated Kotlin and Swift disagree, or one is stale | Two generator runs at different crate versions, or a leftover `.udl` | Regenerate both from the same build; delete the `.udl`; see `uniffi-packaging-versioning` |
-| Callback method never fires on the foreign side | The handle was dropped, or the call happens after the job returned | Hold the callback for the job duration; release it deterministically |
-| Foreign object leaks after a job | Reference cycle across the boundary | Break the cycle: do not store the Rust Object inside the foreign callback implementation |
-| Runtime crash on the first call from a background thread | Object is not truly thread safe despite the bounds | Audit interior mutability; a manual `unsafe impl Sync` is a `rust-unsafe` review item |
+Apply the FFI-path panic lint set from the `rust-panic-safety` skill in `lib.rs`. For a
+UniFFI adapter, also deny `clippy::unreachable` and `clippy::indexing_slicing`, because a
+panic in a non-throwing export is a Swift fatal error. Add `clippy::arithmetic_side_effects`
+when the crate does arithmetic.
+
+Add `#![forbid(unsafe_code)]` when the crate has no hand-written `unsafe`. The generated
+scaffolding does not trip it (rustc 1.98.1, UniFFI 0.32.2). The `rust-unsafe` skill owns
+that rule.
+
+The lints do not see a panic inside an inner crate that the adapter calls, or inside a
+panicking std API such as `split_at`, `Vec::remove`, or `copy_from_slice`. Keep the body of a
+non-throwing export total: an atomic store, or a lock that recovers poison with
+`PoisonError::into_inner`. Otherwise wrap the inner call in `std::panic::catch_unwind` and map
+a panic to a no-op or a logged event.
+
+## Codegen and bindgen failure triage
+
+The Rust messages below are from rustc 1.98.1 with UniFFI 0.32.2.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `E0425` ``cannot find type `UniFfiTag` in the crate root`` | `setup_scaffolding!()` is missing, or it is in a submodule | Call it once at the top of `lib.rs` |
+| `E0428` ``the name `ffi_<crate>_rust_future_...` is defined multiple times`` | `setup_scaffolding!()` is called twice | Remove the second call |
+| `E0277` ``… cannot be shared between threads safely`` or ``… cannot be sent between threads safely`` at `derive(uniffi::Object)` | A field is not `Sync` or not `Send` | Put the state behind `Mutex` or an atomic, or keep the type out of the boundary crate |
+| `E0277` ``the trait bound `usize: Lift<UniFfiTag>` is not satisfied`` (also `Lower`, `TypeId`) | The field or argument type has no UniFFI mapping | Convert to a mapped type with an explicit `From`; see `references/type-mapping.md` |
+| `E0277` ``the trait bound `&str: LowerReturn<UniFfiTag>` is not satisfied`` | A borrowed return | Return an owned value or an `Arc` handle |
+| `E0277` `` `*const u8` cannot be sent between threads safely `` naming `ForeignBytes` | `&[u8]` in an async export | Take `Vec<u8>` |
+| `E0053` ``method `…` has an incompatible type for trait`` at `#[uniffi::export(foreign)]` (for `&[u8]` also `E0277` ``the trait bound `ForeignBytes: uniffi::Lower<UniFfiTag>` is not satisfied``) | A reference argument in a foreign-trait method | Pass the argument by value |
+| `E0405` ``cannot find trait `UniffiCustomTypeConverter` in this scope`` | Code for UniFFI 0.28 or older | Use `uniffi::custom_type!` |
+| Kotlin bindgen: `Async primary constructors not supported` | `async fn new` under `#[uniffi::constructor]` | Rename it to a named async constructor |
+| Async export panics on first poll: `there is no reactor running` | A Tokio timer, socket, or `spawn` without a Tokio runtime | Add `async_runtime = "tokio"` and the `uniffi` `tokio` feature, or spawn onto the process runtime `Handle` |
+| Kotlin runtime: `IllegalArgumentException` about a direct `ByteBuffer` | A heap buffer passed to a `&[u8]` argument | Use `ByteBuffer.allocateDirect` on the caller side |
+| Rust gets an empty or shifted `&[u8]` from Kotlin | The direct buffer has a non-zero position, often `put()` without `flip()` | Call `flip()` after `put()`, or pass `buf.slice()` |
+| Swift app ends with a fatal error in a generated non-throwing call | A Rust panic, or a failed custom-type lift, in a non-throwing export | Make the export panic-free; declare an error on any export that takes a fallible custom type |
+| Generated Swift fails to compile with actor-isolation errors | The module uses `SWIFT_DEFAULT_ACTOR_ISOLATION=MainActor` (Swift 6.2+, uniffi-rs#2818) | Compile the generated Swift in a module with `nonisolated` default isolation; see `uniffi-packaging-versioning` |
+| Generated Kotlin and Swift disagree, or one is stale | Two generator runs at different versions, or a leftover `.udl` | Regenerate both from one build; delete the `.udl` |
+| Callback never fires on the foreign side | The handle was dropped, or the call happens after the job returned | Hold the callback for the job duration |
+| Foreign object leaks after a job | A reference cycle across the boundary | Do not store the Rust Object inside the foreign callback |
+
+## Verify
+
+| Claim | Check | When |
+|-------|-------|------|
+| The surface compiles | `cargo check -p <boundary-crate>` | While you iterate |
+| No unguarded panic site; each kept `.expect` carries `#[expect(clippy::expect_used, reason = "...")]` | `cargo clippy --locked -p <boundary-crate> --all-targets -- -D warnings`, with the lint set above | Before merge |
+| Behavior and error mapping | `cargo test --locked -p <boundary-crate>`. Call the exported methods directly, implement the callback traits in Rust, and assert the event order, the error variants, and cancel | Every change |
+| Error mapping is total | Each `From<InnerError>` impl matches every variant with no `_` arm, so a new variant fails to compile | When an inner error enum changes |
+| Custom types round trip | A property test that converts to the bridge type and back | When you add or change a custom type |
+| Bindings generate | Generate Kotlin and Swift from one build in CI; `uniffi-packaging-versioning` has the commands | Every change to the boundary crate |
+
+A green clippy run does not prove that an export cannot panic: the lints do not see inner
+crates or panicking std APIs. A green Rust run does not prove that the generated Kotlin or
+Swift compiles, that Kotlin callers pass a direct buffer at position 0, or that a Swift
+module's isolation accepts the generated code. Only a platform build and a smoke test on the
+pinned toolchain prove those. For a `&[u8]` export, the Kotlin smoke test fills a direct
+buffer with `put()`, sends it through the app's own call path, and asserts the length and
+the bytes that Rust received.
+
+## Foreign callbacks and listeners
+
+Deliver progress and events through a foreign trait that the platform implements and Rust
+calls. Read `references/interface-patterns.md` ("Minimal boundary crate") when you create a
+boundary crate or write a foreign trait. It holds the complete crate root, compiled against
+UniFFI 0.32, with the full `ProgressListener` pattern.
+
+- Put `Send + Sync` on the trait. Rust calls it from a worker thread.
+- Give every method a `Result<_, CallbackError>` return. The callback error is a
+  `uniffi::Error` type that implements `From<uniffi::UnexpectedUniFFICallbackError>`.
+  Without that impl, an undeclared foreign exception panics in the generated code.
+- Map the callback error into the operation's error with an exhaustive `From`. Never discard
+  the callback result. The `ffi-error-progress-cancel` skill owns the listener-failure
+  policy: by default the job fails with `EngineError::Unexpected`.
+- Pass every argument by value. Foreign-trait methods do not accept references
+  (uniffi-rs#2263).
+- Keep the trait coarse: one `on_progress(event)`, not a per-item or per-row callback. A
+  synchronous callback blocks the Rust worker until Kotlin or Swift returns. Coalesce and
+  rate-limit in Rust before you call out.
+- An `Arc<dyn Trait>` keeps the foreign object alive. Hold it for one call or one job, then
+  drop it. A listener that must outlive a job needs a registration token and an idempotent
+  release method (the `ffi-error-progress-cancel` skill owns it). Never store it with no
+  release path; the platform cannot see or break that reference.
+- Take the trait as `Arc<dyn Trait>`. Use `#[uniffi::export(foreign)]` when only foreign
+  implementations cross, and `#[uniffi::export(rust, foreign)]` when both sides implement it.
+  Do not add `callback_interface` (soft-deprecated) to new code. On 0.32 or later, do not add
+  `with_foreign` (deprecated alias). Below 0.32, `with_foreign` is the only spelling.
+  `references/interface-patterns.md` has the migration rule.
+
+## Async exports
+
+Prefer synchronous exports that the platform runs off the main thread, with progress through
+the callback. An exported `async fn` must return a `Send` future. It needs
+`#[uniffi::export(async_runtime = "tokio")]` when it uses Tokio resources, or the first poll
+panics. It must be drop-safe at every `.await`, because Kotlin coroutine cancellation drops the
+future there and UniFFI sends Rust no cancel signal. Read `references/interface-patterns.md`
+("Async exports") when you add or review an async export.
 
 ## Stability rules for an existing surface
 
-Reshaping an exported function regenerates Kotlin *and* Swift, and can break both consumers
-in the same commit. Before you change a signature:
+A reshaped export regenerates Kotlin and Swift and can break both consumers in one commit.
 
-- Prefer **adding** a new coarse method over changing the arity of an existing one.
-- Prefer **widening the JSON contract**, validated in Rust, over adding a parameter.
-- Treat an added enum variant as a source-compatibility change. An existing
-  exhaustive Kotlin `when` or Swift `switch` stops compiling after bindings are
-  regenerated. Coordinate consumer updates even when the serialized or FFI
-  representation is additive. Removing or changing a variant remains breaking.
+- Prefer a new coarse method, or an argument with a generated default, over a change of
+  arity. `references/type-mapping.md` has the default forms.
+- Prefer a wider JSON contract, validated in Rust, over a new parameter.
+- Treat an added enum variant as a source break. An exhaustive Kotlin `when` or Swift
+  `switch` stops compiling after regeneration. Removing or changing a variant is breaking.
+- Treat a change from `Vec<u8>` to `&[u8]` as a Kotlin source break: `ByteArray` becomes
+  `ByteBuffer`.
 - Use one UniFFI version for both platforms. The `uniffi` crate, the runtime, and the bindgen
-  must match. Skew ownership is `uniffi-packaging-versioning`, but a boundary review must flag
-  any per-platform divergence it sees.
+  must match. A boundary review flags any per-platform divergence.
 
-## Review checklist
+## Review
 
-Answer every item before you merge a change to the boundary crate.
+Read `references/review-checklist.md` when you review a change to the boundary crate or gate
+its merge.
 
-1. Is `setup_scaffolding!()` present exactly once, in the crate root?
-2. Is there a `.udl` file in a proc-macro crate? Delete it.
-3. Is every exported Object `Send + Sync` without a manual `unsafe impl`?
-4. Does any exported Object hold a `Cell`, `RefCell`, `Rc`, or raw pointer?
-5. Is every new type on the correct side of the Record/Object line — state and behavior are
-   an Object, data is a Record?
-6. Is every Record field itself a UniFFI type, with no inner-crate type leaking through?
-7. Does any exported signature contain `&T`, `&mut T`, or a lifetime parameter, apart from the
-   `&self` receiver?
-8. Does every fallible exported function return `Result<_, E>` with a `uniffi::Error` type?
-9. Can any exported path panic? Grep the new code for `unwrap`, `expect`, and
-   `lock().unwrap()`.
-10. Does any exported function pass a large `Vec<u8>` or byte array? Move it to a file path.
-11. Is the new method coarse — a whole operation — or is it a getter that will be called in a
-    loop?
-12. Does every callback trait declare `Send + Sync`, return `Result` with a
-    UniFFI error type, and stay coarse enough to not dominate the work it
-    reports?
-13. Is the callback handle released when the job ends? Is there a cycle across the boundary?
-14. Does a job registry reject duplicate IDs without replacing an active entry,
-    and does an RAII guard remove the entry on success, error, and unwind?
-15. Does the change add real computation to the boundary crate instead of an inner crate?
-16. Does an inner crate now depend on the boundary crate? Reverse it.
-17. Does the change reshape an existing exported signature? Can it be an added method or a
-    widened JSON contract instead?
-18. Are enum and error variant changes additive?
-19. Were both the Kotlin and the Swift bindings regenerated from the same build in this
-    change?
-20. Does a new `async fn` return a `Send` future, and does the pinned UniFFI version support
-    the export form used?
-21. Does any new custom type round trip losslessly in both directions?
-22. Do all engine Objects use the host scheduler or one shared process runtime or provider,
-    rather than a runtime per engine, call, or UI owner?
-23. Is runtime or provider initialization idempotent after process death without forcing all
-    product state into one engine singleton?
-24. Can a UI owner release every stored callback without blocking its main thread or
-    destructor?
+## Sources
 
-If the answer to any item is wrong, revise the change before you merge it.
+Read the pages for the UniFFI version in `Cargo.lock`. `latest` tracks the newest release.
 
-## References
-
-| File | Contents |
-|------|----------|
-| `references/type-mapping.md` | Built-in type mapping to Kotlin and Swift, Option/Vec/HashMap rules, custom types and newtype converters, and what has no mapping |
-| `references/interface-patterns.md` | Object lifecycle, constructor and factory patterns, callback and cancel-handle shapes, and boundary-crossing cost patterns |
-
-## Related skills
-
-| Skill | Use it for |
-|-------|------------|
-| `ffi-error-progress-cancel` | Error taxonomy, progress delivery, and cooperative cancellation semantics |
-| `uniffi-packaging-versioning` | cdylib and staticlib packaging, XCFramework, and version skew |
-| `rust-android-build` | Android target builds, JNI libs layout, and NDK toolchain |
-| `rust-jni` | Hand-written JNI when UniFFI is not the right tool |
-| `rust-unsafe` | FFI safety invariants, manual `Send`/`Sync` impls, and raw pointers |
-| `rust-panic-safety` | Unwind policy, `catch_unwind`, and abort profiles |
-| `memory-model` | Atomics and orderings behind cancel and progress flags |
-| `rust-discipline` | General API-shape discipline |
-| `rust-crate-architecture` | Crate splits, dependency direction, and visibility |
-| `rust-observability` | Tracing and logging across a boundary crate |
-| `cargo-workflows` | Workspace layout, cross-compilation, and target management |
+| Topic | URL |
+|-------|-----|
+| Proc-macros, derives, `setup_scaffolding!` | <https://mozilla.github.io/uniffi-rs/latest/proc_macro/index.html> |
+| Interfaces (Objects), constructors, `Arc` | <https://mozilla.github.io/uniffi-rs/latest/types/interfaces.html> |
+| Foreign traits, `UnexpectedUniFFICallbackError`, cycles | <https://mozilla.github.io/uniffi-rs/latest/foreign_traits.html> |
+| `&[u8]` arguments | <https://mozilla.github.io/uniffi-rs/latest/types/bytes.html> |
+| Custom types | <https://mozilla.github.io/uniffi-rs/latest/types/custom_types.html> |
+| Async and futures | <https://mozilla.github.io/uniffi-rs/latest/futures.html> |
+| Kotlin object lifetimes | <https://mozilla.github.io/uniffi-rs/latest/kotlin/lifetimes.html> |
+| Swift panics and `Sendable` | <https://mozilla.github.io/uniffi-rs/latest/swift/overview.html> |
+| CHANGELOG | <https://github.com/mozilla/uniffi-rs/blob/main/CHANGELOG.md> |
