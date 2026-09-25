@@ -65,6 +65,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | wasm-bindgen | rust-wasm |
 | WebAssembly Component Model | rust-wasm |
 | wasm binary size | rust-wasm |
+| getrandom wasm_js | rust-wasm |
+| time not implemented on this platform | rust-wasm |
 | no_std | rust-embedded-no-std |
 | embedded Rust | rust-embedded-no-std |
 | memory.x | rust-embedded-no-std |
