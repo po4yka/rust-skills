@@ -1,8 +1,16 @@
 # Release Compatibility Review
 
-Use this reference when you classify a public crate release.
+Read this when you classify a public crate release or repair an MSRV build.
 Compare the previous published source with the candidate.
 Apply the repository's published compatibility policy before this default table.
+
+Contents:
+
+- Version classification
+- Public API checklist
+- Feature compatibility
+- MSRV and platform compatibility
+- Repair an MSRV build failure
 
 ## Version classification
 
@@ -12,19 +20,20 @@ Apply the repository's published compatibility policy before this default table.
 | New compatible public item or opt-in feature | Minor |
 | Remove, rename, or move a public item | Major |
 | Add a variant to an exhaustive public enum | Major |
-| Add a field to an exhaustive public struct or enum variant | Major |
+| Add any field, public or private, to a struct whose fields are all public, or a field to an exhaustive public enum variant | Major |
+| Add or remove a private field when the struct already has one | Minor |
+| Add `#[non_exhaustive]` to an existing enum, variant, or struct with no private field | Major |
 | Add a required trait item or change a trait item signature | Major |
-| Make a public trait no longer object safe | Major |
+| Make a public trait no longer dyn compatible (the SemVer guide says "object safe") | Major |
 | Tighten a public generic bound | Major |
 | Change a stable layout or ABI guarantee | Major |
 | Require `std` after supporting `no_std` | Major |
 | Remove a feature or move existing public API behind a feature | Major |
-| Raise MSRV or remove a supported platform | Possibly breaking; follow the published policy |
+| Raise MSRV | Possibly breaking; follow the published policy (the Cargo guide suggests minor) |
+| Remove a supported platform | Possibly breaking; follow the published policy |
 | Add a defaulted trait item or an inherent method | Possibly breaking; inspect downstream overlap |
 
 Cargo uses the left-most non-zero version component as its compatibility boundary.
-For `0.y.z`, treat a change in `y` as the breaking-release position.
-Treat each `0.0.z` release as incompatible with the other `0.0` releases.
 Do not hide a breaking change in a patch release because the crate is below `1.0.0`.
 
 ## Public API checklist
@@ -33,7 +42,7 @@ Check these failure-prone changes explicitly:
 
 - field visibility, field order, and layout guarantees;
 - exhaustive structs, enums, and downstream matches;
-- trait object safety and new required items;
+- trait dyn compatibility and new required items;
 - generic defaults, bounds, inferred types, and return-position `impl Trait` captures;
 - blanket, foreign, inherent, and auto-trait implementations;
 - function arity, safety, ABI, and panic contract;
@@ -47,10 +56,6 @@ Review public trait implementations and types that appear through re-exports.
 Review generated macro output from a downstream crate context.
 Review whether new inherent methods can collide with downstream trait methods.
 Review whether a new impl changes method or type inference.
-
-Run the repository's existing API compatibility tool when one is configured.
-Do not add a release dependency only to replace this review.
-Treat tool output as evidence, not as proof that behavior and macros are compatible.
 
 ## Feature compatibility
 
@@ -67,16 +72,30 @@ detail.
 
 ## MSRV and platform compatibility
 
-Treat an MSRV increase as possibly breaking.
-Apply the project's documented MSRV policy and announce the increase.
-Verify all package targets and supported features on the declared MSRV.
+Apply the project's documented MSRV policy and announce an increase in the changelog.
 
 Treat a new operating-system, linker, native-library, CPU-feature, or runtime requirement as a
 compatibility change.
 Do not infer cross-target support from a host build.
+
+## Repair an MSRV build failure
+
+Find the cause before you raise the MSRV:
+
+| Cause | Fix |
+|---|---|
+| A locked dependency needs a newer Rust | Re-resolve only that dependency: `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update -p <dep>` (`fallback` is the default under resolver `"3"`), or `--precise <version>`. Do not run a full `cargo update` here: it moves every dependency just before publish. Review the lock diff. Vet each new package name with the `rust-security` skill, when it is installed, before you build or test. Then commit the lockfile and test again |
+| Only dev-dependencies need a newer Rust | Prove the library with `cargo +<msrv> check --locked -p <package> --lib` and document that tests need a newer toolchain |
+| The crate's own code needs a newer Rust | Restore compatibility, or raise the MSRV as a documented compatibility decision |
+| The MSRV Cargo cannot parse `Cargo.toml` or `Cargo.lock` (TOML 1.1 syntax needs Cargo 1.94; lockfile v4 needs 1.78) | Use manifest syntax and a lockfile version that the MSRV Cargo reads. Or document that development needs a newer Cargo; Cargo rewrites the published manifest, so dependents keep the MSRV |
+
+In a workspace with several MSRVs, run
+`cargo hack check --rust-version --workspace --all-targets --ignore-private` when `cargo-hack` is
+installed.
 
 ## Official references
 
 - [Cargo SemVer Compatibility](https://doc.rust-lang.org/cargo/reference/semver.html)
 - [Cargo Rust Version](https://doc.rust-lang.org/cargo/reference/rust-version.html)
 - [Cargo Features](https://doc.rust-lang.org/cargo/reference/features.html)
+- [Cargo resolver, Rust version](https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version)

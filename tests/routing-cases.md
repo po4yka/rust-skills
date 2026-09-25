@@ -30,6 +30,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | release checksum | rust-crate-release |
 | release SBOM | rust-crate-release |
 | sign release artifact | rust-crate-release |
+| crates.io trusted publishing | rust-crate-release |
 | build.rs | rust-native-linking |
 | rustc-link-lib | rust-native-linking |
 | pkg-config | rust-native-linking |
