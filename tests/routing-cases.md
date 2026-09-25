@@ -55,6 +55,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | transaction cancellation safety | rust-database |
 | serialization failure | rust-database |
 | schema integration test | rust-database |
+| AssertSqlSafe | rust-database |
 | wasm32-unknown-unknown | rust-wasm |
 | wasm32-wasip1 | rust-wasm |
 | wasm32-wasip2 | rust-wasm |
