@@ -155,6 +155,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | @MainActor Rust callback | rust-swift-ffi |
 | AsyncStream over a C callback | rust-swift-ffi |
 | clippy.toml | rust-lints |
+| deny.toml | rust-security |
 | rustfmt.toml | rust-lints |
 | workspace.lints | rust-lints |
 | unfulfilled_lint_expectations | rust-lints |
@@ -193,6 +194,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | large integer | rust-serde |
 | typosquat | rust-security |
 | cargo-audit | rust-security |
+| path traversal | rust-security |
+| decompression bomb | rust-security |
 | red-green-refactor | rust-tdd |
 | golden-contract | rust-tdd |
 | fault-injection | rust-tdd |

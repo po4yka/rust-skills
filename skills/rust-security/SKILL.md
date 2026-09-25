@@ -1,402 +1,367 @@
 ---
 name: rust-security
-description: Use when you audit Rust dependencies with cargo-audit, configure or change a cargo-deny policy in deny.toml, triage a RUSTSEC advisory, evaluate a new crate for typosquat and supply-chain risk before you add it to Cargo.toml, respond to a published CVE on a pinned dependency, decide whether an advisory ignore entry is acceptable, or harden a Rust parser that reads untrusted files. Do not use for ordinary authentication, secret storage, cryptographic design, key lifecycle, payments, or network TLS policy. Triggers on "cargo audit", "cargo deny", "deny.toml", "RUSTSEC", "advisory", "supply chain", "typosquat", "malicious crate", "yanked", new-dependency-addition reviews, and archive, backup, or binary-format parser hardening.
+description: Use when running cargo-audit or cargo-deny, editing deny.toml, triaging a RUSTSEC advisory or CVE in a dependency, vetting a new or updated crate for typosquat, malicious crate, or compromised-release risk, or hardening a Rust parser that reads untrusted files, archives, or binary formats. Not for authentication, secret storage, cryptographic design, or TLS policy (TLS belongs to rust-networking). Triggers on "cargo audit", "cargo deny", "RUSTSEC", "supply chain", "yanked", "path traversal", "decompression bomb".
 license: BSD-3-Clause
 ---
 
 # Rust Dependency and Parser Security
 
-## Purpose
-
-Use this skill for Rust supply chain security and untrusted-input hardening. It
-covers vulnerability scanning with `cargo-audit`, policy enforcement with
-`cargo-deny`, RUSTSEC advisory triage, new-crate risk evaluation, and parser
-hardening for files that come from outside your trust boundary.
-
-For memory-safety validation, see the `rust-sanitizers-miri` skill. For unsafe
-code audits, see the `rust-unsafe` skill. For lockfile and workspace mechanics,
-see the `cargo-workflows` skill.
-
-## Scope and routing
-
 | Request | Route |
 |---|---|
-| Dependency advisories, dependency vetting, registry policy, or supply-chain risk | Use this skill. |
-| Untrusted file, archive, backup, or binary-format parsing | Use this skill. |
-| Unsafe-code soundness or runtime memory-safety validation | Use `rust-unsafe` or `rust-sanitizers-miri`. |
-| Network TLS transport policy | Use `rust-networking`. |
-| Ordinary authentication or authorization, secret storage, cryptographic protocol design, key lifecycle, or payments | Do not use this skill. Follow the applicable domain policy and security review process. |
+| Advisories, `deny.toml`, dependency vetting, registry and source policy | This skill. |
+| Untrusted file, archive, backup, or binary-format parsing | This skill. |
+| Publishing, Trusted Publishing, binary provenance, SBOMs | The `rust-crate-release` skill. |
+| Unsafe-code soundness, Miri, sanitizers | The `rust-unsafe` or `rust-sanitizers-miri` skill. |
+| TLS transport policy | The `rust-networking` skill. |
+| Authentication, secret storage, cryptographic protocol design, key lifecycle | Not this skill. Follow the domain policy and its security review. |
 
-## Triggers
+Other skills named in this file apply when they are installed.
 
-- "How do I check my Rust dependencies for CVEs?"
-- "How do I use cargo-audit or cargo-deny?"
-- "How do I enforce dependency policy in CI?"
-- "What is the RUSTSEC advisory database?"
-- "A dependency has a security advisory. What do I do?"
-- "Is it safe to add this crate?"
-- "Is it safe to parse this file from user input?"
-- "How do I validate an archive or backup file before import?"
+## Review gate
 
-## Orientation
+Block a change that does any of these:
 
-Before you change anything, collect these facts about the workspace:
+- Adds a package to `Cargo.lock` without an identity check and the source triage of
+  section 5.
+- Adds an `=` requirement as a vetting device.
+- Adds an `[advisories].ignore` entry for a `malicious` advisory, or one without an `id`,
+  a `reason`, and a tracking issue.
+- Adds a `[bans].skip` entry without an exact version and a causal `reason`.
+- Widens the license allowlist to clear one dependency, with no recorded license review.
+- Allocates from an untrusted length field without a cap.
+- Extracts an archive entry without its own traversal check.
+- Panics on malformed input across an FFI boundary.
 
-1. The workspace manifest path. Every command below takes
-   `--manifest-path <workspace>/Cargo.toml` when you do not run it from the
-   workspace root.
-2. The policy config path. `cargo-deny` reads `deny.toml` next to the manifest
-   unless you pass `--config`.
-3. The package count and the dependency graph:
-   `cargo metadata --locked --no-deps` for workspace members, `cargo tree
-   --locked` for the full graph.
-4. The CI job that runs the policy check, and the exact tool version it pins.
-   Read the pin. Do not assume it.
+Do not compile an unvetted package. Until section 5 step 3 passes for every new
+`Cargo.lock` package, do not run `cargo build`, `check`, `test`, `clippy`, `doc`, or `run`,
+and keep rust-analyzer off the workspace. Build scripts and proc macros run at compile time.
 
-Use `--locked` in every command that resolves dependencies. `--locked` fails
-when `Cargo.lock` does not match the manifests. Without it, an audit can pass
+## Read the cargo-deny pin first
+
+Before you write a `cargo deny` command or a `deny.toml` key, read the `cargo-deny`
+version that CI pins. The CLI and the config schema changed in recent releases. The
+commands in this skill need 0.20 or later, where `--config` is a root option. On 0.20,
+`check --config` fails with `unexpected argument '--config' found`. On 0.19, root
+`--config` fails with the same message. Before 0.19.1, an offline check never fails for a
+stale database, and on 0.19.0 the `unsound` scope reports the wrong set. Read the version
+table in [references/deny-policy.md](references/deny-policy.md#version-boundaries) when the
+pin is older than 0.20, or when you add a key or a flag.
+
+Use `--locked` in every command that resolves dependencies. Without it, a check can pass
 against a lockfile that CI never builds.
 
-## 1. cargo-audit: vulnerability scanning
+Run cargo-deny from the workspace root. If you must pass `--manifest-path
+<workspace>/Cargo.toml`, also pass `--config <workspace>/deny.toml`. A relative `--config`
+path resolves against the current directory. When no file is there, cargo-deny prints only
+`[WARN] config path '...' doesn't exist, falling back to default config`, runs the default
+policy instead of yours, and can exit 0. Treat that warning as a failure.
 
-`cargo-audit` compares your `Cargo.lock` against the RUSTSEC advisory database.
-It reports vulnerabilities only. It does not enforce license or source policy.
+## 1. cargo-audit
+
+`cargo-audit` compares `Cargo.lock` with the RustSec advisory database. It fetches the
+database on every run unless you pass `--no-fetch`. There is no `cargo audit fetch`
+subcommand. It reports a vulnerability as an error. It reports an informational advisory
+(`unmaintained`, `unsound`, `notice`) and a yanked version as a warning. It does not check
+licenses or sources.
 
 ```bash
-# Install
 cargo install cargo-audit --locked
-
-# Scan the current project
-cargo audit
-
-# Strict mode: treat warnings as errors (use this in CI)
-cargo audit --deny warnings
-
-# Audit a specific lockfile
+cargo audit                       # exit 1 on a vulnerability
+cargo audit --deny warnings       # also fail on informational advisories and yanked versions
 cargo audit --file path/to/Cargo.lock
-
-# JSON output for scripting
-cargo audit --json | jq '.vulnerabilities.list[].advisory.id'
+cargo audit --json | jq -r '.vulnerabilities.list[]
+  | "\(.advisory.id) \(.package.name) \(.package.version) \(.advisory.categories) unaffected=\(.versions.unaffected)"'
+cargo audit bin target/release/<binary>
 ```
 
-Output format:
+`cargo audit bin` audits a shipped binary. The result is complete only for a binary built
+with `cargo auditable build`. For other binaries it recovers part of the dependency list
+from panic messages.
 
-```text
-error[RUSTSEC-2023-0052]: Vulnerability in `some-crate`
-    Severity: low
-       Title: Integer overflow in offset arithmetic
-    Solution: upgrade to `>= 1.2.0`
-```
+Read [references/incidents.md](references/incidents.md) when you parse the terminal
+report of `cargo audit`. It has a sample finding block.
 
-## 2. cargo-deny: policy enforcement
+## 2. cargo-deny
 
-`cargo-deny` does more than `cargo-audit`. It enforces license policy, bans
-named crates, checks source registries, and reports duplicate dependency
-versions. Run it as the blocking gate. Run `cargo-audit` when you want a fast
-advisory-only check.
+`cargo-deny` is the blocking gate. It checks advisories, licenses, bans (duplicate
+versions, wildcard requirements, named crates), and sources. Use `cargo-audit` for a fast
+advisory-only look.
 
 ```bash
-# Run all checks against the project config
-cargo deny --locked --manifest-path path/to/Cargo.toml check
-
-# Run one check at a time
-cargo deny --locked --manifest-path path/to/Cargo.toml check advisories
-cargo deny --locked --manifest-path path/to/Cargo.toml check licenses
-cargo deny --locked --manifest-path path/to/Cargo.toml check bans
-cargo deny --locked --manifest-path path/to/Cargo.toml check sources
+cargo deny --config deny.toml --locked check               # all four checks, cargo-deny >= 0.20
+cargo deny --config deny.toml --locked check advisories    # or licenses, bans, sources
+cargo deny --config deny.toml --locked --offline check advisories    # no database fetch
 ```
 
-Run the full command locally before you push a change to `deny.toml`. A policy
-change that only CI validates costs a full pipeline round trip per typo.
+A green check proves only that no known advisory, license, ban, or source rule matches the
+lockfile. It does not catch a malicious crate that has no advisory yet. The gate in
+section 5 covers that.
 
-Pin an exact `cargo-deny` version in CI, and read that pin before you reproduce
-a failure locally. A newer minor version can add checks that fail a build that
-passed the day before.
+Read [references/deny-policy.md](references/deny-policy.md) when you write or change
+`deny.toml` or the CI job. It holds the annotated policy, the license allowlist, the
+`ignore` and `skip` entry formats, and the CI job steps.
 
-Name crates and sources explicitly where policy needs it. `[bans]` takes
-`allow = [...]` and `deny = [...]` lists of crate names. `[sources]` takes
-`allow-registry` and `allow-git` lists of URLs. Do not rely only on
-multiple-version detection.
+In CI, run `cargo deny --config deny.toml --locked check` as its own job, on pull requests,
+on pushes to the default branch, and on a schedule. New advisories land against unchanged
+lockfiles.
 
-For the annotated `deny.toml` reference, the meaning of each field, and the
-policy choices that matter, see [references/deny-policy.md](references/deny-policy.md).
+| Failing check or message | First action |
+|---|---|
+| `advisories` | Read the RUSTSEC ID and follow section 4. |
+| `licenses` | Find the crate with `cargo tree --locked -i <crate>`. Do not widen the allowlist without a license review. |
+| `bans` | Run `cargo tree --locked -d`. Unify the versions. Add a `skip` entry only with a causal `reason`. |
+| `sources` | A dependency came from a registry or git remote that policy does not allow. Check for an accidental `[patch]`, a deliberate `[patch]` whose remote is missing from `allow-git`, a leaked `path` override, or a new transitive git dependency. |
+| `unexpected argument '--config' found` | The command and the pinned cargo-deny version disagree. See "Read the cargo-deny pin first". |
 
-## 3. RUSTSEC advisory database
+Reproduce a CI failure locally with the same command and the same pinned version. Fix the
+root cause. Do not extend an `ignore` or `skip` list only to make the job green.
 
-The RUSTSEC database at <https://rustsec.org/> tracks vulnerabilities,
-unmaintained crates, and unsound code.
+## 3. Advisory kinds
 
-```bash
-# Sync and browse the local advisory DB
-cargo audit fetch
-ls ~/.cargo/advisory-db/crates/
-
-# View one advisory on the web
-# https://rustsec.org/advisories/RUSTSEC-2023-0001.html
-```
-
-Advisory categories:
-
-| Category | Meaning | Typical response |
+| Kind | How the advisory marks it | Response |
 |---|---|---|
-| `vulnerability` | Exploitable security bug | Upgrade. Patch or pin if no upgrade exists. |
-| `unmaintained` | Upstream no longer maintains the crate | Plan a replacement. Time-box an ignore entry. |
-| `unsound` | Documented unsoundness in a safe API | Check whether your code reaches the unsound path. |
-| `yanked` | The version was pulled from crates.io | Move off the yanked version. Set `yanked = "deny"`. |
+| Vulnerability | No `informational` field | Upgrade. If no fix exists, see section 4. |
+| `unsound` | `informational = "unsound"` | Find out whether your code reaches the unsound API. |
+| `unmaintained` | `informational = "unmaintained"` | Plan a replacement. A time-boxed ignore is acceptable. |
+| `notice` | `informational = "notice"` | Read it and decide. |
+| Malicious crate | `categories = ["malicious"]`, `patched = []` | Act now. Follow "Malicious advisory" below. |
 
-## 4. Respond to a new advisory
+`yanked` is not an advisory kind. It is a registry state that both tools read from the
+index. Move off a yanked version, and set `yanked = "deny"`.
+
+## 4. Respond to an advisory
 
 ```bash
-# 1. Identify the affected crate and version
-cargo audit 2>&1 | grep -A3 'RUSTSEC-'
-
-# 2. Check whether an upgrade exists
-cargo update -p <crate_name> --dry-run
-
-# 3. Apply the upgrade
-cargo update -p <crate_name>
-
-# 4. If no fix exists, assess the advisory and consider a deny.toml ignore
-#    entry. Add it only with a reason and a tracking issue. Example:
-#    ignore = [
-#        { id = "RUSTSEC-0000-0000", reason = "proc-macro only, no runtime code path, tracking #42" },
-#    ]
-
-# 5. Verify
-cargo deny --locked --manifest-path path/to/Cargo.toml check advisories
+cargo tree --locked -i <crate>@<version>   # which dependency pulls it in
+cargo update -p <crate> --dry-run          # is a semver-compatible fix available?
+cargo update -p <crate>
+cargo deny --config deny.toml --locked check advisories
 ```
 
-Prefer an upgrade over an ignore entry. Prefer a pin or a vendored patch over a
-permanent ignore entry. Add an ignore entry only when no fix exists upstream.
+Prefer an upgrade. If the fix is outside the range that a parent crate allows, upgrade the
+parent. Then prefer a `[patch.crates-io]` entry that points at a fixed `rev`. In the same
+change, add the fork URL to `[sources].allow-git`, with a reason and a tracking link in a
+comment. Otherwise `unknown-git = "deny"` fails the `sources` check. Add an ignore entry
+only when no fix exists. Never ignore a `malicious` advisory: its code already ran, and the
+ignore hides the crate from every later check.
 
-### RUSTSEC triage SLA
+Every `[advisories].ignore` entry must carry:
 
-An advisory ID in the `[advisories].ignore` list is a time-boxed commitment. It
-is not a permanent exemption.
+- `id`: the RUSTSEC ID.
+- `reason`: why the advisory is safe to ignore in this workspace. "Not exploitable" alone
+  is not a reason.
+- A tracking issue link and a re-evaluation date in a trailing comment.
 
-| Severity | SLA before the ignore becomes blocking |
+Set `unused-ignored-advisory = "deny"` (cargo-deny 0.19.0 and later), so an ignore entry
+fails the check after the advisory leaves the graph. Remove the entry in the same change
+that upgrades the dependency. Review the whole ignore list on every dependency bump.
+
+The default time box is below. Replace it when your team has its own policy.
+
+| Severity | Time before the ignore becomes blocking |
 |---|---|
 | Low or informational (unmaintained, no runtime exploit) | 90 days |
 | Medium (the exploit needs conditions your build does not meet) | 30 days |
-| High or critical | 7 days. No ignore should exist. Patch or pin. |
+| High or critical | No ignore. Upgrade, patch, or remove the dependency within 7 days. |
 
-Every `ignore` entry must carry:
+An unmaintained proc-macro crate is a valid low-severity ignore, because it runs only at
+compile time. An advisory in a crate that reads untrusted input at runtime is not.
 
-- `id`: the RUSTSEC ID.
-- `reason`: one sentence that explains why the advisory is safe to ignore in
-  this specific workspace. "Not exploitable" alone is not a reason.
-- A tracking issue link in a trailing comment.
+### Malicious advisory
 
-A proc-macro crate that is flagged as unmaintained is a valid low-severity
-ignore. The crate runs at compile time only. It has no runtime code path. It
-still needs a tracking issue. Remove the entry in the same change that upgrades
-the dependency that pulls it in.
+Assume that the code ran on every machine that built or tested the workspace with the
+crate, or opened it in an IDE that runs rust-analyzer. Build scripts and proc macros run at
+compile time, and rust-analyzer runs both when it loads the workspace. A runtime payload
+can run under `cargo test`.
 
-Review the whole ignore list on every dependency bump. An ignore that outlives
-its SLA is a policy failure, not a backlog item.
+The `cargo audit` terminal report does not show the category. For a malicious release it
+prints `Solution: No fixed upgrade is available!`. Read the category and the `unaffected`
+ranges with the `--json` filter in section 1.
 
-## 5. Evaluate a new crate before you add it
+1. Take the malicious code out of the graph in one change.
+   - If the advisory lists `unaffected` versions, a legitimate crate had a compromised
+     release. Roll back to the newest unaffected version:
+     `cargo update -p <crate>@<bad-version> --precise <unaffected-version>`. If the
+     `Cargo.toml` requirement excludes that version, lower the requirement first.
+   - If it lists no `unaffected` versions, remove the dependency.
+   - Confirm that every malicious package left `Cargo.lock`, the injected dependency
+     included (for example `proc-macro1`). `grep -n 'name = "<package>"' Cargo.lock` must
+     print nothing.
+2. Delete the local copies of each malicious package, because the next build can run them
+   again. Run `cargo clean` in every workspace that built the crate.
 
-Malicious crates reached crates.io in 2025. The attack class is typosquatting
-against popular async, logging, and crypto utility names. Read them before you dismiss a new dependency as low-risk:
+   ```bash
+   reg="${CARGO_HOME:-$HOME/.cargo}/registry"
+   find "$reg/cache" -name '<crate>-<version>.crate' -delete
+   find "$reg/src" -mindepth 2 -maxdepth 2 -type d -name '<crate>-<version>' -exec rm -rf {} +
+   cargo clean
+   ```
 
-- September 2025: `faster_log` and `async_println`, typosquats of popular
-  async-logging names. The payload exfiltrated CI tokens and SSH keys. See
-  <https://blog.rust-lang.org/2025/09/24/crates.io-malicious-crates-fasterlog-and-asyncprintln/>.
-- December 2025: `finch-rust` and `sha-rust`, typosquats of crypto and hash
-  utilities. Same attack class. See
-  <https://blog.rust-lang.org/2025/12/05/crates.io-malicious-crates-finch-rust-and-sha-rust>.
+3. Report to the owner which machines and CI runners built, tested, or opened the
+   workspace. Recommend that they rotate every credential those machines could read:
+   registry tokens, SSH keys, cloud credentials, and wallet keys. Rotation is an external
+   action. Do not do it yourself.
 
-Async runtime helpers, hashing and crypto helpers, and serialization helpers
-are the highest-risk namespaces. Most Rust workspaces depend on all three.
+## 5. Vet a new or changed dependency
 
-Apply this gate to every new crate in `Cargo.toml`:
+Until step 3 passes, the no-compile rule under the review gate holds. rust-analyzer runs
+build scripts and proc macros when `Cargo.toml` changes. Close the IDE, or set
+`rust-analyzer.cargo.buildScripts.enable` and `rust-analyzer.procMacro.enable` to `false`.
+`cargo metadata`, `cargo fetch`, `cargo tree`, and `cargo deny` do not run crate code.
+One exception: a scheduled latest-dependencies job builds unvetted packages by design. Run it
+only on a disposable hosted runner with no secrets, read-only permissions, and no cache save,
+and vet its lock diff with this gate before you adopt the update (the `cargo-workflows` skill,
+when it is installed, has the job).
 
-1. **Typo check.** Compare the crate name character by character against the
-   intended upstream. Check the repository URL, the owner list, the download
-   count, and the first-publish date on crates.io. A one-week-old crate with a
-   familiar name is a red flag.
-2. **Read the code.** Scan the published crate's `build.rs`, `src/lib.rs`, and
-   any proc-macro crate it pulls in. Look for network calls, shell-out,
-   `std::process::Command`, environment-variable reads, and file writes outside
-   `OUT_DIR`. A pure utility crate that opens a socket is a red flag.
-3. **Pin exactly on first adoption.** Use `=1.2.3` in the commit that adds the
-   crate. Loosen to `^1.2` only after the crate has stayed in the tree for at
-   least one release cycle without incident.
-4. **Create and inspect the candidate lockfile.** After you edit `Cargo.toml`,
-   resolve the exact manifest addition once without `--locked`:
+A payload can hide in runtime code, in a new transitive dependency, or in the build script
+of a dependency that a compromised patch release adds. Read
+[references/incidents.md](references/incidents.md) when a finding resembles a known attack
+or when you explain a rejection. It lists recent crates.io malware cases.
+
+Since 2026-02, crates.io files a RustSec advisory with category `malicious` for every crate
+it removes for malware. `cargo audit` and the cargo-deny `advisories` check report these as
+vulnerabilities.
+
+Apply this gate to every package name that is new in the `Cargo.lock` diff, transitive
+packages included. A `cargo update` is a vetting event too: a patch release that adds a
+dependency adds a new package name.
+
+1. **Create the candidate lockfile.** After you edit `Cargo.toml`, resolve once without
+   `--locked`. After `cargo update`, the lockfile is already written. Then read the diff:
 
    ```bash
    cargo metadata --format-version 1 > /dev/null
    git diff -- Cargo.lock
    ```
 
-   Inspect every new package in `Cargo.lock`. Do not use `cargo update -p
-   <crate>` for a crate that is not in the old lockfile. Cargo cannot select
-   that package yet. Do not run `cargo deny --locked` before this step. The old
-   lockfile does not contain the proposed dependency graph.
-5. **Run policy against the candidate graph.** Run `cargo deny --locked check
-   bans advisories licenses sources`. Reject the dependency if the new graph
-   fails.
-6. **Justify the dependency.** Check whether the standard library or a crate
-   already in the graph does the job. Every new crate widens the attack
-   surface and adds a `multiple-versions` risk.
+   Every new `[[package]]` name is a package to vet. Do not use `cargo update -p <crate>`
+   for a crate that is not in the old lockfile. Cargo cannot select it yet. Do not run a
+   `--locked` check before this step, because the old lockfile does not hold the new graph.
+2. **Check the identity.** Compare the name character by character with the intended
+   crate. Look for an added word or character (`faster_log` for `fast_log`), a `-rs` or
+   `-rust` suffix, or a plural. crates.io treats `-` and `_` as the same name, so a swap
+   alone cannot squat. Read the first-publish date, the download count, and the repository
+   URL, and check the owners on the crate page:
+
+   ```bash
+   curl -s -A '<tool> (<contact>)' https://crates.io/api/v1/crates/<crate> \
+     | jq -r '.crate | "\(.created_at) \(.downloads) \(.repository)"'
+   ```
+
+   A crate first published less than 7 days ago (a default threshold; set your own) under
+   a name close to a popular crate is a red flag. Reject it, or read every file of it in
+   step 3.
+3. **Read the published source, not the repository.** The `.crate` can differ from the Git
+   tree. Run `cargo fetch --locked`, then find the unpacked source of each new package:
+
+   ```bash
+   cargo metadata --locked --format-version 1 \
+     | jq -r '.packages[] | select(.name == "<crate>" and .version == "<version>") | .manifest_path'
+   ```
+
+   Triage every new package. Grep the directory of that `manifest_path` for code that
+   reaches outside the process, and read each match:
+
+   ```bash
+   grep -rnE 'Command::new|TcpStream|UdpSocket|reqwest|ureq|hyper|env::var|home_dir|include_bytes!|[A-Za-z0-9+/=]{100,}' <dir>
+   ```
+
+   List the packages that run code at compile time:
+
+   ```bash
+   cargo metadata --locked --format-version 1 | jq -r '.packages[]
+     | select(any(.targets[].kind[]; . == "custom-build" or . == "proc-macro"))
+     | "\(.name) \(.version)"'
+   ```
+
+   Read the build script of each new package in full, with every file it includes. Read
+   every file of a package that is a proc macro, has a grep match that its purpose does not
+   explain, was first published or released less than 7 days ago, or has few downloads or
+   a new owner. Look for network access, `std::process::Command`, environment reads,
+   home-directory and key-file paths, embedded blobs, and file writes outside `OUT_DIR`. A
+   pure utility crate that opens a socket is a red flag.
+4. **Write a caret requirement at the reviewed version** (`name = "1.2.3"`). The committed
+   `Cargo.lock` holds the exact version. Do not use an `=1.2.3` requirement as a vetting
+   device. It stops `cargo update -p` from taking a security fix. In a published library it
+   makes downstream resolution failures more likely: every other requirement on that crate
+   must accept exactly that version, and a yank of that version breaks resolution. Use `=`
+   only for tightly coupled pairs, such as a crate and its companion proc-macro crate.
+5. **Run the policy on the candidate graph.** Run
+   `cargo deny --config deny.toml --locked check`. Reject the dependency if it fails.
+6. **Justify the dependency.** Check whether the standard library or a crate already in
+   the graph does the job. Every new crate widens the attack surface.
+
+For a version bump of a package that is already in the lockfile, check the release date:
+
+```bash
+curl -s -A '<tool> (<contact>)' https://crates.io/api/v1/crates/<crate>/<version> | jq -r .version.created_at
+```
+
+Read the changes of a release that is less than 7 days old or that adds a build script or a
+proc-macro dependency. Run `diff -ru <old-dir> <new-dir>` on the two unpacked directories
+under `$CARGO_HOME/registry/src`.
 
 ## 6. Supply chain hardening
 
 ```bash
-# Commit Cargo.lock for every application and binary crate
-# Use --locked in CI so the build matches the lockfile
 cargo fetch --locked
-
-# Inspect the dependency graph
-cargo tree --locked              # full tree
-cargo tree --locked -d           # duplicate versions
-cargo tree --locked -i <crate>   # why is this crate here
-
-# Find unused dependencies
-cargo machete
-
-# Peer-reviewed dependency vetting
-cargo install cargo-vet
+cargo tree --locked -d             # duplicate versions
+cargo tree --locked -i <crate>     # why is this crate here
+cargo machete                      # unused dependencies
+cargo install --locked cargo-vet
+cargo vet init                     # once per repository
 cargo vet
 ```
 
-Additional rules:
+`cargo machete` is a heuristic. It reports false positives for renamed dependencies and
+for dependencies that only a macro uses. Confirm each finding before you remove it.
 
-- Keep `Cargo.lock` in version control for binaries, cdylibs, and staticlibs.
-  A library crate that ships a lockfile only fixes its own CI.
-- Deny unknown registries. Allow only crates.io unless a git dependency has a
-  written reason and a pinned revision.
-- Treat a `git` dependency without a `rev = "..."` pin as unpinned code
-  execution. Pin the revision, not the branch.
-- Run the policy check on a schedule as well as on pull requests. New
-  advisories land against unchanged lockfiles.
+- Commit `Cargo.lock` for every package, libraries included. It does not constrain the
+  consumers of a library. The `cargo-workflows` skill owns the lockfile policy.
+- Allow only crates.io, unless a git dependency has a written reason and a `rev` pin. A
+  branch pin is unpinned code execution. Enforce this with `unknown-registry = "deny"` and
+  `required-git-spec = "rev"`.
+- Use Cargo 1.96.1 or later in every job that fetches from a third-party registry or over
+  SSH git. Older Cargo has CVE-2026-5222 (registry token leak), CVE-2026-5223 (symlink
+  override in third-party crate tarballs), and libssh2 CVEs. An MSRV job on an old
+  toolchain is the usual exposure.
 
 ## 7. Untrusted-input parser hardening
 
-Any Rust code that parses a file, a byte buffer, or a network frame from
-outside your process must treat that input as adversarial. This applies to
-archives, protobuf, XML, JSON, SQLite files, images, and custom binary
-containers.
+Code that parses a file, a byte buffer, or a network frame from outside the process must
+treat the input as adversarial. This applies to archives, protobuf, XML, JSON, SQLite
+files, images, and custom binary containers.
 
-Core rules:
+- **Cap a length field before you allocate.** Check it against a documented maximum and
+  against the remaining input before `Vec::with_capacity` or `vec![0u8; n]`.
+- **Use checked arithmetic** (`checked_add`, `checked_mul`, `try_into`) for every offset
+  and length. A release build wraps silently.
+- **Limit recursion depth** with an explicit counter.
+- **Reject non-finite floats** at the parse boundary.
+- **Reject path traversal.** Accept only `Component::Normal` UTF-8 components. Create
+  entries relative to an open staging-root handle, with no-follow semantics. Do not
+  canonicalize a destination that does not exist yet. A library `extract` or `unpack_in`
+  helper is not a traversal gate.
+- **Disable XML entity expansion.**
+- **Authenticate before you mutate.** Verify the digest or MAC of a container before you
+  apply any of its content to live state.
+- **Reject unknown schema versions and unknown fields.**
+- **Return typed errors across an FFI boundary.** Do not panic on malformed input.
+- **Keep std `RandomState` for hash-map keys that an outside caller controls**, such as
+  HTTP headers, JSON object keys, and archive entry names. `FxHasher`, `FnvHasher`,
+  `nohash`, and `BuildHasherDefault<DefaultHasher>` have no random secret, so an attacker
+  can build a collision set offline.
 
-- **Never trust a length field before you allocate.** Cap the value before you
-  call `Vec::with_capacity` or `vec![0u8; n]`.
-- **Limit recursion depth** in nested protobuf, XML, and JSON parsers.
-- **Validate floating-point input** for `NaN` and infinity before arithmetic.
-- **Reject path traversal.** Accept only normal UTF-8 `Path::components`.
-  Create entries relative to an open staging-root handle with no-follow
-  semantics. Do not canonicalize a destination that does not exist yet.
-- **Disable entity expansion** in XML parsers.
-- **Authenticate before you mutate.** Verify the digest or MAC of a container
-  before you apply any of its content to live state.
-- **Reject unknown schema versions and unknown fields.** A parser that silently
-  accepts drift is a parser that accepts attacker-chosen fields.
-
-```rust
-// Cap the recursion depth of nested structures.
-const MAX_NESTING_DEPTH: usize = 8;
-
-// Cap the allocation before you trust a length field from untrusted input.
-const MAX_CHUNK_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
-
-fn read_chunk(declared_len: u32) -> Result<Vec<u8>, ParseError> {
-    if declared_len > MAX_CHUNK_BYTES {
-        return Err(ParseError::TooLarge {
-            declared: declared_len,
-            cap: MAX_CHUNK_BYTES,
-        });
-    }
-    Ok(vec![0u8; declared_len as usize])
-}
-```
-
-For the full checklist, including archive extraction, streamed container
-formats, geometry and coordinate validation, and the FFI boundary rules, see
-[references/untrusted-input.md](references/untrusted-input.md).
-
-### Untrusted keys in a hash map
-
-std `HashMap` and `HashSet` use SipHash 1-3 with a per-process random seed. std documents
-that seed as the HashDoS defence. `FxHasher`, `FnvHasher`, and `nohash` remove it.
-Verified across two separate processes: `FxHasher` and `FnvHasher` give byte-identical
-output for the same key. The `FxHasher` hash of `42` is 12569757018929961129 in both runs.
-SipHash and `ahash` differ. An attacker who controls keys can precompute a collision set
-offline.
-
-Get the mechanism right. std `HashMap` is hashbrown. It is open-addressed with SIMD group
-probing, not chained, so degradation shows up as long probe sequences and not as O(n)
-bucket chains. Measured on rustc 1.97.0 with trivially crafted keys, multiples of 2^20 and
-no knowledge of the internals: `FxHashMap` insert took 3.47 ms against 0.35 ms for benign
-keys, a factor of 10. A full blowup needs a deliberately built collision set.
-
-The gate is key provenance, not a profile. Keep std `RandomState` for keys an outside
-caller controls: HTTP headers, query parameters, JSON object keys, archive entry names,
-and protocol field names. Use `ahash::RandomState` when that path is measured hot. It is
-randomly seeded per process, because `runtime-rng` and `getrandom` are default features of
-`ahash` 0.8.12. The swap is one import and leaves no trace in review, so it needs a rule.
-See `rust-hot-path` for the performance side of the same choice.
-
-## 8. CI integration
-
-Run the policy check as its own job so a failure names the cause without a log
-hunt. A minimal job does this:
-
-1. Check out the repository.
-2. Install the exact pinned `cargo-deny` version. A pre-built installer action
-   avoids a source build on every run. On GitHub Actions,
-   `taiki-e/install-action@v2` with `tool: cargo-deny@<pinned-version>` does
-   this.
-3. Run `cargo deny --locked --manifest-path path/to/Cargo.toml check`.
-
-Design rules:
-
-- Pin the tool version. Do not install `latest`.
-- Run the job on pull requests and on pushes to the default branch.
-- Add a scheduled run. Advisories appear without a code change.
-- Cache the advisory database between runs if the job is slow. Do not cache it
-  so long that the job checks a stale database.
-
-When the CI job fails:
-
-| Failing check | First action |
-|---|---|
-| `advisories` | Read the RUSTSEC ID. Try `cargo update -p <crate>`. Only then consider a time-boxed ignore. |
-| `licenses` | Find the crate with `cargo tree --locked -i <crate>`. Do not widen the allowlist to clear one crate without a license review. |
-| `bans` | Run `cargo tree --locked -d`. Unify the versions. Add a `skip` entry only with a causal reason. |
-| `sources` | A dependency came from a registry or git remote that policy does not allow. Check for an accidental `[patch]` or a path override. |
-
-Reproduce the failure locally with the same command and the same pinned tool
-version. Fix the root cause. Do not extend an `ignore` or `skip` list to make
-the job green.
-
-## Review gate
-
-Block a change that does any of these:
-
-- Adds a crate without a typo check, an upstream check, and an exact version
-  pin in the adoption commit.
-- Adds an `[advisories].ignore` entry without an `id`, a `reason`, and a
-  tracking issue.
-- Adds a `[bans].skip` entry without a causal reason for the duplicate.
-- Widens the license allowlist to clear one dependency, with no license review
-  recorded.
-- Allocates from an untrusted length field without a cap.
-- Extracts an archive entry without a traversal check.
-- Panics on malformed input across an FFI boundary.
+Read [references/untrusted-input.md](references/untrusted-input.md) when you write or
+review a parser, an archive extractor, a streamed backup format, a parser behind an FFI
+boundary, or a hasher choice for a map. It has the format threat table, the checklists,
+the hasher rules, and the tests that must exist.
 
 ## Related skills
 
-- `cargo-workflows`: lockfile management, workspaces, and feature flags.
-- `rust-sanitizers-miri`: Miri and sanitizers for memory-safety validation.
-- `rust-unsafe`: unsafe code audit patterns and safe abstraction design.
-- `rust-panic-safety`: panic containment, including panics at an FFI boundary.
+- `cargo-workflows`: lockfile policy, workspaces, and feature flags.
+- `rust-panic-safety`: panic containment at an FFI boundary.
+- `rust-test-tools`: fuzz and property tests for parsers.
 - `rust-hot-path`: the performance side of the hasher choice.
-- `rust-lints`: Clippy configuration and lint policy.
-- `rust-discipline`: engineering discipline and coding conventions.
-- `uniffi-boundary`: input validation and typed errors across a UniFFI boundary.
-- `ffi-error-progress-cancel`: error mapping across an FFI boundary.
-- `rust-jni`: JNI-level FFI safety.
-- `rust-test-tools`: fuzz and property tests for parser hardening.
+- `uniffi-boundary` and `ffi-error-progress-cancel`: validation and typed errors across a
+  binding boundary.

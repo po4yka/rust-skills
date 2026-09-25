@@ -1,56 +1,68 @@
 # cargo-deny Policy Reference
 
-This reference explains the `deny.toml` sections that matter for supply chain
-policy, and the choices you must make in each. Place `deny.toml` next to the
-workspace `Cargo.toml`, or pass `--config` explicitly.
+Contents: [version boundaries](#version-boundaries), [`[advisories]`](#advisories),
+[`[licenses]`](#licenses), [`[bans]`](#bans), [`[sources]`](#sources),
+[CI job](#ci-job), [policy change checklist](#policy-change-checklist).
 
-Validate every edit locally before you push:
+This reference explains the `deny.toml` sections that matter for supply-chain policy, and
+the choices you must make in each. The examples need cargo-deny 0.19.0 or later. Keep
+`deny.toml` next to the workspace `Cargo.toml`, and run the check from the workspace root.
+From 0.19.0, a relative `--config` path resolves against the current directory. When no
+file is there, cargo-deny warns `falling back to default config` and checks the default
+policy instead of yours. Treat that warning as a failure. Run the check with cargo-deny 0.20
+or later:
 
 ```bash
-cargo deny --locked --manifest-path path/to/Cargo.toml check
+cargo deny --config deny.toml --locked check
 ```
+
+On a pin before 0.20, `--config` goes after `check`. The table below lists the other
+differences.
+
+## Version boundaries
+
+| Version | Change | Failure across the boundary |
+|---|---|---|
+| 0.19.0 | Adds the `[advisories]` keys `unsound` (a scope, default `workspace`) and `unused-ignored-advisory`. Resolves a relative `--config` path against the current directory, not the manifest directory (PR#802). | Do not add these keys for an older pin. A relative `--config` path that does not exist falls back to the default policy. |
+| 0.19.1 | Enforces `maximum-db-staleness` (before, the limit was over 14 years, PR#833). Makes `--frozen` stop the advisory database fetch (PR#841). Fixes the `unsound` scope (PR#839). | On an older pin, an offline check never fails for a stale database, and `--frozen` still fetches. On 0.19.0 with the default `unmaintained`, `unsound = "workspace"` reports no unsound advisory and `"transitive"` reports all of them. |
+| 0.20.0 | Moves `--config` and `--metadata-path` to the root command. Removes `check --disable-fetch` (use `--offline`) and the `ban` and `license` check aliases. | On 0.20, `check --config` fails with `unexpected argument '--config' found`. On 0.19, root `--config` fails with the same message. |
+
+For a key or flag that neither this table nor the examples in this reference show, confirm
+in the cargo-deny `CHANGELOG.md` that the pinned version has it.
 
 ## `[advisories]`
 
-Controls RUSTSEC advisory enforcement.
+Controls RustSec advisory enforcement. A vulnerability advisory is always an error.
 
-| Field | Recommended value | Why |
+| Field | Value | Why |
 |---|---|---|
-| `yanked` | `"deny"` | A yanked version is a version the publisher withdrew. Treat it as broken. |
-| `unsound` | `"all"` | Fail on unsoundness in direct and transitive dependencies. The default `"workspace"` scope checks direct dependencies only. |
+| `yanked` | `"deny"` | The publisher withdrew the version. The default is `"warn"`. |
+| `unmaintained` | `"all"` (default) | Fails on unmaintained crates anywhere in the graph. The other scopes are `workspace`, `transitive`, and `none`. |
+| `unsound` | `"all"` | The default `"workspace"` fails only on direct dependencies of workspace crates. It misses an unsound crate that arrives transitively. Needs cargo-deny 0.19.0; the `workspace` and `transitive` scopes work as documented from 0.19.1 (PR#839). |
+| `unused-ignored-advisory` | `"deny"` | An `ignore` entry fails the check after its advisory leaves the graph. The default `"warn"` lets stale entries pile up. Needs cargo-deny 0.19.0. |
 | `ignore` | Empty by default | Every entry is a time-boxed exemption, not a policy. |
-
-Vulnerability advisories are errors. Set `unsound = "all"` explicitly. The
-default scope is `"workspace"`, which does not fail on an unsound advisory that
-reaches the workspace only through a transitive dependency. See the current
-[cargo-deny advisory configuration](https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html).
 
 ```toml
 [advisories]
 yanked = "deny"
 unsound = "all"
+unused-ignored-advisory = "deny"
 ignore = [
-    # Tracking: https://example.invalid/issues/42 - re-evaluate by 2026-06-01
+    # Tracking: <issue-url>. Re-evaluate by <YYYY-MM-DD>.
     { id = "RUSTSEC-0000-0000", reason = "proc-macro only, compile-time, no runtime code path; no upstream fix published" },
 ]
 ```
 
-Rules for an `ignore` entry:
+The rules for an ignore entry and the default time box are in section 4 of
+[SKILL.md](../SKILL.md). The reason must say why the advisory is safe in this workspace,
+not why the advisory is low severity in general.
 
-- Give the `id` and a `reason`. The reason must explain why the advisory is
-  safe to ignore in *this* workspace, not why the advisory is low severity in
-  general.
-- Add a tracking issue link and a re-evaluation date in a trailing comment.
-- Apply the SLA from the main skill: 90 days for low or informational, 30 days
-  for medium, 7 days for high or critical. A high-severity ignore should not
-  exist.
-- Remove the entry in the same change that upgrades the dependency which pulls
-  the advisory in.
-- Re-read the whole list on every dependency bump.
+To ignore a yanked version, use the package-spec form:
+`{ crate = "name@1.2.3", reason = "..." }`.
 
-An advisory that reaches only a compile-time path, such as a proc-macro crate
-flagged as `unmaintained`, is the standard valid case for a low-severity
-ignore. An advisory in a crate that touches untrusted input at runtime is not.
+With `--offline`, cargo-deny does not fetch the database. From cargo-deny 0.19.1, it fails
+when the cached database is older than `maximum-db-staleness` (default `"P90D"`). Set a shorter value, for example
+`"P7D"`, when CI runs offline.
 
 ## `[licenses]`
 
@@ -59,6 +71,7 @@ Controls which SPDX licenses may appear in the dependency graph.
 ```toml
 [licenses]
 confidence-threshold = 0.8
+unused-allowed-license = "deny"
 allow = [
     "MIT",
     "Apache-2.0",
@@ -75,28 +88,26 @@ allow = [
 ignore = true
 ```
 
-Field notes:
-
-- `confidence-threshold = 0.8` is the working default. A lower value accepts
-  weaker license-text matches. A higher value produces more manual review.
-- `allow` is a graph-minimal allowlist. List only the licenses your current
-  graph actually needs. An allowlist that lists licenses no dependency uses
-  hides the moment a new license enters the tree.
-- `licenses.private.ignore = true` skips workspace packages whose manifests
-  declare `publish = false`. Third-party dependencies stay subject to the
-  allowlist. This is the correct setting for a workspace of unpublished
-  internal crates.
+- `confidence-threshold = 0.8` is the default. A lower value accepts weaker license-text
+  matches. A higher value produces more manual review.
+- `allow` is a graph-minimal allowlist. List only the licenses your current graph needs.
+  An allowlist that lists unused licenses hides the moment a new license enters the tree.
+  `unused-allowed-license = "deny"` fails the check when an allowlist entry has no user.
+  The default `"warn"` only prints `license-not-encountered`. `CDLA-Permissive-2.0` is
+  there for `webpki-roots`; remove it if the graph does not need it.
+- `licenses.private.ignore = true` skips workspace members that declare `publish = false`.
+  Third-party dependencies stay subject to the allowlist.
 
 Licenses that need an explicit decision before you add them:
 
 | License | Consideration |
 |---|---|
-| `Apache-2.0 WITH LLVM-exception` | Common in compiler-adjacent and codegen crates. Add when the graph needs it. |
-| `MPL-2.0` | Weak, file-level copyleft. Acceptable in many products, but record the decision. Some binding-generator crate families require it. |
-| `OpenSSL` | Add only when a TLS or crypto dependency needs it, and only after a license review. |
+| `Apache-2.0 WITH LLVM-exception` | Common in compiler-adjacent and codegen crates. Add it when the graph needs it. |
+| `MPL-2.0` | Weak, file-level copyleft. Acceptable in many products, but record the decision. Some binding-generator crate families need it. |
+| `OpenSSL` | Add it only when a TLS or crypto dependency needs it, and only after a license review. |
 
-Never widen the allowlist to clear one failing crate without a recorded license
-review. Find the crate first:
+Do not widen the allowlist to clear one failing crate without a recorded license review.
+Find the crate first:
 
 ```bash
 cargo tree --locked -i <crate>
@@ -110,39 +121,37 @@ Controls duplicate versions, wildcard requirements, and named crate bans.
 [bans]
 multiple-versions = "deny"
 wildcards = "deny"
-highlight = "all"
+allow-wildcard-paths = true
 skip = [
-    # Tracking: https://example.invalid/issues/57
-    # <crate-a> 1.x pins this; <crate-b> 2.x has moved on. Unifiable after the
-    # <crate-a> 2.0 release.
-    { name = "some-transitive-crate", version = "=0.4.9" },
+    { crate = "some-transitive-crate@0.4.9", reason = "<crate-a> 1.x pins it and <crate-b> 2.x has moved on; unify after <crate-a> 2.0, tracking <issue-url>" },
 ]
 ```
 
-Policy choice, `multiple-versions`:
+The target state for `multiple-versions` is `"deny"` with reviewed `skip` entries. With
+`"warn"`, a new duplicate looks exactly like the twenty existing ones, and nobody sees it.
+Use `"warn"` only during an initial cleanup, then move to `"deny"`.
 
-| Value | Effect | Choose when |
-|---|---|---|
-| `"warn"` | Duplicates are reported, not blocking | The graph is large and duplicate churn is not yet under control. Accept that duplicates accumulate. |
-| `"deny"` with exact-version `skip` entries | Every duplicate is either fixed or explicitly justified | You want any *new* duplicate to block. This is the stronger position. |
+Write each `skip` entry in the package-spec form, with an exact version and a `reason`.
+`crate = "name@0.4.9"` matches only `=0.4.9`. A range-based skip silently covers future
+versions that nobody reviewed. The old `{ name = "...", version = "..." }` form is
+deprecated. cargo-deny warns with `unmatched-skip` when an entry no longer matches the
+graph. Make that an error with
+`cargo deny --config deny.toml --locked check -D unmatched-skip bans`.
 
-Prefer `"deny"` plus reviewed `skip` entries. With `"warn"`, a new duplicate
-looks exactly like the twenty existing ones and nobody sees it. With `"deny"`,
-each `skip` entry records which crates disagree and when the split can be
-resolved.
+`wildcards = "deny"` blocks `version = "*"` requirements. A wildcard requirement accepts
+any future release, including a compromised one. Set `allow-wildcard-paths = true` as well.
+Without it, every internal `path` dependency that has no `version` fails the check with
+`error[wildcard]`. The exemption covers path and git dependencies of `publish = false`
+crates and dev-dependencies. A published crate still fails, because crates.io rejects such
+dependencies.
 
-Pin `skip` entries to an exact version (`version = "=0.4.9"`). A range-based
-skip silently covers future versions you never reviewed.
+To find the cause of a duplicate, run `cargo tree --locked -d` and
+`cargo tree --locked -i <crate>@<version>`. The `highlight` field only colors the dot graph
+that `check -g <dir>` writes.
 
-`wildcards = "deny"` blocks `version = "*"` requirements. A wildcard requirement
-means any future release, including a compromised one, satisfies your manifest.
-
-`highlight = "all"` makes the duplicate report show every path in the graph, so
-you can see which dependency causes the split.
-
-Use `allow` and `deny` lists to name crates explicitly when you must forbid a
-specific crate or restrict a category to a known set. Explicit lists express
-policy more precisely than duplicate detection alone.
+Use the `deny` list to forbid a specific crate. An entry takes `crate`, `reason`,
+`wrappers`, and `use-instead`. Explicit lists express policy more precisely than duplicate
+detection alone.
 
 ## `[sources]`
 
@@ -151,32 +160,51 @@ Controls where crates may come from.
 ```toml
 [sources]
 unknown-registry = "deny"
-unknown-git = "warn"
+unknown-git = "deny"
+required-git-spec = "rev"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
 ```
 
-- `unknown-registry = "deny"` blocks any registry that `allow-registry` does not
-  list. Keep this at `"deny"`.
-- `unknown-git = "warn"` reports git dependencies from unlisted remotes. Raise
-  it to `"deny"` and use `allow-git` once the graph has no unreviewed git
-  sources.
-- Pin every git dependency to a `rev`, not a branch or a tag. A branch pin is
-  unpinned code execution. A tag can be moved.
+- `unknown-registry = "deny"` blocks any registry that `allow-registry` does not list.
+  The default is `"warn"`.
+- `unknown-git = "deny"` blocks git dependencies from remotes that `allow-git` does not
+  list. Use `"warn"` only while the graph still has unreviewed git sources.
+- `required-git-spec = "rev"` rejects a git dependency pinned to a branch, a tag, or
+  nothing. A branch pin is unpinned code execution, and a tag can move. The default
+  `"any"` allows all of them.
 
-A `sources` failure often means an accidental `[patch]` section, a local `path`
-override that leaked into a commit, or a git dependency that a transitive crate
-introduced. Check the manifests before you change policy.
+A `sources` failure often means an accidental `[patch]` section, a deliberate `[patch]`
+whose remote is missing from `allow-git`, a local `path` override that leaked into a
+commit, or a git dependency that a transitive crate introduced. Check
+the manifests before you change the policy.
+
+## CI job
+
+Run the policy check as its own job, so a failure names its cause without a log hunt.
+
+1. Check out the repository.
+2. Install the exact pinned `cargo-deny` version with a pre-built installer. On GitHub
+   Actions, use `taiki-e/install-action@<full-commit-sha> # v2.x.y` with
+   `tool: cargo-deny@<version>`. Pin every action to a full commit SHA with a version
+   comment. A policy can require SHA pins, and then a floating tag fails.
+3. Run `cargo deny --config deny.toml --locked check`.
+
+Run the job on pull requests, on pushes to the default branch, and on a schedule, because
+new advisories land against unchanged lockfiles. Without `--offline`, cargo-deny fetches
+the advisory database on every run, so a cache of `$CARGO_HOME/advisory-dbs` only saves
+clone time. With `--offline`, the check fails when the cached database is older than
+`maximum-db-staleness` (see [`[advisories]`](#advisories)).
 
 ## Policy change checklist
 
 Before you commit a `deny.toml` change:
 
-1. Run `cargo deny --locked --manifest-path path/to/Cargo.toml check` and read
-   the full output, not only the exit code.
-2. Confirm every new `ignore` entry has an `id`, a `reason`, a tracking link,
-   and a re-evaluation date.
-3. Confirm every new `skip` entry has an exact version and a causal reason.
-4. Confirm no allowlist got wider without a recorded review.
-5. Confirm the CI job pins the same `cargo-deny` version you ran locally. A
-   version mismatch between local and CI produces failures you cannot
-   reproduce.
+1. Run the full check with the CI pin, and read the whole output, not only the exit code.
+2. Confirm that the CI pin supports every key you added. Use the
+   [version table](#version-boundaries). Check the cargo-deny `CHANGELOG.md` only for a key
+   that neither the table nor the examples here show.
+3. Confirm that every new `ignore` entry has an `id`, a `reason`, a tracking link, and a
+   re-evaluation date.
+4. Confirm that every new `skip` entry has an exact version and a causal `reason`.
+5. Confirm that no allowlist got wider without a recorded review.

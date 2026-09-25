@@ -1,5 +1,12 @@
 # Untrusted-Input Parser Hardening
 
+Contents: [threat surface](#threat-surface-by-format-class), [core rules](#core-rules),
+[archive extraction](#archive-extraction-checklist),
+[streamed containers](#streamed-container-and-backup-checklist),
+[XML and JSON](#xml-and-json-specifics), [SQLite](#sqlite-and-embedded-database-specifics),
+[hash map keys](#untrusted-keys-in-a-hash-map), [FFI boundary](#ffi-boundary-hardening),
+[tests](#tests-that-must-exist).
+
 Use this reference when Rust code parses data that a user, a network peer, or
 another application supplies. Supply chain scanning protects you from a
 malicious dependency. It does nothing about a malicious file. Every parser in
@@ -115,6 +122,12 @@ directory-relative operations on other platforms. Reject archive symlink and
 hard-link entries. If the platform API cannot provide these semantics, do not
 extract an untrusted archive there.
 
+A library `extract` or `unpack_in` helper is not a traversal gate. RustSec records an
+arbitrary file write in `zip` extraction (RUSTSEC-2025-0168) and a symlink-following
+`chmod` in `tar` `unpack_in` (RUSTSEC-2026-0067). Iterate the entries, validate each one
+yourself, and write it through the staging-root handle. Gate the archive crate versions
+with `cargo deny --config deny.toml --locked check advisories`.
+
 ## Archive extraction checklist
 
 Apply all of these before you expose an extracted path to any consumer:
@@ -142,7 +155,9 @@ Apply all of these before you expose an extracted path to any consumer:
 Keep the archive schema owned by one implementation. If a Rust crate owns the
 format, do not let a second implementation in another language reinterpret the
 same bytes. Two readers with different validation produce a parser-differential
-bug.
+bug. For example, `tar` before 0.4.45 ignored PAX size headers in some cases, so one
+archive unpacked differently in other tools (RUSTSEC-2026-0068). `tokio-tar` has the same
+class of PAX bug and no patched release (RUSTSEC-2025-0111).
 
 ## Streamed container and backup checklist
 
@@ -181,6 +196,19 @@ For formats that stream frames or chunks and end with a summary record:
   traversal rules above.
 - Treat the schema of an imported database as untrusted. Verify it before you
   query it.
+
+## Untrusted keys in a hash map
+
+Decide the hasher by key provenance, not by profile. Keep std `RandomState` (SipHash 1-3
+with random keys drawn per thread and varied for each `RandomState`, the std HashDoS
+defense) for keys that an outside caller controls: HTTP headers, query parameters, JSON
+object keys, archive entry names, and protocol field names. `FxHasher`, `FnvHasher`,
+`nohash`, and `BuildHasherDefault<DefaultHasher>` (std uses the keys `(0, 0)`) have no
+random secret, so an attacker can build a collision set offline. Use them only for internal
+keys. Use `ahash::RandomState` when the untrusted-key path is measured hot. It is seeded only
+while its default `runtime-rng` feature is on. Confirm that with
+`cargo tree --locked -e features -i ahash`. The `rust-hot-path` skill has the measurements,
+the seeding check, and the collision failure mode.
 
 ## FFI boundary hardening
 
