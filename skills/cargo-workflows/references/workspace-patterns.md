@@ -1,34 +1,72 @@
-# Workspace Patterns Reference
+# Workspace Patterns
 
-Deep material for `cargo-workflows`: dependency inheritance, workspace lints,
-selective builds, lock-file management, native artifact mapping, and edition
-migration.
+Read this file when you lay out a workspace, add or change a dependency, add a workspace member,
+review a `Cargo.lock` diff, narrow a build to a subset of the workspace, or set up the
+latest-dependencies or MSRV job.
+
+Contents:
+
+- Workspace layout
+- Workspace dependency management
+- When to pin exactly
+- Adding a dependency
+- Adding a member crate
+- Selective build commands
+- Reviewing a `Cargo.lock` diff
+- Scheduled latest-dependencies job
+- MSRV job without a download by an old Cargo
+
+## Workspace layout
+
+```text
+<workspace-root>/
+  Cargo.toml              # Virtual manifest: members, resolver, deps, lints, profiles
+  Cargo.lock              # Committed, libraries included
+  rust-toolchain.toml     # Pinned toolchain + components (rustfmt, clippy)
+  rustfmt.toml            # Formatter config
+  clippy.toml             # Clippy thresholds; msrv only to override rust-version
+  deny.toml               # cargo-deny policy
+  .cargo/config.toml      # Per-target rustflags and runners
+  .config/nextest.toml    # nextest profiles
+  crates/
+    <leaf-crates>/        # Pure logic, no internal dependents
+    <mid-layer-crates>/
+    <ffi-crate>/          # cdylib / staticlib boundary, depends on everything
+    <cli-crate>/          # Host-only binary
+    <bench-crate>/        # Benchmarks
+```
+
+- `members = ["crates/*"]` and an explicit list both work. For an explicit list, the default here
+  is leaf crates first and the FFI crate last, so the file records the dependency direction.
+- Keep helper scripts and fixture generators outside `crates/`. Under a glob, a directory without
+  a `Cargo.toml` stops every command with `failed to load manifest for workspace member`.
 
 ## Workspace dependency management
 
-Centralize every dependency version in the root `Cargo.toml`. A member crate
-must never carry its own version number for a shared dependency.
+Centralize every shared dependency version in the root `Cargo.toml`. A member crate does not carry
+its own version number for a shared dependency.
 
 ```toml
 [workspace.dependencies]
-# Internal crates: path plus an explicit version. The path is what cargo
-# resolves; the version stops cargo-deny flagging the entry as a wildcard.
-my-domain   = { path = "crates/my-domain",   version = "0.0.0" }
-my-error    = { path = "crates/my-error",    version = "0.0.0" }
-my-geometry = { path = "crates/my-geometry", version = "0.0.0" }
+# Internal crates: path only. cargo-deny accepts this in a `publish = false`
+# crate with `allow-wildcard-paths = true` (the rust-security skill owns
+# deny.toml). A published crate also needs `version`, equal to the member's own.
+my-domain   = { path = "crates/my-domain" }
+my-error    = { path = "crates/my-error" }
 
-# External crates: compatible ranges by default.
+# External crates: compatible ranges. Turn default features off here, not in
+# the member, when any member must build without them.
 serde      = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = "1"
 tokio      = { version = "1", default-features = false }
 rusqlite   = { version = "0.40", default-features = false, features = ["bundled"] }
 flate2     = { version = "1", default-features = false, features = ["rust_backend"] }
 
-# Determinism-critical crates: pinned EXACTLY with `=`.
-libm       = "=0.2.16"    # Bit-identical transcendentals
+# Determinism-critical: Cargo.lock holds the exact version. Bump it alone.
+libm       = "0.2.16"     # Bit-identical transcendentals
 ```
 
-Members inherit and may add features, but must not weaken them:
+Members inherit the entry and can add `features` and `optional`. Nothing else:
 
 ```toml
 [dependencies]
@@ -37,79 +75,58 @@ my-domain.workspace = true
 tokio = { workspace = true, features = ["rt", "net"] }
 ```
 
-### When to pin exactly
+A member cannot turn off a default feature that the workspace entry keeps on. On Cargo 1.98 an
+edition-2024 member gets a hard error, and an older-edition member gets a warning and keeps the
+default features. The mechanism and the fix are in
+[feature-resolution.md](feature-resolution.md).
 
-Use `=` pinning only where a patch release can change program output:
+## When to pin exactly
 
-- Math and float formatting crates, when the output must be bit-identical
-  across platforms.
-- Text shaping and font parsing crates, when a rendered or measured result is
-  compared against a stored snapshot.
+Use an `=` requirement only for a tightly coupled pair, such as a crate and its companion
+proc-macro crate. An `=` pin stops `cargo update -p` from taking a security fix, and in a
+published library it makes downstream resolution failures more likely. The `rust-security` skill
+owns this rule.
+
+Some crates can change program output in a patch release:
+
+- Math and float formatting crates, when the output must be bit-identical across platforms.
+- Text shaping and font parsing crates, when a rendered or measured result is compared against a
+  stored snapshot.
 - Any crate whose output feeds a golden test.
 
-A `=` pin means routine `cargo update` will not move it. Bump such a crate
-deliberately, in its own change, and re-bless the affected snapshots in the same
-commit.
+Keep a compatible range for them too. The committed `Cargo.lock` holds the exact version. Mark
+each one in `[workspace.dependencies]`, bump it deliberately in its own change, and re-bless the
+affected snapshots in the same commit.
 
-Everywhere else, use a compatible range. Over-pinning creates duplicate versions
-in the graph and makes security updates slow.
+## Adding a dependency
 
-## Workspace-level lints
+1. Confirm the exact crate name and owner on crates.io before you run `cargo add`. A plausible
+   name can belong to an unrelated or malicious crate. The `rust-security` skill has the full
+   new-crate review, when it is installed.
+2. Do not add a crate to fix a compile error. For E0432 or E0433, first look for a missing
+   `use std::...` path or a missing feature on a crate you already have.
+3. Add the entry to `[workspace.dependencies]`, then inherit it in the member:
 
-Configure clippy and rustc lints once at the workspace level.
-
-```toml
-[workspace.lints.clippy]
-# Group activations. `priority = -1` lets individual lints below override them.
-all         = { level = "deny",  priority = -1 }
-correctness = { level = "deny",  priority = -1 }
-suspicious  = { level = "deny",  priority = -1 }
-pedantic    = { level = "warn",  priority = -1 }
-nursery     = { level = "warn",  priority = -1 }
-cargo       = { level = "warn",  priority = -1 }
-
-# Unsafe documentation. Deny by default.
-missing_safety_doc         = "deny"
-undocumented_unsafe_blocks = "deny"
-
-[workspace.lints.rust]
-unsafe_op_in_unsafe_fn = "deny"
-unused_must_use        = "deny"
-let_underscore_drop    = "deny"
-
-[workspace.lints.rustdoc]
-broken_intra_doc_links = "deny"
+```bash
+# After the [workspace.dependencies] edit:
+cargo add -p <member> <crate> --dry-run   # Prints "Adding <crate> (workspace)"
+cargo add -p <member> <crate>             # Writes <crate>.workspace = true
+cargo tree --locked -i <crate>            # Confirms who pulls it in
 ```
 
-Every member opts in:
+`cargo add` inherits the workspace entry when one exists (measured on Rust 1.98.1). It updates
+`Cargo.lock`, so commit the lock change with the manifest change.
 
-```toml
-[lints]
-workspace = true
-```
+## Adding a member crate
 
-Rules:
-
-- Keep `missing_safety_doc` and `undocumented_unsafe_blocks` denied for the
-  whole workspace. Relax them only for a raw-JNI crate whose generated entry
-  points take raw pointers, and scope the allowance to that crate.
-- Declare `#![forbid(unsafe_code)]` in the crate root of every pure-logic crate.
-  The workspace lint table cannot express this, so it must be per crate.
-- Put thresholds in `clippy.toml`, not in `Cargo.toml`:
-
-```toml
-msrv = "1.88.0"
-allowed-duplicate-crates = ["bitflags"]
-```
-
-  Keep `msrv` equal to `rust-version` in `[workspace.package]`. If `msrv` is
-  higher, clippy suggests APIs that the declared MSRV cannot compile. If it is
-  lower, clippy holds back suggestions you could already use.
-
-  Every entry in `allowed-duplicate-crates` needs a comment naming the
-  transitive dependency that forces the split.
-
-See `rust-lints` for the lint catalogue itself.
+- Add `[lints] workspace = true` to the new member. Without it, the member silently builds with
+  default lint levels. The lint table itself lives in the `rust-lints` skill.
+- Set `edition.workspace = true` and `rust-version.workspace = true`, so the member follows the
+  workspace MSRV and edition.
+- Put `#![forbid(unsafe_code)]` in the crate root of every crate with no hand-written `unsafe`.
+  A crate that calls FFI only through a safe wrapper crate qualifies. Do not set it in the
+  workspace lint table: every member inherits that table, and the FFI crate needs `unsafe`. The
+  `rust-unsafe` skill owns this rule.
 
 ## Selective build commands
 
@@ -122,190 +139,61 @@ cargo check --locked -p <crate>
 cargo nextest run --locked -p <crate>
 cargo nextest run --locked -p <crate> --test <integration-test>
 
-# Test everything
-cargo nextest run --locked --workspace
-
 # Exclude an expensive member from a workspace build
 cargo build --locked --workspace --exclude <bench-crate>
 
-# Cross-compile type-check. This needs no NDK or SDK linker, because
-# `cargo check` does not link.
+# Cross-compile type-check. This needs no target linker. `cargo check` still
+# builds and links build scripts and proc macros, but only for the host.
 cargo check --locked --target aarch64-linux-android -p <crate>
 cargo check --locked --target aarch64-apple-ios     -p <crate>
 ```
 
-`cargo check --target <triple>` is the cheapest guard against a
-cross-compilation break. Run it in CI for every shipping target on the pure-logic
-crates, even when the full native build runs only on the release lane.
+`cargo check --target <triple>` is the cheapest guard against a cross-compilation break. Run it
+in CI for every shipping target, even when the full native build runs only on the release lane.
+Build scripts still run under `cargo check`. A dependency whose build script compiles C (`cc`, a
+`bundled` feature such as the `rusqlite` entry above) still needs the target C compiler: set
+`CC_<triple>` and `AR_<triple>`, or limit the check to pure-Rust crates.
 
-## Cargo.lock management
+`cargo check` does not prove that the code links or that monomorphization succeeds. Run
+`cargo build` for that.
 
-Check `Cargo.lock` into git for an application workspace. Do not check it in for
-a published library.
+## Reviewing a `Cargo.lock` diff
 
-```bash
-cargo update -p <dep> --precise <version>   # Move one dependency, exactly
-cargo update --dry-run                      # Preview the whole update
-cargo update                                # Update within semver ranges
-cargo generate-lockfile                     # Rebuild the lock file from scratch
-```
-
-Reviewing a `Cargo.lock` diff:
-
-- Check every version bump on a security-sensitive crate: TLS, HTTP clients,
-  compression, image and font parsers, and anything that parses untrusted input.
-- Check that an exactly pinned crate did not move. If it did, the change must
-  also carry re-blessed snapshots.
+- Check every version bump on a security-sensitive crate: TLS, HTTP clients, compression, image
+  and font parsers, and anything that parses untrusted input.
+- Check that a determinism-critical crate did not move. If it did, the change must also carry
+  re-blessed snapshots.
 - Check for a new duplicate version of a crate already in the graph. Run
-  `cargo tree --locked --duplicates` to confirm, and record the cause in
-  `deny.toml` under `skip` if the split is unavoidable.
-- A large unexplained lock diff usually means somebody ran `cargo update`
-  instead of `cargo update -p <dep>`. Ask for the reason.
+  `cargo tree --locked --duplicates` to confirm. Record an unavoidable split in the cargo-deny
+  `skip` list with its cause (policy in the `rust-security` skill).
+- A large unexplained lock diff usually means somebody ran `cargo update` or
+  `cargo generate-lockfile` instead of `cargo update -p <dep>`. Ask for the reason.
+- A new package in the diff that no manifest change explains is a red flag. Run
+  `cargo tree --locked -i <package>` to find who pulls it in.
 
-## Native build system properties
+## Scheduled latest-dependencies job
 
-Expose the minimum set of properties, and hardcode the rest so a build cannot
-be misconfigured silently.
-
-| Property | Purpose | Typical default |
-|----------|---------|-----------------|
-| `<ns>.native.enabled` | Turn the whole cargo build off | `true` |
-| `<ns>.native.abis` | Override the selected debug ABIs | Host or emulator ABI |
-| `<ns>.native.cargoProfile` | Cargo profile for CI and release | `release` or a custom profile |
-| `<ns>.local.native.cargoProfile` | Cargo profile for local development | A dev-inherited profile |
-
-Keep these values out of the property surface and fix them in the build logic:
-
-| Setting | Rule |
-|---------|------|
-| Release ABI set | Always the complete shipping set. A release must not build a subset. |
-| `minSdk` | One source of truth. It also forms the clang driver name. |
-| NDK and CMake versions | Pinned in the version catalog, resolved under the configured SDK. |
-| Output path | A generated directory under `build/`, wired into the variant. |
-
-An ABI override is useful for a debug loop. It must be impossible on the release
-path: a release APK or AAB that ships one ABI is a shipping incident.
-
-## Native artifact mapping
-
-Cargo derives the library file name from the package name with hyphens replaced
-by underscores. The platform may need a different name. Map the two explicitly
-and keep the table next to the build logic.
-
-| Cargo package | Cargo output       | Platform artifact  |
-|---------------|--------------------|--------------------|
-| `my-ffi`      | `libmy_ffi.so`     | `libmy_ffi.so`     |
-| `my-engine`   | `libmy_engine.so`  | `libmyengine.so`   |
-
-The loader name must match: `System.loadLibrary("my_ffi")` loads `libmy_ffi.so`.
-UniFFI-generated Kotlin derives this name from the crate, so renaming the
-artifact breaks the generated bindings.
-
-A privileged helper executable is not a `System.loadLibrary` target. Build it
-with a separate task and package it as an asset, not into `jniLibs`.
-
-### iOS static library mapping
-
-| Cargo package | Static library                                                   | XCFramework slice           |
-|---------------|------------------------------------------------------------------|-----------------------------|
-| `my-ffi`      | `libmy_ffi.a` (aarch64-apple-ios)                                  | `ios-arm64`                 |
-| `my-ffi`      | `libmy_ffi.a` (aarch64-apple-ios-sim + x86_64-apple-ios, `lipo`'d) | `ios-arm64_x86_64-simulator`|
-
-## Edition migration
-
-The workflow below applies to any edition bump. Do it once, workspace-wide, in a
-dedicated change.
-
-### Per-crate migration workflow
+SKILL.md has the runner, secret, and cache rules for this job. The job body:
 
 ```bash
-# Pick a leaf crate with no internal dependents.
-cd crates/<leaf-crate>
-
-# Report the silent behaviour changes FIRST. These lints go quiet once the
-# crate is on edition 2024, because the behaviour has already changed.
-cargo clippy --all-targets -- -W rust_2024_compatibility
-
-cargo fix --edition
-
-# cargo fix edits .rs files in place. Read the diff before you continue.
-git diff
-
-# Replace `edition.workspace = true` in this crate with an explicit override:
-#   edition = "2024"
-# Keep the override only during the migration. When the last crate is done,
-# bump [workspace.package] edition and restore `edition.workspace = true`
-# in every crate.
-
-# Verify.
-cargo clippy --locked -p <leaf-crate> --all-targets -- -D warnings
-cargo nextest run --locked -p <leaf-crate>
+export CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=allow   # Ignore rust-version when choosing
+rustup toolchain install stable
+cargo +stable update --verbose
+cargo +stable test --workspace
 ```
 
-### Migration order
+Run this job on current stable, not on the pinned toolchain. With `allow`, the update can select a
+dependency whose `rust-version` is newer than the pin, and the job then fails on the compiler
+version instead of on the breakage it exists to find. A `+stable` override beats
+`rust-toolchain.toml`; `rustup default stable` does not.
 
-Work from leaves inward. The FFI crate goes last, because it depends on
-everything and stricter `extern` rules hit it hardest.
+## MSRV job without a download by an old Cargo
 
-1. Host-only or pure-logic crates: the CLI crate, the error crate.
-2. Core logic crates under `#![forbid(unsafe_code)]`: domain, schema, geometry.
-3. Mid-layer crates.
-4. Backend and pipeline crates.
-5. The FFI crate.
+Use this procedure when SKILL.md says that the MSRV Cargo must not download:
 
-### Edition 2024 breaking changes that bite
+1. Run `cargo vendor --locked vendor` with the pinned toolchain, which must be 1.96.1 or later.
+2. Put the `[source]` tables that it prints in `.cargo/config.toml` for the MSRV job.
+3. Add `--offline` to the MSRV command.
 
-- **Stricter `unsafe` in `extern` blocks.** An `extern` block must now be written
-  `unsafe extern "C" { ... }` or `unsafe extern "system" { ... }`. Every item
-  inside it is unsafe to call by default. Mark an item `safe fn ...` only when
-  the callee really has no safety contract. Review the FFI crate and every crate
-  with platform C bindings.
-- **Unsafe attributes.** `#[no_mangle]`, `#[export_name]`, and
-  `#[link_section]` must be wrapped: `#[unsafe(no_mangle)]`. Every raw FFI
-  export is affected. `cargo fix --edition` rewrites them.
-- **`static mut` references stop the build.** The `static_mut_refs` lint is
-  deny-by-default on edition 2024. `&mut COUNTER` fails with
-  `error: creating a mutable reference to mutable static`. A plain read fails
-  too, because the format machinery takes a reference: `println!("{}", COUNTER)`
-  fails with `error: creating a shared reference to mutable static`. Only a
-  direct read or write of the value inside `unsafe` still compiles.
-  `#[allow(static_mut_refs)]` silences both messages. Do not use it as the
-  migration answer. `&raw mut COUNTER` and `&raw const COUNTER` build a raw
-  pointer and create no reference. A raw pointer keeps every data race the
-  `static mut` had. `cargo fix --edition` prints the `&raw mut` suggestion but
-  does not apply it. The `memory-model` skill selects the real replacement.
-- **`gen` is a reserved keyword.** Rename any identifier called `gen` before you
-  migrate. Find them with `grep -rn '\bgen\b' crates/`.
-- **Precise-capturing `impl Trait`.** A function that returns `impl Trait` and
-  captures only some of its input lifetimes now needs `use<'a, T>` syntax.
-  Iterator adapters are the usual site. `cargo fix --edition` normally handles
-  it.
-- **`if let` and `while let` chains stabilize.** You can collapse existing nested
-  patterns, but do not do it in the migration commit. Keep the migration diff
-  surgical so a reviewer can read it.
-- **Tail-expression temporaries drop earlier.** A temporary in the tail
-  expression of a block is now dropped before the block's local variables.
-  Edition 2021 dropped it after them. A body of `let _local = Noisy("local");
-  temp().0.len() > 0` prints `drop local / drop temporary` on 2021 and
-  `drop temporary / drop local` on 2024. Nothing fails to compile, so
-  `cargo fix --edition` cannot repair it. The `tail_expr_drop_order` lint is the
-  only mechanical way to find the sites.
-- **`if let` releases its scrutinee before the `else` block.** A temporary in the
-  `if let` scrutinee is now dropped before the `else` block runs. Edition 2021
-  held it to the end of the whole `if let`. A `MutexGuard` left as a temporary
-  therefore stops guarding the `else` branch: with a static `M: Mutex<Option<u32>>`,
-  `if let Some(v) = *M.lock().unwrap() { .. } else { M.try_lock().is_ok() }`
-  yields `false` on 2021 and `true` on 2024. The `if_let_rescope` lint finds the
-  sites. Bind the guard to a named local, so the drop point is explicit and
-  identical on both editions.
-
-The last two entries change run-time behaviour with a clean build and green
-tests. They are the reason the migration workflow above runs
-`-W rust_2024_compatibility` before `cargo fix --edition`, not after.
-
-### Do not bump the rustfmt edition early
-
-`rustfmt.toml:edition` controls the formatter rules, and it is independent of the
-crate edition. Bump it only after every crate is on the new edition and the
-workspace builds clean. An early bump reformats the crates that have not
-migrated yet and buries the real diff.
+Do not use `cargo fetch` for this: Cargo 1.85 changed the hash in the registry cache path, so an
+MSRV below 1.85 does not find the cache that a newer Cargo fills.

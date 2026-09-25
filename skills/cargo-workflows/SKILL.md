@@ -1,355 +1,197 @@
 ---
 name: cargo-workflows
-description: Use when you manage a Rust workspace - add or remove crates, edit workspace dependencies and lints, pin the toolchain, run cargo nextest/audit/deny, configure Cargo profiles and rustflags for cross-compilation to Android or iOS, build cdylib or staticlib FFI artifacts, wire a host build system to cargo, debug Cargo.lock churn or feature-unification surprises, or migrate the crate edition.
+description: Use when changing how Cargo builds, resolves, or tests a Rust workspace - Cargo.lock and --locked policy, dependency updates and workspace inheritance, feature-unification surprises, resolver 3 and MSRV, rust-toolchain.toml, Cargo profiles, cargo nextest config, GitHub Actions pinning and caching, cdylib or staticlib builds with cargo rustc, .cargo/config.toml for cross targets, driving cargo from a host build system, or an edition migration with cargo fix --edition. Not for Android or iOS packaging; use rust-android-build or rust-ios-build.
 license: BSD-3-Clause
 ---
 
 # Cargo Workflows
 
-This skill covers the workspace-level mechanics of Cargo: layout, dependency
-inheritance, profiles, cross-compilation, test runners, supply-chain policy, and
-edition migration. Run every command from the directory that holds the workspace
-`Cargo.toml`.
+Run every cargo command from the directory that holds the workspace `Cargo.toml`. Cargo reads
+`.cargo/config.toml` from the current directory upward, so a command run inside a member can
+build with different settings.
 
-## Workspace layout
+## `Cargo.lock` and `--locked`
 
-A multi-crate project uses a virtual manifest at the workspace root. Keep the
-control files next to it.
+Commit `Cargo.lock` for every package, libraries included. `cargo new` tracks it by default, and
+every `--locked` command needs it. Pass `--locked` on every cargo command that CI, a host build
+system, or an agent runs. Without it, a build silently resolves new versions and stops being
+reproducible. Omit it only in a command whose purpose is to change the lock: `cargo update`,
+`cargo add`, the `cargo metadata` resolve in the triage table below, and the scheduled
+latest-dependencies job.
 
-```text
-<workspace-root>/
-  Cargo.toml              # Virtual workspace manifest: members, deps, lints, profiles
-  Cargo.lock              # Checked in for an application workspace
-  rust-toolchain.toml     # Pinned toolchain + components (rustfmt, clippy)
-  rustfmt.toml            # Formatter config
-  clippy.toml             # Clippy thresholds (msrv, allowed-duplicate-crates, ...)
-  deny.toml               # cargo-deny policy
-  .cargo/config.toml      # Per-target rustflags
-  .config/nextest.toml    # nextest profiles
-  crates/
-    <leaf-crates>/        # Pure logic, no internal dependents
-    <mid-layer-crates>/
-    <ffi-crate>/          # cdylib / staticlib boundary, depends on everything
-    <cli-crate>/          # Host-only binary
-    <bench-crate>/        # Criterion benchmarks
+Change the lockfile only on purpose, in a change that says why:
+
+| Task | Command |
+|------|---------|
+| Move one dependency | `cargo update -p <dep>` or `cargo update -p <dep> --precise <version>` |
+| Preview a full update | `cargo update --dry-run` |
+| Full update within the semver ranges | `cargo update`, as a dedicated change |
+
+`cargo generate-lockfile` rebuilds an existing lockfile with the latest version of every package.
+It is a full update, not a repair. Do not run it to fix a `--locked` failure.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `cannot create the lock file ... because --locked was passed to prevent this` | `Cargo.lock` is not in the checkout | Commit it. `git ls-files --error-unmatch Cargo.lock` confirms that git tracks it. |
+| `cannot update the lock file ... because --locked was passed to prevent this` | A manifest edit needs a lock change | Resolve without building: `cargo metadata --format-version 1 > /dev/null`. Review the lock diff, and vet each new package name (the `rust-security` skill, when it is installed). Commit the lock with the manifest, then rerun the original command with `--locked`. |
+| A lock diff touches many unrelated packages | `cargo update` or `cargo generate-lockfile` ran | Revert the lock change and run `cargo update -p <dep>`. |
+
+Never repair the lock by running any command that compiles (`cargo build`, `check`, `test`,
+`clippy`, `doc`, `run`, `nextest`) without `--locked`. That command compiles the new packages and
+runs their build scripts and proc macros before anyone vets them.
+
+A committed lockfile does not reach the users of a library: they resolve from `Cargo.toml`. Add a
+scheduled CI job that runs `cargo +stable update` and then the tests on current stable, and let it
+report, not block merges. This job builds and runs packages that nobody vetted, build scripts and
+proc macros included. Run it on a GitHub-hosted runner, not on a self-hosted runner. On a
+self-hosted runner, a build script can read the credentials of that machine, reach the internal
+network, and stay on the machine after the job. Give it no secrets and
+`permissions: { contents: read }`, and do not let it save a cache (`save-if: false` on
+`Swatinem/rust-cache`). Vet each new package name in its lock diff before you adopt the update.
+
+Read [references/workspace-patterns.md](references/workspace-patterns.md) when you write this job,
+lay out a workspace, add or pin a dependency, add a member crate, or review a `Cargo.lock` diff.
+
+## Verification
+
+Iterate with the narrowest check. Run the workspace gate once before commit or merge. Add the
+feature, cross-target, and MSRV rows when the change touches features, `cfg`-gated code,
+dependencies, or manifests.
+
+| Claim | Check | A green result does not prove |
+|-------|-------|-------------------------------|
+| The crate type-checks | `cargo check --locked -p <crate>` | Codegen, linking, or monomorphization |
+| The workspace builds and links | `cargo build --locked --workspace` | Other targets or feature sets |
+| Lints pass | `cargo clippy --locked --workspace --all-targets -- -D warnings` | Unselected features and targets; rustdoc lints |
+| Doc links resolve | `RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --document-private-items` (the `rust-lints` skill owns this gate) | Doc-test behaviour |
+| Tests pass | `cargo nextest run --locked --workspace` and `cargo test --locked --workspace --doc` | Filtered-out profiles and targets |
+| Formatting | `cargo fmt --check` | Anything semantic |
+| Each feature set builds | The matrix in the Feature flags section | Unlisted combinations |
+| A shipping target compiles | `cargo check --locked --target <triple>` | Linking, or any test on that target |
+| Target tests build | `cargo test --locked --no-run --target <triple>` | That any test passes on the target: report the lane as compile-only |
+| The MSRV holds | `cargo +<msrv> test --locked --workspace` | Newer dependency versions |
+| Newest dependencies work | The scheduled latest-dependencies job | The committed lock |
+
+Pass `--all-targets` to clippy. Without it, clippy skips tests, benches, and examples, and those
+files then fail in CI on a lint that never showed locally.
+
+## CI
+
+```yaml
+# Pin each action to a full commit SHA. Keep the version in a comment.
+- uses: Swatinem/rust-cache@<full-commit-sha>   # v2.9.0 or later (node24)
+  with:
+    cache-on-failure: true
+    workspaces: "<workspace-dir> -> target"
+
+# Manual cache, when you need control over the key
+- uses: actions/cache@<full-commit-sha>          # v5 or later (node24)
+  with:
+    path: |
+      ~/.cargo/registry/index/
+      ~/.cargo/registry/cache/
+      ~/.cargo/git/db/
+      <workspace-dir>/target/
+    key: ${{ runner.os }}-cargo-${{ hashFiles('<workspace-dir>/rust-toolchain.toml', '<workspace-dir>/Cargo.lock') }}
 ```
 
-Rules:
+- Pin every action to a full commit SHA, with the version in a comment. A tag can move to new
+  code.
+- GitHub-hosted runners removed Node 20 on 2026-09-23. Use the node24 majors: `actions/checkout`
+  v5+, `actions/cache` v5+, `actions/upload-artifact` v6+. `Swatinem/rust-cache` runs on node24
+  from v2.9.0; v2.8.x and older use node20 or node16.
+- Set `cache-on-failure: true`. A failed job still compiled dependencies, and the next run can
+  reuse them.
+- Never expose secrets to a job that writes a cache that pull requests can read. Tools can copy
+  the environment into `target/`: until the 2026-09-22 nightly, `cargo miri` stored every
+  environment variable there ([Rust security advisory, 2026-09-21](https://blog.rust-lang.org/2026/09/21/github-actions-leaking-secrets-when-miri-output-is-cached/)).
+  Scope a secret to one step that does not run cargo or Miri into the cached `target/`, or do not
+  cache `target/` in that job. Clear the cache and rotate the secret if a cached job had one.
+- Do not set `RUSTFLAGS=-Dwarnings`. A `RUSTFLAGS` change rebuilds every dependency, and the
+  variable replaces the per-target `rustflags` in `.cargo/config.toml`. Use
+  `CARGO_BUILD_WARNINGS=deny` (Cargo 1.97+) or clippy's `-- -D warnings`. The `rust-lints` skill
+  owns the lint gate.
 
-- Do not hardcode the member count in documentation. Derive it with
-  `cargo metadata --locked --no-deps --format-version 1`.
-- Order the `members` list from leaf crates to the FFI crate. The order records
-  the dependency direction and drives migration order.
-- Keep helper scripts and fixture generators outside `crates/`. They are not
-  cargo packages, so they must not appear in `members`.
-
-## The `--locked` discipline
-
-Pass `--locked` on every cargo invocation that a build system, CI job, or agent
-runs. `--locked` fails the command if `Cargo.lock` would change. Without it, a
-build silently resolves new versions and the build stops being reproducible.
-
-Drop `--locked` only when you deliberately update dependencies with
-`cargo update`.
-
-## Toolchain pinning
-
-Pin the toolchain in `rust-toolchain.toml` so every machine and CI runner uses
-one compiler:
+## Toolchain, MSRV, and resolver
 
 ```toml
+# rust-toolchain.toml. Example pin: use the release the project has tested.
 [toolchain]
-channel = "1.88.0"
+channel = "1.98.1"
 components = ["rustfmt", "clippy"]
 ```
 
-Set `rust-version` in `[workspace.package]` to declare the MSRV, and mirror it
-in `clippy.toml` as `msrv = "..."` so clippy does not suggest APIs that are
-newer than the MSRV. This declaration is not proof that the resolved dependency
-graph supports the MSRV. Resolver 3 prefers compatible versions but can select
-an incompatible version when no compatible version satisfies the requirement.
-Run the real build and tests with the minimum toolchain.
+- Pin an exact release. Do not pin 1.98.0: it can emit a trait-object vtable with a null function
+  pointer, and 1.98.1 fixes it.
+- In CI, run `rustup toolchain install` with no arguments before the first cargo command. It
+  installs the toolchain that `rust-toolchain.toml` names (rustup 1.28+), so the install is a
+  logged step and not an implicit side effect. rustup 1.29.1 warns about implicit installs.
+- Set `rust-version` in `[workspace.package]` and inherit it with `rust-version.workspace = true`.
+  Clippy reads it and does not suggest newer APIs. Do not set `msrv` in `clippy.toml`: when the
+  two differ, Clippy warns and uses `clippy.toml`. The `rust-lints` skill owns that file.
+- `rust-version` is a declaration, not proof. Resolver 3 prefers dependency versions that support
+  it, but picks an incompatible version when no compatible version satisfies the requirement.
+  Prove the MSRV with the real toolchain: run `rustup toolchain install <msrv>`, then
+  `cargo +<msrv> test --locked --workspace`. The `+<msrv>` override beats `rust-toolchain.toml`.
+  When a dev-dependency needs a newer Rust than the MSRV, run
+  `cargo +<msrv> check --locked --workspace --lib --bins` instead. When cargo-hack is installed,
+  `cargo hack check --rust-version --workspace --ignore-private` does the same per package.
+- Do not let a Cargo older than 1.96.1 download from a third-party registry or over SSH git. It has
+  credential-leak, crate-extraction, and libssh2 CVEs; the `rust-security` skill has the list.
+  Read [references/workspace-patterns.md](references/workspace-patterns.md) when the MSRV is below
+  1.96.1 and the workspace uses such a source: it has the offline vendor procedure.
 
-## Cross-compilation
+Resolver rules:
 
-The same pattern applies to Android, iOS, and any other non-host target: install
-the target, put rustflags in `.cargo/config.toml`, and let the host build system
-supply the linker.
-
-Target rustflags, the manual NDK linker setup that replaces `cargo-ndk`,
-XCFramework packaging, and the rules for driving cargo from Gradle or Xcode are
-in [references/cross-compilation.md](references/cross-compilation.md).
-
-### Install the targets
-
-```bash
-# Android, full four-ABI shipping set
-rustup target add aarch64-linux-android armv7-linux-androideabi \
-    x86_64-linux-android i686-linux-android
-
-# iOS device and simulator
-rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-```
-
-### Android ABIs and Rust triples
-
-| Android ABI | Rust target             | Clang target prefix     |
-|-------------|-------------------------|-------------------------|
-| arm64-v8a   | aarch64-linux-android   | aarch64-linux-android   |
-| armeabi-v7a | armv7-linux-androideabi | armv7a-linux-androideabi|
-| x86_64      | x86_64-linux-android    | x86_64-linux-android    |
-| x86         | i686-linux-android      | i686-linux-android      |
-
-The `armeabi-v7a` clang prefix is `armv7a-`, but the Rust triple is `armv7-`.
-This mismatch breaks naive string substitution. Map the two names explicitly.
-
-The clang driver name also carries the API level. First require the application
-`minSdk` to meet the pinned NDK floor. Then compute it per ABI as the maximum of
-the application floor and the ABI floor: `<clang-prefix><api>-clang`. Never
-silently raise only the native library above devices admitted by the manifest.
-
-### iOS targets
-
-| Target                | Use                       |
-|-----------------------|---------------------------|
-| aarch64-apple-ios     | Device                    |
-| aarch64-apple-ios-sim | Simulator (Apple Silicon) |
-| x86_64-apple-ios      | Simulator (Intel, legacy) |
-
-### Cargo profiles for cross-compiled artifacts
-
-Two valid strategies exist. Choose one and write it down.
-
-**Stock profiles.** Use `dev` for local debug variants and `release` for shipping
-variants. This is the simplest option and it keeps profile behaviour identical to
-host builds.
-
-**Custom inherited profiles.** Use them when the shipped library needs different
-codegen from the host build - for example a size-optimized mobile artifact:
-
-```toml
-# Workspace Cargo.toml
-[profile.mobile-release]
-inherits = "release"
-opt-level = "z"        # Optimize for size
-panic = "unwind"       # Required: see below
-
-[profile.mobile-dev]
-inherits = "dev"
-opt-level = 1
-panic = "unwind"
-```
-
-Measure `opt-level = "z"` against `"s"` and `3` on the real artifact before you ship it: `"z"` is
-not automatically the smallest, and a compute-bound path can prefer `3`. Use
-the `rust-performance` skill for the measurement workflow when it is installed.
-
-Select the profile from the host build system with a property, and give local
-development a separate default so a debug loop does not pay for a release build.
-
-**Keep `panic = "unwind"` on any profile that builds an FFI artifact.** This is
-only a prerequisite for panic containment. With `panic = "abort"`,
-`catch_unwind` cannot catch a panic. With `panic = "unwind"`, a panic still must
-not cross a raw `extern "C"` or `extern "system"` boundary. Catch it inside each
-entry point and map it to an ABI-safe status, sentinel, or host exception.
-Verify the generated binding runtime before you rely on it to do this work.
-
-### Build only the artifact the platform consumes
-
-`cargo rustc` overrides the crate type for one invocation. The manifest can then
-keep `crate-type = ["lib"]`, so a plain `cargo build --workspace` does not pay
-for the linking work:
-
-```bash
-# Android shared library
-cargo rustc --locked --profile <profile> --target <triple> \
-    --crate-type cdylib -p <ffi-crate> --lib
-
-# iOS static library
-cargo rustc --locked --release --target aarch64-apple-ios \
-    --crate-type staticlib -p <ffi-crate> --lib
-```
-
-## FFI crate rules
-
-Prefer exactly one FFI crate. It is then the only crate that crosses the
-language boundary. Add a second FFI crate only when the platform loads the
-libraries independently - for example one `.so` per background service. Every
-extra boundary duplicates the error mapping, the panic guard, and the lifetime
-rules, so pay that cost on purpose.
-
-Two valid ways exist to declare the library target. Choose one and write it
-down.
-
-```toml
-# crates/<ffi-crate>/Cargo.toml
-
-# A. Plain Rust lib. Request cdylib or staticlib per invocation with
-#    `cargo rustc --crate-type ...`. A plain `cargo build --workspace`
-#    then does no linking work.
-[lib]
-crate-type = ["lib"]
-
-# B. Always produce the shared library. Simpler build scripts, but every
-#    workspace build links the artifact.
-[lib]
-crate-type = ["cdylib", "lib"]
-```
-
-Keep `lib` in the list under option B. Without it, no other crate in the
-workspace can use the FFI crate, and doc-tests cannot compile.
-
-### Both bindings styles
-
-| Rule | Reason |
-|------|--------|
-| `panic = "unwind"` plus a boundary panic guard | The profile permits `catch_unwind`; the guard prevents a Rust unwind from reaching the host ABI. |
-| One FFI crate where possible | A second boundary duplicates error mapping and lifetime rules. |
-| No business logic in the FFI crate | Keep it a thin translation layer over the pure-logic crates. |
-| Build `cdylib` or `staticlib` on demand with `cargo rustc` | Workspace builds stay fast. |
-
-### Raw JNI crates
-
-- The JVM loads a `.so`, so the crate must produce a `cdylib` - through option B
-  above, or through `cargo rustc --crate-type cdylib`.
-- Export `pub extern "system" fn Java_...` entry points. Edition 2024 spells the
-  attribute `#[unsafe(no_mangle)]`; earlier editions spell it `#[no_mangle]`.
-- The `jni` crate supplies the `JNIEnv`, `JClass`, and `JString` wrappers.
-- A raw JNI surface usually needs `missing_safety_doc` and
-  `not_unsafe_ptr_arg_deref` allowed, because the JNI entry points take raw
-  pointers from the JVM. Scope the allowance to the FFI crate if you can. See
-  `rust-jni`.
-
-Apply the same guard to every raw C, JNI, and callback entry point. Convert a
-normal Rust error and a panic to explicit ABI values:
-
-```rust
-use std::panic::{catch_unwind, AssertUnwindSafe};
-
-#[repr(C)]
-pub enum Status {
-    Ok = 0,
-    InvalidArgument = 1,
-    Failed = 2,
-    Panicked = 3,
-}
-
-fn calculate() -> Result<u32, ()> {
-    todo!()
-}
-
-/// # Safety
-/// `out` must be null or valid for one aligned `u32` write.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn calculate_for_host(out: *mut u32) -> Status {
-    if out.is_null() {
-        return Status::InvalidArgument;
-    }
-
-    match catch_unwind(AssertUnwindSafe(calculate)) {
-        Ok(Ok(value)) => {
-            // SAFETY: The caller contract and the null check make this write valid.
-            unsafe { out.write(value) };
-            Status::Ok
-        }
-        Ok(Err(())) => Status::Failed,
-        Err(_) => Status::Panicked,
-    }
-}
-```
-
-Do not use `catch_unwind` as a general recovery boundary. It catches only
-unwinding Rust panics. It does not catch aborts, foreign exceptions, or memory
-unsafety.
-
-### UniFFI crates
-
-- Prefer the proc-macro path: `#[uniffi::export]`, `#[derive(uniffi::...)]`, and
-  `uniffi::setup_scaffolding!()`. No `.udl` files are needed.
-- UniFFI generates the entry points. Do not write `#[no_mangle]` functions.
-- Keep the unsafe-doc lints **denied**. UniFFI hides the raw pointers, so the FFI
-  crate has no reason to relax them.
-- Gate the bindgen CLI behind a feature so a default workspace build never
-  compiles it:
-
-```toml
-[features]
-cli = ["uniffi/cli"]
-
-[[bin]]
-name = "uniffi-bindgen"
-required-features = ["cli"]
-```
-
-- Generate bindings by introspecting a **host** library, not a cross-compiled
-  artifact. Build the host `cdylib` first, then run the bindgen binary:
-
-```bash
-cargo rustc --locked -p <ffi-crate> --lib --crate-type cdylib
-
-cargo run --locked -p <ffi-crate> --features cli --bin uniffi-bindgen -- \
-    generate --library target/debug/lib<ffi_crate>.dylib \
-    --language kotlin --out-dir <kotlin-out>
-
-cargo run --locked -p <ffi-crate> --features cli --bin uniffi-bindgen -- \
-    generate --library target/debug/lib<ffi_crate>.dylib \
-    --language swift --out-dir <swift-out>
-```
-
-The library extension is `.dylib` on macOS and `.so` on Linux. The `--`
-separates the cargo arguments from the bindgen subcommand. Write the output to a
-temporary directory first, then sync it into the generated-binding modules, so a
-failed run does not leave a half-written module.
-
-See `uniffi-boundary`, `uniffi-packaging-versioning`, and
-`ffi-error-progress-cancel` for the boundary design itself.
+- Edition 2024 implies resolver `"3"` (MSRV-aware, Rust 1.84+) in a package manifest.
+- A virtual workspace has no edition. Set `resolver = "3"` in its `[workspace]` table. Without it,
+  Cargo falls back to resolver `"1"` and prints a `virtual workspace defaulting to` warning.
+- Use `"2"` only when the workspace must build with Cargo older than 1.84.
 
 ## Feature flags
 
-```toml
-[features]
-cli = ["uniffi/cli"]     # Optional tooling, off by default
-loom = ["dep:loom"]      # Concurrency model checking, off by default
-```
+- Features are additive. Once any crate in a build enables a feature, it is on for every consumer
+  in that build. Never use a feature to remove behaviour.
+- Use `dep:<name>` in a feature list. A bare optional dependency name creates an implicit public
+  feature with the same name.
+- Add `required-features` to a `[[bin]]` that needs an optional dependency. Otherwise
+  `cargo build --workspace` tries to build it and fails.
+- If a dependency's default features change the output bit-for-bit, pin the feature set and write
+  down why. A GPU or SIMD backend on a crate that must produce byte-identical output breaks
+  reproducibility.
+- Do not model loom as a Cargo feature. Loom code builds under `--cfg loom`; the `rust-test-tools`
+  skill has the setup.
+- Test the project-owned matrix: default features, `--no-default-features`, and each supported
+  feature set. Use `--all-features` only when the features are additive and the combination is a
+  supported product. When cargo-hack is installed,
+  `cargo hack check --locked -p <crate> --each-feature --exclude-all-features` runs one feature
+  at a time.
 
-Rules:
+Read [references/feature-resolution.md](references/feature-resolution.md) when a crate compiles
+features it did not ask for, a build passes with `-p <crate>` but fails with `--workspace`, or an
+inherited dependency rejects or ignores `default-features = false`.
 
-- Features are additive. Once any crate in the graph enables a feature, it stays
-  on for every consumer. Never use a feature to *remove* behaviour.
-- Set `resolver = "2"` (or newer) in the workspace manifest. It stops
-  dev-dependency features from leaking into normal dependencies.
-- Use the `dep:<name>` syntax in a feature list. A bare optional dependency name
-  creates an implicit feature with the same name that you did not intend to
-  publish.
-- Add `required-features` to a `[[bin]]` that needs an optional dependency.
-  Otherwise `cargo build --workspace` tries to build it and fails.
-- If a dependency's default features change the output bit-for-bit, pin the
-  feature set and write down why. Enabling a GPU or SIMD backend on a crate that
-  must produce byte-identical output breaks reproducibility.
-- Test the project-owned matrix: default features, `--no-default-features`, and
-  each supported feature family. Run `--all-features` only when that combination
-  is a supported product; additive features do not make exclusive backends
-  compatible.
+## Testing with cargo-nextest
 
-## Testing
-
-Use `cargo nextest` as the primary runner. It runs each test in its own process,
-which isolates crashes and gives per-test timeouts.
+When cargo-nextest is installed, use it as the main runner. It runs each test in its own process,
+which isolates crashes and gives per-test timeouts. Without it, use `cargo test --locked`.
 
 ```bash
-cargo nextest run --locked                       # All workspace tests
-cargo nextest run --locked --profile ci          # CI profile
-cargo nextest run --locked -p <crate>            # One crate
+cargo nextest run --locked --workspace
+cargo nextest run --locked --profile ci
 cargo nextest run --locked -p <crate> --test <integration-test>
-cargo test --locked --doc                        # Doc-tests: nextest skips these
+cargo test --locked --workspace --doc
 ```
 
-`cargo nextest` does not run doc-tests. Always run `cargo test --locked --doc`
-as a separate step, or the doc examples rot.
+Run `cargo test --doc` as its own step. nextest skips doc-tests, so a nextest-only gate lets
+doc examples rot.
 
 Example `.config/nextest.toml`:
 
 ```toml
+# Fail loudly on a nextest too old for the keys below.
+nextest-version = { required = "0.9.131" }
+
 [profile.default]
 fail-fast = true
 slow-timeout = { period = "60s" }
@@ -359,6 +201,7 @@ default-filter = 'not test(/^network_integration_/)'
 [profile.ci]
 fail-fast = false
 retries = 2
+flaky-result = "fail"
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 # Opt-in profile for tests that touch the network.
@@ -373,151 +216,99 @@ filter = 'test(/^network_integration_/)'
 test-group = 'network'
 ```
 
-Rules:
+- Keep network-dependent or otherwise flaky tests behind an opt-in profile and a single-threaded
+  test group.
+- Set `retries` only on the CI profile. A retry that passes hides a race, on a developer machine
+  and in CI. `flaky-result = "fail"` (nextest 0.9.131+) keeps the retry for diagnosis and still
+  fails the run.
 
-- Keep network-dependent or otherwise flaky tests behind an opt-in profile and a
-  single-threaded test group. Do not let them run in the default lane.
-- Set `retries` only on the CI profile. A retry on a developer machine hides a
-  real race.
-- Keep the deterministic end-to-end test - the golden or snapshot test - in the
-  crate that owns the orchestration, not in a leaf backend crate. Name the
-  integration test file so the `--test <name>` selector is obvious.
+The `rust-test-tools` and `rust-tdd` skills own test design.
 
-See `rust-test-tools` and `rust-tdd` for test design.
+## Native artifacts and the FFI crate
 
-## Dependency auditing
+`cargo rustc --crate-type` overrides the crate type for one invocation (stable since 1.64). The
+manifest can then keep a plain Rust library, so `cargo build --workspace` does no linking work:
 
 ```bash
-cargo audit                     # RustSec advisories only
-cargo deny --locked check       # Licenses, bans, advisories, sources
+# Shared library (Android, JVM, desktop hosts)
+cargo rustc --locked --profile <profile> --target <triple> \
+    --crate-type cdylib -p <ffi-crate> --lib
+
+# Static library (iOS)
+cargo rustc --locked --profile <profile> --target aarch64-apple-ios \
+    --crate-type staticlib -p <ffi-crate> --lib
 ```
 
-### deny.toml policy
+- Find the produced file from the target directory's final-artifact path or from
+  `--message-format=json`. Never read `deps/` or `build/` inside the target directory:
+  `build.build-dir` (Cargo 1.91+) moves them, and their layout is not stable.
+- Put `[profile.*]` sections only in the root manifest. Cargo ignores a member's profiles and
+  warns `profiles for the non root package will be ignored`.
+- `panic = "abort"` turns every `catch_unwind` guard into dead code. Keep `panic = "unwind"` on
+  a profile that builds an FFI artifact when an entry point must return an error to the host
+  instead of aborting the process. Since Rust 1.81, a panic that reaches an `extern "C"` or
+  `extern "system"` boundary aborts. The guard pattern lives in the `rust-panic-safety` skill.
+- Keep one FFI crate, a thin translation layer over the pure-logic crates. The `rust-jni`,
+  `uniffi-boundary`, `uniffi-packaging-versioning`, and `ffi-error-progress-cancel` skills own the
+  entry points and the boundary design.
 
-Write the policy so a new problem fails the build instead of adding to warning
-noise.
+Read [references/native-artifacts.md](references/native-artifacts.md) when you choose a profile
+or the manifest crate type for a shared or static library, write FFI exports or a UniFFI crate,
+or map a Cargo output name to the name a platform loader expects.
 
-**Licenses.** Allow only the licenses the current graph actually uses. A typical
-permissive set is MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause,
-BSD-3-Clause, ISC, 0BSD, Zlib, Unicode-3.0, and CDLA-Permissive-2.0. Add MPL-2.0
-only if you must - it is file-level copyleft, and the UniFFI crate family
-requires it. Adding a license to the allowlist is a deliberate legal decision,
-not a build fix.
+## Cross targets and host build systems
 
-**Advisories.** Set `yanked = "deny"`. Every `ignore` entry needs a written
-reason and a review date. An ignore without a reason becomes permanent.
+Read [references/cross-compilation.md](references/cross-compilation.md) when you set up
+`.cargo/config.toml` for a non-host target, give cargo a linker or `CC_<triple>`/`AR_<triple>`
+for a target, run tests for a target (a runner or a compile-only `--no-run` lane), or drive cargo
+from Gradle, Xcode, or CMake.
 
-**Bans.** Deny wildcard dependencies. Deny new duplicate versions, and pin each
-unavoidable transitive version split individually in `skip` with its cause. A
-blanket `multiple-versions = "warn"` lets new version skew hide in the noise.
+## Rust edition
 
-**Sources.** Deny unknown registries. Warn on unknown git sources at minimum.
+Edition 2024 is stable since Rust 1.85.0 and is the latest edition as of Rust 1.98.1. Keep the
+steady state at one edition in `[workspace.package]`, inherited with `edition.workspace = true`.
+Treat an edition bump as a workspace-wide contract change, in a dedicated change with formatting,
+clippy, and test evidence.
 
-See `rust-security` for advisory triage and supply-chain review.
+- `cargo fix --edition` cannot fix code behind inactive features or `cfg` expressions. Run it
+  with `--all-features` when the features are additive, or once per supported feature set
+  otherwise, and once per shipping `--target`.
+- Two edition-2024 changes alter drop order with a clean build and green tests: `if let`
+  scrutinee temporaries drop before the `else` block, and tail-expression temporaries drop before
+  the block's locals. Run `-W rust_2024_compatibility` before `cargo fix --edition`, because the
+  lints go quiet after the bump.
+- Do not set `style_edition` or `edition` in `rustfmt.toml` to the new edition until every crate
+  has migrated. A direct `rustfmt` call from an editor or a pre-commit hook reads both keys, and
+  then formats and parses the unmigrated crates as the new edition.
 
-## CI caching
-
-```yaml
-# Pin actions to an exact commit SHA, not a floating tag.
-- uses: Swatinem/rust-cache@<exact-pinned-sha>   # v2 line
-  with:
-    cache-on-failure: true
-    workspaces: "<workspace-dir> -> target"
-
-# Manual cache, when you need control over the key
-- uses: actions/cache@<exact-pinned-sha>          # v4 line
-  with:
-    path: |
-      ~/.cargo/registry/index/
-      ~/.cargo/registry/cache/
-      ~/.cargo/git/db/
-      <workspace-dir>/target/
-    key: ${{ runner.os }}-cargo-${{ hashFiles('<workspace-dir>/Cargo.lock') }}
-```
-
-Set `cache-on-failure: true`. A failed job still produced compiled dependencies,
-and the next run should reuse them.
+Read [references/edition-migration.md](references/edition-migration.md) when you migrate a
+crate, before the first command. It has the command sequence, the migration order, and the edition-2024 breaking changes.
 
 ## Workspace commands cheat sheet
 
 ```bash
-cargo check --locked --workspace                  # Type-check everything
-cargo build --locked --workspace                  # Codegen and link; check is not enough
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo fmt --check                                 # Format check
-cargo build --locked -p <crate>                   # Build one crate
 cargo build --locked --workspace --exclude <crate>
-cargo bench --locked -p <bench-crate>             # Criterion benchmarks, host only
+cargo bench --locked -p <bench-crate>             # Host only
 cargo tree --locked --duplicates                  # Find duplicate versions
 cargo tree --locked -i <dep>                      # Who depends on <dep>?
-cargo tree --locked -f '{p}: {f}' -i <dep>        # Which features are active
-cargo update -p <dep> --precise <version>         # Pin one dependency
-cargo update --dry-run                            # Preview a lock update
-cargo generate-lockfile                           # Rebuild Cargo.lock
+cargo tree --locked -e features -i <dep>          # Which features are active, and who enables them
 cargo metadata --locked --no-deps --format-version 1   # Member list, JSON
-cargo deny --locked check                         # Full policy check
-cargo audit                                       # Advisories only
+cargo deny --config deny.toml --locked check      # cargo-deny >= 0.20; all four checks
+cargo audit                                       # RustSec advisories only
 ```
 
-Pass `--all-targets` to clippy. Without it, clippy skips tests, benches, and
-examples, and those files then fail in CI on a lint you never saw locally.
-
-## Rust edition
-
-Edition 2024 stabilized in Rust 1.85.0 (February 2025).
-
-- Keep the steady state at one edition in `[workspace.package]`, inherited with
-  `edition.workspace = true`.
-- During a staged migration, give the crate being migrated an explicit edition.
-  Crates on different editions interoperate. Remove the overrides when the last
-  crate migrates.
-- Treat an edition bump as a workspace-wide contract change. Do it in a
-  dedicated change with `cargo fix --edition`, formatting, clippy, and test
-  evidence.
-- Bump `rustfmt.toml:edition` only **after** every crate is on the new edition
-  and the workspace builds clean. An early bump produces spurious diffs in the
-  crates that have not migrated yet.
-
-The per-crate migration workflow, the breaking changes that bite, and the
-migration order are in
-[references/workspace-patterns.md](references/workspace-patterns.md).
-
-## Feature resolution pitfalls
-
-Two resolver behaviours silently change what a workspace crate compiles. Both
-are WARNING-severity.
-
-| Pitfall | Symptom | First check |
-|---------|---------|-------------|
-| Feature unification across the workspace | A `no_std` crate gains `std`, heap allocation, or panicking infrastructure it must not contain. | `cargo tree --locked -f '{p}: {f}' -i <shared-dep>` |
-| Workspace inheritance and target-specific features | A cross-compiled build pulls in Linux-only or Windows-only code and the link step fails with missing symbols. | `cargo tree --locked --target <triple> -f '{p}: {f}' -i <dep>` |
-
-The full mechanism, the detection commands, and the fixes are in
-[references/feature-resolution.md](references/feature-resolution.md).
-
-## References
-
-- [references/workspace-patterns.md](references/workspace-patterns.md) -
-  workspace dependency inheritance, workspace lints, selective build commands,
-  `Cargo.lock` review, native artifact mapping, and edition migration.
-- [references/cross-compilation.md](references/cross-compilation.md) - target
-  rustflags, the manual NDK linker setup, XCFramework packaging, and host build
-  system integration rules.
-- [references/feature-resolution.md](references/feature-resolution.md) - feature
-  unification across the workspace, and workspace inheritance versus
-  target-specific features.
+The `rust-security` skill owns the `deny.toml` policy and advisory triage.
 
 ## Related skills
 
-- `rust-lints` - clippy configuration and lint policy
+Each applies when it is installed.
+
+- `rust-lints` - lint levels, clippy configuration, and the lint gate
+- `rust-security` - cargo-deny policy, cargo-audit, advisory triage, new-crate review
 - `rust-crate-architecture` - crate boundaries and dependency direction
-- `rust-security` - cargo-audit, cargo-deny, supply-chain review
-- `rust-test-tools` - test runners, fixtures, and coverage
-- `rust-performance` - runtime profiling and build-time tuning
-- `rust-debugging` - GDB/LLDB, async debugging, backtraces
-- `rust-unsafe` - unsafe code review
-- `rust-jni` - raw JNI entry points and JVM interop
-- `rust-android-build` - Android packaging and Gradle integration
-- `uniffi-boundary` - UniFFI type and API design
-- `uniffi-packaging-versioning` - binding packaging and version skew
-- `ffi-error-progress-cancel` - error, progress, and cancellation across the boundary
+- `rust-test-tools`, `rust-tdd` - test design, loom, golden files
+- `rust-performance` - profiling and build-time tuning
+- `rust-android-build`, `rust-ios-build` - platform packaging
+- `rust-jni`, `uniffi-boundary`, `uniffi-packaging-versioning`, `ffi-error-progress-cancel` -
+  the FFI boundary itself
+- `rust-panic-safety` - panic guards at the boundary

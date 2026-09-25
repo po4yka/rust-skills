@@ -1,96 +1,110 @@
 # Feature Resolution Pitfalls
 
-Deep material for `cargo-workflows`: resolver and feature behaviours that
-silently change what a workspace crate compiles.
+Read this file when a crate compiles code or features it did not ask for, when a build passes with
+`-p <crate>` but fails with `--workspace`, or when a workspace dependency rejects or ignores
+`default-features = false`.
+
+Contents:
+
+- Test supported feature products
+- Pitfall: feature unification enables features in `no_std` crates
+- Pitfall: an inherited dependency cannot turn default features off
 
 ## Test supported feature products
 
-Features are additive and unify for each package in the resolved graph. They
-are not exclusive runtime switches. Define the combinations the project
-supports, then test those combinations directly:
+Features are additive and unify for each package in the resolved graph. They are not exclusive
+runtime switches. Define the combinations the project supports, then test those combinations
+directly:
 
 ```bash
 cargo test --locked --workspace
 cargo test --locked -p <crate> --no-default-features
 cargo test --locked -p <crate> --no-default-features --features <feature>
-# Run only when the complete combination is supported.
+# Run only when the features are additive and the full combination is supported.
 cargo test --locked -p <crate> --all-features
+# When cargo-hack is installed: one run per feature, plus the default and the
+# no-default runs. --exclude-all-features drops the extra all-features run.
+cargo hack check --locked -p <crate> --each-feature --exclude-all-features
 ```
 
-Do not use `--all-features` as a universal quality gate when two backends are
-intentionally exclusive. Either make the features additive, or test each
-supported backend as a separate lane and reject the invalid combination with a
-clear `compile_error!`.
+Do not use `--all-features` as a universal quality gate when two backends are intentionally
+exclusive. Either make the features additive, or test each supported backend as a separate lane
+and reject the invalid combination with a clear `compile_error!`.
 
-`[target.'cfg(feature = "...")'.dependencies]` does not select dependencies by
-feature. Cargo resolves features after it selects target dependency tables.
-Use optional dependencies plus `[features]`, then put target selection in a
-real target table.
+`[target.'cfg(feature = "...")'.dependencies]` does not select dependencies by feature. Cargo
+resolves features after it selects target dependency tables. Use optional dependencies plus
+`[features]`, then put target selection in a real target table.
 
 Reference: [Cargo features](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification),
 [platform-specific dependencies](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#platform-specific-dependencies).
 
-## Pitfall: feature unification silently enables features in `no_std` crates
+## Pitfall: feature unification enables features in `no_std` crates
 
-**Severity: WARNING**
+When several packages use one dependency, Cargo builds it once with the union of their features.
+Resolver 2 and later keep three edges apart: dev-dependencies (unless the command builds tests or
+examples), build-dependencies and proc-macros, and target tables for targets not being built.
+Normal-dependency features still unify across every package that one command builds.
 
-Cargo resolves features per package, not per dependency edge. Resolver v2
-isolates dev-dependency features from normal dependencies, but normal-dependency
-features are still unified across the whole workspace. If any crate enables `std`
-on a shared dependency, every other workspace crate that uses that dependency
-gets `std` too - including a crate that declares itself `no_std`.
+The package selection therefore changes the build. Measured on Rust 1.98.1: member `b` enabled
+feature `extra` on a shared dependency. `cargo check -p app` passed, and
+`cargo check --workspace` compiled the same dependency with `extra` and failed.
 
-The concrete hazard: a bench or test binary adds `serde` with the `derive`
-feature, and `derive` turns on for every `serde` consumer. Worse, a pure-logic
-crate that was designed `no_std` for portability silently gains heap allocation,
-`println!`, or panicking infrastructure that should be absent from the shipped
-artifact.
+The hazard: one crate enables `std` or `alloc` on a shared dependency, and a crate designed as
+`no_std` silently gains heap allocation or `std`-only code. The same mechanism changes behaviour,
+not only compilation: `serde_json`'s `preserve_order` feature changes the key order for every
+crate in the build. The `rust-serde` skill has the serde_json details.
 
 Detection:
 
 ```bash
 # Show which packages activate which features on a shared dependency
-cargo tree --locked -f '{p}: {f}' -i serde | grep -v '^$'
-cargo tree --locked -f '{p}: {f}' -i <shared-dep> | grep -v '^$'
+cargo tree --locked -e features -i <shared-dep>
 
-# Check a pure-logic crate for an unexpected std/alloc pull-in
-cargo check --locked -p <no-std-crate> --no-default-features 2>&1 | grep 'std\|alloc'
+# Prove that a no_std crate builds without std: use a target that has no std.
+rustup target add thumbv7em-none-eabihf
+cargo check --locked -p <no-std-crate> --no-default-features --target thumbv7em-none-eabihf
 ```
 
-Fix: declare `default-features = false` on every dependency of a `no_std` crate,
-and verify with `cargo check --locked --no-default-features`. If a workspace test
-binary needs a `std` feature, gate it behind a dev-dependency instead of a normal
-dependency.
+A host-target `cargo check` cannot prove `no_std`, because `std` is always present on the host.
 
-Reference: [Cargo feature resolution](https://doc.rust-lang.org/cargo/reference/resolver.html#features).
+Fix: turn default features off where the dependency is declared. For an inherited dependency,
+that is the `[workspace.dependencies]` entry; the next section shows why. Let each member add the
+features it needs. Move a dependency that only tests need to `[dev-dependencies]`. Check the
+`no_std` crate on its own with `-p`, and check the workspace build too.
 
-## Pitfall: workspace inheritance breaks target-specific features
+Reference: [Cargo feature resolver version 2](https://doc.rust-lang.org/cargo/reference/features.html#feature-resolver-version-2).
 
-**Severity: WARNING**
+## Pitfall: an inherited dependency cannot turn default features off
 
-When you define a dependency in `[workspace.dependencies]` and reference it as
-`foo = { workspace = true }` in a member crate, resolver v2 sometimes fails to
-limit features to the current compilation target. The same dependency declared
-directly in the member crate resolves correctly.
+An inherited dependency (`foo = { workspace = true }`) accepts only `optional` and `features`
+beside `workspace`. `features` adds to the features of the `[workspace.dependencies]` entry. When
+the workspace entry keeps default features on, a member cannot turn them off:
 
-The symptom: a platform-specific feature turns on for all platforms. A
-cross-compiled Android or iOS build then pulls in Linux-only or Windows-only code
-that the NDK or SDK does not provide, and the link step fails with missing
-symbols. A `#![forbid(unsafe_code)]` or `no_std` crate can break the same way.
+| Member edition | Result on Cargo 1.98.1 (measured) |
+|----------------|-----------------------------------|
+| 2024 | Hard error: `` `default-features = false` cannot override workspace's `default-features` `` |
+| 2021 and older | Warning: `` `default-features` is ignored for foo, since `default-features` was not specified for `workspace.dependencies.foo` ``. The default features stay on. |
+
+The 2021 case is the dangerous one. A target table such as
+`[target.'cfg(target_arch = "wasm32")'.dependencies] foo = { workspace = true, default-features = false }`
+still builds the default features for that target. The link or compile step then fails on code
+the target cannot support, and the warning scrolls past.
+
+Fix: put `default-features = false` in the `[workspace.dependencies]` entry. Let each member, or
+each target table, add the features it needs with `features = [...]`.
 
 Detection:
 
 ```bash
-cargo tree --locked --target aarch64-linux-android -f '{p}: {f}' -i <dep>
-cargo tree --locked --target aarch64-apple-ios     -f '{p}: {f}' -i <dep>
+cargo tree --locked --target <triple> -e features -i <dep>
 ```
 
-Compare the output with the host resolution. A feature that appears only on the
-cross target - or that appears on the cross target and should not - confirms the
-problem.
+Compare the output with the host resolution. A default feature that appears on a target where
+the member disabled it confirms the problem.
 
-Workaround: for a dependency whose target-specific features matter, declare it
-directly in the member crate under `[target.'cfg(...)'.dependencies]` instead of
-inheriting it from the workspace.
+Cargo 1.99, due 2026-10-01 and not stable as of Rust 1.98.1, lets an edition-2024 member override
+an inherited `default-features`. Do not rely on it until the pinned toolchain is 1.99 or later and
+the member is on edition 2024.
 
-Reference: Cargo issue #11779.
+Reference: [inheriting a dependency from a workspace](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#inheriting-a-dependency-from-a-workspace);
+Cargo issue #11779, closed as expected behaviour.

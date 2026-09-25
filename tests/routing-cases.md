@@ -17,6 +17,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | Cargo.lock | cargo-workflows |
 | cargo nextest | cargo-workflows |
 | feature-unification | cargo-workflows |
+| cargo fix --edition | cargo-workflows |
+| rust-toolchain.toml | cargo-workflows |
 | publish a Rust crate | rust-crate-release |
 | cargo publish | rust-crate-release |
 | cargo package | rust-crate-release |
