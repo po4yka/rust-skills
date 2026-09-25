@@ -1,7 +1,7 @@
 # Serde Data Model and Lifetime Bounds
 
-Use this reference when a type derives successfully but a generic parser, one format, or a
-boundary value fails.
+Use this reference when a type derives successfully but a generic parser, a map key, or a large
+number fails. Behavior was measured with serde 1.0.229 and serde_json 1.0.151 on Rust 1.98.1.
 
 ## Choose the deserialization bound from input ownership
 
@@ -32,19 +32,23 @@ where
 }
 ```
 
-Do not use `Deserialize<'static>` as an owned-data shortcut. It asks the decoder to borrow for
-the program lifetime. It rejects normal input buffers and can force needless allocation. The
-relationship is `DeserializeOwned` equals `for<'de> Deserialize<'de>`, not
-`Deserialize<'static>`.
+A type that borrows (a `&'a str` field) cannot satisfy `DeserializeOwned`. The compiler reports
+``implementation of `Deserialize` is not general enough``. Change the bound to
+`Deserialize<'de>` and keep the input alive, or make the field owned (`String`).
+
+Do not use `Deserialize<'static>` as an owned-data shortcut. It accepts only `'static` input, so
+it rejects a normal `String` or read buffer. `DeserializeOwned` equals
+`for<'de> Deserialize<'de>`, not `Deserialize<'static>`.
 
 ## A derive does not prove format compatibility
 
 Serde defines a data model. Each format implements only the parts it can represent. A map key
 is the common failure point.
 
-JSON object keys are strings. `serde_json` accepts string-like keys and supported scalar keys,
-including integers that it can render as strings. It rejects compound keys such as tuples,
-structs, maps, and sequences.
+JSON object keys are strings. `serde_json` writes these key types as strings: `String` and
+`&str`, `char`, `bool`, integers up to `i128` and `u128`, floats, unit enum variants, and newtype
+structs that wrap one of these. It rejects tuples, structs, sequences, maps, and newtype enum
+variants with `key must be a string`.
 
 Choose one contract:
 
@@ -52,22 +56,25 @@ Choose one contract:
 - Encode the map as a sequence of `{ "key": ..., "value": ... }` records.
 - Select a format whose map keys support the required data model.
 
-Do not test only `HashMap<String, T>` when the public type uses a newtype, integer, tuple, or
-enum key. Serialize the exact public type with the selected format.
-
 ## Define the large-integer policy
 
-The default `serde_json::Number` and `serde_json::Value` model does not hold every `i128` or
-`u128`. `Number::from_i128` and `Number::from_u128` return `None` outside their supported range.
-Parsing a larger JSON number into `Value` can also fail.
+The serde_json table in [SKILL.md](../SKILL.md) gives what `Value`, `to_value`, `json!`, and
+`to_string` do with a large integer. This section adds the `Number` internals and the policy.
 
-This does not mean that every direct streaming serialization of `i128` or `u128` fails. A
-serializer can write the decimal digits without constructing a `Value`. Therefore test the
-actual path. A direct `to_writer` path and a `to_value` then `to_writer` path have different
-representational limits.
+Without the `arbitrary_precision` feature, `serde_json::Number` holds an `i64`, a `u64`, or an
+`f64`:
 
-Do not convert an integer through `f64` unless the schema permits precision loss. Values above
-the exact integer range of the chosen floating-point representation can round silently.
+- `Number::from_i128` and `Number::from_u128` return `None` outside the `i64` and `u64` range.
+- A typed `u64` field rejects a larger integer with
+  ``invalid type: floating point `1.8446744073709552e+19`, expected u64``.
+- The `to_string` path and the `to_value` path have different limits, so test the path that
+  production uses.
+
+`arbitrary_precision` stores the digits as text, so these values survive
+`JSON -> Value -> JSON` exactly.
+
+Do not convert an integer through `f64` unless the schema permits precision loss.
+`9007199254740993` parsed as `f64` becomes `9007199254740992.0`.
 
 Choose and document one policy:
 
@@ -75,33 +82,13 @@ Choose and document one policy:
 | --- | --- |
 | Integer fits the default JSON number range | Reject outside the range before serialization |
 | Integer is a decimal string | Validate the canonical string and its sign or width |
-| Arbitrary-precision JSON number | Enable the format feature deliberately and test every consumer |
+| Arbitrary-precision JSON number | Enable the feature deliberately and test every consumer |
 | Binary integer | Select a format and schema with an explicit 128-bit representation |
-
-## Run boundary round trips
-
-For each supported format and version, test:
-
-1. Serialize the current type.
-2. Parse the bytes with the oldest supported reader.
-3. Serialize with the oldest supported writer fixture.
-4. Parse with the current reader.
-5. Assert the semantic value, not only successful parsing.
-
-Include these values when they are in the schema:
-
-- empty strings, collections, and maps;
-- zero, signed minimum, and unsigned maximum;
-- the largest value below and the first value above the documented JSON range;
-- every map-key family;
-- aliases, defaults, and unknown fields;
-- every enum representation.
-
-A compile check proves the trait implementations. Only these format-specific round trips prove
-the wire contract.
 
 ## Authoritative references
 
 - [Serde deserializer lifetimes](https://serde.rs/lifetimes.html)
 - [Serde data model](https://serde.rs/data-model.html)
+- [Serde enum representations](https://serde.rs/enum-representations.html)
 - [`serde_json::Number`](https://docs.rs/serde_json/latest/serde_json/struct.Number.html)
+- [serde_json feature flags](https://github.com/serde-rs/json/blob/master/Cargo.toml)

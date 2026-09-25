@@ -192,6 +192,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | DeserializeOwned | rust-serde |
 | JSON map key | rust-serde |
 | large integer | rust-serde |
+| preserve_order | rust-serde |
+| postcard | rust-serde |
 | typosquat | rust-security |
 | cargo-audit | rust-security |
 | path traversal | rust-security |
