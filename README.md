@@ -6,7 +6,7 @@
 ownership semantics · unsafe review · async · mobile delivery · FFI · native linking · releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
-[![Rust 1.97 · edition 2024](https://img.shields.io/badge/rust-1.97%20%C2%B7%20edition%202024-000000?style=flat-square&logo=rust)](checks/rust-toolchain.toml)
+[![Rust 1.98 · edition 2024](https://img.shields.io/badge/rust-1.98%20%C2%B7%20edition%202024-000000?style=flat-square&logo=rust)](checks/rust-toolchain.toml)
 [![License BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-0969da?style=flat-square)](LICENSE)
 
 </div>
@@ -69,21 +69,25 @@ Enter by the symptom, not by the skill name.
 | `E0382`, `E0499`, E0282/E0283/E0284, or `does not live long enough` | [rust-compiler-errors](skills/rust-compiler-errors/SKILL.md) |
 | A temporary lifetime, drop scope, two-phase borrow, or method autoref depends on syntax | [rust-borrow-semantics](skills/rust-borrow-semantics/SKILL.md) |
 | A match guard, partial move, binding mode, or match ergonomics change is surprising | [rust-pattern-semantics](skills/rust-pattern-semantics/SKILL.md) |
-| `cannot be sent between threads safely` across an `.await` | [rust-async-internals](skills/rust-async-internals/SKILL.md) |
+| A lock guard or `RefCell` borrow held across `.await`, or a `Send` bound on an async closure or an `async fn` in a trait | [rust-async-internals](skills/rust-async-internals/SKILL.md) |
 | A disabled `tokio::select!` branch has side effects, a `JoinHandle` detached, or shutdown hangs | [rust-async-internals](skills/rust-async-internals/SKILL.md) |
 | `Ordering::Relaxed` versus `SeqCst`, a fence you cannot justify | [memory-model](skills/memory-model/SKILL.md) |
 | A global: `static mut`, `OnceLock`, `LazyLock`, `thread_local!` | [memory-model](skills/memory-model/SKILL.md) |
 | A macro to write or debug: `macro_rules!`, a derive, `cargo expand` | [rust-macros](skills/rust-macros/SKILL.md) |
 | You implement `Iterator` or `IntoIterator` for your own type | [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) |
+| Where a module file goes (`mod.rs` or `name.rs`), `unreachable_pub`, or a `lib.rs` re-export | [rust-code-style](skills/rust-code-style/SKILL.md) |
+| A red clippy, `cargo fmt`, or `cargo doc` gate, or `unfulfilled_lint_expectations` | [rust-lints](skills/rust-lints/SKILL.md) |
 | A `SAFETY` comment, `MaybeUninit`, Strict Provenance, `repr(packed)`, or `mem::zeroed` | [rust-unsafe](skills/rust-unsafe/SKILL.md) |
 | Miri, ThreadSanitizer, HWASan, or MTE reports something | [rust-sanitizers-miri](skills/rust-sanitizers-miri/SKILL.md) |
 | You need the profile first: flamegraph, simpleperf, `cargo-bloat` | [rust-performance](skills/rust-performance/SKILL.md) |
 | The profile already named the hot spot: allocations, type size, hasher | [rust-hot-path](skills/rust-hot-path/SKILL.md) |
 | Borrow or clone at an API boundary: `Cow<str>`, `to_mut`, clone cost | [rust-copy-on-write](skills/rust-copy-on-write/SKILL.md) |
 | A tombstone, a stripped backtrace, `addr2line` symbolication | [rust-debugging](skills/rust-debugging/SKILL.md) |
+| `SetLoggerError`, or a `tracing` subscriber in a cdylib that emits nothing | [rust-observability](skills/rust-observability/SKILL.md) |
 | `UnsatisfiedLinkError`, `AttachCurrentThread`, `FindClass`, or an Android ClassLoader failure | [rust-jni](skills/rust-jni/SKILL.md) |
 | Swift calls Rust through a C ABI, an opaque handle, or an `@MainActor` callback | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) |
-| UniFFI packaging, checksum mismatch, mobile support matrix, or final-artifact release proof | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
+| A `uniffi::export` macro error, `UnexpectedUniFFICallbackError`, or a Record-versus-Object choice | [uniffi-boundary](skills/uniffi-boundary/SKILL.md) |
+| A UniFFI checksum mismatch, a `RustBuffer` error, binding version skew, a mobile support matrix, or final-artifact release proof | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
 | `Activity` lifecycle, `ViewModel.onCleared`, process death, or a callback release race | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) |
 | A `RUSTSEC` advisory, or a new dependency nobody vetted | [rust-security](skills/rust-security/SKILL.md) |
 | `DeserializeOwned`, a JSON map key, a large integer, or `rename_all` broke the wire format | [rust-serde](skills/rust-serde/SKILL.md) |
@@ -96,7 +100,8 @@ Enter by the symptom, not by the skill name.
 | A `HashMap<TypeId, _>` whose values borrow, `dyn Any`, `downcast_ref` | [rust-type-erasure](skills/rust-type-erasure/SKILL.md) |
 | Every handler in an event loop needs `&mut` to one shared state | [rust-event-loop-state](skills/rust-event-loop-state/SKILL.md) |
 | 16 KiB page alignment, native debug symbols, or an Android AAR or Prefab package | [rust-android-build](skills/rust-android-build/SKILL.md) |
-| `Rust for iOS`, `IPHONEOS_DEPLOYMENT_TARGET`, XCFramework assembly outside UniFFI | [rust-ios-build](skills/rust-ios-build/SKILL.md) |
+| `Rust for iOS`, `IPHONEOS_DEPLOYMENT_TARGET`, XCFramework and SwiftPM packaging, UniFFI builds included | [rust-ios-build](skills/rust-ios-build/SKILL.md) |
+| `because --locked was passed to prevent this`, or a feature that another crate turned on | [cargo-workflows](skills/cargo-workflows/SKILL.md) |
 | A SemVer bump, `cargo package`, `cargo publish`, or crates.io recovery | [rust-crate-release](skills/rust-crate-release/SKILL.md) |
 | `build.rs`, `pkg-config`, an undefined symbol, or a packaged DLL failure | [rust-native-linking](skills/rust-native-linking/SKILL.md) |
 | HTTP timeout, safe retries, TLS verification, body limits, or graceful shutdown | [rust-networking](skills/rust-networking/SKILL.md) |
@@ -184,13 +189,13 @@ owns it.
 
 | Skill | What it covers |
 | --- | --- |
-| [rust-compiler-errors](skills/rust-compiler-errors/SKILL.md) | Diagnostic triage, root-cause grouping, E0282/E0283/E0284 type anchors, borrow fixes, `Send` across `.await`, and syntax-sensitive E0716 routing. |
-| [rust-borrow-semantics](skills/rust-borrow-semantics/SKILL.md) | Syntax-sensitive temporary lifetimes, drop scopes, place and value expressions, method autoref, and reservation versus activation in two-phase borrows. |
-| [rust-pattern-semantics](skills/rust-pattern-semantics/SKILL.md) | Binding modes, partial moves, match-guard repetition, scrutinee ownership, or-patterns, exhaustiveness policy, and edition 2024 match ergonomics. |
-| [rust-discipline](skills/rust-discipline/SKILL.md) | API and trait design, method lookup, autoderef and UFCS, coherence, panic policy, hot-path allocation, concurrency choices, and FFI review gates. |
-| [rust-code-style](skills/rust-code-style/SKILL.md) | Module file layout, `lib.rs` re-export policy, visibility levels, item order, import groups, and the `thiserror` versus `anyhow` choice. |
-| [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) | Workspace layering, dependency direction rules, the crate-versus-module decision, and module layout for a crate that grew too large. |
-| [rust-lints](skills/rust-lints/SKILL.md) | `workspace.lints`, `clippy.toml`, `rustfmt.toml`, and `deny.toml` policy, safe lint tightening, suppression justification, and red-gate triage. |
+| [rust-compiler-errors](skills/rust-compiler-errors/SKILL.md) | Diagnostic triage, fixes that compile and hide the bug, E0432/E0433 unresolved imports, E0282/E0283/E0284 and never-type anchors, borrow and `Drop` fixes, E0716 routing, and E0038. |
+| [rust-borrow-semantics](skills/rust-borrow-semantics/SKILL.md) | Syntax-sensitive temporary lifetimes, drop scopes, place and value expressions, method autoref, reservation versus activation in two-phase borrows, and edition 2024 temporary-scope changes. |
+| [rust-pattern-semantics](skills/rust-pattern-semantics/SKILL.md) | Binding modes, partial moves, match-guard repetition, `if let` guards and let chains with their version gates, scrutinee ownership, or-patterns, exhaustiveness policy, and edition 2024 match ergonomics. |
+| [rust-discipline](skills/rust-discipline/SKILL.md) | API shape review: pub signatures, trait bounds, blanket and sealed impls, newtypes, `Drop` guards, and SemVer hazards; method lookup, autoderef, UFCS, and coherence (E0034, E0119, E0117). |
+| [rust-code-style](skills/rust-code-style/SKILL.md) | Module file layout, `lib.rs` re-export policy, visibility levels, item order, import groups, the `thiserror` versus `anyhow` choice, and rustdoc `# Errors` and `# Panics` sections. |
+| [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) | Workspace layering, dependency direction rules, the crate-versus-module decision, and crate split, merge, and delete procedures. |
+| [rust-lints](skills/rust-lints/SKILL.md) | `workspace.lints`, `clippy.toml`, and `rustfmt.toml` policy, rustc, clippy, and rustdoc lint levels, safe lint tightening, suppression justification, and red-gate triage. |
 | [rust-macros](skills/rust-macros/SKILL.md) | `macro_rules!` textual scope and hygiene, fragment follow sets, the recursion limit, proc-macro crate rules, and the facade-and-derive crate split. |
 | [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) | The producing side of iteration: a hand-written `Iterator`, the three `IntoIterator` impls, `FromIterator` and `Extend`, `size_hint`, and the `unconditional_recursion` stack overflow. |
 | [rust-variance](skills/rust-variance/SKILL.md) | Variance, subtyping, and lifetime coercion: the two probe functions that settle any case in one `rustc` run, the table for every constructor and `PhantomData` form, why a trait bound matches by equality, and why adding interior mutability is a breaking change. |
@@ -207,13 +212,13 @@ owns it.
 
 | Skill | What it covers |
 | --- | --- |
-| [cargo-workflows](skills/cargo-workflows/SKILL.md) | Workspace and lockfile discipline, resolver and MSRV lanes, project-owned feature matrices, target runners, Cargo config lookup, and staged edition migration. |
+| [cargo-workflows](skills/cargo-workflows/SKILL.md) | Workspace and lockfile discipline, resolver and MSRV lanes, feature unification and feature matrices, profiles, cross-target config and runners, cargo-nextest, pinned GitHub Actions, and staged edition migration. |
 | [rust-crate-release](skills/rust-crate-release/SKILL.md) | SemVer and MSRV classification, registry publishing, deterministic binary archives, checksums, SBOMs, provenance, signing, consumer verification, and release recovery. |
-| [rust-native-linking](skills/rust-native-linking/SKILL.md) | Cargo native integration, deterministic build scripts, separate Rust and native compiler flags, bindings, cross-target linking, and Windows MSVC/GNU verification. |
+| [rust-native-linking](skills/rust-native-linking/SKILL.md) | Cargo native integration in one `*-sys` crate, deterministic build scripts, separate Rust and native compiler flags, bindings, cross-target and Windows MSVC/GNU linking, runtime loading, and link or load failure triage. |
 | [rust-serde](skills/rust-serde/SKILL.md) | Wire compatibility, owned versus borrowed deserialization, format-specific map keys, large-number policy, boundary validation, and exact-format round trips. |
 | [rust-security](skills/rust-security/SKILL.md) | cargo-audit, cargo-deny policy, RUSTSEC advisory triage, new-crate vetting against typosquat risk, and untrusted-input parser hardening. |
 | [rust-android-build](skills/rust-android-build/SKILL.md) | Android cdylib builds, NDK and per-ABI flags, 16 KiB alignment, ELF and size gates, native debug symbols, installed release smoke tests, and reusable AAR or Prefab packages. |
-| [rust-ios-build](skills/rust-ios-build/SKILL.md) | iOS device and simulator static libraries, C headers and modulemaps, XCFramework and SwiftPM packaging, deployment-target and symbol verification, and simulator and device release smoke tests. |
+| [rust-ios-build](skills/rust-ios-build/SKILL.md) | iOS device and simulator static libraries, C headers and modulemaps, XCFramework and SwiftPM packaging (UniFFI builds included), deployment-target and symbol verification, signing, and simulator and device release smoke tests. |
 | [rust-wasm](skills/rust-wasm/SKILL.md) | Exact WebAssembly host and target selection, JavaScript boundary ownership, panic and async behavior, WASI capabilities, runtime tests, feature compatibility, and packaged size gates. |
 | [rust-embedded-no-std](skills/rust-embedded-no-std/SKILL.md) | Bare-metal and `no_std` policy for runtime and memory layout, panic and allocation, interrupts and critical sections, task frameworks, finite resource budgets, and real-device diagnostics. |
 
@@ -226,8 +231,8 @@ owns it.
 
 | Skill | What it covers |
 | --- | --- |
-| [rust-tdd](skills/rust-tdd/SKILL.md) | The red-green-refactor-lint cycle, nextest filters, hand-written fakes, fault-injection queues, and golden contracts with a safe bless procedure. |
-| [rust-test-tools](skills/rust-test-tools/SKILL.md) | nextest, cargo-careful, loom, proptest, cargo-fuzz, cargo-mutants survived-mutant triage, and deterministic golden tests. |
+| [rust-tdd](skills/rust-tdd/SKILL.md) | Test-first red-green-refactor, bug reproduction, refactor safety nets, hand-written fakes, a fault-injection queue, async tokio tests with paused time, and golden-bless rules. |
+| [rust-test-tools](skills/rust-test-tools/SKILL.md) | loom, proptest, cargo-fuzz and differential fuzz targets, cargo-careful, cargo-mutants survived-mutant triage, and golden or snapshot tests. |
 | [rust-sanitizers-miri](skills/rust-sanitizers-miri/SKILL.md) | ASan, TSan, and MSan, Miri validity and provenance checks, bounded many-seed schedules, FFI stubbing, HWASan and MTE, and report triage. |
 | [rust-panic-safety](skills/rust-panic-safety/SKILL.md) | Unwind versus abort, FFI panic guards, safe disposal of a panicking payload, unwrap and expect audits, privacy-safe hooks, and typed-error mapping. |
 
@@ -240,11 +245,11 @@ owns it.
 
 | Skill | What it covers |
 | --- | --- |
-| [memory-model](skills/memory-model/SKILL.md) | Atomic ordering selection, happens-before reasoning, fence placement, compare-exchange rules, and verification with Miri and loom. |
-| [rust-async-internals](skills/rust-async-internals/SKILL.md) | `tokio::select!` evaluation and cancel safety, task ownership and detached handles, async closure lending, shutdown trees, and blocking-work routing. |
-| [rust-unsafe](skills/rust-unsafe/SKILL.md) | The unsafe lint floor, validity and Strict Provenance, SAFETY comments, FFI panic guards, unaligned reads, and Miri Tree Borrows review. |
+| [memory-model](skills/memory-model/SKILL.md) | Atomic ordering selection, happens-before reasoning, fence placement, compare-exchange and `update` loops, global state (`static mut`, `OnceLock`, `LazyLock`, `thread_local!`), and verification with Miri and loom. |
+| [rust-async-internals](skills/rust-async-internals/SKILL.md) | `tokio::select!` and timeout cancel safety, task ownership and shutdown trees, blocking-work routing, runtime setup, manual polling with `Waker::noop`, `Send` bounds on async closures and `async fn` in traits, and stall triage. |
+| [rust-unsafe](skills/rust-unsafe/SKILL.md) | `#![forbid(unsafe_code)]` governance, the unsafe lint floor, SAFETY comments, validity and Strict Provenance, `MaybeUninit` and transmute, unaligned reads, syscall wrappers, zero-copy buffers, and manual `unsafe impl Send`. |
 | [rust-pin-projection](skills/rust-pin-projection/SKILL.md) | `Pin`, `Unpin` and `PhantomPinned`: why a `Pin` on an `Unpin` type enforces nothing, `std::pin::pin!` against `Box::pin` and `Pin::new_unchecked`, the four structural pinning obligations, and `pin-project` against `pin-project-lite`. |
-| [rust-send-sync](skills/rust-send-sync/SKILL.md) | The auto traits as a subject: `&T: Send` exactly when `T: Sync`, the reference and smart-pointer table, `Mutex` against `RwLock` payload bounds, `MutexGuard` as `!Send` but `Sync`, and `PhantomData` markers that remove exactly one trait. |
+| [rust-send-sync](skills/rust-send-sync/SKILL.md) | The auto traits as a subject: `&T: Send` exactly when `T: Sync`, the reference and smart-pointer table, `Mutex` against `RwLock` payload bounds, `MutexGuard` as `!Send` but `Sync`, `PhantomData` markers that remove exactly one trait, and auto-trait leakage through `impl Trait` and `async fn`. |
 | [rust-event-loop-state](skills/rust-event-loop-state/SKILL.md) | Who owns the handler set and who owns the state in a tick loop, state as a trait parameter with capability bounds, when an ECS-shaped world earns its runtime conflict panic, and why `async fn(&mut State)` cannot suspend over shared state. |
 
 </details>
@@ -259,7 +264,7 @@ owns it.
 | [rust-performance](skills/rust-performance/SKILL.md) | Flamegraphs, simpleperf and Instruments, cargo-bloat and cargo-llvm-lines, Criterion baselines, LTO profiles, and build-time tuning. |
 | [rust-hot-path](skills/rust-hot-path/SKILL.md) | What to change once a profile names the hot spot: allocation rate, type size, hasher choice, bounds checks, inline attributes, and buffered I/O. |
 | [rust-copy-on-write](skills/rust-copy-on-write/SKILL.md) | The decision before the profile: `Cow` in return and argument position, the `to_mut` allocation trap, the lifetime a `Cow` field forces on callers, and measured persistent-collection costs. |
-| [rust-debugging](skills/rust-debugging/SKILL.md) | Host-first reproduction, logcat and tombstones, symbolication with addr2line and atos, FFI panic hooks, and a panic-to-cause triage table. |
+| [rust-debugging](skills/rust-debugging/SKILL.md) | Host-first reproduction, logcat and tombstones, symbolication with addr2line and atos, JNI and UniFFI panic signatures, and a panic-to-cause triage table. |
 | [rust-observability](skills/rust-observability/SKILL.md) | `tracing`, production metric contracts, histogram and cardinality budgets, OpenTelemetry context propagation, redaction, bounded exporters, host sinks, and telemetry snapshots. |
 | [rust-networking](skills/rust-networking/SKILL.md) | Production client and server policy for deadline budgets, safe retries, TLS, proxy and DNS, connection pools, streaming limits, overload, cancellation, and graceful shutdown. |
 | [rust-database](skills/rust-database/SKILL.md) | Production database policy for pool budgets, transaction ownership, cancellation, isolation and bounded retries, compatible migrations, and real-schema integration tests. |
@@ -275,8 +280,8 @@ owns it.
 | --- | --- |
 | [rust-jni](skills/rust-jni/SKILL.md) | JNI symbols and panic containment, thread attachment, local references, Android ClassLoader-safe caches, R8 lookup tests, and native crash triage. |
 | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) | A hand-written Rust C ABI for Swift with opaque handles, allocator symmetry, callback lifetime, Swift concurrency isolation, cancellation, and real consumer tests. |
-| [uniffi-boundary](skills/uniffi-boundary/SKILL.md) | Record-versus-Object shape, `Arc` ownership, callbacks, type mapping, async exports, and mobile engine ownership across Kotlin and Swift. |
-| [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) | jniLibs and XCFramework packaging, binding/runtime pinning, mobile support matrices, exact consumer-artifact device proof, and immutable release closures. |
+| [uniffi-boundary](skills/uniffi-boundary/SKILL.md) | Record-versus-Object shape, `Arc` ownership, foreign callbacks, custom types, async exports, macro and bindgen error triage, and mobile engine ownership across Kotlin and Swift. |
+| [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) | jniLibs packaging, the UniFFI header and modulemap for an XCFramework, binding/runtime pinning, additive-versus-breaking FFI changes, checksum-mismatch triage, mobile support matrices, exact consumer-artifact device proof, and immutable release closures. |
 | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) | Versioned errors, progress and cooperative cancellation, plus mobile owner teardown, UI delivery, process restart, memory pressure, and callback-release races. |
 
 </details>
@@ -332,7 +337,7 @@ invocations, and failure triage that a codebase learns the hard way.
 > consuming workspace and toolchain.
 
 - Every ` ```rust ` block in the catalog is extracted and type-checked in CI against the
-  toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.97 on edition 2024. Blocks that
+  toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.98.1 on edition 2024. Blocks that
   cannot compile standalone carry a fence tag saying so. Portable `rust,run` blocks are also
   compiled and executed on the native CI host.
 - Pinned versions age. Where a skill names a crate or tool version, treat it as the version the
