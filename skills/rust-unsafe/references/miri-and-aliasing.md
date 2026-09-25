@@ -4,6 +4,18 @@ The proof side of unsafe: what makes an abstraction unsound after it compiles, a
 that find it. [unsafe-patterns.md](unsafe-patterns.md) holds the patterns you write.
 [SKILL.md](../SKILL.md) holds the rules.
 
+Contents:
+
+- Asserting an auto trait on each field; the derive leak
+- Reference fabrication with `RefCell::as_ptr`
+- The `ManuallyDrop<String>` fabrication, and why Miri clears it
+- Aliasing models: Stacked Borrows and Tree Borrows
+- Miri invocations, and FFI code that Miri cannot run
+- Clippy invocations for unsafe
+
+Miri messages below were measured on Miri nightly-2026-05-15 unless a line says otherwise. The
+numbers in `<N>` and `allocN` change from run to run.
+
 ## Asserting an auto trait on each field
 
 A manual `unsafe impl Send` on a wrapper is unconditional, so it stays accepted after the fields
@@ -27,23 +39,12 @@ const _: () = {
 
 An `Inner` that gains an `Rc<_>` field fails this with E0277.
 
-### You cannot implement `Send` for a reference type
+A negative assertion, that a handle stays `!Send`, has no clean stable form. Use
+`static_assertions::assert_not_impl_all!` (last release 1.1.0, 2019-11-03) or a `compile_fail`
+doctest.
 
-`Send` and `Sync` carry a default impl, so rustc accepts a manual impl only for a struct, enum,
-or union that you own:
-
-```rust,compile_fail
-struct MyType(i32);
-unsafe impl Send for &MyType {}
-```
-
-```text
-error[E0321]: cross-crate traits with a default impl, like `Send`, can only be implemented
-              for a struct/enum type, not `&MyType`
-```
-
-There is one lever, and it is `MyType: Sync`. `&T: Send` holds exactly when `T: Sync`. No
-`unsafe impl` written on the reference type substitutes for it.
+`unsafe impl Send for &T` is E0321; `T: Sync` is the only lever, because `&T: Send` holds exactly
+when `T: Sync`. The `rust-send-sync` skill, when it is installed, has the diagnostic.
 
 ### A derive is a `&self` API
 
@@ -67,10 +68,12 @@ Give the wrapper a `T` whose `Debug` impl clones an `Rc`, and the non-atomic ref
 scoped threads and 300 iterations under Miri are enough:
 
 ```text
-error: Undefined Behavior: Data race detected between (1) non-atomic read on thread `unnamed-1`
-       and (2) retag write of type `usize` on thread `unnamed-2` at alloc271
-  --> library/core/src/cell.rs:513:31
+error: Undefined Behavior: Data race detected between (1) non-atomic write on thread `unnamed-1`
+       and (2) non-atomic read on thread `unnamed-2` at alloc270
 ```
+
+The access kinds in the message change with the interleaving; the `Data race detected` prefix
+does not.
 
 An unconditional `unsafe impl<T> Sync for Wrapper<T> {}` is sound only for a type with no `&self`
 API at all, derives included. Otherwise bound it, `unsafe impl<T: Sync> Sync for Wrapper<T> {}`,
@@ -79,8 +82,9 @@ or delete the manual impl and let the auto impl decide.
 Do not decide this with a native stress test. A raced non-atomic refcount is symmetric: a lost
 decrement leaks, a lost increment frees early, and the leak direction has no symptom. Four
 threads by three million balanced clone-and-drop pairs through an unsound `Sync` exited 0 with a
-strong count of 11427 where 1 was correct, and never crashed. Miri reports the race
-deterministically on a few hundred iterations. Use Miri.
+strong count of 11427 where 1 was correct, and never crashed. Miri reports the race on a few
+hundred iterations. Run it with `-Zmiri-many-seeds`, because one seed explores one thread
+schedule. Use Miri.
 
 ## Reference fabrication with `RefCell::as_ptr`
 
@@ -102,7 +106,7 @@ fn main() {
 }
 ```
 
-Measured on rustc 1.97.0, edition 2024: the program compiles, prints `moo MOO`, and exits 0. A
+Measured on rustc 1.98.1, edition 2024: the program compiles, prints `moo MOO`, and exits 0. A
 `&String` observed a mutation and nothing panicked.
 
 The pattern appears when a borrowing iterator is written over `Rc<RefCell<T>>`. The safe form
@@ -172,7 +176,7 @@ impl Deref for StringRef<'_> {
 }
 ```
 
-Measured on Miri 0.1.0: this runs clean under the default Stacked Borrows, under
+Measured on Miri nightly-2026-05-15: this runs clean under the default Stacked Borrows, under
 `-Zmiri-tree-borrows`, and under `-Zmiri-strict-provenance`, for a `&'static str` literal and for
 a sub-slice of a heap `String`, including a `.clone()` of the deref target. The provenance is
 correct, because the pointer comes from a live allocation. The allocator and capacity
@@ -193,9 +197,6 @@ let owned: String = ManuallyDrop::into_inner(s);   // a safe call; UB when `owne
 ```text
 error: Undefined Behavior: constructing invalid value of type &mut [u8]:
        encountered mutable reference pointing to read-only memory
-   --> library/core/src/ptr/mod.rs:820:24
-    |
-820 |     unsafe { drop_glue(&mut *to_drop) }
 ```
 
 A sub-slice of a heap `String` fails differently, with `trying to retag from <737> for Unique
@@ -206,22 +207,32 @@ instead.
 
 ## Aliasing models: Stacked Borrows and Tree Borrows
 
-Miri checks unsafe code against a formal aliasing model. Tree Borrows, published at PLDI 2025,
-is the current recommended model. It accepts more valid patterns than the older Stacked Borrows,
-so code the older model rejected may pass now.
+Miri checks unsafe code against a formal aliasing model. Run the default model (Stacked Borrows)
+first, then Tree Borrows as a second opinion; the `rust-sanitizers-miri` skill, when it is
+installed, owns the flags.
 
-```bash
-MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked
-```
-
-The classic violation both models reject:
+A write through a raw pointer invalidates a shared borrow taken after the pointer. Both models
+reject the later use of the shared borrow:
 
 ```rust
-let mut x = 5u32;
-let raw = &mut x as *mut u32;
-let shared = &x;         // a shared borrow of `x`
-let _ = unsafe { *raw }; // VIOLATION: the tag `raw` carries was invalidated
+fn main() {
+    let mut x = 5u32;
+    let raw = &mut x as *mut u32;
+    let shared = &x;        // a shared borrow of `x`
+    unsafe { *raw = 6 };    // the write invalidates `shared`
+    println!("{shared}");   // VIOLATION: `shared` is used after the write
+}
 ```
+
+```text
+Stacked Borrows: error: Undefined Behavior: trying to retag from <502> for SharedReadOnly
+                 permission at alloc179[0x0], but that tag does not exist in the borrow stack
+                 for this location
+Tree Borrows:    error: Undefined Behavior: reborrow through <479> at alloc179[0x0] is forbidden
+```
+
+A read through `raw` in place of the write passes both models, even when `shared` is used
+afterward. Do not write a test that reads, and conclude that the pattern is sound.
 
 Under Stacked Borrows the rules are:
 
@@ -231,8 +242,10 @@ Under Stacked Borrows the rules are:
 4. A raw-pointer access requires its tag to still be on the stack.
 
 Tree Borrows replaces the stack with a tree and tracks each pointer's permission separately,
-which is what makes it more permissive. The practical guidance is unchanged: do not derive a
-raw pointer, then use a reference to the same place, then use the raw pointer again.
+which is what makes it more permissive. The practical guidance is the same under both: a write
+through one pointer or reference invalidates every other live pointer and reference to the same
+place, except the ones it was derived from. Re-derive after the write instead of keeping an old
+reference.
 
 ### Never materialize two `&mut` from one raw pointer
 
@@ -293,21 +306,15 @@ error: Undefined Behavior: reborrow through <535> at alloc261[0x0] is forbidden
 ## Miri invocations
 
 ```bash
-# Baseline.
 cargo +nightly miri test --locked
-
-# The recommended model for new unsafe code.
-MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked
-
-# Stricter provenance checking; catches integer-to-pointer casts.
-MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test --locked
-
-# One test only.
-cargo +nightly miri test --locked test_my_unsafe_fn
 ```
 
+The `rust-sanitizers-miri` skill, when it is installed, owns the `MIRIFLAGS` set and when to add
+each flag.
+
 Miri cannot execute a foreign function. Skip a test that crosses a real FFI boundary, and cover
-that path with `cargo-careful` instead:
+that path with ASan on the host, or HWASan or MTE on a device. `cargo +nightly careful test` adds
+only the std precondition checks; it is not a substitute:
 
 ```rust
 #[test]
@@ -315,8 +322,13 @@ that path with `cargo-careful` instead:
 fn ffi_roundtrip() { /* ... */ }
 ```
 
-See the `rust-sanitizers-miri` skill for the stubbing strategy that lets more of a crate run
-under Miri, and the `rust-test-tools` skill for `cargo-careful`.
+A `#[cfg(miri)]` stub for the foreign function lets more of a crate run under Miri. Make the
+stub keep and later dereference every pointer the real library stores. A stub that ignores the
+pointer lets an aliasing defect pass both models; a stub that dereferences it makes both report
+it. Do not count a `-Zmiri-native-lib` run as evidence for the FFI path: the Miri README calls
+it experimental and unsound, because Miri stops tracking initialization and provenance on memory
+shared with native code. The `rust-sanitizers-miri` skill has the stubbing strategy and the
+sanitizer runs, and the `rust-test-tools` skill has `cargo-careful`, when they are installed.
 
 ## Clippy invocations for unsafe
 

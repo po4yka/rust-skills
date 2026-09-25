@@ -4,12 +4,23 @@ Rules about the *shape* of data that crosses a boundary: alignment, pointer widt
 layout, and handle ownership. [SKILL.md](../SKILL.md) covers the safety contract of an unsafe
 block. This file covers the cases where the contract is met and the layout is still wrong.
 
-Every example in this file compiles on rustc 1.97, edition 2024.
+The repository compile check type-checks every example in this file on rustc 1.98.1, edition 2024.
+
+Contents:
+
+- Packed structs (misaligned byte reads are in [unsafe-patterns.md](unsafe-patterns.md))
+- A slice over a caller-owned buffer or a mapping
+- `&T` to `&mut T`; `pointer::cast` over `as`
+- Fat pointers, opaque handles, and closures across a C boundary
+- `OwnedFd` and `BorrowedFd`; bitfields; `assert!` over `debug_assert!`
+- `PhantomData` markers for raw-pointer structs
+- `union` for C interop only
+- Symbol collision in `cdylib` crates
 
 ## Never reference a field of a `#[repr(packed)]` struct
 
 A packed struct has no padding, so a field can sit at a misaligned address. A reference must
-always be aligned. Since Rust 1.72 the compiler rejects the reference outright:
+always be aligned. Since Rust 1.69 the compiler rejects the reference outright:
 
 ```text
 error[E0793]: reference to field of packed struct is unaligned
@@ -50,8 +61,9 @@ Use `&raw const` and `&raw mut`. They are the native syntax since Rust 1.82 and 
 `ptr::addr_of!` and `ptr::addr_of_mut!`. The macros still work, but the operator is the form to
 write in new code.
 
-The clippy lint `unaligned_references` no longer exists. Do not put it in `workspace.lints`:
-clippy rejects an unknown lint name and the whole lint job fails.
+The rustc lint `unaligned_references` was removed when E0793 became a hard error (1.69). Naming
+it gives a `renamed_and_removed_lints` warning, and a `-D warnings` gate turns that warning into a
+failure.
 
 Prefer a layout that avoids the problem. A byte-array field needs no packing and no unaligned
 access:
@@ -70,47 +82,6 @@ impl PacketBytes {
     }
 }
 ```
-
-## Never cast a byte pointer to a wider type and dereference it
-
-A `&[u8]` from I/O carries no alignment guarantee. A cast to `*const u32` compiles, and the
-dereference is undefined behavior when the address is not 4-byte aligned. On x86-64 it produces
-the right answer, which is why the bug reaches production. On ARM and RISC-V it traps.
-
-Three correct options, in order of preference:
-
-```rust
-// 1. Safe conversion from a fixed-size byte array. No unsafe, explicit endianness.
-pub fn read_u32(bytes: &[u8]) -> Option<u32> {
-    Some(u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?))
-}
-
-// 2. An unaligned read when the source really is a byte stream.
-pub fn read_u32_unaligned(bytes: &[u8]) -> Option<u32> {
-    if bytes.len() < 4 {
-        return None;
-    }
-    // SAFETY: the length is checked, and `read_unaligned` does not require
-    // alignment. `u32` has no invalid bit pattern, so any four bytes are valid.
-    Some(unsafe { bytes.as_ptr().cast::<u32>().read_unaligned() })
-}
-
-// 3. `align_to` when a bulk read is worth the split. It returns the unaligned
-//    head, the aligned middle, and the unaligned tail.
-pub fn aligned_middle(bytes: &[u8]) -> usize {
-    // SAFETY: `u32` has no invalid bit pattern and no padding, so reinterpreting
-    // aligned bytes as `u32` is valid.
-    let (_head, middle, _tail) = unsafe { bytes.align_to::<u32>() };
-    middle.len()
-}
-```
-
-Enable `clippy::cast_ptr_alignment`. It catches the `as *const u32` form. It does not catch
-every case, so the rule stands on its own.
-
-Never use `align_to` for a type that has an invalid bit pattern. `bool`, `char`, a `NonZero`
-type, and every enum have invalid bit patterns. Reinterpreting arbitrary bytes as one of them is
-undefined behavior even when the alignment is correct.
 
 ## A slice over a caller-owned buffer or a mapping
 
@@ -153,7 +124,8 @@ relationship for every caller.
 
 ## Never cast `&T` to `&mut T`
 
-This is a hard error, not a lint you can allow:
+rustc rejects it through the deny-by-default lint `invalid_reference_casting`. Never allow the
+lint: the cast is undefined behavior even when the reference is unused.
 
 ```text
 error: casting `&T` to `&mut T` is undefined behavior, even if the reference is unused,
@@ -205,7 +177,14 @@ warning: `extern` block uses type `dyn T`, which is not FFI-safe
 ```
 
 `improper_ctypes` covers declarations you import. `improper_ctypes_definitions` covers
-`extern "C"` functions you export. Promote both to `deny` in `workspace.lints`.
+`extern "C"` functions you export. Keep both on, and never allow either crate-wide. Since 1.98,
+`c_void_returns` also warns on a `-> c_void` return type:
+
+```text
+warning: declarations returning `c_void` are not compatible with C functions returning `void`
+```
+
+Write no return type for a C `void` function. Keep `*mut c_void` for an untyped pointer.
 
 Pass a slice as a pointer and a length. Pass a trait object behind an opaque handle that the
 Rust side owns, as in the next section.
@@ -233,6 +212,11 @@ unsafe extern "C" {
 
 The `[u8; 0]` field makes the type zero-sized with a C-compatible layout. The `PhantomData`
 field removes the auto traits, so the handle cannot be sent to another thread by accident.
+
+Inside an `unsafe extern` block (1.82), mark a foreign function `safe fn` when it has no
+preconditions, for example `pub safe fn handle_count() -> usize;`. A call to it then needs no
+`unsafe` block. The `unsafe extern` itself is your promise that every signature in the block is
+correct.
 
 ## Pass a closure to C as data plus a function pointer
 
@@ -407,27 +391,18 @@ pub struct Owned<T> {
 ### Pick the marker by the three properties it changes
 
 `PhantomData<X>` makes the struct behave for variance, auto traits, and drop check as if it held
-an `X`. Pick the `X` from this table, not from habit. Every row is measured on rustc 1.97.0,
-edition 2024.
+an `X`. Pick the `X` for an FFI handle from this table, not from habit. Every row is measured on
+rustc 1.97.0, edition 2024.
 
 | Marker | Variance in `T` | Auto traits | Owns a `T` for drop check |
 | --- | --- | --- | --- |
 | `PhantomData<T>` | covariant | inherits `T`'s `Send` and `Sync` | yes |
 | `PhantomData<&'a T>` | covariant | `Send` and `Sync`, each iff `T: Sync` | no |
-| `PhantomData<&'a mut T>` | invariant | inherits `T`'s `Send` and `Sync` | no |
-| `PhantomData<fn() -> T>` | covariant | always `Send + Sync` | no |
-| `PhantomData<fn(T)>` | contravariant | always `Send + Sync` | no |
-| `PhantomData<fn(T) -> T>` | invariant | always `Send + Sync` | no |
-| `PhantomData<Cell<T>>` | invariant | `Send` iff `T: Send`, never `Sync` | no |
 | `PhantomData<*const T>` | covariant | neither `Send` nor `Sync` | no |
 | `PhantomData<*mut T>` | invariant | neither `Send` nor `Sync` | no |
 
-`PhantomData<&'a mut T>` is covariant in `'a` and invariant only in `T`.
-
-The `rust-variance` skill holds the same markers from the variance side, with the coercion
-probes that measure each row, in
-[../../rust-variance/references/variance-tables.md](../../rust-variance/references/variance-tables.md).
-That table carries no drop-check column. Change both when you change a row.
+The `rust-variance` skill, when it is installed, owns the full marker table (`&'a mut T`, the
+`fn` forms, `Cell<T>`) with the coercion probes that measure each row.
 
 To strip `Send` and `Sync` from a handle, use `PhantomData<*const T>`. It removes both auto
 traits exactly as `PhantomData<*mut T>` does, and it stays covariant in `T`. Reach for
@@ -501,8 +476,23 @@ that holds it. The fix rustc suggests, `ManuallyDrop<...>`, moves the destructor
 your unsafe code: you must then call `ManuallyDrop::drop` on the live variant yourself, exactly
 once, after reading the discriminant.
 
+## Symbol collision in `cdylib` crates
+
+Edition 2024 requires `#[unsafe(no_mangle)]`, `#[unsafe(export_name = "...")]`, and
+`#[unsafe(link_section = "...")]`. The `unsafe` marks an old hazard: when two compilation units
+export the same unmangled symbol, the linker silently picks one, and the wrong function runs.
+
+Since 1.98, rustc rejects a definition of a core runtime symbol such as `memset`, `memcpy`, or
+`strlen` with a wrong signature (`invalid_runtime_symbol_definitions`, deny by default). Every
+other name still collides with no diagnostic. The JNI convention,
+`Java_<package>_<class>_<method>`, gives natural uniqueness. Check every other unmangled export
+for uniqueness across all native libraries that the host process can load at the same time,
+including libraries you do not own. The third inventory command in [SKILL.md](../SKILL.md) lists
+every unmangled export.
+
 ## Related
 
 - [unsafe-patterns.md](unsafe-patterns.md) — safety comments, FFI entry points, and transmute
 - [miri-and-aliasing.md](miri-and-aliasing.md) — auto traits, aliasing models, Miri, and clippy
-- [SKILL.md](../SKILL.md) — the lint floor, panic guards, and the audit checklist
+- [SKILL.md](../SKILL.md) — the lint floor and the FFI panic facts
+- [audit-checklist.md](audit-checklist.md) — the review checklist

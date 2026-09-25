@@ -14,15 +14,19 @@ Common invalid values include:
 - a `bool` whose byte is not `0` or `1`;
 - an enum with no matching discriminant;
 - a `NonNull<T>` that contains zero;
-- a function pointer that does not point to a compatible function;
-- a value whose fields violate a type invariant.
+- a null function pointer;
+- a struct, tuple, or array with any field that is itself invalid.
+
+A broken safety invariant, such as non-UTF-8 bytes in a `str`, is not immediate undefined
+behavior. It is still unsound: any safe consumer of the value may then cause undefined behavior.
 
 Do not use `mem::zeroed`, `transmute`, or `MaybeUninit::assume_init` to create such a value and
 plan to overwrite it later. Keep the storage as `MaybeUninit<T>` until every byte is initialized
 and the complete value is valid.
 
-For a partially initialized array, track the initialized prefix. Drop only that prefix on an
-error. Convert to `[T; N]` only after all elements exist.
+For a partially initialized array, track the initialized prefix. On an error, drop only that
+prefix, for example with `assume_init_drop` on the initialized sub-slice (stable on
+`[MaybeUninit<T>]` since 1.93). Convert to `[T; N]` only after all elements exist.
 
 ## Reference creation carries the full contract
 
@@ -50,14 +54,27 @@ Prefer the Strict Provenance APIs:
 | Reuse provenance with a new address | `pointer.with_addr(address)` |
 | Transform only the address | `pointer.map_addr(transform)` |
 | Offset within one allocation | `pointer.add`, `sub`, or `offset` with their exact preconditions |
+| A sentinel or tag address that is never dereferenced | `ptr::without_provenance(address)` |
+| A non-null, aligned pointer that is never dereferenced | `ptr::dangling()` or `NonNull::dangling()` |
 
 Use `expose_provenance` and `with_exposed_provenance` only when an external interface truly
 stores a pointer as an integer and later reconstructs it. This is an explicitly weaker model.
 Document the exposure, keep the allocation alive, and test the path under Miri. Do not use an
 integer round trip as ordinary pointer arithmetic.
 
+`-Zmiri-strict-provenance` rejects every exposure (Miri nightly-2026-05-15):
+
+```text
+error: unsupported operation: integer-to-pointer casts and `ptr::with_exposed_provenance` are not supported with `-Zmiri-strict-provenance`
+```
+
+Run the code that exposes provenance in a Miri job without that flag, and keep the strict job
+for the rest.
+
 Pointer-to-pointer casts preserve provenance. Pointer-to-integer-to-pointer conversions are the
-dangerous boundary.
+dangerous boundary. `transmute::<usize, *const T>` creates a pointer with no provenance at all,
+and rustc warns on it since 1.91 (`integer_to_ptr_transmutes`); use `without_provenance` or
+`with_exposed_provenance` instead.
 
 ## Review procedure
 
@@ -66,12 +83,9 @@ dangerous boundary.
 3. State which owner keeps the allocation alive.
 4. State when shared or exclusive access starts and ends.
 5. Keep storage as `MaybeUninit<T>` until the complete validity proof holds.
-6. Run the smallest test under Miri with strict provenance and Tree Borrows.
-
-```bash
-MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test --locked <filter>
-MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked <filter>
-```
+6. Run the smallest test under Miri. A path that exposes provenance on purpose runs in a
+   separate job without `-Zmiri-strict-provenance`. The `rust-sanitizers-miri` skill, when it is
+   installed, owns the Miri flags.
 
 Miri is evidence for the executed path. It is not a proof for unexecuted layouts, schedules, or
 foreign code.
