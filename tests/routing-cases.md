@@ -235,6 +235,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | cannot find macro in this scope | rust-macros |
 | cyclic package dependency | rust-macros |
 | cargo expand | rust-macros |
+| trailing semicolon in macro used in expression position | rust-macros |
+| syn 3 | rust-macros |
 | Cow<str> | rust-copy-on-write |
 | copy-on-write | rust-copy-on-write |
 | to_mut | rust-copy-on-write |
