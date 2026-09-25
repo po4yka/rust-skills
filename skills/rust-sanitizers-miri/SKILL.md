@@ -1,186 +1,195 @@
 ---
 name: rust-sanitizers-miri
-description: Use when you run AddressSanitizer, ThreadSanitizer or MemorySanitizer on Rust code, when you run UBSan on a C or C++ dependency of a Rust crate, when you configure Miri to find undefined behaviour in unsafe Rust (Stacked Borrows or Tree Borrows), when you stub an FFI dependency that Miri cannot execute, when you enable HWASan on Android or MTE on Android 14+, when you enable ASan or TSan on iOS through Xcode, when you read a tombstone tagged SEGV_MTEAERR or SEGV_MTESERR, or when you wire any of these tools into CI. Triggers on "sanitizer", "miri", "ASan", "TSan", "MSan", "HWASan", "MTE", "undefined behavior", "stacked borrows", "tree borrows", or memory-safety validation questions.
+description: Use when running Miri or a sanitizer (ASan, ThreadSanitizer, MSan, HWASan) on Rust code, choosing between Stacked Borrows and Tree Borrows, reading a Miri or ASan report, stubbing FFI that Miri cannot execute, enabling Android MTE or Xcode sanitizers for a Rust library, running UBSan on a C dependency, or wiring these checks into CI. Not for writing or reviewing unsafe code itself; use `rust-unsafe`. Triggers on "miri", "MIRIFLAGS", "sanitizer", "-Zsanitizer", "TSan", "SEGV_MTESERR", "SEGV_MTEAERR".
 license: BSD-3-Clause
 ---
 
 # Rust Sanitizers and Miri
 
-Runtime and interpreter-based safety validation for Rust: ASan, TSan and MSan
-through `RUSTFLAGS`; UBSan through the C compiler on a C or C++ dependency;
-Miri for undefined behaviour (UB) in unsafe code; HWASan and MTE for on-device
-Android validation; ASan and TSan for iOS; and the rules to read the reports
-that these tools produce.
-
 ## 1. Select the tool
 
-Select the tool from the bug class, not from habit. Each tool finds a different
-class and misses the others.
+Select the tool from the bug class. Each tool finds its own class and misses
+the others.
 
-| Bug class | Tool to use | Do not use |
+| Bug class | Tool | Does not find it |
 |---|---|---|
-| Aliasing rule breach, invalid value, provenance error | Miri | ASan (does not model Rust rules) |
-| Heap overflow, use-after-free, double free at runtime | ASan, HWASan or MTE | Miri, if the path reaches FFI |
-| Data race between threads | TSan, or Miri with `-Zmiri-seed` | ASan |
-| Read of uninitialized memory | MSan or Miri | ASan |
-| Integer overflow or null deref in a C or C++ dependency | UBSan, built with clang `-fsanitize=undefined` | Miri (does not execute C or C++), `RUSTFLAGS` (rustc has no UBSan option) |
-| UB inside a C or C++ dependency | ASan, HWASan or MTE | Miri (cannot interpret C or C++) |
-| Type or lifetime error | `cargo check --locked`, Clippy | any sanitizer |
+| Aliasing breach, invalid value, provenance error in Rust | Miri | ASan, HWASan, MTE: they do not model Rust rules |
+| Heap overflow, use-after-free, double free at runtime | ASan, HWASan or MTE | Miri, when the path reaches foreign code |
+| Data race between threads | TSan, or Miri with `-Zmiri-many-seeds` | ASan |
+| Read of uninitialized memory | Miri, or MSan with every object instrumented | ASan |
+| Integer overflow or null dereference in a C or C++ dependency | UBSan: clang `-fsanitize=undefined` on that dependency | Miri (does not run C); rustc (has no UBSan option) |
+| Memory error inside a C or C++ dependency | ASan, HWASan or MTE | Miri |
 
-Full overhead and requirement comparison: `references/miri-ub-patterns.md`.
+Miri knows the Rust rules but cannot execute foreign code. Sanitizers execute
+foreign code but do not know the Rust aliasing model. For a crate that has
+`unsafe` code and FFI, run both.
 
-Two rules follow from the table:
+Read `references/miri-ub-patterns.md` ("Coverage decision table", "Sanitizer
+comparison") when you decide which tool runs on each crate of a workspace, or
+when you need overhead figures.
 
-- Miri sees Rust semantics but cannot execute foreign code.
-- Sanitizers execute foreign code but do not know the Rust aliasing model.
+A green run does not prove the absence of undefined behaviour (UB). Every tool
+checks only the paths that the tests execute. A clean Miri run says nothing
+about a stubbed or skipped path. A clean sanitizer run says nothing about
+uninstrumented code or about the Rust aliasing rules.
 
-Run both. Neither one replaces the other.
+## 2. Review gates
 
-## 2. Sanitizers in Rust
+Apply these gates before you approve a change that adds or edits `unsafe`.
 
-Rust sanitizers need the nightly toolchain and a supported target.
+- [ ] A test exercises the new `unsafe` path.
+- [ ] `cargo +nightly miri test --locked` passes on that test, or the test has
+      `#[cfg_attr(miri, ignore)]` and a comment that gives the reason.
+- [ ] The strict-provenance job passes, or the code exposes provenance on
+      purpose and runs in the separate job (section 9).
+- [ ] Raw-pointer code also passes under `-Zmiri-tree-borrows`.
+- [ ] Byte-parsing code passes under `-Zmiri-symbolic-alignment-check`.
+- [ ] Each new `#[cfg(miri)]` stub keeps the signature, the return domain and
+      any stored pointer of the real function.
+- [ ] An ASan, HWASan or MTE run covers every path that Miri skips.
+- [ ] New concurrency is covered by TSan, by Miri with `-Zmiri-many-seeds`, or
+      by `loom`.
+
+## 3. Failure triage
+
+Miri messages below were measured on nightly 2026-05-15. Match on the quoted
+fragment. Tags and allocation ids change with the program, the toolchain, the
+seed and the flags.
+
+| Symptom | Probable cause | Next action |
+|---|---|---|
+| Miri: `unsupported operation: can't call foreign function` | The test reaches code that Miri cannot interpret | Apply section 7 |
+| Miri: `not available when isolation is enabled` | The test reads a host resource, for example `SystemTime::now` or a file | Add `-Zmiri-disable-isolation` to that job, or inject the value in the test |
+| Miri: `allocN has been freed, so this pointer is dangling` | A pointer kept across a reallocation or a drop | Re-derive the pointer after each operation that can reallocate |
+| Miri: `in-bounds pointer arithmetic failed` | `add` or `offset` past the end of the allocation | Check the length before the arithmetic |
+| Miri: `constructing invalid value` ... `expected a valid enum tag` or `expected a boolean` | A transmute or read produced a value that no variant or `bool` uses | Decode with `TryFrom` and return an error |
+| Miri: `accessing memory based on pointer with alignment` ... `is required`, only on some seeds | A misaligned read through a raw pointer | Use `read_unaligned` or `from_le_bytes`; add `-Zmiri-symbolic-alignment-check` |
+| Miri: `memory is uninitialized` or `encountered uninitialized memory` | A read of `MaybeUninit` before every byte was written | Write every byte first, or use a zero-filled buffer |
+| Miri: `does not exist in the borrow stack` (SB) or `is forbidden` (TB) | An aliasing violation | Section 6, section 8, and `references/miri-ub-patterns.md` |
+| Miri: ``integer-to-pointer casts and `ptr::with_exposed_provenance` are not supported`` | The code rebuilds a pointer from an integer under `-Zmiri-strict-provenance` | Keep the original pointer, or use `with_addr` or `map_addr`. If exposure is required, move the test to the separate job |
+| Miri: `dangling pointer (it has no provenance)` | A pointer made from an integer that was never exposed | Keep the original pointer, or use `with_addr` |
+| Miri: `memory leaked: allocN` | An allocation that no static can reach: `Box::leak`, `mem::forget`, or a pointer held only by a thread still running at exit or by foreign state | Store an intended process-lifetime value in a static (`OnceLock` or `LazyLock`), which Miri does not report, or add `-Zmiri-ignore-leaks` to that job only |
+| Miri passes, ASan fails | The defect is in foreign code that Miri stubbed or skipped | Debug with ASan and read the allocation stack |
+| ASan passes, Miri fails | An aliasing or provenance breach that did not corrupt memory on this run | Fix it. It is UB, and the optimizer can act on it later |
+| MSan reports uninitialized reads in a dependency | Not every object was built with MSan | Rebuild every dependency with MSan, or use Miri |
+| TSan reports a race inside an atomics-based structure | An ordering is too weak, or the code synchronizes with a `fence` that TSan does not model | Confirm with Miri `-Zmiri-many-seeds` or `loom` before you change an ordering; see the `memory-model` skill |
+| ``mixing `-Zsanitizer` will cause an ABI mismatch in crate`` | A crate or std was built without the sanitizer | Add `-Zbuild-std`; for doctests, set `RUSTDOCFLAGS` to the `RUSTFLAGS` value |
+| Doctests fail to link with undefined `__asan_*` symbols | `RUSTDOCFLAGS` lacks the `-Zsanitizer` flag | Set `RUSTDOCFLAGS` to the `RUSTFLAGS` value |
+| rustc aborts while it expands a proc macro under a sanitizer | `--target` is missing, so the proc macro was instrumented | Pass `--target "$HOST"` |
+
+## 4. Run a sanitizer on the host
+
+`-Zsanitizer` is unstable as of Rust 1.98.1, so every sanitizer run needs
+nightly.
 
 ```bash
-# Install nightly and the standard-library source.
-rustup toolchain install nightly
-rustup component add rust-src --toolchain nightly
+rustup toolchain install nightly --component rust-src
+HOST="$(rustc +nightly -vV | sed -n 's/^host: //p')"
 
 # AddressSanitizer (Linux, macOS)
-RUSTFLAGS="-Z sanitizer=address" \
-    cargo +nightly test --locked -Zbuild-std \
-    --target x86_64-unknown-linux-gnu
+RUSTFLAGS="-Zsanitizer=address" RUSTDOCFLAGS="-Zsanitizer=address" \
+    cargo +nightly test --locked -Zbuild-std --target "$HOST"
 
-# ThreadSanitizer (Linux)
-RUSTFLAGS="-Z sanitizer=thread" \
-    cargo +nightly test --locked -Zbuild-std \
-    --target x86_64-unknown-linux-gnu
+# ThreadSanitizer (Linux, macOS)
+RUSTFLAGS="-Zsanitizer=thread" RUSTDOCFLAGS="-Zsanitizer=thread" \
+    cargo +nightly test --locked -Zbuild-std --target "$HOST"
 
-# MemorySanitizer (Linux; needs a fully instrumented build)
-RUSTFLAGS="-Z sanitizer=memory -Zsanitizer-memory-track-origins" \
-    cargo +nightly test --locked -Zbuild-std \
-    --target x86_64-unknown-linux-gnu
+# MemorySanitizer (Linux; every linked object must be instrumented)
+RUSTFLAGS="-Zsanitizer=memory -Zsanitizer-memory-track-origins" \
+RUSTDOCFLAGS="-Zsanitizer=memory -Zsanitizer-memory-track-origins" \
+    cargo +nightly test --locked -Zbuild-std --target "$HOST"
 ```
 
-Rules:
+Rules (build failures and ASan defaults measured on nightly 2026-05-15,
+`aarch64-apple-darwin`):
 
-- Always pass `-Zbuild-std`. It rebuilds the standard library with the
-  sanitizer. Without it the results are incomplete and misleading.
-- Always name an explicit `--target`. `-Zbuild-std` needs one.
-- MSan reports false positives if any linked object is not instrumented. Build
-  every dependency, including C and C++ dependencies, with MSan, or do not
-  trust an MSan report.
-- Run sanitizers on the host target in CI, even for a crate that you ship to a
-  device. The host run is faster and catches the same parser and decoder bugs
-  in your dependencies.
+- Pass `-Zbuild-std`. The prebuilt standard library is not instrumented.
+  Without the rebuild, TSan stops with
+  ``mixing `-Zsanitizer` will cause an ABI mismatch in crate``, ASan leaves std
+  unchecked, and MSan reports false positives.
+- Never silence that error with `-Cunsafe-allow-abi-mismatch=sanitizer`. The
+  mixed build misses errors in the uninstrumented crates and can report false
+  positives. Fix the flags so every crate is instrumented.
+- Pass `--target`, also for the host. Then Cargo keeps `RUSTFLAGS` off build
+  scripts and proc macros. An instrumented proc macro can abort rustc.
+- Set `RUSTDOCFLAGS` to the same `-Zsanitizer` value, or every doctest fails
+  to build (section 3).
+- On macOS, set `ASAN_OPTIONS=detect_stack_use_after_return=1:detect_leaks=1`.
+  Without it, ASan misses `stack-use-after-return` and does not check leaks.
+  Linux enables both by default, so an intentional leak fails a Linux ASan
+  run. Set `detect_leaks=0` only for that job.
+- Build every C and C++ dependency with clang `-fsanitize=memory` for an MSan
+  run. Otherwise do not trust an MSan report.
+- Expect TSan false positives on `std::sync::atomic::fence` and on
+  synchronization in inline assembly. TSan does not model either one.
 
-## 3. Read the ASan report
-
-```text
-==12345==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000050
-READ of size 4 at 0x602000000050 thread T0
-    #0 0x401234 in my_crate::parser::parse_record src/parser.rs:87
-    #1 0x401567 in my_crate::reader::read_next src/reader.rs:42
-```
-
-Map the ASan error class back to the Rust construct that produced it.
-
-| ASan error | Likely Rust cause |
-|---|---|
-| `heap-buffer-overflow` | `unsafe` slice or pointer access past the end of a buffer |
-| `use-after-free` | Raw pointer used after a `Vec` reallocation moved the buffer |
-| `stack-use-after-return` | Reference to a local returned out of the function |
-| `heap-use-after-free` | Use after `drop()`, or a second `Box::from_raw` on one pointer |
-| `double-free` | Ownership transferred to FFI and also dropped on the Rust side |
-| `alloc-dealloc-mismatch` | Allocated by one allocator, freed by another across the FFI boundary |
-
-Triage order:
-
-1. Read frame `#0`. It names the access, not always the defect.
-2. Read the allocation and free stacks that ASan prints below the access.
-3. Find the `unsafe` block on the path between them. That block owns the bug.
-4. Write a Miri test for the same path if the path is pure Rust. Miri gives a
-   more exact diagnosis than ASan for aliasing and provenance defects.
-
-## 4. On-device sanitizers: Android and iOS
-
-Use HWASan or MTE on Android. Use Xcode ASan or TSan for code that Xcode
-compiles. Run a host sanitizer build to instrument the Rust library itself.
-
-| Platform | Tool | Requirement |
-|---|---|---|
-| Android ARM64 | HWASan | Android 14 and later with `wrap.sh`; Android 10 through 13 need a HWASan system image |
-| Android ARM64 | MTE heap checks | Android 13 and later on a device that reports the `mte` CPU feature; set `android:memtagMode` |
-| iOS device or Simulator | Xcode ASan | Xcode scheme Diagnostics, or `-enableAddressSanitizer YES` |
-| iOS Simulator | Xcode TSan | Xcode scheme Diagnostics, or `-enableThreadSanitizer YES` |
-
-Manifest activation checks native heap allocations without a Rust rebuild.
-Stack MTE needs Android 14 QPR3 or later and an instrumented rebuild. A tag
-mismatch raises `SIGSEGV` with `si_code = SEGV_MTEAERR` in async mode or
-`SEGV_MTESERR` in sync mode.
-
-Full build commands, the cost table, manifest activation, tombstone analysis
-and the rollout order: `references/platform-sanitizers.md`.
-
-## 5. Miri: the UB interpreter
-
-Miri interprets Rust MIR and checks every operation against the Rust
-memory model. It finds defects that no runtime sanitizer can find, because it
-knows the language rules and not only the machine behaviour.
+## 5. Run Miri
 
 ```bash
-# Install Miri. Miri needs nightly.
 rustup +nightly component add miri
-
-# Run the whole test suite under Miri.
-cargo +nightly miri test --locked
-
-# Run one test.
-cargo +nightly miri test --locked test_name
-
-# Strict provenance. Recommended for CI.
-MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test --locked
-
-# Allow file I/O, the clock and randomness.
-MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --locked
+cargo +nightly miri test --locked                  # whole suite
+cargo +nightly miri test --locked <test_filter>    # one test
 ```
 
-Miri runs about 100 times slower than a native build. Keep the Miri test set
-small and deterministic. Do not run integration tests that read large files
-under Miri.
+Nightly and cache rules:
 
-> **FFI limitation.** Miri cannot execute `extern "C"` or `extern "system"`
-> functions that have no Miri shim, foreign code inside a `-sys` crate,
-> JNI calls, UniFFI ABI calls, libc syscalls, or inline assembly. Section 6
-> gives the strategy for each case.
+- Keep secrets out of any Miri job that writes a `target/` cache a pull request
+  can read. Miri nightlies before 2026-09-22 wrote every environment variable
+  into `target/`. If such a job ran with secrets, clear the cache and rotate
+  the secrets ([Rust blog, 2026-09-21](https://blog.rust-lang.org/2026/09/21/github-actions-leaking-secrets-when-miri-output-is-cached/)).
+- Pin a nightly date if a Miri regression blocks the pipeline. Pin 2026-09-22 or
+  later. Miri diagnostics change with the nightly.
 
-### What Miri detects
+Miri interprets every operation, so it runs much slower than a native test.
+Keep the Miri test set small and deterministic. Gate a large-input or
+long-running test with `#[cfg_attr(miri, ignore)]`, or shrink its input under
+`cfg(miri)`.
 
-- **Dangling pointers.** Use after free, and use after a reallocation moved the
-  buffer.
-- **Invalid values.** An enum discriminant that no variant uses, a `bool` that
-  is not 0 or 1, a reference to unaligned data, a null reference.
-- **Uninitialized memory.** A read of `MaybeUninit` before initialization, and a
-  read of a partly initialized buffer.
-- **Aliasing violations.** A breach of Stacked Borrows or Tree Borrows rules.
-- **Data races.** Miri has its own concurrency model. It interleaves threads at
-  yield points and reports an unsynchronized access to shared state. This model
-  is independent of the aliasing model.
-- **Memory leaks.** Miri reports a leak at the end of the run unless you pass
-  `-Zmiri-ignore-leaks`.
+Miri also reports data races and leaks at exit. It reports an invalid value
+where the code produces it, at the `transmute` or read, not at a later use. It
+emulates some weak-memory effects, so an atomic load can return
+an outdated value, but that emulation is not complete.
 
-Worked examples of each class, with the exact Miri message and the correct
-pattern, are in `references/miri-ub-patterns.md`.
+Miri cannot execute a foreign function that has no Miri shim. This includes
+every C or C++ entry point behind a `-sys` crate, JNI calls, generated UniFFI
+scaffolding, and inline assembly. Miri shims a subset of the platform API,
+including files (with `-Zmiri-disable-isolation`), threads, and `epoll` and
+`eventfd` on Linux targets. System API support varies between targets. If a shim
+is missing, try `--target x86_64-unknown-linux-gnu` before you stub.
+`-Zmiri-native-lib` calls real native code, but it is experimental and unsound.
+A run through it is not evidence for the FFI path.
 
-## 6. Stub an FFI dependency that Miri cannot execute
+Read `references/miri-ub-patterns.md` when a Miri run fails and you need the
+shape of the defect and its fix. It shows each UB class with the message Miri
+prints.
 
-The goal is to run Miri over your Rust logic while the foreign call is replaced
-or skipped. Select the strategy from the shape of the dependency.
+## 6. Aliasing model policy
+
+```bash
+cargo +nightly miri test --locked                                  # Stacked Borrows (default)
+MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked  # Tree Borrows
+```
+
+- Run the default model, Stacked Borrows (SB), first. The SB run is the gate.
+- Add a Tree Borrows (TB) run as more evidence on a crate with hand-written
+  raw-pointer code. Never make TB the only gate. The Miri README calls TB "even
+  more experimental than Stacked Borrows", and code it accepts today "might be
+  declared UB in the future".
+- Treat a failure under either model as a finding.
+- Fix an SB failure even when TB passes. TB accepts some patterns that SB
+  rejects, for example a `&mut` reborrow that is written after a read through
+  its parent raw pointer.
+
+## 7. Stub an FFI dependency that Miri cannot execute
+
+Run Miri over the Rust logic while the foreign call is replaced or skipped.
+Select the strategy from the shape of the dependency.
 
 | FFI situation | Strategy |
 |---|---|
 | `extern "C"` block that you declare in your own crate | Gate the block with `#[cfg(not(miri))]`. Add a `#[cfg(miri)]` stub with the same signature. |
 | Inline `asm!` or `global_asm!` | Add a pure-Rust fallback behind `#[cfg(miri)]`. Keep both paths under one test. |
-| Third-party crate that links C or C++ | You cannot stub it. Exclude the crate from the Miri invocation, or gate the tests that reach it. |
+| Third-party crate that links C or C++ | You cannot stub it. Exclude the crate from the Miri run, or gate the tests that reach it. |
 | Generated FFI scaffolding, for example a UniFFI or JNI binding layer | Do not stub the generated code. Gate the tests that cross the boundary. |
 | Test that needs a live host runtime, for example a JVM, a GPU driver or a database | Gate the test with `#[cfg_attr(miri, ignore)]`. Do not stub. |
 | Platform syscall through `libc` with a simple return value | Stub it behind `#[cfg(miri)]` and return the success value. |
@@ -199,229 +208,151 @@ unsafe fn platform_specific_call(_fd: i32) -> i32 {
 }
 ```
 
-The stub must keep the same signature, the same safety contract and the same
-return domain as the real function. If the real function returns a pointer that
-the caller dereferences, the stub must return a pointer into a real allocation.
-A stub that returns a null pointer moves the defect instead of removing it.
+The stub must keep the signature, the safety contract and the return domain of
+the real function:
 
-### Skip the test instead of stubbing
+- If the real function returns a pointer that the caller dereferences, the stub
+  returns a pointer into a real allocation. A null stub moves the defect
+  instead of removing it.
+- If the real function stores a pointer, the stub stores it too, and the stub
+  of each later call that uses it dereferences it. Otherwise Miri cannot see an
+  alias against the stored pointer (section 8).
+- Do not let a stub hide the UB that you want to find. A stub that always
+  returns `0` for a function whose error path frees a buffer removes the test
+  you need.
 
-```rust
-// Pure Rust logic. This runs under Miri.
-#[test]
-fn parses_record_header() {
-    // No foreign call on this path.
-}
+Keep the stub next to the real declaration, in the same module, so it cannot
+drift from the signature. Use the built-in `cfg(miri)`, not a `miri` Cargo
+feature: Miri sets the cfg itself, and a feature can be enabled by accident in
+a normal build.
 
-// This path reaches foreign code. Miri cannot interpret it.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn round_trips_through_ffi_boundary() {
-    // Skipped under Miri; covered by ASan and by the normal test run.
-}
-```
+### Skip a test or exclude a crate
 
-### Exclude a whole crate
-
-Select the FFI-free crates explicitly, or exclude the FFI crates from the
-workspace run:
+Put a comment with the reason on each `#[cfg_attr(miri, ignore)]`, and name
+the job that covers the path instead.
 
 ```bash
 # Select the crates that Miri can interpret.
-cargo +nightly miri test --locked -p my-core -p my-parser -p my-model
+cargo +nightly miri test --locked -p my-core -p my-parser
 
 # Or run the workspace and exclude the crates that reach foreign code.
-cargo +nightly miri test --locked --workspace \
-    --exclude my-ffi --exclude my-render-backend
+cargo +nightly miri test --locked --workspace --exclude my-ffi
 ```
 
-### Stubbing rules
+Every path that a stub, a skip or an exclusion removes from Miri needs an ASan
+run on the host, or a HWASan or MTE run on a device. A `cargo +nightly careful
+test` run without `-Zcareful-sanitizer` is not a substitute: it adds std debug
+assertions, not memory-error detection.
 
-- Never let a stub hide the UB that you want to find. A stub that always
-  returns `0` on a function whose error path frees a buffer removes the very
-  test you need.
-- Keep the stub next to the real declaration, in the same module. A stub in a
-  distant file drifts out of sync with the signature.
-- Cover the FFI path with a sanitizer run. The stub removes Miri coverage, so
-  ASan or HWASan must cover that path instead.
-- Do not add a `miri` feature flag. Use the built-in `cfg(miri)`. Miri sets it
-  automatically, and a feature flag can be enabled by accident in a normal
-  build.
+## 8. A `Box` and a pointer that foreign code keeps
 
-## 7. Stacked Borrows and Tree Borrows
+A `Box<T>` asserts unique access while it is live. If foreign code stores a
+`*mut T` taken from the `Box`, and Rust then writes through the `Box`, the
+stored pointer is invalid. A later foreign access (read or write) through it
+is UB.
 
-Miri checks aliasing with one of two models. Stacked Borrows is the default.
-Tree Borrows is the alternative.
-
-```bash
-# Default: Stacked Borrows.
-cargo +nightly miri test --locked
-
-# Tree Borrows.
-MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked
-```
-
-| Model | Shape | Use it for |
-|---|---|---|
-| Stacked Borrows | Each allocation carries a stack of borrow tags. A use pops every tag above it. | The default check. Run it first. |
-| Tree Borrows (PLDI 2025) | Reborrows form a tree instead of a stack. | Raw pointer code that interacts with `Box` or with FFI, where the stack model is too coarse. |
-
-Run both models on any crate that contains hand-written raw pointer code. A
-violation that one model reports may not appear under the other. A run that is
-clean under only one model is not evidence.
-
-## 8. Aliasing assumptions travel through `Box`
-
-Severity: warning, whenever you mix `Box<T>` with raw-pointer FFI.
-
-`Box<T>` carries `Unique<T>` semantics. The compiler assumes that the `Box`
-exclusively owns the data and that no other pointer aliases it. This becomes
-the LLVM `noalias` attribute. If you take a `*mut T` out of a `Box`, hand it to
-foreign code, and the foreign code stores that pointer while the `Box` is still
-live, both the `Box` and the raw pointer claim unique access.
-
-Failure mode:
-
-```rust
-let mut boxed = Box::new(MyStruct::new());
-let raw: *mut MyStruct = &mut *boxed as *mut _;
-unsafe { ffi_register(raw); } // Foreign code stores `raw`.
-boxed.field = 42;             // Load through the Box. LLVM may reorder it
-                              // past the store made through `raw`.
-// `raw` and `boxed` now alias. Tree Borrows reports this.
-```
+Miri sees this only when Miri-executed code uses the stored pointer after the
+`Box` access. Make the `#[cfg(miri)]` stubs keep the pointer and read through
+it on a later call, as the foreign side does. Then both SB and TB report the
+read. With a stub that ignores the pointer, neither model reports anything.
+Read `references/miri-ub-patterns.md` ("`Box` plus FFI aliasing") when you
+write these stubs for a registration API. It has the full stubs and test.
 
 Correct patterns:
 
-- Use `Box::into_raw` to transfer ownership to the foreign side. Never use the
-  original `Box` again. Recover it with `Box::from_raw` exactly once.
+- Transfer ownership with `Box::into_raw` and never use the original `Box`
+  again. Access the value only through the raw pointer. Recover it with
+  `Box::from_raw` exactly once, after the foreign side unregisters it and no
+  foreign call or callback can still use the pointer. An unregister call can
+  return while a callback on a foreign thread still runs.
 - For a synchronous foreign borrow, do not access or reborrow the value until
-  the call returns. If foreign code stores the pointer, use `Box::into_raw` and
-  recover it only after unregistering the pointer and stopping all foreign use.
-- Use `Pin` only when `T` has a pinning invariant. `Pin<Box<T>>` keeps the
-  address stable, but it does not permit aliasing or concurrent foreign access.
-- Run `MIRIFLAGS="-Zmiri-tree-borrows"` on this code. The tree model reports
-  this aliasing violation.
+  the call returns.
+- Use `Pin<Box<T>>` only when `T` has a pinning invariant. It keeps the address
+  stable. It does not permit aliasing or concurrent foreign access.
 
-See the pointer provenance and Stacked Borrows sections of
-`references/miri-ub-patterns.md` for the exact Miri messages.
-
-## 9. MIRIFLAGS reference
-
-| Flag | Effect |
-|---|---|
-| `-Zmiri-disable-isolation` | Allow I/O, the clock and randomness |
-| `-Zmiri-strict-provenance` | Reject integer-to-pointer casts that have no provenance |
-| `-Zmiri-symbolic-alignment-check` | Check alignment symbolically, not only on the concrete address |
-| `-Zmiri-num-cpus=N` | Report N CPUs to the program |
-| `-Zmiri-seed=N` | Seed the randomized thread scheduler |
-| `-Zmiri-many-seeds=A..B` | Run the test once for each seed in the bounded half-open range |
-| `-Zmiri-ignore-leaks` | Do not report memory that is still allocated at exit |
-| `-Zmiri-tree-borrows` | Use Tree Borrows instead of Stacked Borrows |
-
-Recommended combinations:
+## 9. Miri jobs and flag hazards
 
 ```bash
-# Development: permissive, fast to get running.
-MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --locked
-
-# CI: strict.
+# Gate: default model and strict provenance.
 MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test --locked
 
-# Concurrency CI: exercise a bounded set of randomized schedules.
-MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-many-seeds=0..16 -Zmiri-num-cpus=4" \
-    cargo +nightly miri test --locked
+# Byte parsers and raw-pointer crates: symbolic alignment, then Tree Borrows.
+MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check" \
+    cargo +nightly miri test --locked -p my-parser
+MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-strict-provenance" \
+    cargo +nightly miri test --locked -p my-parser
 
-# Code with intentional leaks, for example a process-lifetime global.
-MIRIFLAGS="-Zmiri-ignore-leaks -Zmiri-disable-isolation" \
-    cargo +nightly miri test --locked
+# Concurrency: many schedules for the threaded tests.
+MIRIFLAGS="-Zmiri-many-seeds=0..16" cargo +nightly miri test --locked <test_filter>
+
+# Endianness: interpret on a big-endian target.
+cargo +nightly miri test --locked -p my-parser --target s390x-unknown-linux-gnu
 ```
 
-## 10. CI integration
+Flag hazards:
 
-```yaml
-- name: Miri
-  run: |
-    rustup toolchain install nightly
-    rustup +nightly component add miri
-    # Select only the crates that contain no foreign code.
-    cargo +nightly miri test --locked \
-      -p my-core -p my-parser -p my-model
-  env:
-    MIRIFLAGS: "-Zmiri-disable-isolation -Zmiri-strict-provenance"
+- A misaligned read passes default Miri on some seeds and fails on others. Add
+  `-Zmiri-symbolic-alignment-check` to make the failure certain. It gives false
+  positives when code aligns a pointer with manual integer arithmetic;
+  `align_to` is fine in both modes.
+- `-Zmiri-strict-provenance` rejects every deliberate exposure, including
+  `with_exposed_provenance`. Run exposing code in a separate job without the
+  flag. No `cfg` reports the flag, so `cfg_attr(miri, ignore)` cannot select
+  these tests. Keep them out of the gate with `-- --skip <name>` or by crate
+  (`--exclude`). `-Zmiri-permissive-provenance` only silences the warning.
+  Miri can miss bugs on exposed pointers either way.
+- Miri reports 1 CPU by default, so `cargo miri test` runs one test at a
+  time and does not detect a race between two tests on a shared resource
+  (measured on nightly 2026-05-15). Add `-Zmiri-num-cpus=4` or
+  `-- --test-threads=4` for that job. `RUST_TEST_THREADS` does not reach the
+  program under isolation. `cargo miri nextest run` runs each test in its own
+  process and never detects such a race.
 
-- name: Miri (Tree Borrows)
-  run: cargo +nightly miri test --locked -p my-core
-  env:
-    MIRIFLAGS: "-Zmiri-disable-isolation -Zmiri-tree-borrows"
+Read `references/miri-flags-and-ci.md` when you need another flag, for
+example `-Zmiri-seed=N` to reproduce one failing seed. It has the full
+MIRIFLAGS table.
 
-- name: ASan
-  run: |
-    rustup toolchain install nightly
-    rustup component add rust-src --toolchain nightly
-    RUSTFLAGS="-Z sanitizer=address" \
-    cargo +nightly test --locked -Zbuild-std \
-    --target x86_64-unknown-linux-gnu
+## 10. Read an ASan report
 
-- name: TSan
-  run: |
-    RUSTFLAGS="-Z sanitizer=thread" \
-    cargo +nightly test --locked -Zbuild-std \
-    --target x86_64-unknown-linux-gnu
-```
+| ASan error | Likely Rust cause |
+|---|---|
+| `heap-buffer-overflow` | `unsafe` slice or pointer access past the end of a buffer |
+| `heap-use-after-free` | Raw pointer kept across a `Vec` or `String` reallocation, or used after `drop()` |
+| `stack-use-after-return` | Raw pointer to a local that escaped its function |
+| `double-free` | `Box::from_raw` called twice on one pointer, or ownership passed to FFI and also dropped in Rust |
+| `alloc-dealloc-mismatch` | C++ `new` memory freed with `free`, or the reverse, across the FFI boundary |
 
-CI rules:
+Triage order:
 
-- Pin the nightly date if a Miri regression blocks the pipeline. Miri tracks
-  nightly and its diagnostics change.
-- Run the Miri job and the sanitizer jobs in parallel. They share no artifacts.
-- Keep the sanitizer jobs on the host target. Cross-compiled sanitizer runs
-  need a device or an emulator and belong in a nightly or on-demand job.
-- Treat a Miri failure as a build failure. Miri reports real UB, not style.
+1. Read frame `#0`. It names the access, not always the defect.
+2. Read the allocation and free stacks that ASan prints below the access.
+3. Find the `unsafe` block on the path between them. That block owns the bug.
+4. If the path is pure Rust, write a Miri test for it. Miri names aliasing and
+   provenance defects more exactly than ASan.
 
-## 11. Review gates
+## 11. On-device sanitizers: Android and iOS
 
-Apply these gates before you approve a change that adds or edits `unsafe`.
+On Android arm64, use HWASan or MTE. Xcode instruments only the code that
+Xcode compiles. A prebuilt Rust static library gets no ASan or TSan
+instrumentation from the scheme setting. Run a host sanitizer build for the
+Rust code itself.
 
-- [ ] The change has a test that exercises the new `unsafe` path.
-- [ ] `cargo +nightly miri test --locked` passes on that test, or the test is
-      gated with `#[cfg_attr(miri, ignore)]` and the reason is written in a
-      comment.
-- [ ] `MIRIFLAGS="-Zmiri-strict-provenance"` passes. A provenance failure means
-      a pointer was made from an integer.
-- [ ] Raw-pointer code that touches `Box` or FFI also passes under
-      `-Zmiri-tree-borrows`.
-- [ ] Any new `#[cfg(miri)]` stub has the same signature and the same return
-      domain as the real function.
-- [ ] Any path that Miri skips is covered by an ASan or HWASan run.
-- [ ] New concurrency is covered by TSan, or by Miri with `-Zmiri-seed` and
-      `-Zmiri-num-cpus`, or by `loom`.
+Read `references/platform-sanitizers.md` when you build for a device. It has the
+platform requirements, the HWASan build and `wrap.sh`, the MTE manifest modes
+and stack-MTE rebuild, the tombstone check, and the Xcode commands.
 
-## 12. Failure triage
+## 12. CI integration
 
-| Symptom | Probable cause | Next action |
-|---|---|---|
-| Miri: "unsupported operation: can't call foreign function" | The test reaches code that Miri cannot interpret | Apply section 6 |
-| Miri: "pointer must be in-bounds at offset ..." | The pointer was derived before a reallocation | Re-derive the pointer after every operation that can reallocate |
-| Miri: "enum value has invalid tag", or a validation error on a `bool` | A transmute produced an enum discriminant or a `bool` that no valid value uses | Use `TryFrom` and validate the value |
-| Miri rejects an integer-to-pointer cast under `-Zmiri-strict-provenance`, or reports "no exposed tags" without it | The code rebuilt a pointer from an integer address | Keep the original pointer, or expose the provenance deliberately with `ptr::with_exposed_provenance` |
-| Miri reports a leak on a global | The value lives for the process lifetime by design | Add `-Zmiri-ignore-leaks` to that job only |
-| Miri passes, ASan fails | The defect is in foreign code that Miri stubbed or skipped | Debug with ASan and read the allocation stack |
-| ASan passes, Miri fails | The defect is an aliasing or provenance rule breach that did not corrupt memory on this run | Fix it. It is real UB and the optimizer may act on it later. |
-| MSan reports uninitialized reads in a dependency | Not every object was built with MSan | Rebuild every dependency with MSan, or use Miri instead |
-| TSan reports a race inside an atomics-based structure | A memory ordering is too weak, or the structure is unsound | See the `memory-model` skill |
-| Sanitizer build fails to link | `-Zbuild-std` or `--target` is missing | Add both |
+Read `references/miri-flags-and-ci.md` when you write the CI jobs. It has a
+GitHub Actions example and the job layout rules.
+
+Treat a Miri failure as a build failure. Miri reports UB, not style.
 
 ## Related skills
 
-- `rust-unsafe` — unsafe Rust patterns and the review checklist for `unsafe`
-- `rust-debugging` — GDB and LLDB debugging, symbol resolution, `addr2line`
-- `memory-model` — atomics, memory ordering, lock-free data structures
-- `rust-test-tools` — test harnesses, property tests and fuzzing
-- `rust-security` — supply chain safety and memory-safe development
-- `cargo-workflows` — toolchain pinning, workspace and profile configuration
-- `rust-jni` — JNI boundary design; JNI calls cannot run under Miri
-- `uniffi-boundary` — UniFFI boundary design; the generated scaffolding cannot
-  run under Miri
-- `rust-android-build` — Android target setup for the cross-compiled builds in
-  section 4
+- `rust-unsafe`: unsafe patterns and the review checklist for `unsafe`
+- `memory-model`: atomics, memory ordering, `loom`
+- `rust-debugging`: symbolication and `addr2line` for sanitizer and tombstone frames
+- `rust-test-tools`: property tests and fuzzing that feed these tools
+- `rust-jni`, `uniffi-boundary`: FFI layers that Miri cannot execute
+- `rust-android-build`: Android target setup for the device builds
