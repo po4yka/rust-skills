@@ -1,7 +1,18 @@
 # Unwrap audit and typed-error migration
 
 Use this file when a workspace already has a large `.unwrap()` and `.expect()` population and
-you must reduce the risk without a rewrite.
+you must reduce the risk without a rewrite. The general `unwrap` and `expect` rule lives in the
+`rust-discipline` skill; this file covers FFI-reachable code.
+
+Contents:
+
+- Step 1: measure
+- Step 2: rank by reachability
+- Step 3: replace by category
+- Step 4: roll out the lints
+- Step 5: the `#[expect]` contract
+- Typed errors on an FFI path: the typed public error and its single mapping site
+- Audit report shape
 
 ## Step 1: measure, do not remember
 
@@ -10,13 +21,16 @@ you must reduce the risk without a rewrite.
 rg -n --type rust '\.unwrap\(\)|\.expect\(' \
   -g '!target/**' -g '!**/tests/**' -g '!**/benches/**' | wc -l
 
-# Per crate, worst first.
+# Per file, worst first.
 rg -c --type rust '\.unwrap\(\)|\.expect\(' \
   -g '!target/**' -g '!**/tests/**' -g '!**/benches/**' \
   | sort -t: -k2 -rn | head -20
 
-# Only the crates that sit on an FFI path.
+# Directories that define extern functions.
 rg -l 'extern "(C|system)"' --type rust | xargs -n1 dirname | sort -u
+
+# Crates that the boundary crate reaches: the rank 2 sites live here.
+cargo tree -p <boundary-crate> -e normal --prefix none
 ```
 
 Record the number in the pull request, not in the skill. The number changes; the method does
@@ -42,55 +56,46 @@ Fix rank 1 to 4 first. Leave rank 6 alone unless it is cheap.
 
 ### `Result` with an error type
 
-```rust
-// Before
-let config = serde_json::from_str::<Config>(raw).unwrap();
+Replace `serde_json::from_str::<Config>(raw).unwrap()` with a mapped error:
 
-// After
+```rust
 let config: Config = serde_json::from_str(raw).map_err(Error::InvalidConfig)?;
 ```
 
 ### `Option` from input
 
-```rust
-// Before
-let host = url.host_str().unwrap();
+Replace `url.host_str().unwrap()` with:
 
-// After
+```rust
 let host = url.host_str().ok_or(Error::MissingHost)?;
 ```
 
 ### Indexing and slicing
 
-```rust
-// Before
-let header = &buf[..HEADER_LEN];
+Replace `&buf[..HEADER_LEN]` with:
 
-// After
+```rust
 let header = buf.get(..HEADER_LEN).ok_or(Error::Truncated)?;
 ```
 
 ### Numeric conversion
 
-```rust
-// Before
-let len = buf.len() as u32;   // silently truncates
+`buf.len() as u32` truncates silently. Replace it with:
 
-// After
+```rust
 let len = u32::try_from(buf.len()).map_err(|_| Error::TooLarge)?;
 ```
 
-Keep the `.unwrap()` only when the bound is checked in the same function, and write the
-proof. The check must survive release builds:
+Keep a panicking conversion only when construction already bounds the value. Check the bound
+in the same function with a check that survives release builds, and state the invariant in the
+`expect` message:
 
 ```rust
 assert!(buf.len() <= MAX_U32 as usize, "buffer length is bounded by construction");
-// Infallible: `buf.len() <= MAX_U32` is checked above.
-let len: u32 = buf.len().try_into().unwrap();
+let len: u32 = buf.len().try_into().expect("buf.len() <= MAX_U32 is checked above");
 ```
 
-Use the `map_err` form above when the length comes from input. An assertion is
-only for a bound that construction already guarantees.
+Use the `map_err` form when the length comes from input.
 
 ### Arithmetic
 
@@ -120,25 +125,25 @@ first.
 
 ### Lock acquisition
 
+State the poison policy at each `lock()`; the `rust-discipline` skill owns it. When a panic under
+the lock must also stop the next user:
+
 ```rust
-// Acceptable: a poisoned lock is a fatal invariant violation.
 let state = self.state.lock().expect("state mutex poisoned");
 ```
 
-If the data is still valid after a panic, say so and recover:
+When the data is still valid after a panic, say why and recover:
 
 ```rust
 // The map is only ever inserted into, so a partial insert cannot corrupt it.
-let state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 ```
 
 ### Environment and configuration at startup
 
-```rust
-// Before
-let path = std::env::var("APP_DATA_DIR").unwrap();
+Replace `std::env::var("APP_DATA_DIR").unwrap()` with:
 
-// After
+```rust
 let path = std::env::var("APP_DATA_DIR").map_err(|_| Error::MissingEnv("APP_DATA_DIR"))?;
 ```
 
@@ -148,27 +153,21 @@ should still print a usable message.
 ## Step 4: roll out the lints
 
 Deny in one crate at a time. A workspace-wide `deny` on day one produces hundreds of
-findings and gets reverted.
+findings and gets reverted. The `rust-lints` skill owns the workspace floor; this step adds the
+panic lints for crates on an FFI path.
 
 Order:
 
-1. `clippy::panic`, `clippy::todo`, `clippy::unimplemented`, `clippy::unreachable` — usually
-   a small population, and each hit is a real defect.
+1. `clippy::panic`, `clippy::todo`, `clippy::unimplemented` — usually a small population, and
+   each hit is a real defect.
 2. `clippy::unwrap_used` on the FFI adapter crates.
 3. `clippy::expect_used` as `warn` on the same crates.
 4. `clippy::indexing_slicing` and `clippy::arithmetic_side_effects` on parsers and decoders.
-5. `clippy::panic_in_result_fn` everywhere. A function that returns `Result` and still panics
-   defeats its own signature.
+5. `clippy::panic_in_result_fn` on the same crates. A function that returns `Result` and still
+   panics defeats its own signature.
 6. `clippy::missing_panics_doc` on public APIs that keep a documented panic.
 
-```toml
-# Workspace root Cargo.toml: the floor that every member inherits.
-[workspace.lints.clippy]
-panic = "deny"
-todo = "deny"
-unimplemented = "deny"
-panic_in_result_fn = "deny"
-```
+Keep the workspace floor from the `rust-lints` skill unchanged. Every member inherits it:
 
 ```toml
 # Member Cargo.toml: inherit the floor unchanged.
@@ -176,102 +175,90 @@ panic_in_result_fn = "deny"
 workspace = true
 ```
 
-```toml
-# Member Cargo.toml of a crate on an FFI path: a local table instead of the floor.
-[lints.clippy]
-panic = "deny"
-todo = "deny"
-unimplemented = "deny"
-panic_in_result_fn = "deny"
-unwrap_used = "deny"       # tighten per crate as it is cleaned
+A crate on an FFI path keeps `[lints] workspace = true` and tightens the panic lints with
+crate-root attributes. Source attributes override the Cargo lint levels, and the crate keeps
+the whole floor, including the unsafe lints that an FFI adapter needs most.
+
+```rust
+// lib.rs of a crate on an FFI path. Its Cargo.toml keeps `[lints] workspace = true`.
+#![deny(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::panic_in_result_fn
+)]
+#![warn(clippy::expect_used, clippy::indexing_slicing, clippy::missing_panics_doc)]
 ```
 
 Cargo rejects a manifest that sets `lints.workspace = true` and a `[lints.<tool>]` table at
-the same time: `cannot override 'workspace.lints' in 'lints'`. A member either inherits the
-floor or restates the whole list locally. Restate the list for the crates you tighten.
+the same time: `cannot override 'workspace.lints' in 'lints'`. If you use a local table
+instead, it must restate every `[workspace.lints.rust]` and `[workspace.lints.clippy]` entry.
 
 ```toml
 # clippy.toml at the workspace root
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
 ```
+
+`panic_in_result_fn` has no `clippy.toml` test exemption. In a crate that denies it, write
+tests that return `()`, or put this attribute on each test module that holds a
+`Result`-returning test: `#[expect(clippy::panic_in_result_fn, reason = "test assertions")]`.
 
 Verify with the same command the CI uses:
 
 ```bash
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --locked --workspace --all-targets -- -D warnings
 ```
 
-## Step 5: the `#[allow]` contract
+Add `--all-features` only when the features are additive. Otherwise run each supported feature
+set; the `cargo-workflows` skill owns that rule.
 
-A local `#[allow]` is acceptable only with a justification on the same line or directly above.
+## Step 5: the `#[expect]` contract
+
+Under `-D warnings`, a kept `.expect("<invariant>")` in a crate that sets `expect_used = "warn"`
+needs a scoped suppression. Use `#[expect]` with a reason, not `#[allow]`: `#[expect]` fails
+with `unfulfilled_lint_expectations` when the call goes away, so a stale suppression cannot
+stay. `#[expect]` needs Rust 1.81. Below that MSRV, use `#[allow(lint)]` with a comment that
+states the invariant.
 
 ```rust
-// The key is inserted three lines above, so the lookup cannot miss.
-#[allow(clippy::unwrap_used)]
-let entry = map.get(&key).unwrap();
+#[expect(clippy::expect_used, reason = "the key is inserted above, so the lookup cannot miss")]
+let entry = map.get(&key).expect("key inserted above");
 ```
 
 Rules:
 
 - Never put `#![allow(clippy::unwrap_used)]` at a crate root to silence a migration. That
   deletes the signal for every future line.
-- Scope the allow to the smallest item: the statement or the function, not the module.
-- An allow with no comment is a review failure, the same as a bare `.unwrap()`.
-- Re-check the allows when the surrounding code changes. The proof is attached to the code
+- Scope the suppression to the smallest item: the statement or the function, not the module.
+- A suppression with no `reason` is a review failure, the same as a bare `.unwrap()`.
+- Re-check the reasons when the surrounding code changes. The proof is attached to the code
   around it, and that code moves.
 
-## Typed error design
+## Typed errors on an FFI path
 
-Design the error type so the boundary can map it without a string match.
+The `rust-code-style` skill owns the `thiserror` and `anyhow` split. For a crate on an FFI path:
 
-```rust
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("invalid input: {0}")]
-    InvalidInput(String),
-    #[error("resource not found")]
-    NotFound,
-    #[error("operation cancelled")]
-    Cancelled,
-    #[error("i/o failure")]
-    Io(#[from] std::io::Error),
-}
-```
-
-Rules:
-
-- One error enum per crate, not one per function. A caller that must match on six unrelated
-  enums stops matching and starts stringifying.
-- Mark it `#[non_exhaustive]` when the crate is a public dependency, so a new variant is not
-  a breaking change.
-- Use `#[from]` only where the conversion is unambiguous. Two `#[from]` arms for the same
-  source type do not compile, and that is a design signal.
-- Keep the `Display` text short and free of secrets. It can end up in a host log or in an
-  exception message that a user sees.
-- Do not put a backtrace in the error type on an FFI path. The shipped panic hook emits only a
-  closed site code plus bounded numeric location. Reproduce locally with
-  `RUST_BACKTRACE=full`, or symbolicate the crash artifact offline against the exact binary.
-
-### Where `anyhow` still fits
-
-- Binaries, CLIs, and test harnesses: one propagation type, one report at the top.
-- Internal orchestration code that never appears in a public signature.
-- `anyhow::Context` on the way up, to add the operation name and the parameters:
-
-  ```rust
-  // `with_context` is a trait method. Without this import it is not in scope,
-  // and the error reads "no method named `with_context`".
-  use anyhow::Context as _;
-
-  let raw = std::fs::read_to_string(&path)
-      .with_context(|| format!("read config at {}", path.display()))?;
-  ```
-
-Convert to a typed error before the value crosses a crate boundary that a binding layer
-consumes. Downcasting an `anyhow::Error` at an FFI boundary is a sign the type was wrong two
-layers earlier.
+- Give the crate a typed public error. `anyhow::Result` or `Result<_, String>` in its public
+  API forces the boundary to match on strings.
+- Map the typed error to the foreign representation in exactly one place per boundary crate.
+  A second mapping site drifts.
+- Design the error type so the boundary can map it without a string match. Use one error enum
+  per crate, not one per function. A caller that must match on six unrelated enums starts to
+  stringify.
+- Mark it `#[non_exhaustive]` when the crate is a public dependency, so a new variant is not a
+  breaking change.
+- Keep the `Display` text short and free of secrets. It can reach a host log, or a Java
+  exception message through a `jni` error policy.
+- Do not put a backtrace in the error type. The shipped panic hook emits only a closed site code
+  plus bounded numeric location. Reproduce locally with `RUST_BACKTRACE=full`, or symbolicate
+  the crash artifact offline against the exact binary.
+- Convert an `anyhow::Error` to a typed error before the value crosses into a crate that a
+  binding layer consumes. A downcast at the FFI boundary shows the type was wrong two layers
+  earlier.
 
 ## Audit report shape
 

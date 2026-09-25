@@ -167,6 +167,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | catch_unwind | rust-panic-safety |
 | panic hook | rust-panic-safety |
 | panic payload | rust-panic-safety |
+| panic in a function that cannot unwind | rust-panic-safety |
 | flamegraph | rust-performance |
 | simpleperf | rust-performance |
 | cargo-bloat | rust-performance |

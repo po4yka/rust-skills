@@ -4,7 +4,21 @@ Every pattern here answers the same question: where does the panic stop, and wha
 foreign caller see instead. Pick the shape that matches the boundary, then keep it identical
 across all entry points of the crate.
 
-Every `Err(payload)` branch below calls this helper. Dropping a caught payload can panic:
+Contents:
+
+- Pattern selection
+- Status codes
+- Returning a pointer or an opaque handle
+- Out-parameters
+- Transferring a bounded panic category
+- Callbacks that foreign code invokes
+- The macro-generated `extern` layer
+- UniFFI
+- Async work behind a synchronous boundary
+- Testing the guard
+
+Every `Err(payload)` branch below calls the `discard_panic_payload` helper from `SKILL.md`.
+This probe proves that it survives a payload whose destructor panics:
 
 ```rust,run
 fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
@@ -47,8 +61,8 @@ double-panic path, where safe destruction is no longer available.
 | C ABI, returns a scalar | `catch_unwind` in the `extern` body | A reserved negative status code |
 | C ABI, returns a pointer or handle | `catch_unwind` in the `extern` body | Null, plus a last-error slot |
 | C ABI, writes through out-params | `catch_unwind` in the `extern` body | A status code; out-params untouched |
-| JNI method | `with_env` + `resolve`, or `catch_unwind` | A thrown exception and a neutral return value |
-| UniFFI `#[uniffi::export]` | Generated scaffolding | The generated error path |
+| JNI method | `with_env` + `resolve`, or `catch_unwind` (see `jni-boundary.md`) | A thrown exception and a neutral return value |
+| UniFFI `#[uniffi::export]` | Generated scaffolding | Kotlin: `InternalException` with the panic text. Swift: an internal error from a throwing export; an uncatchable fatal error from a non-throwing export |
 | Rust callback that foreign code invokes | `catch_unwind` in the callback body | A status code, or a recorded flag |
 | Runtime entry that drives async work | `catch_unwind(AssertUnwindSafe(...))` around `block_on` | A status code plus a join-point check |
 
@@ -280,106 +294,22 @@ Audit that nothing bypasses it:
 rg -n 'extern "(C|system)" fn' --type rust
 ```
 
-## JNI: the full pattern
-
-### Loader
-
-```rust
-static JVM: std::sync::OnceLock<JavaVM> = std::sync::OnceLock::new();
-
-#[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
-pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) -> jint {
-    let _ = JVM.set(vm);
-    match std::panic::catch_unwind(|| {
-        init_logging("app-native");
-        // This is the application-owned outermost Rust FFI bootstrap. It
-        // statically composes component handlers and installs the hook once.
-        install_bootstrap_panic_hook();
-        JNI_VERSION
-    }) {
-        Ok(version) => version,
-        Err(payload) => {
-            discard_panic_payload(payload);
-            jni::sys::JNI_ERR
-        }
-    }
-}
-```
-
-Store the VM handle before the guard. A later call needs it to attach a thread or to report a
-failure, and a panic during init must not lose it.
-
-### Method entry point without `with_env`
-
-Use this when the workspace pins `jni` 0.21 or earlier, which has no `with_env`/`resolve`.
-
-```rust
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_example_app_NativeBridge_nativeStart(
-    mut env: JNIEnv<'_>,
-    _thiz: JObject,
-    handle: jlong,
-) -> jint {
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let session = SESSION_REGISTRY.lookup(handle)?;
-        session.start()
-    }));
-    match outcome {
-        Ok(Ok(())) => 0,
-        Ok(Err(SessionError::InvalidHandle)) => {
-            let _ = env.throw_new(
-                "java/lang/IllegalStateException",
-                "invalid native session handle",
-            );
-            -1
-        }
-        Ok(Err(_)) => {
-            let _ = env.throw_new("java/lang/RuntimeException", "native operation failed");
-            -1
-        }
-        Err(payload) => {
-            discard_panic_payload(payload);
-            let _ = env.throw_new("java/lang/RuntimeException", "native operation panicked");
-            -1
-        }
-    }
-}
-```
-
-`SESSION_REGISTRY.lookup` treats the `jlong` as an opaque generational ID. It
-decodes a non-zero slot and generation, locks the registry, checks both values,
-and clones an `Arc<Session>` only after they match. It releases the lock before
-`start`. `nativeDestroy` removes the entry and increments its generation before
-the slot can be reused. A forged, zero, destroyed, or stale ID returns
-`SessionError::InvalidHandle`; it is never cast to a pointer.
-
-### Rules that hold for both variants
-
-- Throw before you return. The JVM raises the pending exception when control returns to Java.
-- Return a neutral value after a throw. Java never reads it.
-- Never call another JNI function after `throw_new` except to return. Most JNI calls are
-  invalid while an exception is pending.
-- Do not invent a new Java exception class per panic class. One type keeps one catch site on
-  the managed side.
-- Keep the panic exception message fixed. Never copy the panic payload into it. The privacy-safe
-  hook records only a closed site code plus bounded numeric location.
-- Resolve every `jlong` session ID through a generational registry before use. Never cast a
-  caller-provided integer to a pointer.
-- A panic on a thread that Rust attached to the JVM must be caught on that thread. The
-  attaching code is an entry point too.
-
 ## UniFFI
 
 `uniffi::setup_scaffolding!()` with `#[uniffi::export]` generates the `extern "C"` glue and
 its panic guard. Consequences:
 
-- Generated scaffolding needs no hand-written guard. Confirm with
-  `rg -n 'extern "C"' <crate>/src` that every hit is macro-generated.
+- Generated scaffolding needs no hand-written guard. Run
+  `rg -n 'extern "(C|system)"' <crate>/src`. Generated scaffolding does not appear there, so
+  every hit is a hand-rolled export.
 - Any hand-rolled `extern "C"` in the same crate bypasses the generated guard and needs the
   full treatment.
-- Model the failure as a typed error in the UDL or the proc-macro signature. A panic becomes
-  an opaque internal error on the foreign side; a typed error keeps its variant.
+- Model the failure as a typed error in the exported signature: return `Result<T, E>` with
+  `#[derive(uniffi::Error)]` on `E`. A typed error keeps its variant. A panic becomes an internal error on the foreign side, and its message is
+  the panic payload text (`&str` or `String`). Keep panic messages free of input data, and do
+  not forward that exception message to telemetry.
+- Swift calls a non-throwing export through `try!`, so a panic there ends the app. Keep such
+  exports, for example a cancel call, panic-free, or give them a typed error.
 
 See the `uniffi-boundary` skill for the type mapping and the `ffi-error-progress-cancel`
 skill for the error, progress, and cancellation contract.
@@ -431,6 +361,23 @@ Two distinct failure paths exist here:
    payload through the guarded helper, and return `SessionError::TaskPanicked`
    so the entry point poisons the session.
 
+The join-point check inside `run()`:
+
+```rust
+match handle.await {
+    Ok(value) => Ok(value),
+    Err(err) if err.is_panic() => {
+        discard_panic_payload(err.into_panic());
+        Err(SessionError::TaskPanicked)
+    }
+    Err(_) => Err(SessionError::Cancelled),
+}
+```
+
+A `std::thread` handle works the same way: `join()` returns `Err(payload)`. Discard the payload
+after you classify the result as a fatal internal error. A detached task whose `JoinHandle` you
+drop reports nothing, so keep the handle or guard the task body itself.
+
 `AssertUnwindSafe` does not restore a mutated `Session`. Give the session an
 independent poison flag, check it at every entry point, and set it before you
 return the panic status. A handle registry can instead invalidate the handle.
@@ -440,12 +387,13 @@ Both must reach the caller. A guard alone is not enough when the crate spawns.
 
 ## Testing the guard
 
-- Add a hidden test-only entry point, or call the plain Rust `_entry` function from a test and
-  assert on the status code.
-- Force a panic through a test hook, then assert the status is the reserved panic code and the
-  process is still alive.
-- Run the guard tests under `panic = "unwind"`. Cargo ignores the `panic` key for the test
-  profile by default, so this is the normal case.
+- Call the plain Rust `_entry` function from a test to check the domain results. It has no
+  guard, so it cannot test the panic code.
+- Call the guarded `extern` function itself from a Rust test, or a hidden test-only entry point
+  that uses the same guard. Force a panic through a test hook, then assert the status is the
+  reserved panic code and the process is still alive.
+- Cargo builds tests with unwind whatever the profile says, so a green guard test does not
+  prove that the shipped build unwinds. Run the `--print cfg` check in `SKILL.md` for that.
 - Add a debug-build assertion that the Rust bootstrap's composed hook includes
   this component's handler before the first entry point does work.
 - Fuzz the input decoder behind the boundary. A fuzz harness finds the panics that a guard
