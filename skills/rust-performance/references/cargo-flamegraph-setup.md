@@ -1,8 +1,13 @@
-# cargo-flamegraph Setup and Criterion Reference
+# Host Profiler Setup: cargo flamegraph and samply
 
-## cargo-flamegraph setup
+Setup and invocations for `cargo flamegraph` 0.6.14 and `samply` 0.13.1 on Linux and macOS.
+[SKILL.md](../SKILL.md) defines the `profiling` profile that every command here uses. Criterion
+authoring is in [benchmarking.md](benchmarking.md).
 
-### Linux prerequisites
+Contents: Linux prerequisites (`--no-rosegment`, DWARF or frame pointers), macOS prerequisites,
+Installation, Invocations, Check the result, Read a flamegraph.
+
+## Linux prerequisites
 
 ```bash
 # Install perf
@@ -10,260 +15,146 @@ sudo apt-get install linux-tools-common linux-tools-$(uname -r)  # Debian/Ubuntu
 sudo dnf install perf                                            # Fedora
 sudo pacman -S perf                                              # Arch
 
-# Allow perf for the current user (choose one)
-sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'                   # temporary
-echo 'kernel.perf_event_paranoid = 1' | sudo tee -a /etc/sysctl.d/perf.conf  # permanent
-sudo sysctl -p /etc/sysctl.d/perf.conf
-
+# Allow perf and samply for unprivileged users (choose one)
+echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid                        # until reboot
+echo 'kernel.perf_event_paranoid = 1' | sudo tee /etc/sysctl.d/99-perf.conf  # permanent
+sudo sysctl -p /etc/sysctl.d/99-perf.conf
 ```
 
-Do not change the process-global `kernel.kptr_restrict` setting as a routine
-prerequisite. User-space Rust stacks do not require kernel symbols. When a
-specific kernel profile needs them, follow the host security policy and restore
-the setting after the bounded diagnostic session.
+Do not change the process-global `kernel.kptr_restrict` setting as a routine prerequisite.
+User-space Rust stacks do not need kernel symbols. When a specific kernel profile needs them,
+follow the host security policy and restore the setting after the bounded diagnostic session.
 
-Rust 1.90 and later use `lld` by default on supported Linux hosts. `perf` needs
-load segments instead of one read-only segment for accurate stack traces. Add
-the linker flag for the profiled Linux target:
+### `--no-rosegment` for lld
 
-```toml
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-Clink-arg=-Wl,--no-rosegment"]
-```
-
-### macOS prerequisites
-
-Current `cargo-flamegraph` uses `xctrace` on macOS. Grant the requested
-profiling permission when macOS prompts. Do not weaken System Integrity
-Protection for profiling.
+Rust 1.90 made `rust-lld` the default linker for `x86_64-unknown-linux-gnu` only. Other Linux
+targets still use the system linker unless you configure lld or mold. With lld or mold, `perf`
+cannot build correct stacks unless the linker gets `--no-rosegment`. The flag puts read-only data
+in the executable segment, so keep it out of the builds that ship. Set it for the profiling build
+and the `cargo flamegraph` run only:
 
 ```bash
-# Lower-friction alternative with no root requirement
-cargo install samply
-samply record ./target/release/myapp
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Clink-arg=-Wl,--no-rosegment"
+cargo build --locked --profile profiling --bin myapp
+cargo flamegraph --profile profiling --bin myapp
 ```
 
-### Installation
+Set the variable for both commands. `cargo flamegraph` runs its own `cargo build`, and a build
+without the flag replaces the binary. For another Linux target that links with lld or mold, use
+its own variable, for example `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS`.
+
+`CARGO_TARGET_<TRIPLE>_RUSTFLAGS` is the environment form of `[target.<triple>] rustflags`. Cargo
+joins it with the config-file `[target.*]` entries (checked on cargo 1.98.1). Like any target
+entry, it makes Cargo drop `[build] rustflags`. A `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS`
+variable replaces every target entry, this one included, so the stacks break again.
+[build-configuration.md](build-configuration.md) section 1 shows the precedence.
+
+### Unwinding: DWARF or frame pointers
+
+`cargo flamegraph` runs `perf record --call-graph dwarf,64000`. DWARF mode unwinds from
+`.eh_frame`, which rustc emits by default; the `profiling` profile adds the function names, inline
+frames, and file:line. DWARF mode does not need frame pointers.
+
+DWARF mode copies only 64000 bytes of user stack per sample. A deeper stack (deep recursion,
+large stack frames) stops at the same depth in every sample. Frame-pointer mode has no such limit.
+Add `-Cforce-frame-pointers=yes` to the same variable, rebuild, and pass a custom `perf record`
+command with `--cmd`:
 
 ```bash
-cargo install flamegraph
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Clink-arg=-Wl,--no-rosegment -Cforce-frame-pointers=yes"
+cargo build --locked --profile profiling --bin myapp
+cargo flamegraph --profile profiling --cmd "record -F 997 --call-graph fp" --bin myapp
 ```
 
-`cargo flamegraph` folds stacks with `inferno`, which is pure Rust and needs no extra install. If you prefer the original Perl scripts:
+`--cmd` replaces the whole `perf record` argument list, and `cargo flamegraph` rejects it together
+with `--freq`, so put `-F` inside it. The standard library ships with frame pointers since Rust
+1.79, and `aarch64-unknown-linux-gnu` keeps non-leaf frame pointers by default since Rust 1.89.
+The flag adds frame pointers to your own code on every target.
+
+## macOS prerequisites
+
+`cargo flamegraph` uses `xctrace` on macOS. Grant the profiling permission when macOS prompts. Do
+not weaken System Integrity Protection for profiling. `cargo flamegraph` rejects `--cmd`, and any
+`--freq` other than the default 997, on macOS, because it drives `xctrace` at its fixed rate.
+
+`samply` needs no extra setup to launch a program. To attach to a running process on macOS, run
+`samply setup` once, and again after each `samply` update.
+
+## Installation
 
 ```bash
-git clone https://github.com/brendangregg/FlameGraph
-export PATH="$PATH:/path/to/FlameGraph"
+cargo install --locked flamegraph
+cargo install --locked samply
 ```
 
-### Usage patterns
+`cargo flamegraph` folds stacks with `inferno`, which is pure Rust and needs no extra install.
+
+## Invocations
+
+`cargo flamegraph` has no `--locked` option, and it runs its own `cargo build` (or `cargo bench
+--no-run` for `--bench`) without one. Run the matching `cargo build --locked` or `cargo bench
+--locked --no-run` first, with the same profile, package, and target flags.
 
 ```bash
-# Profile a binary with arguments
-cargo flamegraph --locked --bin myapp -- --workers 4 --input data.bin
+# A binary with arguments
+cargo build --locked --profile profiling --bin myapp
+cargo flamegraph --profile profiling --bin myapp -- --workers 4 --input data.bin
 
-# Profile one integration test
-cargo flamegraph --locked --test integration_tests -- test_name
+# One integration test binary. It profiles the harness and every test in it,
+# so filter to one test after --.
+cargo build --locked --profile profiling --test integration_tests
+cargo flamegraph --profile profiling --test integration_tests -- test_name
 
-# Profile a benchmark; everything after -- goes to the Criterion harness
-cargo flamegraph --locked --bench my_bench -p my-bench-crate -- --bench decode_large
+# A Criterion benchmark. --bench puts Criterion in benchmark mode;
+# --profile-time skips the statistics phase so it stays out of the profile.
+cargo bench --locked --profile profiling --no-run -p my-bench-crate --bench decode
+cargo flamegraph --profile profiling -p my-bench-crate --bench decode -- \
+    --bench --profile-time 10 decode_large
 
-# Profile an example
-cargo flamegraph --locked --example my_example
+# An example
+cargo build --locked --profile profiling --example my_example
+cargo flamegraph --profile profiling --example my_example
 
-# Point cargo at a nested workspace while staying at the repository root,
-# so that relative fixture paths in the program still resolve
-cargo flamegraph --locked --manifest-path path/to/Cargo.toml --bin myapp -- \
+# A nested workspace, run from the repository root so that relative
+# fixture paths in the program still resolve
+cargo build --locked --manifest-path path/to/Cargo.toml --profile profiling --bin myapp
+cargo flamegraph --manifest-path path/to/Cargo.toml --profile profiling --bin myapp -- \
     run --input fixtures/sample.bin
 
-# Custom sample frequency. Higher is more accurate and costs more overhead.
-# 997 Hz is prime, which avoids aliasing with periodic work.
-cargo flamegraph --locked --freq 997 --bin myapp
+# Write to a chosen file, then open it
+cargo flamegraph --profile profiling -o /tmp/fg.svg --bin myapp && open /tmp/fg.svg      # macOS
+cargo flamegraph --profile profiling -o /tmp/fg.svg --bin myapp && xdg-open /tmp/fg.svg  # Linux
 
-# Write to a chosen file
-cargo flamegraph --locked -o profile.svg --bin myapp
-
-# Write and open
-cargo flamegraph --locked -o /tmp/fg.svg --bin myapp && open /tmp/fg.svg      # macOS
-cargo flamegraph --locked -o /tmp/fg.svg --bin myapp && xdg-open /tmp/fg.svg  # Linux
+# samply on the same build
+samply record ./target/profiling/myapp --workers 4
 ```
 
-Build with frame pointers if stacks come out truncated:
+On Linux, `--freq <HZ>` changes the sample rate; 997 Hz is the default, a prime that avoids
+aliasing with periodic work.
 
-```bash
-RUSTFLAGS="-C force-frame-pointers=yes" cargo flamegraph --locked --bin myapp
-```
+## Check the result
 
-### Reading flamegraphs
+- Frames show Rust function names, not hex addresses. Hex addresses mean the build has no
+  symbols: check that the command used `--profile profiling`, and that the profile sets
+  `strip = "none"`.
+- On Linux, `readelf -S target/profiling/myapp | grep -c debug_info` prints a non-zero count.
+- Frames show demangled names, not `_R...` strings. Raw v0 names mean the tool is too old for
+  the default mangling since Rust 1.97. `cargo flamegraph` 0.6.14 demangles v0 names itself, so
+  reinstall it with `cargo install --locked flamegraph`. For direct `perf report` or
+  `perf script` output, use Linux perf 6.16 or later (the perf in Ubuntu 24.04 and Debian 13 is
+  too old), or pipe the text through `rustfilt`.
 
-```text
-Wide frames  = more CPU time
-Tall stacks  = deep call chains
-Plateau tops = CPU time actually spent in that frame
+## Read a flamegraph
 
-x-axis: NOT time. Frames are sorted alphabetically inside each stack level.
-y-axis: call stack depth. The bottom frame was called first.
-```
+Width is the share of samples. The left-to-right order is alphabetical, not time. The same
+patterns apply to a `simpleperf` flamegraph from an Android device.
 
-Look for:
+| Pattern | Meaning | Action |
+|---------|---------|--------|
+| Wide plateau at the top | Leaf hotspot | Change that function; see the `rust-hot-path` skill |
+| Wide frame with tall narrow towers above it | Hot dispatch | Reduce call overhead, inline, or devirtualize |
+| Unexpected `alloc` / `dealloc` / `drop` frames | Allocation pressure | Confirm the sites with DHAT, then reuse buffers |
+| Stacks cut off, or `[unknown]` under your frames | Unwinding failed | See the failure triage in SKILL.md |
+| Raw `_R...` symbol names | The tool cannot demangle v0 symbols | See the failure triage in SKILL.md |
 
-- Wide frames near the top. These are hot leaves, where the CPU really is.
-- Unexpected `std::alloc` / `dealloc` / `drop` frames. These mean allocation pressure.
-- Many thin `<closure>` frames. These mean closure overhead in a tight loop.
-- Frames from a third-party rendering, parsing or crypto crate. Expected inside that stage, suspicious anywhere else.
-
----
-
-## Criterion reference
-
-### Manifest setup
-
-```toml
-[dev-dependencies]
-# Match the Criterion version already pinned in your workspace.
-criterion = { version = "0.7", features = ["html_reports"] }
-
-[[bench]]
-name = "decode"
-harness = false   # required, or the built-in test harness eats the arguments
-```
-
-### Benchmark structure with throughput
-
-```rust
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::hint::black_box;   // criterion::black_box is deprecated; use the std one
-use std::time::Duration;
-
-fn bench_throughput(c: &mut Criterion) {
-    let mut group = c.benchmark_group("decode");
-
-    // Measurement window and sample count
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(100);
-
-    for (label, bytes) in [("small", 8_192usize), ("medium", 65_536), ("large", 262_144)] {
-        let data = vec![0u8; bytes]; // replace with a real fixture
-
-        // Report bytes/sec next to the time
-        group.throughput(Throughput::Bytes(bytes as u64));
-        group.bench_with_input(
-            BenchmarkId::new("decode", label),
-            &data,
-            |b, data| b.iter(|| decode(black_box(data))),
-        );
-    }
-    group.finish();
-}
-
-criterion_group!(benches, bench_throughput);
-criterion_main!(benches);
-```
-
-Use `Throughput::Bytes` for byte streams and `Throughput::Elements` for item counts, such as one rendered frame or one processed record per iteration.
-
-### Per-item benchmark with expensive setup
-
-Build the fixture once, outside the measured closure. Only the work under test belongs inside `iter`.
-
-```rust
-fn bench_render(c: &mut Criterion) {
-    let scene = load_fixture_scene();   // setup, not measured
-
-    let mut group = c.benchmark_group("render");
-    group.measurement_time(Duration::from_secs(15));
-    group.sample_size(50);
-
-    for px in [2048u32, 3000, 4500] {
-        group.throughput(Throughput::Elements(1));  // one output per iteration
-        group.bench_with_input(
-            BenchmarkId::new("raster", px),
-            &px,
-            |b, &px| b.iter(|| render_to_buffer(black_box(&scene), black_box(px))),
-        );
-    }
-    group.finish();
-}
-```
-
-If the setup must run per iteration, use `iter_batched` so the setup cost stays out of the measurement.
-
-### Statistical configuration
-
-Set the statistics for a whole target through the `criterion_group!` config form. It replaces the plain `criterion_group!(benches, bench_throughput);` line shown above. The builder methods on `Criterion` take `self` by value, so chain them on a fresh `Criterion::default()`:
-
-```rust
-criterion_group! {
-    name = benches;
-    config = Criterion::default()
-        .measurement_time(Duration::from_secs(10))  // how long to measure
-        .sample_size(200)                           // number of samples
-        .warm_up_time(Duration::from_secs(3))       // warm-up before measurement
-        .noise_threshold(0.05)                      // 5% noise threshold
-        .significance_level(0.05)                   // p-value threshold
-        .confidence_level(0.95);                    // confidence interval width
-    targets = bench_throughput
-}
-criterion_main!(benches);
-```
-
-The same methods exist on `BenchmarkGroup`, where they take `&mut self`. Use the group form to configure one group only, as the examples above do.
-
-Raise `sample_size` and `measurement_time` when the reported change is not significant. Do not lower `significance_level` to make a result look real.
-
-### Wall time and CPU time
-
-Criterion measures wall time by default. For compute-bound work with no I/O this is the right metric. For work that blocks on I/O, wall time reports the wait, not the cost.
-
-Do not build async benchmarks for synchronous compute-bound code. Add the async harness only when the code under test is genuinely async.
-
-### Async benchmarks with Tokio
-
-```toml
-[dev-dependencies]
-criterion = { version = "0.7", features = ["async_tokio"] }
-tokio = { version = "1", features = ["full"] }
-```
-
-```rust
-fn bench_async(c: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    c.bench_function("async_op", |b| {
-        b.to_async(&rt).iter(|| async_operation(black_box(42)))
-    });
-}
-```
-
-### Comparing results
-
-```bash
-# Save a baseline on the base branch
-cargo bench --locked -p my-crate --bench decode -- --save-baseline main-branch
-
-# Switch branch and compare against it
-git checkout my-feature
-cargo bench --locked -p my-crate --bench decode -- --baseline main-branch
-```
-
-Name the bench target with `--bench`. Without it, cargo also runs the lib target, which keeps the
-libtest bench harness even when every `[[bench]]` sets `harness = false`. libtest reads the Criterion
-flag first and stops with `error: Unrecognized option: 'save-baseline'`.
-
-Output:
-
-```text
-decode/medium           time:   [12.345 µs 12.456 µs 12.567 µs]
-                        change: [-5.2312% -4.8956% -4.5600%] (p = 0.00 < 0.05)
-                        Performance has improved.
-```
-
-Read the `change` interval, not the midpoint. If the interval crosses zero, or `p > 0.05`, there is no measured change.
-
-### Validating benchmark code in review
-
-```bash
-# Compile every benchmark target without running measurements
-cargo bench --locked --workspace --no-run
-```
-
-This is the cheap gate for CI and for review. It catches API drift in benchmark code without paying for a full measurement run.
+A differential flamegraph uses color: red marks growth, blue marks a reduction.

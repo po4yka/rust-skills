@@ -1,30 +1,14 @@
 # Build-Time Optimization
 
-Reference for cutting Rust compile time in a multi-crate workspace, especially one that cross-compiles to several mobile targets.
+Reference for cutting Rust compile time in a multi-crate workspace, especially one that cross-compiles to several mobile targets. The Cargo book chapter [Optimizing Build Performance](https://doc.rust-lang.org/cargo/guide/build-performance.html) covers the general settings.
 
-## 1. Diagnose first with cargo --timings
+Contents: 1. Diagnose first; 2. sccache; 3. Cross-compilation target matrix; 4. Workspace splitting; 5. Linkers; 6. Other quick wins; 7. Generic signature shape and the thin wrapper.
 
-```bash
-cargo build --locked --timings
-cargo build --locked --release --timings
-# Writes target/cargo-timings/cargo-timing.html
-```
+## 1. Diagnose first
 
-Read the timeline for:
-
-- Long sequential chains, which mean no parallelism is available.
-- Individual crates over 10 s, which are the candidates worth attacking.
-- Proc-macro crates, which block every downstream crate until they finish.
-
-For LLVM IR volume rather than wall time, use `cargo llvm-lines`:
-
-```bash
-cargo install cargo-llvm-lines
-cargo llvm-lines --locked --release | head -20
-cargo llvm-lines --locked --release -p my-crate | head -30
-```
-
-High IR volume in a crate costs both compile time and binary size. Fix it with the thin-wrapper pattern described in SKILL.md, then check the signature shape in section 7.
+Start with `cargo build --locked --timings` and `cargo llvm-lines`, as SKILL.md sections 5 and 9
+show. Attack the crates that the timeline shows over 10 s or on a long sequential chain. Check
+the generic signature shape in section 7 before you split crates.
 
 ---
 
@@ -34,7 +18,7 @@ sccache caches `rustc` output. It matters most when the same crate is compiled m
 
 ```bash
 # Install
-cargo install sccache   # or: brew install sccache
+cargo install --locked sccache   # or: brew install sccache
 
 # Enable for Rust builds, in .cargo/config.toml or in the environment
 export RUSTC_WRAPPER=sccache
@@ -43,16 +27,20 @@ export RUSTC_WRAPPER=sccache
 sccache --show-stats
 ```
 
-In GitHub Actions:
+In GitHub Actions, the cache persists between runs only with the GitHub Actions backend. Set both
+variables through `GITHUB_ENV`; an `env` block on the setup step applies only to that step. The
+action's README enables the cache only on non-release runs, so a release build compiles from source:
 
 ```yaml
-- uses: mozilla-actions/sccache-action@v0.0.9
-- run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+- uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+  if: github.event_name != 'release' && github.event_name != 'workflow_dispatch'
+- if: github.event_name != 'release' && github.event_name != 'workflow_dispatch'
+  run: |
+    echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+    echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 ```
 
-An `env` block on the setup action applies only to that action step. Write the
-variable to `GITHUB_ENV` or set it on every Cargo step so later builds use the
-wrapper.
+Without `SCCACHE_GHA_ENABLED=true`, sccache writes a local disk cache that the next job never sees.
 
 The target triple and code-generation options are part of the cache key.
 Compilations for Android, iOS, and the host do not share one cached object merely
@@ -111,21 +99,14 @@ cargo build --locked --release --target aarch64-apple-ios
 
 # Simulator on an Apple Silicon host
 cargo build --locked --release --target aarch64-apple-ios-sim
-
-# Simulator on an Intel host
-cargo build --locked --release --target x86_64-apple-ios
 ```
 
-Combine the device and simulator slices into an XCFramework. Pass one library per platform. If you build more than one simulator architecture, merge those slices into one static library with `lipo` first:
+`x86_64-apple-ios` (the simulator on an Intel host) is optional. Build it only when a supported
+consumer still needs it. Packaging the slices into an XCFramework belongs to the `rust-ios-build`
+skill, when it is installed.
 
-```bash
-xcodebuild -create-xcframework \
-  -library target/aarch64-apple-ios/release/libmycrate.a \
-  -library target/aarch64-apple-ios-sim/release/libmycrate.a \
-  -output MyCrate.xcframework
-```
-
-Binding generation for an FFI layer runs once per target and costs almost nothing next to compilation. See `uniffi-packaging-versioning` and `rust-android-build`.
+Binding generation for an FFI layer runs once per target and costs almost nothing next to
+compilation. See `uniffi-packaging-versioning` and `rust-android-build`.
 
 ---
 
@@ -165,14 +146,14 @@ linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 ```
 
-Rough link speed on a large project: GNU ld, then lld at about 2x, then mold at about 5-10x. mold is Linux ELF only.
+The [mold README](https://github.com/rui314/mold) reports mold 4.9x faster than LLVM lld and 1.9x faster than wild at the median of its August 2026 benchmarks. Measure the link time of your own project before you switch. mold is Linux ELF only. With lld or mold, add `-Wl,--no-rosegment` before you profile with `perf`; see [cargo-flamegraph-setup.md](cargo-flamegraph-setup.md).
 
 `wild-linker` 0.10.0 is a newer incremental Linux linker. It is less mature than mold, so treat it as an experiment. Note the name: the crates.io crate called `wild` is an unrelated Windows glob-expansion library.
 
 ### Platform rules
 
 - **macOS**: the default Apple linker needs no alternative. `mold` is Linux ELF only.
-- **Android**: the NDK ships its own `lld`. Do not override the linker for `*-linux-android*` targets.
+- **Android**: link through the NDK clang driver, which uses the NDK's own `lld`. The `rust-android-build` skill sets `CARGO_TARGET_<TRIPLE>_LINKER`. Do not replace that driver with mold or a host linker.
 - **iOS**: use the Xcode-provided Apple linker through the standard Cargo iOS target configuration. Do not override.
 
 ---
@@ -181,18 +162,23 @@ Rough link speed on a large project: GNU ld, then lld at about 2x, then mold at 
 
 ```toml
 [profile.dev]
-debug = "line-tables-only"     # much faster than full debug info, still gives backtraces
-split-debuginfo = "unpacked"   # reduces linker input on macOS
+debug = "line-tables-only"     # faster than full debug info, still gives backtraces with line numbers
 ```
+
+`debug = "line-tables-only"` removes variable and type info, so a debugger shows no local
+variables. Set `debug = true` again before a debugger session; see `rust-debugging`.
+
+Do not copy `split-debuginfo = "unpacked"` into a shared profile to speed up macOS links. It is
+already the Cargo default on macOS, and on Linux it moves debug info into `.dwo` files next to the
+objects.
 
 ```bash
 # Sometimes faster for full rebuilds and for CI, where the incremental cache is cold
 CARGO_INCREMENTAL=0 cargo build --locked
 ```
 
-Pin the versions of heavy proc-macro dependencies. An unpinned bump recompiles the proc-macro crate and everything downstream of it.
-
-Prefer `--locked` in every scripted build. It stops a background dependency resolution from silently changing what you measured.
+Pass `--locked` in every scripted build. It stops a dependency resolution from silently changing
+what you measured.
 
 ---
 
@@ -222,7 +208,7 @@ Measured on rustc 1.97.0, aarch64-apple-darwin, `-C opt-level=0`, with one root 
 | by value | 4: `top::<&mut Buf>`, `mid::<&mut &mut Buf>`, `leaf::<&mut &mut Buf>`, `leaf::<&mut &mut &mut Buf>` |
 | behind `&mut` | 3: `top_ref::<Buf>`, `mid_ref::<Buf>`, `leaf_ref::<Buf>` |
 
-`leaf` appears twice in the by-value column because two call paths reach it at two different depths. Count the copies with `nm target/release/libmycrate.rlib | rustfilt | grep '::leaf'`, after `cargo install rustfilt`.
+`leaf` appears twice in the by-value column because two call paths reach it at two different depths. Count the copies with `nm target/release/libmycrate.rlib | rustfilt | grep '::leaf'`, after `cargo install --locked rustfilt`.
 
 ### Measured build cost of the three shapes
 
@@ -259,3 +245,28 @@ Three rules follow:
 - Take a generic writer, reader or sink parameter by `&mut impl Trait`. `&mut dyn Trait` saves almost nothing more on this shape and it costs a virtual call per write.
 - `cargo check` is identical for all three, to the hundredth of a second. Type-checking is depth-independent, so a check-only CI gate reports none of this. Gate build time on `cargo build --release`.
 - Confirm the mechanism from the deepest symbol. In the by-value rlib it is `<T48 as Ser>::ser::<&mut &mut ... &mut Vec<u8>>`, with 48 `&mut` levels.
+
+### Thin wrapper: compile the body once
+
+A high `Copies` count in `cargo llvm-lines` means the generic was instantiated many times. Keep the generic surface and move the body into a concrete inner function:
+
+```rust
+// Before: the whole body is monomorphized for every T.
+fn send<T: AsRef<[u8]>>(data: T) {
+    // ... large body ...
+}
+```
+
+```rust
+// After: a thin generic wrapper plus one concrete inner copy.
+fn send<T: AsRef<[u8]>>(data: T) {
+    fn inner(data: &[u8]) {
+        // ... large body, compiled once ...
+    }
+    inner(data.as_ref())
+}
+```
+
+Measured on rustc 1.97.0 at `-C opt-level=3`, one 15-line body reached through six argument types (`&str`, `&String`, `String`, `&Rc<str>`, `&Cow<'_, str>`, `&Box<str>`): the fully generic form emitted 917 LLVM IR lines over its 6 copies, and the thin-wrapper form emitted 53 lines over the same 6 copies plus 148 lines in the one `inner` copy, so 201 in total. That is 4.6x less IR for the same work.
+
+Check the crates with the heaviest generic iterator chains and the widest trait-bound surfaces first. The wrapper shrinks each copy; it does not reduce the number of copies. To cut the copy count, change the signature shape as shown above.

@@ -1,417 +1,219 @@
 ---
 name: rust-performance
-description: Use when a Rust workload is slow, a binary or app bundle grew, a benchmark regressed, a flamegraph needs analysis, a native crash needs symbolication, or a cross-build is slow. Covers cargo-flamegraph, perf, simpleperf, Perfetto, HWASan, ndk-stack, Instruments, os_signpost, MetricKit, cargo-bloat, cargo-llvm-lines, Criterion, heaptrack, DHAT, rayon, cargo --timings, sccache, LTO, codegen-units, and linker choice. Triggers on "flamegraph", "simpleperf", "Perfetto", "Instruments", "cargo-bloat", "binary size", "build time", "LTO", "monomorphization", or any performance question.
+description: Use when a Rust workload is slow, a benchmark regressed, a binary or app bundle grew, or a build is slow, and the next step is to measure it with a flamegraph, samply, perf, simpleperf, Perfetto, Instruments, DHAT, Criterion, Gungraun, cargo-bloat, cargo-llvm-lines, or cargo --timings, or to tune LTO, codegen-units, opt-level, PGO, or a rayon thread pool. Not for choosing the code change after a profile names the hotspot; use `rust-hot-path`.
 license: BSD-3-Clause
 ---
 
 # Rust Performance
 
-Profiling and optimization for Rust workloads on the host, on Android, and on iOS.
+Measure Rust speed, heap use, binary size, and build time on the host, on Android, and on iOS. The `rust-hot-path` skill, when it is installed, turns a named hotspot into a code change.
 
 ## Rules of engagement
 
-1. Measure before you change code. A profile or a benchmark must name the hotspot.
-2. Write down the metric first. Choose one number per concern: items/sec, MB/s, ms per pass, peak MB, or KB added to the app bundle. An optimization without a metric is a guess.
-3. Profile the profile that ships. Size and speed numbers from `dev` do not transfer to `release`.
-4. Change one thing per measurement. Save a baseline, apply one change, compare.
-5. Keep the same machine, the same power state, and the same device for A/B runs.
-6. Optimize the algorithm before the constant factor. LTO gives 5-30%; a better data structure gives more.
+1. Name one metric and record a baseline before you change code: items/s, MB/s, ms per pass, peak MB, or KB added to the app bundle. A change without a before and an after number is a guess.
+2. Measure the build that ships. Numbers from `dev` do not transfer to `release`. On the host, run profilers on the `profiling` profile below, which is the release build plus symbols. On Android and iOS, profile the platform ship profile (sections 2 and 3), which keeps line tables and does not strip.
+3. Change one thing per measurement. Keep the machine, the power state, and the device the same for the A and B runs.
+4. Fix the algorithm or the data structure before you tune build flags.
+
+## Build a profile that the profiler can read
+
+A profile without symbols shows hex addresses and truncated stacks. A release build has no debug info: Cargo passes `-C strip=debuginfo` whenever `debug` is off (checked on 1.98.1), and many ship profiles also set `strip = "symbols"`. Define this profile once in the workspace-root `Cargo.toml`:
+
+```toml
+[profile.profiling]
+inherits = "release"
+debug = true      # "line-tables-only" is enough when file:line is all you need
+strip = "none"    # required: `strip` is inherited, so a stripping release strips this too
+```
+
+Build it with `--locked`, then point every profiler at `target/profiling/<name>`:
+
+```bash
+cargo build --locked --profile profiling --bin myapp
+```
+
+Check the build before you read a profile. On Linux, `readelf -S target/profiling/myapp | grep -c debug_info` must print a non-zero count. On every host, the flamegraph must show function names, not hex addresses.
 
 ## Tool selection
 
 | Target | CPU profile | Heap profile | Notes |
 |--------|-------------|--------------|-------|
-| Host (Linux) | `samply`, `cargo flamegraph`, `perf record` | `heaptrack`, DHAT | `perf_event_paranoid <= 1` required |
-| Host (macOS) | `samply`, `cargo flamegraph` (`xctrace`), Instruments | DHAT through the `dhat` crate, Instruments Allocations | Grant profiling permission when prompted; do not weaken SIP |
-| Android | `simpleperf`, Perfetto | Android Studio native allocations, HWASan for errors | `perf`, `heaptrack` and DHAT do not work here |
-| iOS | Instruments Time Profiler, `os_signpost` | Instruments Allocations and Leaks | No `simpleperf`; MetricKit for production data |
+| Host (Linux) | `samply`, `cargo flamegraph`, `perf record` | `heaptrack`, DHAT | Set `kernel.perf_event_paranoid` to 1 or lower once, as root |
+| Host (macOS) | `samply`, `cargo flamegraph` (`xctrace`), Instruments | DHAT through the `dhat` crate, Instruments Allocations | Grant the profiling permission when prompted; do not weaken SIP |
+| Android | `simpleperf`, Perfetto | Android Studio native allocations | `perf`, `heaptrack` and DHAT do not run there |
+| iOS | Instruments Time Profiler, `os_signpost` | Instruments Allocations and Leaks | MetricKit for data from shipped devices |
 
-`samply` 0.13.1 is the lowest-friction sampling profiler on the host. It runs on macOS and Linux, needs no root access or Instruments, and opens the result in the Firefox Profiler:
+## Verification
 
-```bash
-cargo install samply
-samply record ./target/release/app
-```
+Before you claim a performance change, have evidence for each line that applies:
 
-The Firefox Profiler is also a viewer for raw `perf` data on Linux.
+- The hotspot: a profile of the `profiling` profile (host) or of the ship profile (device), or a benchmark, named it before the change.
+- The win: `cargo bench --locked -p <crate> --bench <b> -- --save-baseline before` before the change and `-- --baseline before` after, with a change interval that does not cross zero; or a Gungraun instruction-count delta. A green `cargo bench --no-run` proves only that the benchmarks compile.
+- The benchmark measured work: the two-size scaling check in section 6 moved the time.
+- The size: `cargo bloat --locked --profile <ship-profile> --target <triple> --crates` captured before and after, when the change touches generics, dependencies, or profile settings.
+- The profiles: `panic` and `strip` did not change silently in a profile that a symbolication or FFI-catch path depends on.
+- New `unsafe` or new parallelism: checked with the sanitizers in the `rust-sanitizers-miri` skill.
 
----
+## Failure triage
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Flamegraph shows hex addresses | The profiled build has no symbols | Build and profile with `--profile profiling`; check it with `readelf -S` |
+| Linux stacks wrong, or no function names, under `cargo flamegraph` or `perf` | `rust-lld` without `--no-rosegment`, or a build without debug info | Profile the `profiling` profile; pass `-Wl,--no-rosegment` through `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` |
+| Stacks stop at the same depth in deep call chains | DWARF mode copies only 64000 bytes of stack per sample | Add `-Cforce-frame-pointers=yes` to `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`, rebuild, and run `cargo flamegraph --profile profiling --cmd "record -F 997 --call-graph fp" --bin myapp` |
+| Stacks cut off only in `--call-graph fp` mode | No frame pointers in your code | Add `-C force-frame-pointers=yes` through `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` or the config file, not `RUSTFLAGS` |
+| A flag from `.cargo/config.toml` has no effect | `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` is set and replaces it | Unset it, or move every flag to one config level |
+| Frames or reports show raw `_R...` names | The tool predates v0 mangling, the default since Rust 1.97 | Upgrade the tool, or pipe text output through `rustfilt`; see `rust-debugging` |
+| Symbolication shows `<unknown>` | Stripped library | Use the unstripped `.so` from `target/<triple>/<profile>/`, not the packaged copy |
+| `cargo flamegraph --locked` fails with `unexpected argument` | `cargo flamegraph` has no `--locked` | Run `cargo build --locked ...` first, then `cargo flamegraph` without it |
+| `cargo flamegraph` fails on Linux | `perf_event_paranoid` too high | Set it to 1 or lower |
+| `cargo flamegraph` fails on macOS | `xctrace` permission, or a `--freq` other than 997 | Grant the permission and drop `--freq`, or use `samply`; do not weaken SIP |
+| Benchmark results swing by more than 10% between runs | Thermal or scheduler noise | Fix the power state, close background load, raise `sample_size` |
+| Binary grew after a dependency bump | New monomorphizations or new codegen | `cargo bloat --crates` then `cargo llvm-lines` on the top crate |
+| An Android profiling step fails | Device, manifest, or packaging setup | The common-mistakes table in [references/android-profiling.md](references/android-profiling.md) |
+
+## Silent failures
+
+None of these gives an error:
+
+- A CI gate that cannot fail. Criterion prints "Performance has regressed." and still exits 0. A Gungraun run without the main-branch baseline prints `N/A` for every comparison and passes.
+- Unsound parallel code. Never use a JNI environment, or an FFI handle that is not thread-safe, inside a `rayon` closure: rayon runs the closure on other threads.
+- A lost FFI error path. `panic = "abort"` makes every `catch_unwind` inert, so an FFI entry point aborts the process and returns no error.
+- Crashes that nobody can symbolicate. A second build with other `debug` or `strip` settings has a different build ID, so it cannot symbolicate the shipped binary.
+- A library that faults on the device. Never put `-C target-cpu=native` in a config that cross-compiles: the library then assumes host CPU features and faults with an illegal instruction.
 
 ## 1. Host profiling
 
-### cargo-flamegraph
-
-`cargo flamegraph` works for host-target binaries, tests, examples and benchmarks. It does not work for Android or iOS targets.
+`samply` 0.13.1 samples on macOS and Linux and opens the result in the Firefox Profiler. It needs no root on macOS.
 
 ```bash
-cargo install flamegraph
-
-# Profile a binary with arguments
-cargo flamegraph --locked --bin myapp -- --workers 4 --input data.bin
-
-# Profile a benchmark (pass --bench through to the harness)
-cargo flamegraph --locked --bench my_bench -p my-bench-crate -- --bench
-
-# Custom sample frequency; 997 Hz avoids aliasing with periodic work
-cargo flamegraph --locked --freq 997 --bin myapp
+cargo install --locked samply
+samply record ./target/profiling/myapp --workers 4
 ```
 
-On macOS current `cargo flamegraph` uses `xctrace`. On Linux it uses `perf`.
-
-See [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) for the Linux and macOS prerequisites, and for the test, example, `--manifest-path` and output-file invocations.
-
-### Reading flamegraphs
-
-| Axis | Meaning |
-|------|---------|
-| X (width) | Proportion of samples, so proportion of CPU time. Wider is hotter. |
-| X (order) | Alphabetical inside each stack level. It is NOT a time sequence. |
-| Y (height) | Call stack depth. The bottom frame is the entry point. |
-
-| Pattern | Meaning | Action |
-|---------|---------|--------|
-| Wide plateau at the top | Leaf hotspot | Optimize that function |
-| Wide frame with tall narrow towers above it | Hot dispatch | Reduce call overhead, inline, or devirtualize |
-| Unexpected `alloc` / `dealloc` / `drop` frames | Excessive allocation | Pool or reuse buffers |
-| Many thin `<closure>` frames | Closure overhead in a tight loop | Extract to a named function |
-| Empty or truncated stacks | Unwinding failed | Build with `-C force-frame-pointers=yes` |
-
-Differential flamegraphs use color: red marks a regression, blue marks an improvement.
-
-### Other host tools
-
-- `perf stat` and `perf record` — Linux only. Build with `RUSTFLAGS="-C force-frame-pointers=yes"` for reliable call graphs.
-- `heaptrack` — Linux heap profiler. Run `heaptrack ./target/release/myapp`.
-- DHAT through Valgrind — Linux only. Run `valgrind --tool=dhat ./target/debug/myapp`.
-- DHAT through the `dhat` crate — version 0.3.3 builds and runs on stable. No nightly is needed. Keep the feature gate so the profiler and its global allocator stay out of the shipped binary:
+`cargo flamegraph` 0.6.14 records with `perf` on Linux and with `xctrace` on macOS. It has no `--locked` option, and it runs its own `cargo build` without one. Build with `--locked` first, then profile the same profile:
 
 ```bash
-cargo run --release --locked -p myapp --features dhat-heap -- <args>
-# Writes dhat-heap.json on exit.
-# View at https://nnethercote.github.io/dh_view/dh_view.html
+# x86_64 Linux only: rust-lld, the default linker there since Rust 1.90, needs this for perf stacks
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Clink-arg=-Wl,--no-rosegment"
+
+cargo build --locked --profile profiling --bin myapp
+cargo flamegraph --profile profiling --bin myapp -- --workers 4
 ```
 
-The same crate also turns a heap measurement into a regression test. Build the profiler in testing mode, then assert on `dhat::HeapStats`:
+Set `--no-rosegment` only for the profiling build and the `cargo flamegraph` run, as above. In the repository config it also reaches shipped builds and puts read-only data in an executable segment. `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` joins the config-file `[target]` rustflags; a plain `RUSTFLAGS` replaces every config-file entry. Read [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) when a first `cargo flamegraph` run fails or shows broken stacks, when you profile a test, example, or benchmark, or when you interpret a flamegraph pattern. Width is the share of samples; the left-to-right order is alphabetical, not time.
 
-```rust,ignore
-let _p = dhat::Profiler::builder().testing().build();
-// run the code under test
-dhat::assert_eq!(dhat::HeapStats::get().total_blocks, 1);
-```
+Heap profiles:
 
-`dhat::assert_eq!` is not a no-op outside testing mode. Under a non-testing profiler it panics with `dhat: asserting while not in testing mode`, and with no profiler running it panics with `dhat: asserting when no profiler is running`. For what to change in the code once DHAT names the allocation sites, see `rust-hot-path`.
-
-- `xctrace` on macOS — current `cargo flamegraph` calls it for you.
-- Instruments on macOS — Allocations and Leaks templates also work on host builds.
-
----
+- Linux: `heaptrack ./target/profiling/myapp`, or `valgrind --tool=dhat ./target/profiling/myapp`.
+- Any host, on stable: the `dhat` crate 0.3.3. Put both the `#[global_allocator] static ALLOC: dhat::Alloc = dhat::Alloc;` item and the `dhat::Profiler::new_heap()` call behind a `dhat-heap` feature, so neither reaches the shipped binary. Run `cargo run --locked --profile profiling --features dhat-heap -- <args>`, then open `dhat-heap.json` in the [DHAT viewer](https://nnethercote.github.io/dh_view/dh_view.html).
+- A `dhat::assert_eq!` allocation-count test pins a win. The `rust-hot-path` skill has the test and its one-test-per-file isolation rule.
 
 ## 2. Android on-device profiling
 
-Host tools such as `perf`, `heaptrack` and DHAT do not work for Android targets. Use `simpleperf` for a CPU profile of one process. Use Perfetto when you need the native profile next to scheduler, binder and app frame data.
-
-Set two things before you record:
-
-- `-C force-frame-pointers=yes` for every Android target, as per-target `rustflags` in `.cargo/config.toml`. Without it `simpleperf` cannot walk ARM64 stacks and the flamegraph comes out empty. The cost is one reserved register (`x29` on ARM64).
-- An unstripped `.so` kept on the host, under `target/<triple>/<profile>/`. Gradle packages a stripped copy, and every symbolication step needs the unstripped one.
-
-The `simpleperf` and Perfetto commands, the full prerequisites table, offline symbolication with `ndk-stack` and `llvm-addr2line`, HWASan builds, Android Studio LLDB and the native memory profiler are in [references/android-profiling.md](references/android-profiling.md).
-
----
+Use `simpleperf` for a CPU profile of one app. Use Perfetto when you need the native profile next to scheduler, binder and app frame data. The app must be profileable (`<profileable android:shell="true" />` for a release build on Android 10 or later) or debuggable, and symbolization needs the unstripped `.so` under `target/<triple>/<ship-profile>/`, not the packaged copy. Read [references/android-profiling.md](references/android-profiling.md) when you record on a device: it has the call-graph mode and frame-pointer rules per ABI, the `simpleperf` and Perfetto commands, the native memory profiler, and a common-mistakes table.
 
 ## 3. iOS on-device profiling
 
-iOS profiling uses Instruments for sampling and `os_signpost` for in-code interval markers. There is no `simpleperf` on iOS.
-
-### Instruments
-
-```text
-Product -> Profile (Cmd-I) in Xcode
-Time Profiler   -> CPU flamegraphs and call trees
-Allocations     -> heap growth and allocation counts
-Leaks           -> retain cycles
-```
-
-For usable symbols in Instruments:
-
-- Build the Rust static library with the on-device debug profile, so debug line tables survive.
-- Turn off "Strip Swift Symbols" in the Xcode scheme for the profiling run.
-
-### os_signpost markers
-
-Mark the boundaries of major native stages so Instruments shows named intervals in the Points of Interest track. Emit the signposts from the platform side around each call into the Rust library:
-
-```swift
-import os.signpost
-
-let log = OSLog(subsystem: "com.example.app", category: "engine")
-let id = OSSignpostID(log: log)
-
-os_signpost(.begin, log: log, name: "HeavyStage", signpostID: id)
-// call into the Rust library
-os_signpost(.end, log: log, name: "HeavyStage", signpostID: id)
-```
-
-Emit the signposts from Rust only through a platform shim, gated behind a build feature or `cfg`. Keep the shim out of the Android and host builds.
-
-### MetricKit
-
-MetricKit gives aggregated on-device performance data from real users. Wire `MXMetricPayload` in the app delegate to collect hang rate, CPU time and memory metrics in production without instrumentation overhead. Use it to confirm that a local win is real on shipped devices.
-
----
+Use Instruments through Product -> Profile in Xcode; there is no `simpleperf` on iOS. Read [references/ios-profiling.md](references/ios-profiling.md) when you profile a Rust library in an iOS app: it has the symbol setup (a Rust profile with line tables and no strip, and a dSYM), `os_signpost` interval markers around calls into Rust, and MetricKit field data.
 
 ## 4. Binary size (cargo-bloat)
 
-Always pass the profile that ships. Numbers from `release` do not match a size-optimized mobile profile.
+Pass the profile that ships: `android-jni` in the `rust-android-build` skill, or `ios-release` in the `rust-ios-build` skill. Numbers from `release` do not match a size-optimized mobile profile.
 
 ```bash
-# Per-crate breakdown; this is what maps to app bundle growth
-cargo bloat --locked --profile mobile-release --target aarch64-linux-android --crates
+# Per-crate breakdown; this maps to app bundle growth. Use aarch64-apple-ios for the iOS device slice.
+cargo bloat --locked --profile <ship-profile> --target aarch64-linux-android --crates > before.txt
+# apply the change, then run it again and compare
+cargo bloat --locked --profile <ship-profile> --target aarch64-linux-android --crates > after.txt
+diff before.txt after.txt
 
 # Top 20 functions by size
-cargo bloat --locked --profile mobile-release --target aarch64-linux-android -n 20
-
-# iOS device slice
-cargo bloat --locked --profile mobile-release --target aarch64-apple-ios --crates
-
-# Compare before and after
-cargo bloat --locked --profile mobile-release --target aarch64-linux-android --crates > before.txt
-# apply the change
-cargo bloat --locked --profile mobile-release --target aarch64-linux-android --crates > after.txt
-diff before.txt after.txt
+cargo bloat --locked --profile <ship-profile> --target aarch64-linux-android -n 20
 ```
 
-### Strip and debug trade-offs
-
-| Setting | Binary size | Debuggable | Use when |
-|---------|-------------|------------|----------|
-| `strip = "symbols"` | Smallest | No | Ship builds with no on-device profiling need |
-| `strip = "debuginfo"` | ~5-10% larger | Partial | Keeps symbol names for profiling |
-| `strip = "none"` + `debug = 0` | ~10-15% larger | No | ELF symbols remain for `ndk-stack` |
-| `strip = "none"` + `debug = "line-tables-only"` | ~30-50% larger | Yes | Profiling sessions, or ship builds with packaged symbol sidecars |
-
-If you strip the shipped library, archive the unstripped copy alongside the release so crashes can still be symbolicated offline.
-
-### FFI scaffolding
-
-Generated FFI scaffolding is not free. Each type that crosses the boundary generates code. If the FFI crate dominates `cargo bloat --crates`, audit the public surface and narrow the number of enums and records that cross. See `uniffi-boundary` and `rust-jni`.
-
----
+Each type that crosses an FFI boundary generates scaffolding code. If the FFI crate dominates `--crates`, reduce the enums and records that cross; see `uniffi-boundary` and `rust-jni`. Section 8 has the `strip` rule.
 
 ## 5. Monomorphization bloat (cargo-llvm-lines)
 
 `cargo llvm-lines` counts LLVM IR lines per function. High IR volume costs both compile time and binary size.
 
 ```bash
-cargo install cargo-llvm-lines
+cargo install --locked cargo-llvm-lines
 cargo llvm-lines --locked --release -p my-crate | head -30
 ```
 
-A high `Copies` count means the generic was instantiated many times. Fix it with the thin-wrapper pattern: keep the generic surface, move the body into a concrete inner function. Measured on rustc 1.97.0 at `-C opt-level=3`, one 15-line body reached through six argument types (`&str`, `&String`, `String`, `&Rc<str>`, `&Cow<'_, str>`, `&Box<str>`): the fully generic form emitted 917 LLVM IR lines over its 6 copies, and the thin-wrapper form emitted 53 lines over the same 6 copies plus 148 lines in the one `inner` copy, so 201 in total. That is 4.6x less IR for the same work.
+A high `Copies` count means the generic was instantiated many times. Keep the generic surface and move the body into one concrete inner function; this cut LLVM IR 4.6x in a measured case. To cut the number of copies as well, change the signature shape. Read the generic-signature section of [references/build-time-optimization.md](references/build-time-optimization.md) when `cargo llvm-lines` names a generic function: it has the thin-wrapper example and the measured costs.
 
-```rust
-// Before: the whole body is monomorphized for every T.
-fn send<T: AsRef<[u8]>>(data: T) {
-    // ... large body ...
-}
-```
+## 6. Benchmarks
 
-```rust
-// After: a thin generic wrapper plus one concrete inner copy.
-fn send<T: AsRef<[u8]>>(data: T) {
-    fn inner(data: &[u8]) {
-        // ... large body, compiled once ...
-    }
-    inner(data.as_ref())
-}
-```
-
-Check the crates with the heaviest generic iterator chains and the widest trait-bound surfaces first. The wrapper shrinks each copy; it does not reduce the number of copies. To cut the copy count, change the signature shape: the generic-signature section of [references/build-time-optimization.md](references/build-time-optimization.md) measures an `impl Write` parameter taken by value at 15x the release build time of `&mut impl Write` on the same crate.
-
----
-
-## 6. Criterion microbenchmarks
-
-### Pick the harness first
-
-| Harness | Measures | Reach for it when |
-|---------|----------|-------------------|
-| Criterion | Wall clock, in process | The default. Baselines, statistics, HTML reports |
-| Divan 0.1.21 | Wall clock, in process | You want a lighter in-process harness with less code per benchmark |
-| Hyperfine 1.20.0 | Wall clock of a whole process | The unit of work is one CLI invocation, not one function |
-| Gungraun 0.19.4 | Valgrind instruction counts | You need a number that does not move with machine noise, inside `cargo bench` |
-
-Two naming traps:
-
-- Gungraun is the rename of `iai-callgrind`. `iai-callgrind` is still published separately at 0.16.1, so pin the crate you mean instead of taking whichever name you remember.
-- Rust's built-in `#[bench]` attribute is nightly-only. On stable it fails with E0554.
-
-### Running Criterion
+Use Criterion 0.8 by default. Use Gungraun (Valgrind instruction counts, Linux only) for a number that does not move with machine noise, or for a CI gate. Do not use `#[bench]`: it is nightly-only and fails on stable with E0658. Read [references/benchmarking.md](references/benchmarking.md) when you pick another harness (Divan, Hyperfine, Gungraun) or write or review benchmark code: it has the harness table, the manifest, benchmark structure, statistics, async benchmarks, the scaling probe with measured numbers, and the CI gate commands.
 
 Declare `harness = false` for every benchmark target in the crate manifest, otherwise the built-in test harness intercepts the arguments.
 
 ```bash
-# Compile every benchmark without measuring. Use this in review and in CI.
-cargo bench --locked --workspace --no-run
+cargo bench --locked --workspace --no-run      # compile every benchmark, measure nothing
+cargo test --locked --workspace --benches      # run each Criterion benchmark once (smoke test)
 
-# Run one suite
+# Run one suite, or one benchmark function
 cargo bench --locked -p my-crate --bench decode
-
-# Filter to one benchmark function
 cargo bench --locked -p my-crate --bench decode -- decode_large
 
 # Save a baseline, change the code, then compare against it
 cargo bench --locked -p my-crate --bench decode -- --save-baseline before
 cargo bench --locked -p my-crate --bench decode -- --baseline before
-
-# HTML report
-open target/criterion/report/index.html
 ```
 
-Criterion prints the verdict with a p-value:
+Name the bench target with `--bench` when you pass Criterion flags. Without it, the lib target's libtest harness also receives the flags and stops with `error: Unrecognized option: 'save-baseline'`.
 
-```text
-decode/medium           time:   [12.345 µs 12.456 µs 12.567 µs]
-                        change: [-5.2312% -4.8956% -4.5600%] (p = 0.00 < 0.05)
-                        Performance has improved.
-```
+Read the `change` interval in Criterion's output, not the midpoint. If the interval crosses zero, or `p > 0.05`, there is no measured change. Increase `sample_size` or `measurement_time`; do not lower the significance level. A low p-value is not proof either: wall-clock variance from memory layout (symbol order, environment size, stack alignment) is systematic within one build, so it repeats across samples and passes the test. Confirm a small wall-clock win with Gungraun instruction counts on Linux before you keep the change.
 
-Do not read a change with `p > 0.05` as a result. Increase `sample_size` or `measurement_time` instead.
+Prove that the benchmark measured something. `black_box` on the input and on the output does not prove that the work ran: LLVM can rewrite a reduction such as `(0..n).sum()` into a closed form, so the routine becomes O(1). Run the same routine at two input sizes 10x apart. A time ratio near 1.0 means the benchmark measured nothing. Do not require a ratio near 10: cache effects make it superlinear, and fixed per-iteration overhead makes it sublinear.
 
-A low p-value is not proof either. Wall-clock variance caused by memory layout — symbol order, environment size, stack alignment — is systematic within one build, so it repeats across samples and Criterion reports `p < 0.05` on it. The result is reproducible and still wrong. Instruction counts do not have that failure mode, so confirm a small wall-clock win with Gungraun before you keep the change.
+Gate benchmarks in CI:
 
-Benchmark structure, `Throughput` reporting, statistical configuration and async benchmarks are in [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md).
-
-### Prove the benchmark measured something
-
-`black_box` on the input and on the output does not prove the work ran. LLVM rewrites an arithmetic reduction such as `(0..n).sum()` into the closed form `n * (n - 1) / 2`, so the routine really becomes O(1), and a `black_box` on each end does not bring the loop back. Measured under `cargo +nightly bench`, `black_box` on both sides: `closed_form_2m` 0.58 ns/iter and `closed_form_20m` 0.57 ns/iter. A 10x input moved the time by 1.02x. The same 10x change on a pre-built `Vec<u64>` moved it 11.5x to 13.2x over four runs. A `black_box` inside the reduction, as in `(0..black_box(n)).map(black_box).sum::<u64>()`, does emit the loop again, but then the barrier is what you measure.
-
-Run the identical routine at two problem sizes 10x apart, as two benchmark functions in the same binary. Real work moves the time. Folded work does not.
-
-```rust
-use std::hint::black_box;
-use std::time::Instant;
-
-/// Seconds per call of `f`, averaged over `reps` calls.
-fn per_call<T>(reps: u32, mut f: impl FnMut() -> T) -> f64 {
-    let start = Instant::now();
-    for _ in 0..reps { black_box(f()); }
-    start.elapsed().as_secs_f64() / f64::from(reps)
-}
-
-fn main() {
-    // Folded: LLVM rewrites `(0..n).sum()` into n * (n - 1) / 2.
-    let folded = per_call(1_000_000, || black_box((0..black_box(20_000_000u64)).sum::<u64>()))
-        / per_call(1_000_000, || black_box((0..black_box(2_000_000u64)).sum::<u64>()));
-
-    // Real: the sum reads memory that the compiler cannot fold away.
-    let small: Vec<u64> = (0..2_000_000).collect();
-    let large: Vec<u64> = (0..20_000_000).collect();
-    let real = per_call(50, || black_box(&large).iter().sum::<u64>())
-        / per_call(50, || black_box(&small).iter().sum::<u64>());
-
-    // Eighteen release runs: folded ratio 0.93 to 1.27, real ratio 11.8 to 14.7.
-    println!("folded ratio = {folded:.2}, real ratio = {real:.2}");
-}
-```
-
-Read the ratio in one direction only. A ratio near 1.0 for a 10x input change means the benchmark measured nothing. Do not require a ratio near 10: cache effects make it superlinear, and fixed per-iteration overhead makes it sublinear for a cheap routine.
-
-The Criterion examples in [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) pass every fixture through `black_box`. That guards against a discarded result. It does not guard against a folded loop. Apply this scaling check to each of them before you trust the number.
-
-### Long correctness tests as a regression signal
-
-Full-pipeline correctness tests, such as golden-output tests, are not benchmarks, but they do measure wall-clock time. If such a test starts taking more than twice its usual time, treat it as a performance regression and profile it. See `rust-test-tools`.
-
----
+- Every change: the compile or the smoke command above.
+- Do not gate on Criterion (see Silent failures). A shared CI runner is also too noisy for a wall-clock gate.
+- For an automatic gate, compare Gungraun instruction counts against a baseline from the main branch with `--callgrind-limits`. A regression over the limit exits with code 3. Both runs must read the same `target/gungraun` directory (see Silent failures).
 
 ## 7. Data-parallel work with rayon
 
-Use `rayon` when the work is compute-bound and splits into independent units.
+The global `rayon` pool starts one thread per logical CPU, or `RAYON_NUM_THREADS`. A library must not build the global pool: the host, or an earlier `par_iter` call, can create it first, and `build_global` then returns an error. Build a library-owned pool once at init with `rayon::ThreadPoolBuilder::new().num_threads(threads).build()`, and run the parallel work inside `pool.install(|| ...)`.
 
-```rust
-use rayon::prelude::*;
-
-let results: Vec<_> = items
-    .par_iter()
-    .map(|item| process(item, &config))
-    .collect();
-```
-
-Rules for mobile targets:
-
-- Cap the pool. The default `rayon` pool is unbounded relative to what a phone should run. Build the global pool once at library init:
-
-```rust
-rayon::ThreadPoolBuilder::new()
-    .num_threads(num_cpus::get_physical())
-    .build_global()
-    .expect("rayon global pool already initialized");
-```
-
-- On iOS, size the pool from `ProcessInfo.processInfo.activeProcessorCount` and pass that value across the FFI boundary at init.
-- Never hold an FFI handle or a JNI environment inside a `rayon` closure. Resolve every value you need into owned data before the parallel section.
-
----
+- On a phone, let the host app choose the thread count and pass it across the FFI boundary at init. Return the build error to the caller; do not panic in init.
+- Resolve every JNI or FFI value you need into owned data before the parallel section (see Silent failures).
 
 ## 8. Profiles and LTO
 
-Profile names are your own convention. Define them once in the workspace `Cargo.toml`.
-
-Cargo reads `[profile.*]` only from the workspace-root manifest. A table in a member crate or in a dependency is discarded, so a library crate cannot ship optimization settings to its consumers.
+Cargo reads `[profile.*]` only from the workspace-root manifest. A table in a member crate or in a dependency is discarded, so a library crate cannot ship optimization settings to its consumers. Profile names other than `dev`, `release`, `test` and `bench` are your own convention.
 
 ```toml
 [profile.release]
-lto = "thin"          # good performance, much faster to link than "fat"
-codegen-units = 1     # best optimization; disables parallel codegen
-strip = "symbols"
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"
+strip = "none"             # strip the shipped copy in packaging (llvm-strip, Gradle, Xcode); archive this one
 panic = "abort"
 
 [profile.mobile-release]   # this is what ships in the app bundle
 inherits = "release"
-opt-level = "z"            # size-optimized
+opt-level = "z"            # size-optimized; measure against 3
 lto = "fat"
-codegen-units = 1
 panic = "unwind"           # required when the FFI boundary catches panics
-strip = "none"             # keep ELF symbols for offline symbolication
+strip = "none"             # keep symbols here; the packaging step strips its own copy
 debug = "line-tables-only"
-
-[profile.mobile-dev]       # on-device debugging and profiling
-inherits = "dev"
-opt-level = 1
-debug = "line-tables-only"
-panic = "unwind"
-
-[profile.bench]            # host benchmarks
-inherits = "release"
-debug = false
-lto = "thin"
-
-[profile.dev]
-debug = "line-tables-only"     # faster than full debug info
-split-debuginfo = "unpacked"   # reduces linker input on macOS
 ```
 
-Two decisions in that block need a deliberate answer:
+Add the `profiling` profile from the top of this skill next to these. When the workspace already has a platform ship profile (`android-jni` from `rust-android-build`, `ios-release` from `rust-ios-build`), tune that profile and do not add `mobile-release` next to it.
 
-- `panic`. Use `"abort"` for the smallest binary and no unwinding overhead. Use `"unwind"` when a panic must be caught at the FFI boundary, as JNI wrappers do with `catch_unwind`. A panic that unwinds out of an `extern "C"` function aborts the process, so the boundary must catch the panic before it escapes. `catch_unwind` cannot catch anything under `panic = "abort"`. See `rust-panic-safety` and `ffi-error-progress-cancel`.
-- `strip`. Use `"symbols"` for the smallest artifact only if you archive an unstripped copy. Use `"none"` with `debug = "line-tables-only"` when you profile or symbolicate on device.
+Four settings need a deliberate answer:
 
-LTO comparison:
+- `panic`. Use `"abort"` for the smallest binary and no unwinding overhead. Use `"unwind"` when an FFI entry point must return an error instead of aborting (see Silent failures). The `rust-panic-safety` skill owns the boundary policy and the panic-message privacy rule.
+- `strip`. Use `"symbols"` only when the artifact never needs crash symbolication. Otherwise keep `"none"` with `debug = "line-tables-only"`, strip the shipped copy in the packaging step, and archive the unstripped Cargo output it came from. The `rust-debugging` skill has the archive check.
+- `lto`. `"thin"` gives gains similar to `"fat"` in much less link time. For a true no-LTO baseline use `lto = "off"`: `lto = false`, the default, still runs thin-local LTO.
+- `opt-level`. `"s"` and `"z"` turn off the loop vectorizer; measure the hot loop at `3` (the `rust-hot-path` skill has the mechanism and the probe).
 
-| Setting | Link time | Runtime performance | Use when |
-|---------|-----------|---------------------|----------|
-| `lto = "off"` | Fast | Baseline | The true no-LTO baseline for an A/B |
-| `lto = false` | Fast | Above the baseline | Dev builds. Thin-local LTO stays on |
-| `lto = "thin"` | Moderate | +5-15% | Most release builds |
-| `lto = "fat"` | Slow | +15-30% | Maximum performance or minimum size |
-| `codegen-units = 1` | Slowest | Best | Always pair with LTO for release |
-
-`opt-level = "z"` trades throughput for size. Measure it. On a compute-bound hot path `opt-level = 3` can be the better ship setting even on mobile.
-
-Where Cargo reads each setting from, why `lto = false` does not turn LTO off, `target-cpu`, profile-guided optimization and the global allocator are in [references/build-configuration.md](references/build-configuration.md).
-
----
+Read [references/build-configuration.md](references/build-configuration.md) when you change a build flag for speed or size: it has the LTO and strip tables, where Cargo reads each setting from, rustflags precedence, `target-cpu`, profile-guided optimization, and the global allocator.
 
 ## 9. Build time
 
@@ -424,76 +226,8 @@ cargo build --locked --release --timings
 
 Read the timeline for long sequential chains, crates over 10 s, and proc-macro crates that block everything downstream.
 
-The full build-time playbook — sccache, the cross-compilation target matrix, workspace splitting, linker choice, generic signature shape, and incremental compilation trade-offs — is in [references/build-time-optimization.md](references/build-time-optimization.md).
-
----
-
-## Failure triage
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Flamegraph shows empty or truncated stacks | No frame pointers | Add `-C force-frame-pointers=yes` for the target in `.cargo/config.toml` |
-| Symbolication shows `<unknown>` | Stripped library | Use the unstripped `.so` from `target/<triple>/<profile>/`, not the packaged copy |
-| Profiling a release build shows no symbols | The ship profile strips symbols | Profile the on-device debug profile, or symbolicate offline |
-| `cargo flamegraph` fails on Linux | `perf_event_paranoid` too high | Set it to 1 or lower |
-| `cargo flamegraph` fails on macOS | `xctrace` permission or tool failure | Grant profiling permission, or use `samply`; do not weaken SIP |
-| Benchmark results swing by more than 10% between runs | Thermal or scheduler noise | Fix the power state, close background load, raise `sample_size` |
-| Binary grew after a dependency bump | New monomorphizations or new codegen | `cargo bloat --crates` then `cargo llvm-lines` on the top crate |
-| An Android profiling or symbolication step fails | Device, NDK or packaging setup | The common-mistakes table in [references/android-profiling.md](references/android-profiling.md) |
-
----
-
-## Review checklist
-
-Before you claim a performance change:
-
-- [ ] A profile or benchmark named the hotspot before the change.
-- [ ] The measurement used the profile that ships, not `dev`.
-- [ ] A Criterion baseline was saved before and compared after, with `p < 0.05`.
-- [ ] `cargo bloat --crates` was captured before and after if the change touches generics, dependencies, or profile settings.
-- [ ] Benchmarks still compile: `cargo bench --locked --workspace --no-run`.
-- [ ] The change did not silently switch `panic` or `strip` in a profile that a symbolication or FFI-catch path depends on.
-- [ ] Any new `unsafe` or new parallelism was checked with the sanitizers in `rust-sanitizers-miri`.
-
----
-
-## Quick reference
-
-| Task | Command |
-|------|---------|
-| Host flamegraph of a binary | `cargo flamegraph --locked --bin myapp -- <args>` |
-| Host flamegraph of a benchmark | `cargo flamegraph --locked --bench my_bench -p my-bench-crate -- --bench` |
-| Record an Android CPU profile | `adb shell simpleperf record -p $(adb shell pidof com.example.app) --call-graph dwarf --duration 30 -o /data/local/tmp/perf.data` |
-| Android flamegraph | `$ANDROID_NDK_HOME/simpleperf/inferno.sh -sc --record_file perf.data` |
-| Symbolicate a native crash | `adb logcat \| $ANDROID_NDK_HOME/ndk-stack -sym target/aarch64-linux-android/debug/` |
-| Per-crate binary size | `cargo bloat --locked --profile mobile-release --target aarch64-linux-android --crates` |
-| Monomorphization bloat | `cargo llvm-lines --locked --release -p my-crate \| head -30` |
-| Compile all benchmarks | `cargo bench --locked --workspace --no-run` |
-| Save a benchmark baseline | `cargo bench --locked -p my-crate --bench decode -- --save-baseline before` |
-| Build timing report | `cargo build --locked --release --timings` |
-| Cache hit rate | `sccache --show-stats` |
-
----
-
-## References
-
-- [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) — flamegraph prerequisites, install, and the Criterion authoring reference.
-- [references/android-profiling.md](references/android-profiling.md) — the `simpleperf` and Perfetto commands, offline symbolication, panic backtraces, HWASan, Android Studio LLDB and native memory profiler.
-- [references/build-configuration.md](references/build-configuration.md) — where Cargo reads settings from, `opt-level`, `target-cpu`, PGO, global allocator.
-- [references/build-time-optimization.md](references/build-time-optimization.md) — sccache, cross-compilation matrix, workspace splitting, linkers, generic signature shape.
-- Android NDK simpleperf documentation: `$ANDROID_NDK_HOME/simpleperf/doc/`
-- Perfetto UI: https://ui.perfetto.dev
-- DHAT viewer: https://nnethercote.github.io/dh_view/dh_view.html
+Read [references/build-time-optimization.md](references/build-time-optimization.md) when `--timings` shows where the time goes: it has sccache, the cross-compilation target matrix, workspace splitting, linker choice, and the generic signature shape.
 
 ## Related skills
 
-- `rust-hot-path` — what to change in the code once a profile names the hotspot. This skill produces the profile; `rust-hot-path` turns it into a diff.
-- `cargo-workflows` — workspace layout, feature flags, profile plumbing.
-- `rust-discipline` — allocation and clone anti-patterns on hot paths.
-- `rust-sanitizers-miri` — HWASan, ASan, TSan and Miri for correctness under optimization.
-- `rust-debugging` — backtraces, LLDB, and crash triage.
-- `rust-observability` — tracing spans and structured timing in production.
-- `rust-android-build` — NDK toolchain, target matrix, Gradle packaging.
-- `rust-jni` and `uniffi-boundary` — FFI surface size and panic handling at the boundary.
-- `rust-panic-safety` — `catch_unwind` at the boundary and the `panic` profile setting.
-- `rust-test-tools` — benchmark harness setup and regression gating.
+Other skills are named at their point of use above; each applies when it is installed. Two more apply here: `cargo-workflows` for workspace layout, feature flags, and profile plumbing, and `rust-observability` for tracing spans and structured timing in production.

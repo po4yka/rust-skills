@@ -1,9 +1,13 @@
 # Build configuration for runtime speed
 
-Reference for `skills/rust-performance/SKILL.md`. It holds the build knobs that change how fast the
-shipped binary runs: where Cargo reads settings from, `opt-level`, `target-cpu`, profile-guided
-optimization, and the global allocator. Profile tables and the LTO trade-off are in SKILL.md section 8.
-Compile-time tuning is in [build-time-optimization.md](build-time-optimization.md).
+Reference for [SKILL.md](../SKILL.md). It holds the build knobs that change how fast the shipped
+binary runs: where Cargo reads settings from, the LTO and strip tables, `opt-level`, `target-cpu`,
+profile-guided optimization, and the global allocator. SKILL.md section 8 holds the profile block
+and the `panic`, `strip`, and `lto` rules. Compile-time tuning is in
+[build-time-optimization.md](build-time-optimization.md).
+
+Contents: 1. Where the settings are read; 2. LTO, codegen units, and strip; 3. opt-level;
+4. target-cpu; 5. Profile-guided optimization; 6. The global allocator; 7. Order of work.
 
 Every figure below was measured on rustc 1.97.0, host `aarch64-apple-darwin` (`apple-m4`), unless the
 text names another target.
@@ -48,8 +52,10 @@ rustflags = ["-C", "target-cpu=native"]
 `[target.<triple>] rustflags` replaces `[build] rustflags` the same way. With both tables present, a
 build received only the `[target.aarch64-apple-darwin]` entry, with and without an explicit `--target`.
 
-Precedence, highest first: the `RUSTFLAGS` environment variable, then the `[target.*]` tables, then
-`[build] rustflags`.
+Precedence, highest first: the `CARGO_ENCODED_RUSTFLAGS` environment variable, then `RUSTFLAGS`,
+then the `[target.*]` tables, then `[build] rustflags`. The Cargo reference calls these four
+mutually exclusive sources: the first one present is used and the rest are dropped.
+`CARGO_ENCODED_RUSTFLAGS` also dropped a `[target.<triple>]` entry when re-checked on 1.98.1.
 
 Inside the `[target.*]` level, entries do join. Cargo concatenates the matching `[target.<triple>]`
 table and every matching `[target.'cfg(...)']` table. With the three tables below, rustc received
@@ -68,10 +74,12 @@ rustflags = ["-C", "force-frame-pointers=yes"]
 
 Setting `RUSTFLAGS` on that same config dropped both target tables.
 
-This bites the profiling workflow. SKILL.md section 2 asks for `-C force-frame-pointers=yes`. Put it in
-`[build] rustflags`, then add a `target-cpu` entry in any `[target.*]` table, and the frame-pointer
-flag disappears. The flamegraph goes back to truncated stacks with no error. Keep all rustflags at one
-level.
+This bites the profiling workflow. The Linux profiling setup passes `-Wl,--no-rosegment` through
+`CARGO_TARGET_<TRIPLE>_RUSTFLAGS`, the environment form of a `[target.<triple>]` entry. Cargo joins
+it with the config-file target tables (checked on cargo 1.98.1). A `RUSTFLAGS="..."` prefix drops
+it, and `perf` stacks break with no error. A `[build] rustflags` entry disappears as soon as any
+matching `[target.*]` entry exists, from a table or from that variable. Keep every rustflags entry
+at one level.
 
 ### `lto = false` is not `lto = "off"`
 
@@ -88,7 +96,26 @@ against thin LTO. Use `lto = "off"` for the true baseline.
 
 ---
 
-## 2. opt-level
+## 2. LTO, codegen units, and strip
+
+| Setting | Link time | Use when |
+| --- | --- | --- |
+| `lto = "off"` | Fastest | The true no-LTO baseline for an A/B |
+| `lto = false` (the default) | Fast | Thin-local LTO inside one crate; no LTO at all with `codegen-units = 1` or `opt-level = 0` |
+| `lto = "thin"` | Moderate | Most release builds; gains similar to `"fat"` in much less link time |
+| `lto = "fat"` | Slowest | The last bit of speed or size |
+| `codegen-units = 1` | Slower compile | Better optimization; measure it with and without LTO |
+
+| Setting | What stays in the file | Use when |
+| --- | --- | --- |
+| `strip = "symbols"` | No symbol table, no debug info | An artifact that never needs crash symbolication |
+| `strip = "debuginfo"`, the default when `debug` is off | Symbol table only | Function names in crash reports and profiles |
+| `strip = "none"` + `debug = "line-tables-only"` | Symbols and file:line tables | Profiling, and offline symbolication with line numbers |
+| `strip = "none"` + `debug = true` | Everything, including variable info | Debugger sessions |
+
+---
+
+## 3. opt-level
 
 `rustc -C help` states the range: `optimization level (0-3, s, or z; default: 0)`.
 
@@ -121,18 +148,10 @@ column moves 96 bytes of padding across the five levels; `__text` moves 1,928 by
 The whole spread is under 1 percent of the code section, and a size level can still cost throughput.
 Build the ship profile at `3`, at `"s"` and at `"z"`, then pick from your own numbers.
 
-### `z` disables loop vectorization; measure `s`
+### `s` and `z` disable loop vectorization
 
-Count the vector operations in the emitted assembly. On aarch64 the vector operand suffixes are `.4s`,
-`.2d`, `.16b` and `.8h`:
-
-```bash
-rustc -C opt-level=3 -C codegen-units=1 --edition 2024 \
-  --emit asm --crate-type=lib src/lib.rs -o out.s
-grep -cE '\.4s|\.2d|\.16b|\.8h' out.s
-```
-
-A plain accumulate loop over `&[u32]`, `aarch64-apple-darwin`:
+A plain accumulate loop over `&[u32]`, marked `#[inline(never)]`, `aarch64-apple-darwin`. The count
+is the number of vector operand suffixes (`.4s`, `.2d`, `.16b`, `.8h`) in the emitted assembly:
 
 | opt-level | Vector ops |
 | --- | --- |
@@ -143,42 +162,17 @@ A plain accumulate loop over `&[u32]`, `aarch64-apple-darwin`:
 | `s` | 0 |
 | `z` | 0 |
 
-`"s"` gave the same result as `"z"` for this loop, but `"s"` does not
-categorically disable loop vectorization. Its size cost model can still choose
-not to vectorize a specific loop. `"z"` disables loop vectorization. This is
-the mechanism behind the warning in SKILL.md section 8: size levels can cost
-throughput outright, so measure the actual hot loop.
-
-### The assembly check needs `#[inline(never)]`
-
-At `opt-level >= 2` a small non-generic `pub fn` in a `--crate-type=lib` is not emitted into the
-assembly at all. It is left as an inline candidate. The output file came out at 54 bytes holding only
-`.build_version` and `.subsections_via_symbols`, which reads exactly like "the loop disappeared".
-`-C codegen-units=1` does not change it.
-
-Mark the function under test before you read its assembly:
-
-```rust
-#[inline(never)]
-pub fn accumulate(v: &[u32]) -> u32 {
-    let mut t = 0u32;
-    for x in v {
-        t = t.wrapping_add(*x);
-    }
-    t
-}
-```
-
-The same trap hits the `panic_bounds_check` grep in `rust-hot-path`.
+`"s"` and `"z"` turn off the loop vectorizer; measure the hot loop at `3` (the `rust-hot-path`
+skill has the mechanism and the probe, including the `#[inline(never)]` rule).
 
 ---
 
-## 3. target-cpu
+## 4. target-cpu
 
 `-C target-cpu` raises the instruction-set baseline the compiler may use.
 
 ```bash
-RUSTFLAGS="-C target-cpu=native" cargo build --release
+RUSTFLAGS="-C target-cpu=native" cargo build --locked --release
 ```
 
 `native` resolves to the host processor. `rustc --print target-cpus` names it on the first line: on
@@ -221,9 +215,10 @@ Rules:
 
 ---
 
-## 4. Profile-guided optimization
+## 5. Profile-guided optimization
 
-`-C profile-generate` and `-C profile-use` are stable. Both appear in `rustc -C help` on 1.97.0.
+`-C profile-generate` and `-C profile-use` are stable. Both appear in `rustc -C help` on 1.97.0. The
+rustc book chapter "Profile-guided Optimization" is the primary reference.
 
 The model is two passes: build instrumented, run on representative input, rebuild with the merged
 profile.
@@ -231,19 +226,28 @@ profile.
 ```bash
 # 1. Instrumented build. --target keeps build scripts out of the profile; see below.
 RUSTFLAGS="-Cprofile-generate=$PWD/pgo-data" \
-  cargo build --release --target aarch64-apple-darwin
+  cargo build --locked --release --target aarch64-apple-darwin
 
-# 2. Run the representative workload. Each process writes one .profraw file.
+# 2. Run the representative workload. Each instrumented binary writes one .profraw
+#    file and updates it in place on later runs.
 ./target/aarch64-apple-darwin/release/myapp --input real-workload.bin
 
-# 3. Merge. llvm-profdata comes from `rustup component add llvm-tools-preview`,
-#    or from `xcrun llvm-profdata` on macOS.
-xcrun llvm-profdata merge -o merged.profdata pgo-data
+# 3. Merge with the llvm-profdata that matches rustc's LLVM. rustup does not put it on PATH.
+rustup component add llvm-tools
+PROFDATA="$(rustc --print sysroot)/lib/rustlib/$(rustc --print host-tuple)/bin/llvm-profdata"
+"$PROFDATA" merge -o merged.profdata pgo-data
+"$PROFDATA" show merged.profdata    # "Total functions:" must be non-zero
 
-# 4. Optimized build.
-RUSTFLAGS="-Cprofile-use=$PWD/merged.profdata" \
-  cargo build --release --target aarch64-apple-darwin
+# 4. Optimized build. The llvm-args flag warns for each function that has no profile data.
+RUSTFLAGS="-Cprofile-use=$PWD/merged.profdata -Cllvm-args=-pgo-warn-missing-function" \
+  cargo build --locked --release --target aarch64-apple-darwin
 ```
+
+On 1.98.1, two runs of the instrumented binary left one `.profraw` file, `show` printed
+`Total functions: 6` for a small program, and the flagged build warned `no profile data available
+for function ...` for code the workload did not reach. The rustc book says an `llvm-profdata` from
+a recent LLVM or Clang usually works too: `xcrun llvm-profdata` merged a 1.98.1 profile on macOS.
+A `RUSTFLAGS` prefix replaces config-file rustflags for these builds (section 1).
 
 ### Two silent traps
 
@@ -255,7 +259,8 @@ warning: pgo-data/default_14157245456489944735_0.profraw: invalid instrumentatio
 ```
 
 A missing file is a hard error, so only the un-merged case is silent. Grep the build output for
-`bad magic` before you believe a PGO number.
+`bad magic` before you believe a PGO number. A clean build is not proof either: without
+`-pgo-warn-missing-function`, LLVM says nothing when a function has no profile data.
 
 **Without `--target`, the instrumented build also instruments build scripts.** Cargo passes `RUSTFLAGS`
 to host artifacts when no target triple is given. Measured on a crate with a trivial `build.rs`: one
@@ -274,7 +279,7 @@ them, so reach for it only once the manual four steps work.
 
 ---
 
-## 5. The global allocator
+## 6. The global allocator
 
 Rust uses the system allocator by default. Swapping it is one static item.
 
@@ -333,14 +338,18 @@ The prefix is a crate feature. `tikv-jemallocator` 0.7.0 offers
 `unprefixed_malloc_on_supported_platforms`, which moves the run-time name back to `MALLOC_CONF`. On
 some platforms the feature does nothing. `tikv-jemalloc-sys` 0.7.1 lists `android`, `dragonfly` and
 `apple` in `NO_UNPREFIXED_MALLOC_TARGETS` and turns the prefix back on for them, so on macOS and
-Android the run-time name stays `_RJEM_MALLOC_CONF`. The build script reports this, but the message
-comes from a registry dependency and Cargo does not display it. Read it from the build directory:
+Android the run-time name stays `_RJEM_MALLOC_CONF`. The build script reports this, but Cargo shows
+build-script warnings only for path dependencies. Ask for them with `-vv`, which shows them for
+every crate:
 
 ```bash
-grep -rh cargo:warning target/release/build/*/output
+cargo build --locked --release -vv 2>&1 | grep -i unprefixed
 ```
 
-With the feature enabled, an `aarch64-apple-darwin` build printed:
+Do not read Cargo's internal `build/*/output` files instead. Their location moves with
+`build.build-dir`.
+
+With the feature enabled, the `aarch64-apple-darwin` build script printed:
 
 ```text
 cargo:warning="Unprefixed `malloc` requested on unsupported platform `aarch64-apple-darwin` => using prefixed `malloc`"
@@ -352,7 +361,7 @@ server to a macOS or Android result.
 
 ---
 
-## 6. Order of work
+## 7. Order of work
 
 Each row costs more than the one above it. Stop when the metric is met.
 
@@ -362,8 +371,8 @@ Each row costs more than the one above it. Stop when the metric is met.
 | `opt-level`, `lto`, `codegen-units` | Build time only | None | `cargo bloat`, Criterion baseline |
 | `target-cpu` baseline (`x86-64-v3` and similar) | None at run time | Drops old CPUs | `diff` of `rustc --print cfg` |
 | Swap the allocator | Binary size, build time | jemalloc: Linux and macOS only; mimalloc: none | `MIMALLOC_VERBOSE=1`, or jemalloc `stats_print` |
-| PGO | A representative workload, plus CI plumbing | None | Build log has no `bad magic` warning |
+| PGO | A representative workload, plus CI plumbing | None | No `bad magic` warning; `llvm-profdata show` counts functions; hot functions draw no missing-profile warning |
 | `target-cpu=native` | None | Binary runs on one machine class | `diff` of `rustc --print cfg` |
 
-Every row needs a Criterion baseline before and after, per SKILL.md rule 4. A build-configuration
-change is invisible in review, so an unmeasured one becomes a permanent unexplained setting.
+Every row needs a Criterion baseline before and after, per the rules of engagement in SKILL.md.
+A build-configuration change is invisible in review, so an unmeasured one becomes a permanent unexplained setting.

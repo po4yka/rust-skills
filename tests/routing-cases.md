@@ -175,6 +175,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | simpleperf | rust-performance |
 | cargo-bloat | rust-performance |
 | LTO | rust-performance |
+| Criterion | rust-performance |
+| rayon thread pool | rust-performance |
 | ThreadSanitizer | rust-sanitizers-miri |
 | tree borrows | rust-sanitizers-miri |
 | HWASan | rust-sanitizers-miri |
