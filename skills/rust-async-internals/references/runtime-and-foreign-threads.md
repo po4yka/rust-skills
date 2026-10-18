@@ -85,9 +85,14 @@ Use this only when the caller is a dedicated service thread that has nothing els
    `panic = "unwind"`. The `rust-panic-safety` skill, when it is installed, owns that policy.
 3. Take ownership of a received file descriptor with a duplicate, because the host can close the
    original at any time. An `OwnedFd` closes on every error path with no cleanup code.
-4. Set a received socket to nonblocking before `from_std` or `AsyncFd::new`. On Unix, `from_std`
-   panics in debug builds on a blocking socket. `AsyncFd::new` does not check, and a blocking fd
-   then blocks a worker thread inside a read in every build.
+4. Set a received socket to nonblocking before `from_std` or `AsyncFd::register`. On Unix,
+   `from_std` panics in debug builds on a blocking socket. `AsyncFd::register` does not check,
+   and a blocking fd then blocks a worker thread inside a read in every build. Since Tokio
+   1.53.3, use the unsafe `register` API instead of the deprecated `new`. Prove that the owned
+   descriptor stays valid and open, refers to the same underlying file description, and that
+   every `as_raw_fd()` call returns that same descriptor for the entire `AsyncFd` lifetime.
+   Do not close or replace it through another owner or through `get_mut`. Call `register`
+   inside a Tokio runtime with I/O enabled, and document these invariants at the unsafe call.
 5. Reset shared state with an RAII guard, not with cleanup code at each early return. A guard that
    sets the module back to `Idle` on drop keeps the state correct after a panic too.
 6. Store the `CancellationToken` in the state-machine variants that own live work (for example
