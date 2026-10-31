@@ -3,7 +3,7 @@
 Read this file when you set up the NDK toolchain, compute the API level of the NDK driver, write
 or change the Gradle task that builds the Rust library, or bump the NDK.
 
-Contents: toolchain environment; API level; Gradle task; NDK upgrades.
+Contents: toolchain environment; API level; Gradle task; NDK upgrades; targets and linker.
 
 ## Toolchain environment
 
@@ -85,3 +85,42 @@ Pin one NDK version in the build. For a bump:
 4. Rebuild every shipped ABI and run the ELF, export, and size gates. Update the size baseline in
    a separate commit, and only with a measured reason.
 5. Run the installed release smoke on every ABI family that CI can exercise.
+
+## Targets and linker
+
+| Android ABI | Rust target | Linker variable | NDK driver in `$NDK_BIN` |
+|-------------|-------------|-----------------|--------------------------|
+| `arm64-v8a` | `aarch64-linux-android` | `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` | `aarch64-linux-android<api>-clang` |
+| `armeabi-v7a` | `armv7-linux-androideabi` | `CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER` | `armv7a-linux-androideabi<api>-clang` |
+| `x86_64` | `x86_64-linux-android` | `CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER` | `x86_64-linux-android<api>-clang` |
+| `x86` | `i686-linux-android` | `CARGO_TARGET_I686_LINUX_ANDROID_LINKER` | `i686-linux-android<api>-clang` |
+
+Only `armeabi-v7a` breaks the pattern. The Rust target starts with `armv7-`, and the NDK driver
+starts with `armv7a-`. Do not write `armv7a-` in a Cargo target position.
+
+Store one project-owned shipping ABI matrix. Local builds can select a declared subset; CI and
+release builds must build the complete matrix.
+
+```bash
+rustup target add aarch64-linux-android armv7-linux-androideabi \
+    x86_64-linux-android i686-linux-android
+```
+
+Keep `crate-type = ["lib"]` under `[lib]` in `Cargo.toml`, and select the `cdylib` per invocation.
+A plain `cargo build` of that package writes only an rlib and never runs the NDK linker. Set
+`NDK_BIN` as in the [ELF check](../SKILL.md#elf-check).
+
+```bash
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android<api>-clang"
+cargo rustc --locked --target aarch64-linux-android --profile android-jni \
+  --crate-type cdylib -p <ffi-crate> --lib
+```
+
+Declare `crate-type = ["cdylib"]` in the manifest only when every supported build of that package
+must link the Android artifact.
+
+Compute `<api>` per ABI from the NDK metadata, and fail when the application `minSdk` is below the
+NDK floor. Pin one NDK version in the build. Do not put NDK paths in `.cargo/config.toml`: a
+checked-in absolute path breaks on every other machine, so the config file holds flags only. Read
+[ndk-and-gradle.md](ndk-and-gradle.md) when you set up the NDK toolchain,
+compute `<api>`, or bump the NDK.
