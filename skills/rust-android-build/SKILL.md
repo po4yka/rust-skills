@@ -66,7 +66,7 @@ publish. Local builds, signing for a local smoke, and inspection need none.
 | No build-ID note in the `.so` | `--build-id=sha1` absent for that target | `llvm-readelf -n` and the config tables |
 | AGP cannot extract native debug metadata | Cargo stripped the input | `strip = "none"` in the selected profile |
 | `.so` grew after a dependency change | New transitive crate, or lost LTO | The selected profile, then `llvm-nm --size-sort` on the unstripped `.so` or `cargo bloat --crates` on a `cdylib` package |
-| A panic aborts instead of raising a Java exception | `panic = "abort"`, or the nightly `panic = "immediate-abort"`, in the selected profile | Inspect the profile that the build selected |
+| A panic aborts instead of raising a Java exception | `panic = "abort"`, or the nightly `panic = "immediate-abort"`, in the selected profile | Inspect the profile that the build selected; the `rust-panic-safety` skill owns the policy |
 | Parallel ABI builds run one after another | A shared `CARGO_TARGET_DIR` | One target directory per ABI |
 
 ## Link flags in `.cargo/config.toml`
@@ -217,11 +217,9 @@ panic = "unwind"
 debug = "line-tables-only"  # no debugger variables; use true for an LLDB session
 ```
 
-- Keep `panic = "unwind"` in every Android profile when the boundary contract turns a panic into a
-  Java exception or an error value. With `panic = "abort"` or the nightly
-  `panic = "immediate-abort"`, `catch_unwind` cannot run, and a panic kills the app process. Use an
-  aborting profile only when the production contract accepts process termination, and do not call
-  it panic containment. The `rust-panic-safety` skill owns the boundary policy.
+- With `panic = "abort"` or the nightly `panic = "immediate-abort"`, a panic kills the app process
+  instead of raising a Java exception. The `rust-panic-safety` skill, when it is installed, owns
+  the choice between unwind and abort and the boundary policy.
 - Keep `strip = "none"`. The packaging step strips the shipped copy and extracts symbols from the
   unstripped input. A Cargo-stripped input destroys the symbol file.
 - Measure `opt-level` (`"z"`, `"s"`, `3`), `lto`, and `codegen-units` changes on the real `.so`
@@ -248,14 +246,17 @@ The allowed set depends on the boundary:
   `Java_*` methods.
 - `RegisterNatives`: `JNI_OnLoad`, and `JNI_OnUnload` when defined. Registered methods need no
   exported name.
-- UniFFI: the functions that the generated C header declares, plus the `UNIFFI_META_*` data
+- UniFFI: the `external fun` functions that the generated Kotlin file declares in `UniffiLib` and
+  `IntegrityCheckingUniffiLib` (bound with JNA `Native.register`), plus the `UNIFFI_META_*` data
   symbols that the UniFFI macros export, plus `JNI_OnLoad` when the crate defines one to seed
-  `JavaVM::singleton()` for callback threads. The header does not declare the `UNIFFI_META_*`
-  symbols, and uniffi-bindgen reads them from the unstripped library, so do not remove them.
+  `JavaVM::singleton()` for callback threads. Kotlin generation writes no C header (as of
+  uniffi-bindgen 0.32.2). A `<namespace>FFI.h` header exists only when the build also generates
+  Swift. The generated code does not declare the `UNIFFI_META_*` symbols, and uniffi-bindgen
+  reads them from the unstripped library, so do not remove them.
 
-Derive `expected-exports.txt` from the JNI registration table or the UniFFI header. For UniFFI, add
-the `UNIFFI_META_*` names from the dynamic symbols of the same build, and `JNI_OnLoad` when the
-crate defines it. Sort the file, and compare it with the defined dynamic symbols of each final
+Derive `expected-exports.txt` from the JNI registration table, or for UniFFI from the
+`external fun` names in those two Kotlin objects. Add the `UNIFFI_META_*` names from the dynamic
+symbols of the same build, and `JNI_OnLoad` when the crate defines it. Sort the file, and compare it with the defined dynamic symbols of each final
 `.so`:
 
 ```bash

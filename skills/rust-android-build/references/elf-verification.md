@@ -4,8 +4,8 @@ Read this file when you write or change the release gate script for the Rust `.s
 the size gate fails. It says what to inspect in each built library, in what order, how to audit a
 size regression, and how to wire the checks into CI.
 
-Contents: check order; file and ELF header; LOAD alignment; `DT_NEEDED`; exported symbols; build
-ID; size gate, size audit, and linker size flags; CI wiring; triage.
+Contents: check order; file and ELF header; LOAD alignment; `DT_NEEDED` and prebuilt `GNU_RELRO`;
+exported symbols; build ID; size gate, size audit, and linker size flags; CI wiring; triage.
 
 All commands use the NDK LLVM tools. Resolve them once:
 
@@ -87,6 +87,33 @@ Rebuild a misaligned prebuilt with a linker option in its build system, for exam
 `LDFLAGS=-Wl,-z,max-page-size=16384` or CMake
 `target_link_options(<target> PRIVATE "-Wl,-z,max-page-size=16384")`. A linker option in `CFLAGS`
 does not reach the final link.
+
+Also check the `GNU_RELRO` segment of each prebuilt `.so` on a 64-bit ABI. The Android 16 KB
+page-size guide (developer.android.com/guide/practices/page-sizes, read 2026-10-31) says that a
+RELRO end (`VirtAddr` plus `MemSiz`) that is not 16 KB aligned crashes the app with a
+segmentation fault. The rule applies when `GNU_RELRO` shares a `LOAD` segment with writable data
+such as `.data` or `.bss`. A RELRO that fills its own `LOAD` passes. A link with NDK r27 or older
+can produce the bad layout. Rebuild it with both `-Wl,-z,max-page-size=16384` and
+`-Wl,-z,common-page-size=16384`, or with NDK r28 or later. The LOAD check above does not catch
+this layout. Run this check once per prebuilt file:
+
+```bash
+so=<lib-dir>/arm64-v8a/libprebuilt.so
+read -r rstart rsize < <("$NDK_BIN/llvm-readelf" -lW "$so" | awk '$1 == "GNU_RELRO" {print $3, $6}') || true
+if [ -n "${rstart:-}" ]; then
+  rend=$(( rstart + rsize ))
+  while read -r lstart lsize; do
+    lend=$(( lstart + lsize ))
+    if (( lstart <= rstart && rend < lend && rend % 0x4000 != 0 )); then
+      printf 'FAIL %s: GNU_RELRO ends at 0x%x inside a LOAD that ends at 0x%x\n' "$so" "$rend" "$lend"
+      exit 1
+    fi
+  done < <("$NDK_BIN/llvm-readelf" -lW "$so" | awk '$1 == "LOAD" {print $3, $6}')
+fi
+```
+
+Columns 3 and 6 of a program-header line are `VirtAddr` and `MemSiz`. A file with no `GNU_RELRO`
+line passes.
 
 ## 5. Exported symbol allowlist
 
