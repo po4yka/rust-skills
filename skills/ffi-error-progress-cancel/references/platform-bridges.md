@@ -232,14 +232,21 @@ Call it:
 The worker owns cleanup. Write to a temporary path and rename on success.
 
 ```rust
-let tmp = target.with_extension("part");
-let result = render_into(&tmp, &flag, listener);
-match result {
-    Ok(()) => std::fs::rename(&tmp, &target).map_err(CoreError::io)?,
-    Err(e) => {
-        let _ = std::fs::remove_file(&tmp); // best effort; do not mask `e`
-        return Err(e);
+fn render_to(
+    target: &Path,
+    flag: &AtomicBool,
+    listener: Arc<dyn ProgressListener>,
+) -> Result<(), CoreError> {
+    let tmp = target.with_extension("part");
+    let result = render_into(&tmp, flag, listener);
+    match result {
+        Ok(()) => std::fs::rename(&tmp, target).map_err(CoreError::io)?,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp); // best effort; do not mask `e`
+            return Err(e);
+        }
     }
+    Ok(())
 }
 ```
 
