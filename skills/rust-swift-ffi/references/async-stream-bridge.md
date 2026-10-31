@@ -1,6 +1,7 @@
 # AsyncStream over a C callback
 
-This bridge turns the `rs_engine_start` progress callback from `SKILL.md` into
+This bridge turns the `rs_engine_start` progress callback from
+`callbacks-and-cancellation.md` into
 an `AsyncStream`. It assumes the `Engine` class, a `nonisolated` `Sendable`
 `JobProgress` struct, and the `EngineError(taking:)` initializer that the
 `SKILL.md` snippets use. It also assumes two exports that `SKILL.md` does not
@@ -74,4 +75,4 @@ carries an error.
 In this shape the last `Job` reference often dies inside `finishStream`, on
 the Rust worker. `rs_job_release` then runs on that worker, so it must not
 join the worker or take a lock that the worker holds (see the cancellation
-section of `SKILL.md`).
+section of `callbacks-and-cancellation.md`).

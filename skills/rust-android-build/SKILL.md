@@ -185,16 +185,7 @@ later, set `fatal` instead of `false` so that a misaligned library aborts at loa
 
 ### Common traps
 
-- A prebuilt `.so` that ships next to the Rust library (a `DT_NEEDED` entry or a `jniLibs`
-  sibling) keeps its own alignment. A static C archive linked into the Rust `cdylib` takes the
-  final link's alignment. Rebuild a prebuilt with a linker option in its own build system; a
-  linker option in `CFLAGS` does not reach the final link.
-- An `mmap` or `mprotect` size that assumes a 4096-byte page is not 16 KiB aligned. The kernel
-  rounds the mapping up, and the code keeps using its smaller size. Read the page size at run
-  time: `sysconf(_SC_PAGESIZE)` in C, `libc::sysconf(libc::_SC_PAGESIZE)` in Rust.
-- For an undefined `PAGE_SIZE` in C code on a 64-bit ABI, replace the macro with
-  `sysconf(_SC_PAGESIZE)`. Do not define `__BIONIC_DEPRECATED_PAGE_SIZE_MACRO`, because it
-  restores `4096` and hides the bug.
+Read `references/elf-verification.md` when a prebuilt `.so`, a static C archive, an `mmap` or `mprotect` size, or a C `PAGE_SIZE` macro breaks 16 KiB alignment.
 
 ## Release profile
 
@@ -231,47 +222,7 @@ debug = "line-tables-only"  # no debugger variables; use true for an LLDB sessio
 
 ## Exported symbols
 
-rustc owns the export list of a `cdylib`. It passes its own `-Wl,--version-script` and
-`-Wl,--no-undefined-version`, and it exports every `#[unsafe(no_mangle)]` and
-`#[unsafe(export_name)]` item in the crate graph, even one in a dependency that the library never
-calls, under fat LTO too. A checked-in `--version-script` does not narrow that list: with Rust
-1.98.1 and NDK r30 `ld.lld`, `global: Java_*; local: *;` left a `#[unsafe(no_mangle)]` helper
-exported, and a map that names an absent symbol, such as `JNI_OnUnload`, breaks the link. Do not
-add a version script. Remove a leak at its source: delete the attribute, or turn off the
-dependency feature that adds it.
-
-The allowed set depends on the boundary:
-
-- JNI name-based binding: `JNI_OnLoad` and `JNI_OnUnload` when the crate defines them, and the
-  `Java_*` methods.
-- `RegisterNatives`: `JNI_OnLoad`, and `JNI_OnUnload` when defined. Registered methods need no
-  exported name.
-- UniFFI: the `external fun` functions that the generated Kotlin file declares in `UniffiLib` and
-  `IntegrityCheckingUniffiLib` (bound with JNA `Native.register`), plus the `UNIFFI_META_*` data
-  symbols that the UniFFI macros export, plus `JNI_OnLoad` when the crate defines one to seed
-  `JavaVM::singleton()` for callback threads. Kotlin generation writes no C header (as of
-  uniffi-bindgen 0.32.2). A `<namespace>FFI.h` header exists only when the build also generates
-  Swift. The generated code does not declare the `UNIFFI_META_*` symbols, and uniffi-bindgen
-  reads them from the unstripped library, so do not remove them.
-
-Derive `expected-exports.txt` from the JNI registration table, or for UniFFI from the
-`external fun` names in those two Kotlin objects. Add the `UNIFFI_META_*` names from the dynamic
-symbols of the same build, and `JNI_OnLoad` when the crate defines it. Sort the file, and compare it with the defined dynamic symbols of each final
-`.so`:
-
-```bash
-"$NDK_BIN/llvm-readelf" --dyn-syms --wide <lib-dir>/arm64-v8a/libnative.so \
-  | awk '$5 ~ /^(GLOBAL|WEAK)$/ && $7 != "UND" && $4 ~ /^(FUNC|OBJECT)$/ {print $8}' \
-  | sort -u > actual-exports.txt
-comm -23 actual-exports.txt expected-exports.txt > unexpected-exports.txt
-comm -13 actual-exports.txt expected-exports.txt > missing-exports.txt
-test ! -s unexpected-exports.txt && test ! -s missing-exports.txt
-```
-
-The filter keeps data symbols (`OBJECT`, for example a `#[unsafe(no_mangle)] pub static`) and drops
-imports (`UND`) such as `__cxa_finalize`. An unexpected symbol is an ABI leak: any process that
-can `dlopen` the library can call it, and it pins the signature. A missing name-based export fails
-at run time with `UnsatisfiedLinkError`.
+Read `references/elf-verification.md` when you derive `expected-exports.txt`, run the dynamic-symbol allowlist diff, consider a `--version-script`, or remove an unexpected export.
 
 ## Gradle and jniLibs integration
 
@@ -284,42 +235,7 @@ set the `Exec` task `workingDir` to the workspace root. Read
 
 ## Targets and linker
 
-| Android ABI | Rust target | Linker variable | NDK driver in `$NDK_BIN` |
-|-------------|-------------|-----------------|--------------------------|
-| `arm64-v8a` | `aarch64-linux-android` | `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` | `aarch64-linux-android<api>-clang` |
-| `armeabi-v7a` | `armv7-linux-androideabi` | `CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER` | `armv7a-linux-androideabi<api>-clang` |
-| `x86_64` | `x86_64-linux-android` | `CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER` | `x86_64-linux-android<api>-clang` |
-| `x86` | `i686-linux-android` | `CARGO_TARGET_I686_LINUX_ANDROID_LINKER` | `i686-linux-android<api>-clang` |
-
-Only `armeabi-v7a` breaks the pattern. The Rust target starts with `armv7-`, and the NDK driver
-starts with `armv7a-`. Do not write `armv7a-` in a Cargo target position.
-
-Store one project-owned shipping ABI matrix. Local builds can select a declared subset; CI and
-release builds must build the complete matrix.
-
-```bash
-rustup target add aarch64-linux-android armv7-linux-androideabi \
-    x86_64-linux-android i686-linux-android
-```
-
-Keep `crate-type = ["lib"]` under `[lib]` in `Cargo.toml`, and select the `cdylib` per invocation.
-A plain `cargo build` of that package writes only an rlib and never runs the NDK linker. Set
-`NDK_BIN` as in the [ELF check](#elf-check).
-
-```bash
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android<api>-clang"
-cargo rustc --locked --target aarch64-linux-android --profile android-jni \
-  --crate-type cdylib -p <ffi-crate> --lib
-```
-
-Declare `crate-type = ["cdylib"]` in the manifest only when every supported build of that package
-must link the Android artifact.
-
-Compute `<api>` per ABI from the NDK metadata, and fail when the application `minSdk` is below the
-NDK floor. Pin one NDK version in the build. Do not put NDK paths in `.cargo/config.toml`: a
-checked-in absolute path breaks on every other machine, so the config file holds flags only. Read
-[references/ndk-and-gradle.md](references/ndk-and-gradle.md) when you set up the NDK toolchain,
-compute `<api>`, or bump the NDK.
+Read `references/ndk-and-gradle.md` when you map an Android ABI to its Rust target and NDK driver, add a `rustup` target, set a `CARGO_TARGET_<TRIPLE>_LINKER` variable, run the manual `cargo rustc --crate-type cdylib` build, or compute `<api>`.
 
 ## Related skills
 

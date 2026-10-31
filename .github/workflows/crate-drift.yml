@@ -1,0 +1,61 @@
+name: Crate drift
+
+# The skills name crate versions (uniffi, tokio, syn, sqlx, criterion, reqwest, embassy), and
+# checks/Cargo.lock holds the versions the examples compile against. Dependabot proposes
+# compatible lockfile updates; this job reports what it cannot: a newer semver-incompatible
+# release, which can change the API a skill describes. One aggregated issue, updated in place.
+
+on:
+  schedule:
+    - cron: '29 8 * * 4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  crates:
+    name: Locked crates against crates.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # One request per second with a User-Agent, as the crates.io crawler policy asks.
+      - name: Compare checks/Cargo.lock with crates.io
+        id: probe
+        run: |
+          set -euo pipefail
+          status=0
+          python3 scripts/drift-report.py crates --delay 1 > /tmp/body.md || status=$?
+          cat /tmp/body.md
+          case "$status" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            10) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$status" ;;
+          esac
+
+      - name: Open or update the drift issue
+        if: steps.probe.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf '\nRun: %s\n' "$RUN_URL" >> /tmp/body.md
+          title="Crates in checks/Cargo.toml have newer releases"
+          gh label create crate-drift --force --color 5319E7 \
+            --description "A crate the examples use has a newer release" > /dev/null
+          number="$(gh issue list --label crate-drift --state open --json number \
+            --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file /tmp/body.md
+            echo "updated issue #${number}"
+          else
+            gh issue create --title "$title" --label crate-drift --body-file /tmp/body.md
+          fi

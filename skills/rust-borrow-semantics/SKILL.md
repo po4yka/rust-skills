@@ -226,7 +226,8 @@ Both lints are allow-by-default members of `rust_2024_compatibility`. Interpret 
   temporaries own locks, transactions, file descriptors, or other guards.
 
 The feature-set and target rule, the migration workflow, the staged per-crate order, and the full
-edition 2024 change list live in the `cargo-workflows` skill, when it is installed.
+edition 2024 change list live in the `cargo-workflows` skill, when it is installed. Without it,
+run `cargo fix --edition` once per supported feature set and once per shipping `--target`.
 
 ## Verification
 

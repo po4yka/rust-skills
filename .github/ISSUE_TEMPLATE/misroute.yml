@@ -1,0 +1,63 @@
+name: Misroute report
+description: A prompt loaded the wrong skill, or no skill, from this catalog.
+title: "misroute: "
+labels: [misroute]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A confirmed report becomes a row in `tests/routing-cases.md` (the phrase and the skill
+        that must answer it) or in `evals/routing/negative-cases.md` (a phrase a description must
+        not claim). Remove private code and identifiers before you paste.
+  - type: textarea
+    id: phrase
+    attributes:
+      label: What you typed
+      description: The prompt, error message, or phrase, as close to verbatim as you can.
+    validations:
+      required: true
+  - type: input
+    id: answered
+    attributes:
+      label: Skill that answered
+      description: The skill the agent loaded, or "none".
+      placeholder: rust-compiler-errors
+    validations:
+      required: true
+  - type: input
+    id: expected
+    attributes:
+      label: Skill that should have answered
+      description: The skill you expected, or "none" when no skill should have loaded.
+      placeholder: rust-event-loop-state
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Client and version
+      description: For example Claude Code 2.1.316, Codex CLI, Cursor.
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The model ID the client ran, if you know it.
+  - type: dropdown
+    id: install
+    attributes:
+      label: How the catalog was installed
+      options:
+        - One bundle
+        - Several bundles
+        - Full catalog
+        - Single skills
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: How many skills were installed, whether AGENTS.snippet.md was in context, the catalog tag.

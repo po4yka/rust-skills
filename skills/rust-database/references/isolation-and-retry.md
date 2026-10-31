@@ -1,8 +1,25 @@
 # Isolation and retry classification
 
-Controls for common invariants and a runnable retry classifier, behind "Choose
-isolation from the invariant" and "Retry the complete transaction" in
-`SKILL.md`.
+Isolation choice, controls for common invariants, and a runnable retry
+classifier, behind "Choose isolation from the invariant" and "Retry the
+complete transaction" in `SKILL.md`.
+
+## Choose isolation from the invariant
+
+Write the invariant and the conflicting schedule before you choose an
+isolation level. Use the lowest level that the database documents as sufficient
+for that schedule. Prefer a unique, foreign-key, exclusion, or check
+constraint, or an explicit lock, when it makes the invariant simpler and
+cheaper.
+
+Do not use `SELECT` followed by `UPDATE` as concurrency control at read
+committed isolation unless a constraint, row lock, or compare-and-swap predicate
+closes the race, because two transactions can pass the same check at the same
+time.
+
+Acquire multiple locks in a stable order. Keep lock scopes short. A deadlock can
+still occur through another code path, so classify and handle the database's
+deadlock-victim error.
 
 ## Controls for common invariants
 

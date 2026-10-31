@@ -12,6 +12,8 @@ Contents:
 - Ask the JVM to act on a native socket
 - Local reference frames
 - Name every thread
+- Thread attachment
+- The env must not cross an await point
 
 ## Build the load-time cache
 
@@ -364,3 +366,61 @@ For threads you spawn yourself, use `std::thread::Builder::new().name("...")`.
 For a thread created outside Rust, set the name with `pthread_setname_np` on
 Linux and Android. The Linux limit is 15 characters plus the terminator; a
 longer name is rejected, so keep the prefix short.
+
+## Thread attachment
+
+A thread that Rust created (a tokio worker, a `std::thread`, a raw pthread)
+must attach before it calls Java, and must be detached before it exits, or ART
+aborts the process. The crate detaches every thread that attached through its
+API (at guard drop, scope end, or thread exit), so do not add a second detach.
+Only a thread that attached through raw `AttachCurrentThread` (C, C++,
+`jni::sys`) needs its own `pthread_key_create` destructor.
+
+Capture the `JavaVM` once at load, and make more handles with `vm.clone()` or,
+on 0.22, `JavaVM::singleton()`. Call `from_raw` only on a raw pointer that the
+host hands you: `JNI_OnLoad`, or `ndk_context` in a NativeActivity app. Never
+rebuild a handle from `vm.get_raw()`.
+
+- On 0.22, use `vm.attach_current_thread(|env| ..)` (stays attached) for a
+  worker that calls back many times. Use `attach_current_thread_for_scope`
+  (detaches when the closure returns) only for a one-off call: it pays the
+  attach cost on every call. An attach call does not change an existing
+  attachment.
+- Every 0.22 attach call pushes a new local frame for the closure. An exception
+  that the closure leaves pending is cleared and returned as
+  `Error::CaughtJavaException`. Log or propagate that `Err`; never discard it.
+- 0.22 has no daemon attachment, so the desktop or server JVM hang in
+  [Failure triage](../SKILL.md#failure-triage) applies: shut down the Rust runtime and
+  join every attached thread before `main` returns.
+- On 0.21, bind the guard to a name (`let _guard = vm.attach_current_thread()?;`):
+  a bare statement or `let _ =` detaches before the next JNI call. Use
+  `attach_current_thread_permanently` for a long-lived 0.21 worker.
+
+Read [jni-threading-and-callbacks.md](jni-threading-and-callbacks.md)
+when you write an attach call, wire a callback, build the load-time cache, or
+ask the JVM to act on a native socket.
+
+## The env must not cross an await point
+
+The env handle is `!Send + !Sync`. Holding it across `.await` in a `Send` future
+does not compile. The danger is the "fix" that makes it compile:
+
+```rust
+// FORBIDDEN: leaks the env and lies about its lifetime.
+let env_static: &'static mut Env<'static> = Box::leak(Box::new(env));
+
+// FORBIDDEN: same lie, no allocation.
+let env_static: &'static mut Env<'static> = unsafe { std::mem::transmute(env) };
+
+// FORBIDDEN: captures the env in a task that another thread may run.
+tokio::spawn(async move { env.call_method(/* ... */); });
+```
+
+Use the env synchronously, extract owned data, then spawn. The task captures a
+`JavaVM` clone and a global reference, never an env or a local reference. A
+JVM thread that calls a native method is not a Tokio runtime thread, so a bare
+`tokio::spawn` panics there. Spawn through a `Handle` that the library keeps in
+its load-time cache. Never `unwrap` a JNI error on a path that can run during
+shutdown: the JVM may already be tearing the thread down. Read
+[jni-threading-and-callbacks.md](jni-threading-and-callbacks.md)
+when you spawn async work from a native method; it has the worked example.

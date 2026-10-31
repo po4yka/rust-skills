@@ -24,16 +24,21 @@ if [ "${RUST_SKILLS_CHECK_LOCKED:-}" != "1" ]; then
         bash "$ROOT/checks/check.sh" "$@"
 fi
 
-echo "==> catalog: frontmatter, references, routing, README parity"
+echo "==> catalog: frontmatter, references, routing, bundles, budgets, README parity"
 python3 "$ROOT/scripts/validate-skills.py"
+
+echo "==> routing evaluation set: schema, coverage, and blindness (no key, no network)"
+python3 "$ROOT/evals/routing/run.py" --lint
 
 cd "$ROOT/checks"
 
 # The classifier decides which compile failures the catalog may ignore. A wrong
 # entry in its excuse list turns a broken example into a passing one, so the
 # excuse list has its own tests and they run before anything depends on them.
-echo "==> unit tests: frontmatter, check locking, and the failure classifier"
+echo "==> unit tests: catalog rules, drift report, routing runner, check locking, and the classifier"
 python3 "$ROOT/scripts/test_validate_skills.py" 2>&1 | tail -3
+python3 "$ROOT/scripts/test_drift_report.py" 2>&1 | tail -3
+python3 "$ROOT/evals/routing/test_run.py" 2>&1 | tail -3
 python3 test_with_lock.py 2>&1 | tail -3
 python3 test_gen.py 2>&1 | tail -3
 python3 test_analyze.py 2>&1 | tail -3

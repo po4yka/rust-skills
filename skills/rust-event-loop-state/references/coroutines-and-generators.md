@@ -1,6 +1,6 @@
 # Coroutines and generators over `&mut State`
 
-Evidence for the suspendable-routine section of `SKILL.md`. Read it when someone proposes an
+Evidence for `suspendable-routines.md`. Read it when someone proposes an
 `async fn(&mut State)`, a waker or context side channel, nightly coroutines, a stable
 generator crate, `std::ops::Generator`, or a `gen` block as the way to give a suspendable
 routine `&mut State`.
