@@ -112,6 +112,34 @@ class TestExcuses(unittest.TestCase):
         )
         self.assertIn("ex", suspects)
 
+    def test_never_type_cascade_beside_an_undefined_name_is_a_fragment(self):
+        fragment, _, _, suspects = analyze.classify(
+            {
+                "ex": [
+                    error("E0425", "cannot find value `conn` in this scope"),
+                    error("E0599", "no method named `commit` found for type `!` in the current scope"),
+                ]
+            }
+        )
+        self.assertEqual((fragment, suspects), (1, {}))
+
+    def test_never_type_method_error_alone_is_a_suspect(self):
+        _, _, _, suspects = analyze.classify(
+            {"ex": [error("E0599", "no method named `commit` found for type `!` in the current scope")]}
+        )
+        self.assertIn("ex", suspects)
+
+    def test_missing_method_on_a_real_type_beside_an_undefined_name_is_a_suspect(self):
+        _, _, _, suspects = analyze.classify(
+            {
+                "ex": [
+                    error("E0425", "cannot find value `conn` in this scope"),
+                    error("E0599", "no method named `commit` found for struct `Tx` in the current scope"),
+                ]
+            }
+        )
+        self.assertIn("ex", suspects)
+
     def test_wrapper_damage_is_not_a_suspect(self):
         _, artifact, _, suspects = analyze.classify(
             {"ex": [error("E0424", "expected value, found module `self`")]}
