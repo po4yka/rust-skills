@@ -35,20 +35,24 @@ is the single most common resource-exhaustion bug in binary parsers.
 ```rust
 const MAX_CHUNK_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
 
-fn read_chunk(declared_len: u32) -> Result<Vec<u8>, ParseError> {
+fn read_chunk(declared_len: u32, remaining: usize) -> Result<Vec<u8>, ParseError> {
     if declared_len > MAX_CHUNK_BYTES {
         return Err(ParseError::TooLarge {
             declared: declared_len,
             cap: MAX_CHUNK_BYTES,
         });
     }
-    Ok(vec![0u8; declared_len as usize])
+    let n = usize::try_from(declared_len)
+        .ok()
+        .filter(|&n| n <= remaining)
+        .ok_or(ParseError::Truncated { declared: declared_len, remaining })?;
+    Ok(vec![0u8; n])
 }
 ```
 
-Cross-check the declared length against the real remaining input where the
-format allows it. A length field that exceeds the file is a malformed file, not
-a large allocation.
+`remaining` is the count of input bytes not yet read. Check the declared length
+against it before you allocate, wherever the format gives that count. A length
+field that exceeds the file is a malformed file, not a large allocation.
 
 Use checked arithmetic for every offset and length computation on untrusted
 values. `checked_add`, `checked_mul`, and `try_into` turn a silent wrap in
