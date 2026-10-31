@@ -158,17 +158,20 @@ It checks, for every skill:
 ### 2. Compile and behavior-check the examples
 
 `checks/README.md` lists the commands for each phase. Every ` ```rust ` block in `skills/` is
-read, and its fence decides what happens to it. An untagged block is type-checked; most are
-fragments that name types the prose defines, and the analyzer buckets those and ignores them. A
-`rust,run` block must compile cleanly and then run on the native host within ten seconds. The gate
-fails on an example that never reached the compiler, a failing run block, a `compile_fail` block
-that compiled or missed the code its fence names, or a compile error the analyzer cannot
-attribute to an undefined symbol or to the extraction wrapper.
+read, and its fence decides what happens to it. An untagged block is type-checked. A block that
+names a type or value the prose defines is a fragment, and rustc checks nothing that touches that
+name. Supply the name in `checks/preludes/<skill>.toml`; a fragment that `checks/fragments.txt`
+does not list fails the gate. A `rust,run` block must compile cleanly and then run on the native
+host within ten seconds. The gate fails on an example that never reached the compiler, a failing
+run block, a `compile_fail` block that compiled or missed the code its fence names, an unlisted
+fragment, or a compile error the analyzer cannot attribute to an undefined symbol or to the
+extraction wrapper.
 
-`checks/baseline.txt` is empty and should stay empty. When the gate reports a new suspect, fix
-the example. Add a baseline line only for a failure no fence tag can express, with a comment
-saying why. Add a crate to `checks/Cargo.toml` when a skill starts using it, or every block that
-imports it silently degrades to a fragment. `checks/README.md` has the full description.
+`checks/baseline.txt` and `checks/fragments.txt` are empty and should stay empty. When the gate
+reports a new suspect, fix the example. Add a baseline line only for a failure no fence tag can
+express, with a comment saying why. Add a crate to `checks/Cargo.toml` when a skill starts using
+it, or every block that imports it silently degrades to a fragment. `checks/README.md` has the
+full description.
 
 `check.sh` then confirms the CLI still discovers the catalog. This lists the skills and installs
 nothing:
