@@ -101,7 +101,7 @@ If zero lines, two provider lines, or `custom-provider` appear, install one prov
 `main`, before any TLS client or server exists. With more than one rustls version in the graph,
 name it: `-i rustls@0.23.45`.
 
-```rust
+```rust,ignore
 fn main() {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
