@@ -15,8 +15,10 @@ Contents:
 
 ## The probe files
 
-Compile with a real output path. `rustc -o /dev/null` fails with a temp-directory error even
-when the code is correct:
+Compile with a real output path. Never pass `rustc -o /dev/null`: rustc renames its temporary
+output onto that path. As root, the rename replaces the `/dev/null` device with a regular file
+and exits 0. As a normal user, it fails with a temp-directory error even when the code is
+correct:
 
 ```bash
 rustc --edition 2024 --crate-type lib --emit=metadata probe.rs -o probe.rmeta
