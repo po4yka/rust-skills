@@ -349,7 +349,7 @@ invocations, and failure triage that a codebase learns the hard way.
 > Verify those against the consuming workspace and toolchain.
 
 - Every ` ```rust ` block without the `rust,ignore` tag is extracted and type-checked in CI
-  against the toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.98.1 on edition 2024.
+  against the toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.99.1 on edition 2024.
   An untagged block can fail only on a name that the surrounding prose defines; any other compile
   error fails the gate. Portable `rust,run` blocks are also compiled and executed on the native
   CI host.

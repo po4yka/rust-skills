@@ -122,6 +122,20 @@ def is_resolution(diagnostic: dict) -> bool:
     return any(message.startswith(prefix) for prefix in RESOLUTION_PREFIXES)
 
 
+# Since Rust 1.99, rustc's error recovery gives the result of an expression that
+# involves an unresolved name the type `!`, and a later method call on it then
+# reports E0599 "no method named `m` found for type `!`". That error is a
+# cascade of the missing name, so it is excused only next to a resolution
+# error in the same example. Alone, it is a suspect.
+NEVER_TYPE_CASCADE = re.compile(r"^no method named `[^`]+` found for type `!`")
+
+
+def is_resolution_cascade(diagnostic: dict) -> bool:
+    return code_of(diagnostic) == "E0599" and bool(
+        NEVER_TYPE_CASCADE.match(diagnostic.get("message", ""))
+    )
+
+
 def is_artifact(diagnostic: dict) -> bool:
     if code_of(diagnostic) in ARTIFACT_CODES:
         return True
@@ -248,6 +262,8 @@ def classify(errors: dict[str, list[dict]]):
     suspects: dict[str, list[dict]] = {}
     for example, diagnostics in errors.items():
         unresolved = [d for d in diagnostics if not is_resolution(d)]
+        if len(unresolved) < len(diagnostics):
+            unresolved = [d for d in unresolved if not is_resolution_cascade(d)]
         if not unresolved:
             fragment += 1
             continue
