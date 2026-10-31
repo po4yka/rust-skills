@@ -13,7 +13,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="x86_64-unknown-linux-gnu"
-SKILLS_CLI_VERSION="1.7.0"
+SKILLS_CLI_VERSION="1.7.4"
 
 # gen.py, cargo, and analyze.py share examples/, manifest.json, check.json, and
 # check.err. Hold one checkout-scoped process lock across the complete sequence
