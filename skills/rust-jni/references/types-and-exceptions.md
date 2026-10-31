@@ -11,13 +11,16 @@ are in [../SKILL.md](../SKILL.md).
 | `Long` | `jlong` | `jlong` (`i64`) | `i64` |
 | `Boolean` | `jboolean` | 0.22: `jboolean` is `bool`; 0.21: `u8` | `bool` |
 | `String` | `jstring` | 0.22: `s.mutf8_chars(env)?.to_str()`; 0.21: `env.get_string(&s)?` | `String` |
-| `String?` | `jstring` | return `std::ptr::null_mut()` for `None` | `Option<String>` |
+| `String?` | `jstring` | 0.22 `Result<JString>` export: return `Ok(JString::null())` for `None`; raw `jstring` export: `std::ptr::null_mut()` | `Option<String>` |
 | `ByteArray` | `jbyteArray` | `JByteArray`; `env.convert_byte_array(&array)?` copies it into a `Vec<u8>` | `Vec<u8>` (copies); a `&[u8]` argument takes a direct `ByteBuffer` (0.32+) |
 | `LongArray` | `jlongArray` | `JLongArray` | `Vec<i64>` |
 | `Array<String>` | `jobjectArray` | `JObjectArray<JString>`, one element per `set_element` | `Vec<String>` |
 
-Return a new Java string with `env.new_string(text)?.into_raw()`. The raw
-`jstring` is what the extern function returns; `null_mut()` is the Java `null`.
+From a raw `extern "system"` export, return a new Java string with
+`env.new_string(text)?.into_raw()`. That raw `jstring` is what the extern
+function returns, and `null_mut()` is the Java `null`. From a `native_method!`
+export that returns `Result<JString>`, return the `JString` itself, and
+`JString::null()` for Java `null`.
 
 Version note: `jni` 0.22 moved several helpers from the env onto the object
 types (`JString::mutf8_chars` replaces `env.get_string`, for example). Confirm
