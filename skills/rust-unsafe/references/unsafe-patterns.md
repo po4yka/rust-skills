@@ -700,21 +700,36 @@ impl Drop for BufferedWriter {
 ```
 
 ```rust
-// CORRECT: log and discard in drop; expose an explicit fallible close.
-impl Drop for BufferedWriter {
+use std::io::{self, Write};
+
+pub struct BufferedWriter<W: Write> {
+    inner: W,
+    closed: bool,
+}
+
+// CORRECT: expose an explicit fallible close; drop flushes only when close did not run.
+impl<W: Write> BufferedWriter<W> {
+    pub fn close(mut self) -> io::Result<()> {
+        let result = self.inner.flush();
+        self.closed = true; // The caller owns this result. Drop must not flush again.
+        result
+    }
+}
+
+impl<W: Write> Drop for BufferedWriter<W> {
     fn drop(&mut self) {
-        if let Err(err) = self.flush() {
+        if self.closed {
+            return;
+        }
+        if let Err(err) = self.inner.flush() {
             tracing::error!(error = %err, "flush on drop failed");
         }
     }
 }
-
-impl BufferedWriter {
-    pub fn close(mut self) -> Result<(), Error> {
-        self.flush()
-    }
-}
 ```
+
+Without the `closed` flag, `close()` flushes, then `drop()` runs at the end of `close()` and
+flushes again. A failed flush then reaches the caller and the log both.
 
 The auto-trait proofs, the two reference fabrications, the aliasing models, and the Miri and
 clippy invocations are in [miri-and-aliasing.md](miri-and-aliasing.md).

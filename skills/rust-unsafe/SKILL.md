@@ -126,7 +126,7 @@ In these faults the unsafe block is correct and the shape of the data is wrong. 
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `E0793: reference to field of packed struct is unaligned` | A method call, `match`, or `&mut` on a `#[repr(packed)]` field | Copy the field out, or `(&raw const f).read_unaligned()` |
+| `E0793: reference to field of packed struct is unaligned` | `&` or `&mut`, a `&self` or `&mut self` method (`clone()`), a `match` guard, or a `ref` binding on a `#[repr(packed)]` field | Copy the field out, or `(&raw const f).read_unaligned()` |
 | Correct on the host and the device; default Miri or a debug `*p` fails only on some buffer addresses | `bytes.as_ptr() as *const u32`, then a read | "Pointer reads from untrusted byte buffers" below |
 | `error: casting &T to &mut T is undefined behavior` | Mutation through a shared reference | `UnsafeCell`; there is no other sound way |
 | A `*const` silently became a `*mut` | `as` on a pointer changes mutability too | `ptr.cast::<T>()`, and `cast_mut` when you mean it |

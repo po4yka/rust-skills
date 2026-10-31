@@ -28,8 +28,11 @@ error[E0793]: reference to field of packed struct is unaligned
           (even if that reference is never dereferenced)
 ```
 
-A method call, a `match` on the field, and a `&mut` binding all create a reference. They all
-fail. Copy the field out, or go through a raw pointer:
+A borrow (`&` or `&mut`), a method that takes `&self` or `&mut self` (autoref, such as `clone()`
+or `to_string()`), a `match` arm with a guard, and a `ref` or `ref mut` binding all create a
+reference. They fail with E0793. A plain `match` or `if let` on a `Copy` field, with no guard and
+no `ref` binding, reads a copy and compiles. A method that takes `self` by value, such as
+`count_ones()`, also compiles. Copy the field out, or go through a raw pointer:
 
 ```rust
 #[repr(C, packed)]
@@ -391,18 +394,10 @@ pub struct Owned<T> {
 ### Pick the marker by the three properties it changes
 
 `PhantomData<X>` makes the struct behave for variance, auto traits, and drop check as if it held
-an `X`. Pick the `X` for an FFI handle from this table, not from habit. Every row is measured on
-rustc 1.97.0, edition 2024.
-
-| Marker | Variance in `T` | Auto traits | Owns a `T` for drop check |
-| --- | --- | --- | --- |
-| `PhantomData<T>` | covariant | inherits `T`'s `Send` and `Sync` | yes |
-| `PhantomData<&'a T>` | covariant | `Send` and `Sync`, each iff `T: Sync` | no |
-| `PhantomData<*const T>` | covariant | neither `Send` nor `Sync` | no |
-| `PhantomData<*mut T>` | invariant | neither `Send` nor `Sync` | no |
-
-The `rust-variance` skill, when it is installed, owns the full marker table (`&'a mut T`, the
-`fn` forms, `Cell<T>`) with the coercion probes that measure each row.
+an `X`. Pick the `X` for an FFI handle on purpose, not from habit. The `rust-variance` skill, when
+it is installed, owns the marker table for variance and auto traits, with the probes that measure
+each row. For a handle, only `PhantomData<T>` declares that the handle owns a `T` for drop check;
+`PhantomData<&'a T>`, `PhantomData<*const T>`, and `PhantomData<*mut T>` do not.
 
 To strip `Send` and `Sync` from a handle, use `PhantomData<*const T>`. It removes both auto
 traits exactly as `PhantomData<*mut T>` does, and it stays covariant in `T`. Reach for
@@ -420,19 +415,22 @@ pub struct Handle<T> { raw: usize, _marker: PhantomData<*const T> }
 pub struct WriteHandle<T> { raw: usize, _marker: PhantomData<*mut T> }
 ```
 
-### `PhantomData<T>` buys drop check only under `#[may_dangle]`
+### `PhantomData<T>` buys no drop check next to a plain `Drop` impl
 
 On stable, a plain `impl Drop` already forces every type parameter to strictly outlive the value,
-so `PhantomData<T>` there buys variance and auto traits, not drop check. The marker becomes
-load-bearing for drop check only next to `unsafe impl<#[may_dangle] T> Drop`, which needs nightly
-and `#![feature(dropck_eyepatch)]`. On stable the attribute is
-`error[E0658]: may_dangle has unstable semantics and may be removed in the future`.
+so `PhantomData<T>` there buys variance and auto traits, not drop check. An owning FFI handle
+needs a `Drop` impl to free the resource, so this is the usual case. The marker becomes
+load-bearing for drop check next to `unsafe impl<#[may_dangle] T> Drop`, which needs nightly and
+`#![feature(dropck_eyepatch)]`. On stable the attribute is
+`error[E0658]: may_dangle has unstable semantics and may be removed in the future`. The
+`rust-variance` skill owns the one stable case where the marker does change drop check: a struct
+with drop glue but no `Drop` impl of its own.
 
 The stable consequence is a trap in the other direction. `Vec<T>` and `Box<T>` carry the
 eyepatch. A newtype over one of them does not, so adding a `Drop` impl to the newtype breaks
 code that compiled before, even when the body of `drop` is empty:
 
-```rust,compile_fail
+```rust,compile_fail,E0597
 struct Wrapper<T>(Vec<T>);
 impl<T> Drop for Wrapper<T> { fn drop(&mut self) {} }   // delete this and it compiles
 
