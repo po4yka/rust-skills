@@ -181,10 +181,33 @@ fn via_mut_unsize<'a, 'b: 'a>(x: Cell<&'b mut i32>) -> Cell<&'a mut dyn Send> { 
 | `PhantomData<*mut T>` | invariant | neither, whatever `T` is | a raw handle through which `T` is written, so it must also be invariant |
 | `PhantomData<Cell<T>>` | invariant | `Send` needs `T: Send`, never `Sync` | interior mutability held behind a pointer |
 
-The drop-check role of `PhantomData<T>` is real but is not observable on stable. With a plain
-`impl Drop`, every lifetime parameter must strictly outlive the value whether the marker is there
-or not. The difference appears only under `#![feature(dropck_eyepatch)]` with
-`unsafe impl<#[may_dangle] T> Drop`. Do not look for a stable reproduction.
+`PhantomData<T>` also tells drop check that the struct owns a `T`. The other forms do not. On
+stable (measured on Rust 1.99.1 and 1.98.1) the difference shows in one case only: the struct has
+no `Drop` impl of its own, but another field gives it drop glue. Then a `T` with a borrow and a
+`Drop` impl must outlive the struct:
+
+```rust,compile_fail,E0597
+use std::marker::PhantomData;
+
+struct Loud<'a>(&'a str);
+impl Drop for Loud<'_> { fn drop(&mut self) { assert!(!self.0.is_empty()) } }
+
+// No `Drop` impl, but the `String` field gives `Owns` drop glue.
+struct Owns<T> { _name: String, _owns: PhantomData<T> }
+
+fn owns<'a>(_: &'a str) -> Owns<Loud<'a>> { Owns { _name: String::new(), _owns: PhantomData } }
+
+fn main() {
+    let _o;
+    let s = String::from("x");
+    _o = owns(&s); // `PhantomData<fn() -> T>` here compiles
+}
+```
+
+The marker has no drop-check effect in the other stable cases. A plain `impl Drop` already
+forces every type parameter to strictly outlive the value. A struct with no drop glue is never
+dropped. The marker carries the most weight next to `unsafe impl<#[may_dangle] T> Drop`, which
+needs nightly and `#![feature(dropck_eyepatch)]`; `Vec<T>` and `Box<T>` use it.
 
 The `rust-unsafe` skill, when it is installed, covers the same markers from the FFI side, and
 the `rust-discipline` skill covers `PhantomData<fn() -> S>` on type-state APIs.
@@ -282,7 +305,7 @@ Rules that follow:
 `std::sync::mpsc::Sender<T>` is invariant in `T`, so one call site that demands `'static` pins the
 whole channel. This pair is rejected:
 
-```rust,compile_fail
+```rust,compile_fail,E0597
 use std::sync::mpsc::{channel, Sender};
 
 struct Message<'a> { description: &'a str }
@@ -330,7 +353,7 @@ fn main() {
 
 The `note:` points at your own bound. `S: Sink<&'static u8>` is not `S: Sink<&'a u8>`:
 
-```rust,compile_fail
+```rust,compile_fail,E0597
 trait Sink<T> { fn put(&self, v: T); }
 
 fn feed<'a, S: Sink<&'a u8>>(s: &S, v: &'a u8) { s.put(v) }
@@ -400,7 +423,7 @@ error: lifetime may not live long enough
 
 The caller's type annotation propagates into the argument through the invariant `&mut`:
 
-```rust,compile_fail
+```rust,compile_fail,E0597
 fn push_str_ref<'a>(v: &mut Vec<&'a str>, s: &'a str) { v.push(s) }
 
 fn main() {
