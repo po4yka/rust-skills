@@ -6,7 +6,9 @@ step-driven loop, or when you drive an io_uring backend from that loop.
 ## The pattern
 
 The bridge is a manual poll with the standard no-op waker, `Waker::noop()` (Rust 1.85). It
-allocates nothing. Clippy's `manual_noop_waker` lint flags a hand-written replacement.
+allocates nothing. Clippy's `manual_noop_waker` lint (as of clippy 1.99) flags only an `impl Wake`
+with an empty `wake`. It does not flag a hand-written `RawWakerVTable` no-op, so review that form
+by hand and replace it with `Waker::noop()`.
 
 ```rust
 use std::io;
