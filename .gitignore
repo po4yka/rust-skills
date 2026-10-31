@@ -9,4 +9,11 @@
 .vscode/
 .zed/
 *.swp
+
+# Python bytecode from the harness scripts
 __pycache__/
+
+# Evaluation results: they need a key, so they are recorded in research/, not here
+evals/routing/routing-*.json
+evals/plugin/results/
+eval-results.json

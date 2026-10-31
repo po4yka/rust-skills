@@ -1,0 +1,111 @@
+name: Plugin eval
+
+# Runs the evals/plugin suite against the plugin in this checkout. Every case is a real agent
+# run on a paid API key, so this workflow never runs on push or on a schedule. Run it before
+# every tag and after any change to a default model (docs/releasing.md), and record the result
+# in research/ with the exact model IDs printed in the job summary.
+#
+# The key lives in the `plugin-eval` environment, not in repository secrets, so that a required
+# reviewer on that environment can gate every run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Agent model ID
+        required: true
+        default: claude-opus-5-5
+      judge-model:
+        description: Judge model ID for the LLM graders
+        required: true
+        default: claude-haiku-5-5
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  # The suite format needs Claude Code 2.1.269 or later. Pin the CLI so a release cannot change
+  # a result between two runs on the same commit.
+  CLAUDE_CODE_VERSION: '2.1.316'
+
+jobs:
+  eval:
+    name: claude plugin eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: plugin-eval
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Check the inputs and the key
+        env:
+          MODEL: ${{ inputs.model }}
+          JUDGE_MODEL: ${{ inputs.judge-model }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          for id in "$MODEL" "$JUDGE_MODEL"; do
+            if ! printf '%s' "$id" | grep -Eqx 'claude-[a-z0-9-]+'; then
+              echo "::error::not a model ID: ${id}"
+              exit 1
+            fi
+          done
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "::error::the plugin-eval environment has no ANTHROPIC_API_KEY secret; nothing ran"
+            exit 1
+          fi
+
+      - name: Install the pinned CLI
+        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Run the suite
+        env:
+          MODEL: ${{ inputs.model }}
+          JUDGE_MODEL: ${{ inputs.judge-model }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          claude plugin eval . \
+            --eval-dir evals/plugin \
+            --trust-plugin \
+            --model "$MODEL" \
+            --judge-model "$JUDGE_MODEL" \
+            --max-cost-usd 20 \
+            --threshold 0.8 \
+            --no-publish \
+            --json eval-results.json
+
+      - name: Summarize
+        if: always()
+        env:
+          MODEL: ${{ inputs.model }}
+          JUDGE_MODEL: ${{ inputs.judge-model }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, subprocess
+          commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+          print(f"Catalog `{commit}`, CLI `{os.environ['CLAUDE_CODE_VERSION']}`, agent `{os.environ['MODEL']}`, judge `{os.environ['JUDGE_MODEL']}`\n")
+          try:
+              data = json.load(open("eval-results.json"))
+          except (OSError, ValueError):
+              print("No result file: the run failed before it wrote one.")
+              raise SystemExit(0)
+          print(f"Cost: ${data.get('costUsd', 0):.2f}. Partial: {data.get('partial')}.\n")
+          print("| Case | With plugin | Without plugin |")
+          print("| --- | ---: | ---: |")
+          for case in data.get("cases", []):
+              def mean(arm):
+                  runs = case.get("arms", {}).get(arm, [])
+                  return f"{sum(r.get('score', 0) for r in runs) / len(runs):.2f}" if runs else "-"
+              print(f"| {case['name']} | {mean('with')} | {mean('without')} |")
+          PY
+          cat eval-results.json 2>/dev/null || true

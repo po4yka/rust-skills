@@ -1,0 +1,10 @@
+---
+description: The build bundle. A natural request that the rust-security skill owns; the answer must cite that skill's verifier.
+tags: [build, trigger]
+runs: 2
+max_turns: 10
+timeout_seconds: 300
+allowed_tools: [Read, Glob, Grep, Skill]
+---
+
+A teammate opened a PR that adds a crate named `serde-jsonn` to our service, and it pulls in eleven new transitive packages. Before I approve it, what should I check about the crate itself, and what command should CI run so a known advisory in the new dependency tree fails the build?
