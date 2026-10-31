@@ -17,7 +17,7 @@ language = 6657
 [body_tokens]
 cargo-workflows = 6829
 ffi-error-progress-cancel = 7459
-memory-model = 7820
+memory-model = 5662
 rust-android-build = 6047
 rust-async-internals = 7773
 rust-callback-bounds = 6223
