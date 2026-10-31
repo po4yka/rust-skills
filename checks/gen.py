@@ -37,7 +37,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 SKILLS = (HERE.parent / "skills").resolve()
 OUT = HERE / "examples"
 PRELUDES = HERE / "preludes"
-PRELUDE_KEYS = {"file", "section", "block", "items", "setup"}
+PRELUDE_KEYS = {"file", "section", "block", "items", "setup", "method_of", "receiver", "returns", "shape"}
 
 # A compile_fail example carries this prefix so analyze.py can tell the two
 # populations apart from the target name alone.
@@ -122,24 +122,53 @@ def shape_of(block: str) -> str:
     return "async-body"
 
 
-def wrap(block: str, items: str = "", setup: str = "") -> tuple[str, str]:
+def wrap(
+    block: str,
+    items: str = "",
+    setup: str = "",
+    method_of: str = "",
+    receiver: str = "&self",
+    returns: str = "",
+    shape: str = "",
+) -> tuple[str, str]:
     """Build a compilable file around one block, and name the shape used.
 
     Prelude `items` go after the block, at the crate root. Item order does not
     matter in Rust, and an inner attribute in the block must stay first.
-    Prelude `setup` statements open the statement wrapper's body.
+    Prelude `setup` statements open the statement wrapper's body. With
+    `method_of`, the statement wrapper becomes a method of that type, so a block
+    lifted from a method body can use `self`: `impl <method_of> { async fn
+    __ex(<receiver>) ... }`. The type itself comes from `items`. `returns`
+    replaces the wrapper's return type, for a block that returns its own error
+    type. `shape = "item"` keeps a statement-free block at the crate root, for
+    a macro that must expand there, such as a UniFFI derive.
     """
-    shape = shape_of(block)
-    if setup and shape != "async-body":
-        raise ValueError(f"a prelude `setup` needs a statement block, and this block is {shape}-level")
+    if shape not in ("", "item"):
+        raise ValueError(f"a prelude `shape` can only be \"item\", not {shape!r}")
+    shape = shape or shape_of(block)
+    if (setup or method_of or returns) and shape != "async-body":
+        raise ValueError(
+            "a prelude `setup`, `method_of`, or `returns` needs a statement block,"
+            f" and this block is {shape}-level"
+        )
+    # The alias goes after the block with the prelude items: an inner attribute
+    # such as `#![no_main]` at the top of a block must stay first in the file.
     alias = RESULT_ALIAS if needs_result_alias(block + "\n" + items) else ""
-    tail = ("\n" + items + "\n") if items else ""
+    tail = alias + (("\n" + items + "\n") if items else "")
+    alias = ""
     if shape == "crate":
         return HEADER + alias + block + "\n" + tail, shape
     if shape == "item":
         return HEADER + alias + block + "\nfn main() {}\n" + tail, shape
     body = (setup + "\n" if setup else "") + block
-    return HEADER + alias + WRAPPER_OPEN + body + WRAPPER_CLOSE + tail, shape
+    opener = WRAPPER_OPEN
+    if returns:
+        opener = f"async fn __ex() -> {returns} {{\n"
+    if method_of:
+        opened = f"impl {method_of} {{\n" + opener.replace("__ex()", f"__ex({receiver})")
+        closed = WRAPPER_CLOSE.replace("}\nfn main() {}", "}\n}\nfn main() {}")
+        return HEADER + alias + opened + body + closed + tail, "method-body"
+    return HEADER + alias + opener + body + WRAPPER_CLOSE + tail, shape
 
 
 def load_preludes(path: pathlib.Path = PRELUDES) -> tuple[dict, list[str]]:
@@ -165,8 +194,8 @@ def load_preludes(path: pathlib.Path = PRELUDES) -> tuple[dict, list[str]]:
         ):
             problems.append(f"{where}: needs string `file` and `section` and integer `block`")
             continue
-        if not entry.get("items") and not entry.get("setup"):
-            problems.append(f"{where}: defines neither `items` nor `setup`")
+        if not any(entry.get(k) for k in ("items", "setup", "method_of", "returns", "shape")):
+            problems.append(f"{where}: changes nothing; set `items`, `setup`, `method_of`, `returns`, or `shape`")
             continue
         key = (entry["file"], entry["section"], entry["block"])
         if key in preludes:
@@ -256,6 +285,10 @@ def main() -> int:
                         block,
                         (prelude or {}).get("items", ""),
                         (prelude or {}).get("setup", ""),
+                        (prelude or {}).get("method_of", ""),
+                        (prelude or {}).get("receiver", "&self"),
+                        (prelude or {}).get("returns", ""),
+                        (prelude or {}).get("shape", ""),
                     )
                 except ValueError as error:
                     bad_fences.append(f"{rel}:{line}: {error}")

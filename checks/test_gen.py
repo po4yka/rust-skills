@@ -33,6 +33,23 @@ class TestPrelude(unittest.TestCase):
         self.assertEqual(shape, "item")
         self.assertLess(source.index("#![forbid"), source.index("struct B;"))
 
+    def test_method_of_makes_self_available(self):
+        source, shape = gen.wrap("let n = self.items.len();", "struct Store { items: Vec<u8> }", "", "Store", "&mut self")
+        self.assertEqual(shape, "method-body")
+        self.assertIn("impl Store {", source)
+        self.assertIn("async fn __ex(&mut self)", source)
+        self.assertEqual(source.count("{"), source.count("}"))
+
+    def test_returns_replaces_the_wrapper_return_type(self):
+        source, _ = gen.wrap("return Err(Error::Bad);", "enum Error { Bad }", "", "", "&self", "Result<(), Error>")
+        self.assertIn("async fn __ex() -> Result<(), Error> {", source)
+        self.assertNotIn(gen.WRAPPER_OPEN, source)
+
+    def test_shape_item_keeps_a_block_at_the_crate_root(self):
+        source, shape = gen.wrap("#[derive(Debug)]\nstruct A;", "", "", "", "&self", "", "item")
+        self.assertEqual(shape, "item")
+        self.assertNotIn("async fn __ex", source)
+
     def test_setup_is_rejected_on_an_item_block(self):
         with self.assertRaises(ValueError):
             gen.wrap("fn main() {}", "", "let x = 1;")
