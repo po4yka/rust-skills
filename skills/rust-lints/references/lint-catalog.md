@@ -71,7 +71,7 @@ defect reached production.
 | `missing_asserts_for_indexing` (restriction) | Index sites where one `assert!` would let the compiler drop the bounds checks. It fires on `s[0] + s[1] + s[2]` with no preceding `assert!(s.len() > 2)`. It is the only automated way to find these sites. Restriction, so no default level and no config in this skill turns it on; run it as a one-off audit: `cargo clippy --locked --workspace -- -W clippy::missing_asserts_for_indexing`. See `rust-hot-path`. |
 | `ptr_arg` (style, not perf) | A `&Vec<T>` or `&mut Vec<T>` parameter where `&[T]` or `&mut [T]` works. It forces every caller to own a `Vec`. It is warn by default, so most projects see it, but a config that enables only `clippy::perf` misses it. The win is small and it is per call, not per iteration: measured on rustc 1.97.0 aarch64 at `-C opt-level=3`, for a body of `v.iter().sum()`, the `&Vec<u32>` version starts with two extra loads (the pointer and the length out of the `Vec` header) that the `&[u32]` version does not need, because a slice arrives in two registers. Both bodies came to 60 instructions. The suppression matrix below says when the owned reference is the right answer. |
 | `exhaustive_enums`, `exhaustive_structs` | A public enum or struct without `#[non_exhaustive]`. Adding a field or a variant later is then a breaking change for every downstream match or literal. |
-| `disallowed_methods` on `std::ptr::read` | A misaligned read from a byte buffer that came from I/O or FFI. `ptr::read` requires an aligned pointer, so a misaligned read is undefined behavior on every target, and it faults in practice on aarch64. Use `read_unaligned`. The entry does not catch the `p.read()` method on `*const T` or `*mut T` (clippy 0.1.98); `cast_ptr_alignment` catches the cast that makes the pointer misaligned. |
+| `disallowed_methods` on `std::ptr::read` | A misaligned read from a byte buffer that came from I/O or FFI. `ptr::read` requires an aligned pointer, so a misaligned read is undefined behavior on every target. The optimizer can miscompile it on any target. It can fault on a strict-alignment target. aarch64 Linux and x86_64 permit a misaligned plain load (but not a misaligned atomic or exclusive access), so a passing test there does not prove the code correct. Use `read_unaligned`. The entry does not catch the `p.read()` method on `*const T` or `*mut T` (clippy 0.1.98); `cast_ptr_alignment` catches the cast that makes the pointer misaligned. |
 | `disallowed_methods` on `std::env::set_var` | A mutation of the process environment after threads have started. It is not thread-safe. |
 | `arithmetic_side_effects`, `integer_division`, `modulo_arithmetic` | Unchecked integer arithmetic: overflow, truncation, divide-by-zero. A release build wraps silently; a debug build panics. Both outcomes are wrong. `arithmetic_side_effects` fires on integer operators only, so it does not cover float math. |
 | `indexing_slicing` | `buf[i]` on data whose length came from outside the program. Use `.get()` and handle the `None`. |
@@ -165,13 +165,14 @@ with ASan on the host or HWASan on a device. See `rust-unsafe` and `rust-sanitiz
 Add these only when the workspace runs an async runtime. A synchronous,
 compute-bound workspace - even one with data parallelism - gains nothing from
 them, and carrying dead lint config trains readers to ignore the config.
+Merge these keys into the existing `[workspace.lints.clippy]` table. A second
+table header, or a key the table already has, is a TOML parse error. The strict
+template in [workspace-lints.md](workspace-lints.md) already sets `large_futures`.
 
 ```toml
-[workspace.lints.clippy]
 await_holding_lock         = "deny"  # a blocking guard held across .await deadlocks the executor
 await_holding_refcell_ref  = "deny"  # a RefCell borrow held across .await panics on re-entry
 await_holding_invalid_type = "warn"
-large_futures              = "warn"
 ```
 
 Do not ban `std::sync::Mutex` or `RwLock` with `disallowed-types`.
