@@ -42,8 +42,14 @@ and `"z"` also disable loop vectorization, which matters for SIMD-heavy code.
 ## Pin `wasm-opt`
 
 `wasm-pack` runs any `wasm-opt` on `PATH` without a version check. If there is
-none, it downloads the binaryen release that its own version pins
-(`version_117` in wasm-pack 0.13.1 to 0.15.0). The wasm-pack log line
+none, it downloads the binaryen release that its own version pins:
+
+| wasm-pack | Bundled binaryen |
+| --- | --- |
+| 0.13.1 to 0.15.0 | `version_117` |
+| 0.15.1 (2026-10-30) | `version_130` |
+
+The wasm-pack log line
 `found wasm-opt at ...` shows when the `PATH` binary ran. Optimizer output and
 supported proposals change between binaryen releases, and a wasm-pack upgrade
 can change the bundled one. Pin the wasm-pack version, and pin `wasm-opt` in
@@ -52,6 +58,12 @@ one of two ways:
 - Put a pinned `wasm-opt` on `PATH` in CI.
 - Set `wasm-opt = false` under `[package.metadata.wasm-pack.profile.release]`
   and run a pinned binary as a separate step.
+
+wasm-pack 0.15.1 adds `--enable-exception-handling` to the `wasm-opt` arguments
+of a `--panic-unwind` build. wasm-pack 0.15.0 relied on the `target_features`
+section instead, so its optimizer step failed when that section was stripped or
+an older `wasm-opt` on `PATH` ran. If you run a pinned `wasm-opt` as a separate
+step on a `--panic-unwind` build, pass `--enable-exception-handling` yourself.
 
 Rust 1.87+ output uses bulk-memory and non-trapping float-to-int instructions
 by default. If `wasm-opt` rejects them, enable them explicitly:
@@ -62,8 +74,9 @@ wasm-opt = ["-Os", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 ```
 
 This list replaces the default arguments, so keep an `-O` level in it. The flags
-are a workaround from an open `wasm-pack` issue; check them against the pinned
-binaryen version.
+are a workaround from an open `wasm-pack` issue, reported while wasm-pack bundled
+`version_117`. Check them against the pinned binaryen version: the `version_130`
+bundle of wasm-pack 0.15.1 is not confirmed to need them.
 
 After any optimizer change, run the full runtime test suite and the
 engine-baseline validation from `SKILL.md` on the optimized file.

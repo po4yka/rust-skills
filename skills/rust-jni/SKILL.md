@@ -50,7 +50,7 @@ The snippets use 0.22 unless the text says 0.21. Read
 | Native abort with no exception, and the guard never runs | The `cdylib` profile sets `panic = "abort"` | Accept the abort, or build that profile with `panic = "unwind"` |
 | Native crash with no Rust message in logcat | No logger or panic hook in the outermost Rust bootstrap | Initialize logging and the redacted hook there; see the `rust-panic-safety` skill |
 | Crash in a callback long after the call returned | A local reference or an env was stored between calls | Store a global reference and a `JavaVM` clone |
-| `ClassNotFoundException` only on a Rust-created thread | `FindClass` used the system loader | Use the `JNI_OnLoad` class cache, or a `Class` or `ClassLoader` from managed code |
+| `ClassNotFoundException` only on a Rust-created thread, or on `jni` 0.22 `Err(Error::NoClassDefFound { .. })` from `Env::find_class` (the crate clears the exception) | `FindClass` used the system loader | Use the `JNI_OnLoad` class cache, or a `Class` or `ClassLoader` from managed code |
 | Corruption after passing a direct `ByteBuffer` | The Java buffer was collected while Rust held the slice | Hold a global reference to the buffer |
 | `improper_ctypes_definitions` on `JNI_OnLoad` | `JavaVM` taken by value on 0.22 | Take `*mut jni::sys::JavaVM` and call `JavaVM::from_raw` |
 
@@ -130,7 +130,8 @@ extern "system" fn JNI_OnLoad(raw_vm: *mut jni::sys::JavaVM, _reserved: *mut c_v
             log::error!("JNI_OnLoad failed: {error}");
             JNI_ERR
         }
-        // A payload's Drop can panic again. JNI_OnLoad runs once: leak it, never mem::forget.
+        // A payload's Drop can panic again. JNI_OnLoad runs once, so leak it. Use ManuallyDrop:
+        // the `rust-lints` floor denies mem::forget (`mem_forget`). That is policy, not a hazard.
         Err(payload) => {
             let _leaked = std::mem::ManuallyDrop::new(payload);
             JNI_ERR
@@ -308,10 +309,10 @@ does not compile. The danger is the "fix" that makes it compile:
 
 ```rust
 // FORBIDDEN: leaks the env and lies about its lifetime.
-let env_static: &'static mut JNIEnv = Box::leak(Box::new(env));
+let env_static: &'static mut Env<'static> = Box::leak(Box::new(env));
 
 // FORBIDDEN: same lie, no allocation.
-let env_static: &'static mut JNIEnv = unsafe { std::mem::transmute(env) };
+let env_static: &'static mut Env<'static> = unsafe { std::mem::transmute(env) };
 
 // FORBIDDEN: captures the env in a task that another thread may run.
 tokio::spawn(async move { env.call_method(/* ... */); });

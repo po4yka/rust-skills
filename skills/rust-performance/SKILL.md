@@ -153,7 +153,7 @@ Declare `harness = false` for every benchmark target in the crate manifest, othe
 
 ```bash
 cargo bench --locked --workspace --no-run      # compile every benchmark, measure nothing
-cargo test --locked --workspace --benches      # run each Criterion benchmark once (smoke test)
+cargo test --locked --workspace --benches      # run each Criterion and Gungraun >= 0.20 benchmark once (smoke test)
 
 # Run one suite, or one benchmark function
 cargo bench --locked -p my-crate --bench decode

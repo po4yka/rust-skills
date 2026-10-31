@@ -49,14 +49,19 @@ ambiguous.
 Teardown can run on the main thread or in a destructor. It must finish without
 waiting for Rust work.
 
-- Android calls coroutine cancellation and the idempotent release method from
-  `awaitClose`, `ViewModel.onCleared`, or the lifecycle collection scope.
-- Swift cancels the consuming task and calls the idempotent release method from
-  `onTermination` or explicit owner teardown.
+- Android calls coroutine cancellation and the idempotent registration-release
+  method from `awaitClose`, `ViewModel.onCleared`, or the lifecycle collection
+  scope.
+- Swift cancels the consuming task and calls the idempotent registration-release
+  method from `onTermination` or explicit owner teardown.
 - Rust sets a flag, closes registration, and returns. It does not join a thread,
   drain a queue, acquire a lock held by callback code, or wait for a job stage.
-- A destructor can call the same release method as explicit teardown. The
-  second call is a no-op.
+- A destructor can call the same registration-release method as explicit
+  teardown. The second call is a no-op.
+
+Registration release ends one callback registration. It is not the
+reservation release in [platform-bridges.md](platform-bridges.md), which frees a
+job-registry entry inside Rust and which the host never calls.
 
 Do not perform synchronous shutdown in `onCleared`, `deinit`, or an app
 background callback. If a feature requires proof that work stopped, expose an

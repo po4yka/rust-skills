@@ -9,3 +9,6 @@
 .vscode/
 .zed/
 *.swp
+
+# Python bytecode from scripts/ and checks/
+__pycache__/

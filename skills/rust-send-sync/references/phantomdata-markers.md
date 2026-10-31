@@ -3,13 +3,16 @@
 `PhantomData<X>` inherits `X`'s auto traits exactly, so any std type with the wanted
 implementation works as a marker. Pick the marker that removes only what you mean to remove:
 
-| Marker field | `Send` | `Sync` | Variance in `T` if the marker names your own `T` |
-| --- | --- | --- | --- |
-| `PhantomData<fn() -> T>` | kept | kept | covariant |
-| `PhantomData<Cell<T>>` | kept | removed | invariant |
-| `PhantomData<MutexGuard<'static, T>>` | removed | kept | invariant, and it forces `T: 'static` |
-| `PhantomData<*const T>` | removed | removed | covariant |
-| `PhantomData<*mut T>` | removed | removed | invariant |
+| Marker field | `Send` | `Sync` |
+| --- | --- | --- |
+| `PhantomData<fn() -> T>` | kept | kept |
+| `PhantomData<Cell<T>>` | kept | removed |
+| `PhantomData<MutexGuard<'static, T>>` | removed | kept |
+| `PhantomData<*const T>` | removed | removed |
+| `PhantomData<*mut T>` | removed | removed |
+
+A marker that names your own `T` also sets the variance in `T` and the drop-check ownership. The
+`rust-variance` skill, when it is installed, owns the table for both.
 
 ```rust
 use std::cell::Cell;
@@ -39,8 +42,7 @@ Rules:
   thread, and the diagnostic then names `*mut ()`, a type the reader cannot find in the struct.
 - Write `()` inside the marker when the marker only drops an auto trait. A marker that names your
   own parameter also constrains variance: `PhantomData<Cell<T>>` makes the struct invariant in
-  `T`, which rejects caller substitutions that look safe. The `rust-variance` skill covers that
-  side.
+  `T`, which rejects caller substitutions that look safe.
 - `PhantomData<MutexGuard<'static, T>>` goes further than the other four markers. `MutexGuard<'a,
   T>` is declared `T: ?Sized + 'a`, so a naked `T` in this marker forces `T: 'static` on the
   struct, and rustc rejects the definition with `error[E0310]`. Write `MutexGuard<'static, ()>`

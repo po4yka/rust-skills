@@ -167,7 +167,7 @@ and each growth then doubles. Measured on rustc 1.97.0, it is 8 for 1-byte eleme
 `push` calls on a `Vec<u32>` therefore cost four allocations and end at capacity 32, with
 twelve slots of waste. One `Vec::with_capacity(20)` costs one allocation and no waste.
 
-**`reserve` and `reserve_exact` differ only on a non-empty vector.** `reserve` applies the
+**`reserve` and `reserve_exact` differ mainly on a non-empty vector.** `reserve` applies the
 amortized policy on top of your request. `reserve_exact` does not.
 
 ```rust
@@ -180,7 +180,10 @@ b.reserve_exact(1);
 assert_eq!(b.capacity(), 4);        // exactly len + additional
 ```
 
-On an empty vector both give the exact request, so a test that starts from `Vec::new()`
+On an empty vector both give the exact request when it is at least the minimum non-zero
+capacity above. Below that minimum, `reserve` rounds up and `reserve_exact` does not: on
+rustc 1.99.1, `reserve(1)` gives 4 on a `Vec<u32>`, `reserve_exact(1)` gives 1, and
+`reserve(5)` gives 8 on a `Vec<u8>`. A test that starts from `Vec::new()` with a large request
 shows them as identical and hides a 50% overshoot in the real path. Use `reserve_exact`
 when you know the final length and you are memory-bound. Use `try_reserve` when the size
 comes from untrusted input; the `rust-panic-safety` skill covers it.
@@ -252,6 +255,7 @@ enum Inline { Ping, Seq(i32), Body(i32, Payload) }
 enum Boxed { Ping, Seq(i32), Body(Box<(i32, Payload)>) }
 
 const _: () = assert!(std::mem::size_of::<Inline>() == 108);
+#[cfg(target_pointer_width = "64")] // a Box is 4 bytes on a 32-bit target
 const _: () = assert!(std::mem::size_of::<Boxed>() == 16);
 ```
 

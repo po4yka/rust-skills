@@ -115,8 +115,10 @@ pub const IS_APPLE_SIMULATOR: bool = cfg!(all(
 ));
 ```
 
-Rust 1.91 and later set `target_env = "sim"`. Earlier supported toolchains set
-`target_abi = "sim"`. Keep both checks when the workspace MSRV is below 1.91.
+Rust 1.91 and later set `target_env = "sim"`. Rust 1.78 through 1.90 set
+`target_abi = "sim"`. Keep both checks when the workspace MSRV is 1.78 to 1.90.
+Below Rust 1.78, `cfg(target_abi)` is unstable and stable Rust rejects it. Read
+the `TARGET` variable in `build.rs` and emit a custom cfg instead.
 
 Keep platform differences at the host boundary. Do not fork domain logic for
 device and simulator builds.
@@ -187,7 +189,7 @@ crate-type = ["lib"]
 
 [profile.ios-release]
 inherits = "release"
-panic = "unwind"            # catch_unwind at the C ABI and in UniFFI scaffolding needs unwind
+panic = "unwind"            # catch_unwind at the C ABI needs it; rust-panic-safety owns the rule
 debug = 1
 strip = "none"
 ```

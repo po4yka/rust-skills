@@ -20,14 +20,20 @@ Contents:
 |---------|----------|-------------------|
 | Criterion 0.8 | Wall clock, in process | The default. Baselines, statistics, HTML reports |
 | Divan 0.1.21 | Wall clock, in process | You want a lighter in-process harness with less code per benchmark |
-| Hyperfine 1.20.0 | Wall clock of a whole process | The unit of work is one CLI invocation, not one function |
-| Gungraun 0.19.4 | Valgrind instruction counts | You need a number that does not move with machine noise, or a CI gate. Linux only (Valgrind); not macOS or Windows |
+| Hyperfine 2.0.0 | Wall clock of a whole process | The unit of work is one CLI invocation, not one function |
+| Gungraun 0.20.0 | Valgrind instruction counts, or Linux perf counters | You need a number that does not move with machine noise, or a CI gate. Linux only (Valgrind, perf); not macOS or Windows |
 
 Two traps:
 
 - Gungraun is the rename of `iai-callgrind`. `iai-callgrind` is still published separately at
   0.16.1, so name the crate you mean. Gungraun also needs a `gungraun-runner` binary of the same
   version on `PATH`.
+- Gungraun 0.20.0 (2026-09-26) renames `ValgrindTool` to `Tool`, and the features
+  `client_requests` to `act` and `client_request_defs` to `stubs`. Code and manifests written
+  for 0.19 fail to build until you rename them.
+- Hyperfine 2.0.0 (2026-10-07) runs each command without a shell by default. A command with a
+  pipe, a redirect, or a glob now needs `-S`. `--time-unit`, `--sort`, and `--reference` are
+  removed, and the `--export-json` schema changed to version 2.
 - Rust's built-in `#[bench]` attribute is nightly-only. On stable it fails with E0658, and adding
   `#![feature(test)]` then fails with E0554:
 
@@ -227,7 +233,7 @@ Three gates, from cheap to strict:
 | Gate | Command | What a green result proves |
 |------|---------|----------------------------|
 | Compile | `cargo bench --locked --workspace --no-run` | The benchmark code compiles. Nothing about speed |
-| Smoke run | `cargo test --locked --workspace --benches` | Each Criterion benchmark ran once without a panic. Criterion runs in test mode here and measures nothing |
+| Smoke run | `cargo test --locked --workspace --benches` | Each Criterion benchmark, and each Gungraun benchmark as of 0.20.0, ran once without a panic. Both run in test mode here and measure nothing. Only Gungraun 0.20.0 and later supports this on a host without Valgrind or perf |
 | Regression | Gungraun limits against a main-branch baseline | Instruction counts did not grow past the limit, if the log compares against `main` with numbers, not `N/A` |
 
 SKILL.md section 6 says why Criterion alone cannot gate a pull request. Compare Criterion

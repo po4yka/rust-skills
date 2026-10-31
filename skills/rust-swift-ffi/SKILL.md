@@ -69,8 +69,11 @@ library or XCFramework, not a Cargo target file. It does these operations:
 - Assert that the context release occurs once and that no later callback
   arrives.
 
-The Swift sanitizers see only Swift code, and Miri sees only Rust. Only the
-consumer test proves the cross-language lifetime, for the paths that it runs.
+The Xcode sanitizers instrument only the Swift, C, and Objective-C code that
+they compile. ASan checks no Rust memory access, but it still catches a double
+free or an invalid free on the Rust side. The `rust-debugging` skill, when it is
+installed, owns the details. Miri sees only Rust. Only the consumer test proves
+the cross-language lifetime, for the paths that it runs.
 When unsafe boundary code changes, also run a host ASan build of the Rust
 tests with the `rust-sanitizers-miri` flags.
 
@@ -236,14 +239,13 @@ message buffer and releases it after it copies the bytes. Keep diagnostic
 chains, paths, and backtraces in Rust logs. Swift maps codes to its own
 `Error` enum with an unknown-code case.
 
-Contain unwinding at every export. Since Rust 1.81, a panic at an
-`extern "C"` boundary aborts the process, and Swift gets no error and no
-cleanup. A fallible export returns the reserved internal-error code for a
+Contain unwinding at every export. The `rust-panic-safety` skill, when it is
+installed, owns the guard, the abort rules, and the `panic` profile setting.
+A panic that escapes an export ends the process, and Swift gets no error and
+no cleanup. A fallible export returns the reserved internal-error code for a
 caught panic, never a domain code. A `void` release or cancel export logs the
-panic and returns. Keep destructor paths non-panicking. `panic = "abort"`
-catches nothing, so document process abort or build with `panic = "unwind"`.
-Keep the `extern "C"` body to validation, the panic guard, and delegation.
-`rust-panic-safety` owns the guard and the profile decision.
+panic and returns. Keep destructor paths non-panicking. Keep the `extern "C"`
+body to validation, the panic guard, and delegation.
 
 ## Give every callback one retained context
 

@@ -110,7 +110,9 @@ pub struct Native { pub a: u8, pub b: u64, pub c: u8 }             // rustc reor
 #[repr(C)] pub struct Packed { pub b: u64, pub a: u8, pub c: u8 }  // 0 interior + 6 tail
 #[repr(C)] pub struct Small  { pub a: u8, pub b: u32 }             // 3 interior
 #[repr(C)] pub struct Wide   { pub b: u32, pub a: u8 }             // the same 3, now at the tail
+#[cfg(target_pointer_width = "64")] // u64 is 4-aligned on i686, which changes all three
 const _: () = assert!(std::mem::size_of::<Native>() == 16);
+#[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::size_of::<Spread>() == 24 && std::mem::size_of::<Packed>() == 16);
 const _: () = assert!(std::mem::size_of::<Small>() == 8 && std::mem::size_of::<Wide>() == 8);
 ```

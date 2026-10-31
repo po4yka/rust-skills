@@ -189,15 +189,18 @@ js-sys = "0.3"
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies.web-sys]
 version = "0.3"
-features = ["Window", "console"]
+features = ["Window", "Performance", "console"]
 ```
 
 Enable only the `web-sys` interfaces that the code uses. Each one adds binding
 code, compile time, and possible artifact size.
 
 Inject the clock. On `wasm32-unknown-unknown`, read time in the JavaScript
-adapter (`js_sys::Date::now()` or `web_sys::Performance::now()`) and pass it to
-the portable code, because `std::time` panics there.
+adapter and pass it to the portable code, because `std::time` panics there. Use
+`js_sys::Date::now()`, or `window.performance()` and then `.now()` on the result.
+`now` is an instance method of `web_sys::Performance`, so write
+`web_sys::window().and_then(|w| w.performance()).map(|p| p.now())`. It needs the
+`Window` and `Performance` features.
 
 `getrandom` has no default backend on `wasm32-unknown-unknown`. Enable feature
 `wasm_js` (0.3.4 and later, 0.4) or `js` (0.2) for each major version in the

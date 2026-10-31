@@ -174,9 +174,11 @@ crate, or opened it in an IDE that runs rust-analyzer. Build scripts and proc ma
 compile time, and rust-analyzer runs both when it loads the workspace. A runtime payload
 can run under `cargo test`.
 
-The `cargo audit` terminal report does not show the category. For a malicious release it
-prints `Solution: No fixed upgrade is available!`. Read the category and the `unaffected`
-ranges with the `--json` filter in section 1.
+The `cargo audit` terminal report does not show the category. For a malicious release
+cargo-audit 0.22.2 prints `Solution: No fixed upgrade is available!`, even when the advisory
+lists newer `unaffected` versions. The unreleased rustsec `main` prints
+`Upgrade to <range> (unaffected)` in that case. Do not match on the `Solution` line. Read the
+category and the `unaffected` ranges with the `--json` filter in section 1.
 
 1. Take the malicious code out of the graph in one change.
    - If the advisory lists `unaffected` versions, a legitimate crate had a compromised

@@ -309,8 +309,8 @@ rule, the `owned_cow` lint, and the grep.
 
 A legacy signature `fn legacy(s: &String)` cannot take your `&str`, and you cannot change the
 crate. The circulating answer is a `ManuallyDrop` plus `String::from_raw_parts` fabrication that
-builds a fake `String` over borrowed bytes. Do not write it. It is unsound the moment anything
-mutates through the reference, and it buys almost nothing.
+builds a fake `String` over borrowed bytes. Do not write it: it buys almost nothing. The
+`rust-unsafe` skill, when it is installed, owns the reason it is undefined behavior.
 
 Reuse one buffer instead. `String::clear` keeps the capacity, so `push_str` stops reallocating
 after the first few calls:

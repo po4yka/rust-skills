@@ -148,7 +148,8 @@ rules:
 | Any, with `panic = "abort"` | The process ends |
 
 A non-throwing export, such as `cancel_job(&self, id: String)`, must therefore be panic-free by
-construction. The `rust-panic-safety` skill owns the unwind policy.
+construction. The `rust-panic-safety` skill, when it is installed, owns the unwind policy and
+the `panic` profile setting.
 
 Apply the FFI-path panic lint set from the `rust-panic-safety` skill in `lib.rs`. For a
 UniFFI adapter, also deny `clippy::unreachable` and `clippy::indexing_slicing`, because a

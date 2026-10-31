@@ -231,10 +231,11 @@ echo '_RNvCsbhslDugC6KQ_2m211foo_bar_baz' | rustfilt
 echo '_ZN4core3fmt9Formatter9write_fmt17hb4f5d866d07ffa27E' | rustfilt
 # core::fmt::Formatter::write_fmt
 
-# LLVM c++filt demangles v0. Mach-O names need -_ to drop the extra underscore.
+# c++filt demangles v0. Mach-O names need -_ to drop the extra underscore.
 echo '_RNvCsbhslDugC6KQ_2m211foo_bar_baz' | c++filt
 echo '__RNvCsbhslDugC6KQ_2m211foo_bar_baz' | c++filt -_
-# m2::foo_bar_baz
+# llvm-cxxfilt and the macOS c++filt (LLVM 18):  m2::foo_bar_baz
+# GNU binutils c++filt 2.42 keeps the crate hash: m2[8367458d81cab0c2]::foo_bar_baz
 ```
 
 Grep for `_R`, not `_ZN`. A `_ZN` pattern matches no Rust symbol in a current build and returns

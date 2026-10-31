@@ -249,7 +249,7 @@ satisfied only by a callable whose `Output` **is** `&'a str`. `&'static str` is 
 A named function has its own zero-sized item type, and the `Fn` impl on that type fixes
 `Output = &'static str`. So this fails:
 
-```rust,compile_fail
+```rust,compile_fail,E0597
 fn service_name() -> &'static str { "Service" }
 
 fn main() {

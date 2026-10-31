@@ -317,17 +317,19 @@ and close it yourself. Do not expect `Drop` to run any hook.
 
 ### tokio::fs::File
 
-Read against tokio 1.53.1. `File` has no `Drop` impl at all. It holds `Arc<std::fs::File>`, so
+Read against tokio 1.54.1. `File` has no `Drop` impl at all. It holds `Arc<std::fs::File>`, so
 the fd closes when the last handle to that `Arc` drops. A write started by `poll_write` runs on
 the blocking pool and holds a clone until it ends, so the close waits for it. With no operation
 in flight, the close syscall runs inline, on the thread that drops the file.
 
 The data is not lost, but the write error is. A failed background write lands in
-`last_write_err`, and the next `write`, `flush`, or `seek` call reads that field. A drop makes
-that call never happen.
+`last_write_err`. Only the next `write`, `write_vectored`, `flush`, or `shutdown` reports it.
+`seek`, `sync_all`, `sync_data`, and `set_len` wait for the background write, keep the error
+stored, and return only their own result. A drop makes the reporting call never happen.
 
-Call `file.flush().await?` before you drop a file you wrote to. Add `file.sync_all().await?` when
-the bytes must reach the disk.
+Call `file.flush().await?` before you drop a file you wrote to. Add `file.sync_all().await?` after
+the flush when the bytes must reach the disk. A `sync_all` without the flush can return `Ok` after
+a failed write.
 
 ### General audit
 

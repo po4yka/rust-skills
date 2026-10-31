@@ -44,8 +44,10 @@ Read the table as four rules.
    crates. Nothing else does, short of LTO.
 3. `#[inline]` on a generic function is redundant for this purpose. The downstream crate
    monomorphizes the body itself, so it already holds the MIR.
-4. `lto = true` inlines everything the budget allows, regardless of the attribute. Do not add
-   `#[inline]` to a crate that only ever builds under fat LTO.
+4. `lto = true` removes the crate-boundary reason for `#[inline]`: LLVM sees every body, with
+   or without the attribute. The attribute still adds `inlinehint` (see the attribute table
+   below), and the hint can still change an inlining decision under LTO. Measure before you
+   remove `#[inline]` from a crate that only ever builds under fat LTO.
 
 The last row matters when a fix looks like a no-op. Splitting a hot function into two modules of
 the same crate does not add a barrier. Moving it into its own crate does.
@@ -500,7 +502,7 @@ fn main() {
 | Every function in the rlib keeps a symbol | Incremental or `dev` build: rustc skips the inference | Probe with `--release` and `incremental = false` |
 | A helper crosses at `opt-level = 3` and stops at `"s"` or `"z"` | The MIR inliner does not run at opt-level 1, `"s"`, or `"z"`, so a small call stays in the body | `#[inline]` on the helper, or `opt-level = 3` for that crate |
 | `nm` prints `Unknown attribute kind` on an rlib | Xcode `nm` reads LTO bitcode from a newer LLVM | Probe with `--config 'profile.release.lto=false'` |
-| Adding `#[inline]` made no difference at all | The build already uses `lto = true` | Remove the attribute and keep the compile time |
+| Adding `#[inline]` made no difference at all | The build already uses `lto = true`, so the body crossed the crate boundary without it | Measure with and without the attribute under the LTO profile. Remove it only when the profile and the benchmark show no change, and keep the compile time |
 | `cargo rustc -- --emit=llvm-ir=app.ll` writes no `.ll` | The crate was fresh, so rustc never ran | `touch` a source file and repeat |
 | `ignoring emit path because multiple .ll files were produced` | More than one codegen unit | Add `-C codegen-units=1` |
 | A grep for `_ZN` in a profile finds nothing | v0 mangling is the default since 1.97.0 | Grep `_R`, and allow the extra Mach-O underscore |
