@@ -101,7 +101,7 @@ fn evens(limit: u32) -> Vec<u32> {
 ```
 
 For a hand-written iterator, implement `size_hint` instead. SKILL.md states the rule, and the
-`rust-iterator-impl` skill holds the impl.
+`rust-iterator-impl` skill holds the impl: a `size_hint` lower bound never exceeds the items left.
 
 Do not `collect` only to iterate again. Return `impl Iterator<Item = T>` instead of `Vec<T>`. On
 edition 2024 this needs no lifetime bound, because RPIT captures in-scope lifetimes by default.

@@ -1,0 +1,14 @@
+{
+  "name": "rust-skills",
+  "description": "Agent skills for production Rust: ownership semantics, unsafe review, async, FFI, native linking, releases, and supply chain.",
+  "license": "BSD-3-Clause",
+  "author": {
+    "name": "po4yka",
+    "url": "https://github.com/po4yka"
+  },
+  "homepage": "https://github.com/po4yka/rust-skills",
+  "repository": "https://github.com/po4yka/rust-skills",
+  "skills": [
+    "./skills"
+  ]
+}

@@ -14,10 +14,19 @@ Layout is flat. One directory per skill:
 ```text
 skills/<name>/SKILL.md          the skill itself, always present
 skills/<name>/references/*.md   optional deep material, loaded on demand
-README.md                       the catalog table and the routing graph
-scripts/validate-skills.py      catalog structure checks (tests: scripts/test_validate_skills.py)
+README.md                       the catalog table, the install bundles, and the routing graph
+bundles.toml                    install bundles: bundle -> ordered skill names
+AGENTS.snippet.md               the always-on router a consumer pastes; every skill once
+.claude-plugin/                 plugin manifest and marketplace, one plugin per bundle
+scripts/validate-skills.py      catalog checks (tests: scripts/test_validate_skills.py)
+scripts/catalog-ceilings.toml   ratchet: accepted values over a limit, which may only shrink
+scripts/drift-report.py         toolchain and crate drift report behind the weekly workflows
 tests/routing-cases.md          phrase -> skill, checked against every description
+evals/                          routing and plugin evaluations; evals/README.md says what they prove
 checks/                         compile-check harness for the rust examples; check.sh runs CI
+docs/releasing.md               tags, versioning, evaluations before a tag, repository settings
+CHANGELOG.md, SECURITY.md       release history; security scope and how to report
+.github/                        CI, drift, and plugin-eval workflows; CODEOWNERS; templates
 research/                       primary-source findings and catalog decisions
 ```
 
@@ -65,15 +74,16 @@ The body starts at an `# Title` heading directly after the frontmatter.
   skills must apply to any Rust workspace.
 - Tag every code block with a language: `rust`, `bash`, `toml`, `yaml`, `kotlin`, `swift`,
   `text`.
-- Keep `SKILL.md` under 500 lines (the validator enforces it) and near 5,000 tokens. Put gotchas,
-  triage tables, verifier commands, and escalation rules first. Move conditional material, long
-  examples, and background to `references/<topic>.md`. Link each reference directly from
+- Keep `SKILL.md` under 500 lines and 4,800 estimated tokens; the validator enforces both. Put
+  gotchas, triage tables, verifier commands, and escalation rules first. Move conditional
+  material, long examples, and background to `references/<topic>.md`. Link each reference from
   `SKILL.md` at the point of need with the condition to read it ("Read `references/x.md` when
   ..."). A reference over 100 lines starts with a short contents list.
 - Do not add a "When to use this skill" section. The description does that job, and the body
   loads only after the agent chose the skill.
 - Name another skill by its name only ("the `rust-security` skill, when it is installed"). An
   install of one skill has no sibling directories, so a path into another skill is a dead link.
+  For a skill in another bundle, state the rule in one sentence with a command or API name.
 - Give each rule one home in the catalog. Other skills point to the owner in one line.
 - State the verifier: which command proves which claim, when to run it, and what a green result
   does not prove. Scale it to the risk. Do not add "double-check" or "verify again" steps.
@@ -112,8 +122,9 @@ The body starts at an `# Title` heading directly after the frontmatter.
    conditional or does not fit in the size budget.
 
 3. Add one row to the catalog table in `README.md`, in the section that matches the subject.
-   Link the name to `skills/<name>/SKILL.md`. Add one node to the routing diagram. Every skill
-   appears exactly once in both places.
+   Link the name to `skills/<name>/SKILL.md`. Add one node to the routing diagram, one row to
+   `AGENTS.snippet.md`, and the name to one bundle in `bundles.toml` and its plugin entry in
+   `.claude-plugin/marketplace.json`. Every skill appears exactly once in each.
 
 4. Add at least one row to `tests/routing-cases.md`: a phrase a user is likely to type, and the
    new skill. The phrase must appear in the new `description`. A skill with no routing case
@@ -129,58 +140,50 @@ bash checks/check.sh
 ```
 
 A green run locally means a green run in CI. The one gate that can be missing is the skills-CLI
-discovery step, which needs `npx`; `check.sh` says so out loud when it has to skip it, and CI
-always runs it. `check.sh` writes only under `checks/` and a temporary directory, so run and rerun
-it without asking.
+discovery step, which needs `npx`; `check.sh` says so when it skips it. `check.sh` writes only
+under `checks/` and a temporary directory, so run and rerun it without asking.
 
 ### 1. Catalog structure
 
-```bash
-python3 scripts/validate-skills.py
-```
+`python3 scripts/validate-skills.py` checks, for every skill:
 
-It checks, for every skill:
-
-- frontmatter keys stay inside the Agent Skills spec, and the three required keys are present;
-- `name` equals the directory name and uses the allowed character set;
-- `description` is one plain line, long enough to state what and when, and under 1024
-  characters;
+- frontmatter keys stay inside the spec with the three required keys; `name` equals the
+  directory name; `description` is one plain line of 80 to 1024 characters; `SKILL.md` is at
+  most 500 lines;
 - every frontmatter value survives a real YAML parser unchanged: no `: `, no ` #`, no leading
   indicator character, because the skills CLI and the agent runtimes read the file with one;
-- `SKILL.md` is at most 500 lines;
 - every Markdown link resolves from the file that holds it and stays inside the skill directory,
   every `references/*.md` code span exists, and no file names a `skills/<name>/` repository path;
 - every phrase in `tests/routing-cases.md` still appears in the description it routes to, and
   every skill has at least one routing case;
-- the README catalog lists exactly the skills that exist on disk;
-- the README Mermaid routing graph names every skill exactly once.
+- the README catalog and its Mermaid routing graph name every skill on disk exactly once;
+- every skill is in exactly one bundle of `bundles.toml`, and each bundle has a README install
+  row; `AGENTS.snippet.md` names every skill exactly once in at most 60 lines;
+- descriptions stay under 5,000 characters per bundle (about 2,000 tokens, the skill listing of
+  a 200K-context client) and 20,000 in total, and each body stays under 4,800 estimated tokens
+  (characters / 2.5; the calibration is in `research/token-calibration-2026-10.md`);
+- a reference to a skill in another bundle carries a fallback with a code span in the same or
+  the next sentence, and no description claims a phrase of `evals/routing/negative-cases.md`.
+
+A value already over a limit sits in `scripts/catalog-ceilings.toml`. The validator fails when it
+grows and warns when it shrinks; then lower the entry, or remove it once the value is under the
+limit. Never raise an entry to make a change pass; the one exception is a cross-bundle fallback
+sentence, which may raise `body_tokens` by its own size. `--report budget` prints sizes, and
+`--report cross-refs` lists every reference that has no fallback.
 
 ### 2. Compile and behavior-check the examples
 
-`checks/README.md` lists the commands for each phase. Every ` ```rust ` block in `skills/` is
-read, and its fence decides what happens to it. An untagged block is type-checked. A block that
-names a type or value the prose defines is a fragment, and rustc checks nothing that touches that
-name. Supply the name in `checks/preludes/<skill>.toml`; a fragment that `checks/fragments.txt`
-does not list fails the gate. A `rust,run` block must compile cleanly and then run on the native
-host within ten seconds. The gate fails on an example that never reached the compiler, a failing
-run block, a `compile_fail` block that compiled or missed the code its fence names, an unlisted
-fragment, or a compile error the analyzer cannot attribute to an undefined symbol or to the
-extraction wrapper.
+Every ` ```rust ` block in `skills/` is read, and its fence decides what happens to it; the rules
+are under "Authoring conventions" above, and `checks/README.md` has the phases and commands.
+`checks/baseline.txt` is empty and should stay empty: fix the example instead of adding a line.
+A block that names a type or value the prose defines is a fragment, and rustc checks nothing that
+touches that name. Supply the name in `checks/preludes/<skill>.toml`. A fragment that
+`checks/fragments.txt` does not list fails the gate; that file holds two blocks no prelude can
+complete, so do not add to it.
+Add a crate to `checks/Cargo.toml` when a skill starts using it, or every block that imports it
+silently degrades to a fragment.
 
-`checks/baseline.txt` is empty and should stay empty. `checks/fragments.txt` holds two blocks
-that no prelude can complete; do not add to it. When the gate reports a new fragment, add a
-prelude. When it reports a new suspect, fix the example. Add a baseline line only for a failure no fence tag can
-express, with a comment saying why. Add a crate to `checks/Cargo.toml` when a skill starts using
-it, or every block that imports it silently degrades to a fragment. `checks/README.md` has the
-full description.
-
-`check.sh` then confirms the CLI still discovers the catalog. This lists the skills and installs
-nothing:
-
-```bash
-npx skills add ./ --list
-```
-
+`check.sh` then runs `npx skills add ./ --list`, which lists the skills and installs nothing.
 Run it after any frontmatter edit. The CLI and the agent runtimes parse frontmatter with a real
 YAML parser: a `: ` in a description once hid a whole skill, and a ` #` cut one in half.
 `plain_scalar_problem` in `scripts/validate-skills.py` rejects both, but the CLI is the only
@@ -188,20 +191,18 @@ end-to-end proof.
 
 ### What `main` enforces
 
-`main` blocks force-pushes and branch deletion, and merged head branches are deleted
-automatically. Status checks are not required, so a direct push still lands: CI reports on it,
-it does not gate it. Run `bash checks/check.sh` before you push, because nothing else will.
+Branch protection, not convention, guards `main`: it requires the `Validate catalog` and
+`Compile-check examples` checks and a Code Owners review, and rejects direct pushes, force-pushes,
+deletion, and unsigned commits (`docs/releasing.md` lists every setting). `npx skills add` copies
+`main` into consumers' agent directories, so an unchecked commit is a supply-chain change.
 
 ### Do not run `skills remove` inside this repository
 
 `npx skills remove --skill <name>` treats this repository's own `skills/` directory as an
-install location and **deletes the source directory**. It does this even when you never ran
-`skills add`. The deletion is silent and it is not staged in git, so an uncommitted skill is
-lost outright.
-
-Use `npx skills add ./ --list` to inspect the catalog, and `npx skills use ./ --skill <name>`
-to read one skill. Neither writes to `skills/`. If you need to test an install and a removal,
-do it in a scratch directory, never in a checkout of this repository.
+install location and **deletes the source directory**, even when you never ran `skills add`. The
+deletion is silent and not staged in git, so an uncommitted skill is lost outright. Use
+`npx skills add ./ --list` or `npx skills use ./ --skill <name>` to inspect; neither writes to
+`skills/`. Test an install and a removal in a scratch directory, never in this checkout.
 
 ## Pull request conventions
 
@@ -213,3 +214,10 @@ do it in a scratch directory, never in a checkout of this repository.
 - Do not mention Claude, Claude Code, or Anthropic in commit messages or pull request text.
 - Do not add `Co-Authored-By` trailers.
 - Update the `README.md` catalog row in the same pull request that adds or renames a skill.
+
+## Releases and evaluations
+
+Tag every catalog actualization, on a green `main` commit only. The plugin never sets `version`,
+so its version is the installed commit SHA. Run `evals/plugin` before every tag and after any
+model-default change, and record the results in `research/` with the model IDs.
+`docs/releasing.md` has the release commit, the versioning rule, and the evaluation commands.

@@ -112,13 +112,11 @@ loop {
 }
 ```
 
-Without `biased`, `select!` picks a random arm to poll first, so the loop can still process a few
-more messages after cancellation fires. `biased;` with the `cancelled()` arm first makes shutdown
+Without `biased`, `select!` polls the arms in random order, so the loop can process a few more
+messages after cancellation. `biased;` with the `cancelled()` arm first makes shutdown
 win on the next iteration. Under `biased;`, never put an always-ready data arm above the shutdown
 arm: that order starves it. Give every long-lived `select!` loop a `cancelled()` arm unless
 another arm ends the loop on shutdown. Otherwise shutdown hangs.
-Match `Some(msg)` on `recv()`: a closed channel then disables the arm. A plain `msg = rx.recv()`
-arm receives `None` at once on every iteration and spins.
 
 ### CancellationToken tree
 

@@ -12,4 +12,4 @@ rust-code-style/references/module-layout.md :: `lib.rs` is the table of contents
 # Three forbidden forms side by side, with a `/* ... */` placeholder and one env
 # used three times. The first two forms compile on purpose (that is the danger
 # the prose names) and the third cannot, so no single prelude is faithful.
-rust-jni/SKILL.md :: The env must not cross an await point :: 074a8814
+rust-jni/references/jni-threading-and-callbacks.md :: The env must not cross an await point :: 074a8814

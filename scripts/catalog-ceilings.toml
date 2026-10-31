@@ -1,0 +1,91 @@
+# Accepted values above a hard limit in scripts/validate-skills.py. A ratchet:
+# the validator fails when a listed value grows, and asks for the entry to be
+# lowered or removed when it shrinks. Never raise an entry to make a change
+# pass; move material to references/ or shorten the text instead. One exception:
+# a commit that adds a cross-bundle fallback sentence may raise body_tokens for
+# that skill by the size of the sentence, and its message must say so.
+#
+# Regenerate after a change that shrinks a value:
+#   python3 scripts/validate-skills.py --emit-ceilings > scripts/catalog-ceilings.toml
+
+[description]
+total = 22304
+
+[bundle_descriptions]
+language = 6657
+
+[body_tokens]
+cargo-workflows = 6780
+ffi-error-progress-cancel = 7459
+memory-model = 5662
+rust-android-build = 5989
+rust-async-internals = 7770
+rust-callback-bounds = 6223
+rust-cli = 7326
+rust-code-style = 6533
+rust-compiler-errors = 7684
+rust-copy-on-write = 7624
+rust-crate-architecture = 7450
+rust-crate-release = 7804
+rust-database = 6098
+rust-debugging = 7294
+rust-discipline = 7322
+rust-embedded-no-std = 7724
+rust-event-loop-state = 5626
+rust-hot-path = 5541
+rust-ios-build = 6954
+rust-iterator-impl = 7765
+rust-jni = 6358
+rust-lints = 7551
+rust-macros = 7912
+rust-native-linking = 7354
+rust-networking = 6032
+rust-observability = 7779
+rust-panic-safety = 6513
+rust-pattern-semantics = 5873
+rust-performance = 7640
+rust-pin-projection = 7800
+rust-sanitizers-miri = 7748
+rust-security = 7824
+rust-send-sync = 7172
+rust-serde = 7733
+rust-swift-ffi = 5904
+rust-tdd = 7114
+rust-test-tools = 7384
+rust-type-erasure = 7392
+rust-unsafe = 5792
+rust-variance = 7927
+rust-wasm = 5769
+uniffi-boundary = 7229
+uniffi-packaging-versioning = 7189
+
+[cross_refs]
+cargo-workflows = 15
+memory-model = 4
+rust-android-build = 4
+rust-async-internals = 6
+rust-callback-bounds = 3
+rust-code-style = 5
+rust-compiler-errors = 4
+rust-copy-on-write = 1
+rust-crate-architecture = 7
+rust-debugging = 13
+rust-discipline = 10
+rust-iterator-impl = 3
+rust-jni = 4
+rust-lints = 9
+rust-native-linking = 4
+rust-networking = 2
+rust-observability = 4
+rust-panic-safety = 10
+rust-performance = 4
+rust-pin-projection = 2
+rust-security = 7
+rust-send-sync = 2
+rust-swift-ffi = 3
+rust-tdd = 4
+rust-test-tools = 2
+rust-type-erasure = 3
+rust-unsafe = 10
+uniffi-boundary = 2
+uniffi-packaging-versioning = 6

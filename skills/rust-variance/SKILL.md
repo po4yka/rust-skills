@@ -167,7 +167,8 @@ These std functions hand out an unbounded lifetime the same way: `<*const T>::as
 `<*mut T>::as_mut`, `NonNull::as_ref` and `as_mut`, `as_ref_unchecked` and `as_mut_unchecked`
 (stable since 1.95), `slice::from_raw_parts`, and `CStr::from_ptr`. When no input carries the
 lifetime, take `&self` on a wrapper that owns the pointer, or return a guard. The `rust-unsafe`
-skill, when it is installed, owns the pointer-validity rules and the Miri workflow.
+skill, when it is installed, owns the pointer-validity rules and the Miri workflow. Without it,
+run `cargo +nightly miri test --locked` on every path that turns a raw pointer into a reference.
 
 Since Rust 1.94 a raw-pointer cast cannot extend the lifetime bound of a trait object, and old
 unsafe code that does fails with `note: raw pointer casts of trait objects cannot extend

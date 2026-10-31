@@ -23,11 +23,11 @@ Every quoted diagnostic comes from rustc 1.98.1, edition 2024, on aarch64-apple-
 | `error[E0308]: ... one type is more general than the other` | [Closure inference is positional](#closure-inference-is-positional) |
 | `error[E0282]: type annotations needed` on a closure argument | [Closure inference is positional](#closure-inference-is-positional). For `\|o\| async move { .. }` against `AsyncFn`, write `async \|o\| ..`; see [Pick the bound](#pick-the-bound-from-the-return-type) |
 | `error[E0309]` then `error[E0621]` then `error[E0502]` on one function | [Do not hoist the lifetime](#do-not-hoist-the-lifetime) |
-| `sort_by_key` rejects `\|o\| &o.field` | [Change what the callback receives](#change-what-the-callback-receives) |
-| Callback output is generic over `'a` and your signature cannot name it | [Generic outputs](#generic-outputs-need-rpitit-or-a-gat) |
-| Deciding between `F: Fn`, `Box<dyn Fn>`, and `fn(..)` in a field | [Store a callable in a field](#store-a-callable-in-a-field) |
-| `error[E0747]: constant provided when a type was expected` | [Store a callable in a field](#store-a-callable-in-a-field) |
-| `error[E0562]: impl Trait is not allowed in field types` | [Store a callable in a field](#store-a-callable-in-a-field) |
+| `sort_by_key` rejects `\|o\| &o.field` | Read [key-projections.md](references/key-projections.md#change-what-the-callback-receives) |
+| Callback output is generic over `'a` and your signature cannot name it | Read [key-projections.md](references/key-projections.md#generic-outputs-need-rpitit-or-a-gat) |
+| Deciding between `F: Fn`, `Box<dyn Fn>`, and `fn(..)` in a field | Read [storing-callables.md](references/storing-callables.md#store-a-callable-in-a-field) |
+| `error[E0747]: constant provided when a type was expected` | Read [storing-callables.md](references/storing-callables.md#store-a-callable-in-a-field) |
+| `error[E0562]: impl Trait is not allowed in field types` | Read [storing-callables.md](references/storing-callables.md#store-a-callable-in-a-field) |
 | `expected an Fn() closure, found Arc<dyn Fn()>` | Read [storing-callables.md](references/storing-callables.md#arc-and-rc-of-dyn-fn-do-not-implement-fn) |
 | `reached the recursion limit while instantiating` on a writer or visitor trait | Read [storing-callables.md](references/storing-callables.md#by-value-impl-trait-plus-a-delegating-impl-is-a-monomorphization-bomb) |
 | A `move` closure unexpectedly implements `Fn`, captures a whole owner, or changes drop timing | Read [closure-capture-semantics.md](references/closure-capture-semantics.md) |
@@ -177,7 +177,7 @@ Write the binder explicitly. Elision refuses a second reference argument with `e
 `for<'a> FnMut(&'a A, &'a B) -> &'a K` compiles and ties both arguments to one region, so give the
 second its own `'b` unless you mean to tie them. The shape also works for a `T` that carries a
 lifetime, such as `Order<'s>`; a trait with a lifetime parameter can fail there (see
-[Generic outputs](#generic-outputs-need-rpitit-or-a-gat)).
+[key-projections.md](references/key-projections.md#generic-outputs-need-rpitit-or-a-gat)).
 
 ## Closure inference is positional
 
@@ -222,91 +222,18 @@ worked examples and the full diagnostics.
 
 ## Change what the callback receives
 
-Before you build a projection DSL, change what the callback is handed. These both compile with
-the very projection `Vec::sort_by_key` rejects:
-
-```rust
-struct Order { country: String, code: u32 }
-
-fn main() {
-    let v = vec![
-        Order { country: "cz".into(), code: 3 },
-        Order { country: "at".into(), code: 1 },
-    ];
-    // v.sort_by_key(|o| &o.country);   // would NOT compile
-
-    let m = v.iter().max_by_key(|o| &o.country).unwrap();
-    assert_eq!(m.code, 3);
-
-    let mut refs: Vec<&Order> = v.iter().collect();
-    refs.sort_by_key(|o| &o.country);
-    assert_eq!(refs[0].code, 1);
-}
-```
-
-For an iterator of `&'s T` the closure parameter is `&'x &'s T`. `&o.country` reborrows through
-the inner `&'s T` and yields `&'s String`, whose lifetime the collection fixes, not the callback
-binder. The higher-ranked `'x` never reaches the output, so a fixed `K` is satisfiable.
-
-`Vec::sort_by(|a, b| a.country.cmp(&b.country))` is the third escape and needs no new type at
-all. Reach for it before any of the trait machinery below.
+Read `references/key-projections.md` when `sort_by_key` rejects `|o| &o.field`, before you build a
+projection trait: `sort_by`, `iter().max_by_key`, or a `Vec<&T>` often needs no new bound.
 
 ## Generic outputs need RPITIT or a GAT
 
-A composite your signature can name still fits a higher-ranked `Fn` bound.
-`impl for<'a> FnMut(&'a T) -> Reverse<&'a str>` and `impl for<'a> FnMut(&'a T) -> (&'a str, u32)`
-both accept a bare closure. Reach for a trait only when the output must stay a type *parameter*,
-because no `Fn` bound can write `-> K<'a>`. `impl FnMut(&T) -> impl Ord` is rejected:
-``error[E0562]: `impl Trait` is not allowed in the return type of `Fn` trait bounds``. Declare a
-one-method trait with `fn project<'a>(&mut self, i: &'a In) -> impl Ord + use<'a, Self, In>`, and
-have callers pass a named unit struct instead of a closure. That loss of the closure is the cost
-of this row. `use<..>` in a trait method needs Rust 1.87, and it is load-bearing: without it the
-result also captures the `&mut self` borrow, and two calls in one comparison fail with E0499.
-
-Read [storing-callables.md](references/storing-callables.md#composite-outputs-rpitit) when you
-write this trait. It has the runnable examples and three traps: repeat `impl Ord + use<..>` in
-the impl (a concrete type triggers `refining_impl_trait`), keep the lifetime off the trait
-(`for<'a> K: KeyProjection<'a, T>` breaks on a borrowed `T`), and use a GAT `type Out<'a>` when
-callers must name the output.
+Read [key-projections.md](references/key-projections.md#generic-outputs-need-rpitit-or-a-gat) when
+the callback output must stay a type parameter over `'a`, such as `-> impl Ord`.
 
 ## Store a callable in a field
 
-Four shapes, and the choice is not stylistic.
-
-| Field type | Size | Captures | Different expressions in one `Vec` | Caller can name the type | Allocates |
-| --- | --- | --- | --- | --- | --- |
-| `F` on `struct S<F: Fn(u32)>` | Size of `F`. 0 for a non-capturing closure | Yes | No, `E0308` | No, `E0747` / `E0562` | No |
-| `Box<dyn Fn(u32)>` | Two machine words, fat pointer | Yes | Yes | Yes | Only if the closure value is not zero-sized |
-| `fn(u32)` | One machine word | **No** | Yes | Yes | No |
-| `B` on `struct S<B: MyTrait>` with a blanket impl | Size of `B`. 0 for a user unit struct | Yes | No | Yes, if the user declares a named type | No |
-
-The coercion to `fn(u32)` is silent: no warning, no lint. Read
-[storing-callables.md](references/storing-callables.md#field-sizes-are-measurable) when you
-need the size probe.
-
-`Box` of a zero-sized value does not call the allocator. A non-capturing closure is a ZST, and so
-is a closure that captures only zero-sized values. Measure the closure value with `size_of_val`;
-capture presence alone is not the rule. Read
-[storing-callables.md](references/storing-callables.md#boxdyn-fn-allocates-for-a-non-zero-sized-closure-value)
-when you must prove an allocation claim.
-
-A caller cannot write the type of a generic callable field. A `fn` item path in type position is
-`error[E0747]: constant provided when a type was expected` ("function item types cannot be named
-directly"). Returning `-> Gadget<impl Fn(u32)>` only defers the problem: a field typed
-`Gadget<impl Fn(u32)>` is ``error[E0562]: `impl Trait` is not allowed in field types``. The
-generic parameter does not block `dyn`: implement your own trait for `Gadget<F>` and box that.
-Read [storing-callables.md](references/storing-callables.md#a-generic-callable-field-cannot-be-named)
-when you need the three compile-checked examples.
-
-A public generic type that stores user-supplied behaviour declares its own one-method trait plus
-a blanket impl over `FnOnce`. Callers keep passing closures, and a caller who needs a nameable,
-zero-sized callable implements the trait for a unit struct. Coherence accepts both impls because
-of the orphan rule: only the crate that defines the struct can implement `FnOnce` for it, and that
-crate does not. The same holds for any foreign trait, such as `Display`. There is no stable
-shortcut: `type OnDrop = impl FnOnce(u32);` in an associated type is still `error[E0658]` on
-1.98.1, issue #63063. Read
-[storing-callables.md](references/storing-callables.md#declare-your-own-callable-trait) when you
-write the trait.
+Read [storing-callables.md](references/storing-callables.md#store-a-callable-in-a-field) when you
+choose between `F: Fn`, `Box<dyn Fn>`, `fn(..)`, and your own trait for a field, or on E0747 or E0562.
 
 ## Related skills
 

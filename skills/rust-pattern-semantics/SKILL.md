@@ -287,8 +287,8 @@ To migrate:
 1. List the affected patterns with
    `cargo clippy --locked --all-targets --all-features -- -W rust_2024_incompatible_pat`. Use
    `--all-features` only when the features are additive. Otherwise run it once per supported
-   feature set. Repeat it per shipping target as the `cargo-workflows` skill describes, when it is
-   installed.
+   feature set. Repeat it once per shipping `--target <triple>`, as the `cargo-workflows` skill
+   describes when it is installed.
 2. `cargo fix --edition` applies this lint, which is part of `rust-2024-compatibility`. It
    rewrites each pattern to a fully explicit form with the same meaning in every edition.
 3. Review each rewrite. The explicit form keeps the 2021 meaning, including a silent copy. Decide

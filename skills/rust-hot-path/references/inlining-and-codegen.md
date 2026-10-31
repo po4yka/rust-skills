@@ -1,17 +1,63 @@
 # Inlining and codegen inspection
 
 Measured inlining thresholds, the compile-time price of `#[inline]`, the vectorization and
-bounds-check probes, and the commands that show what the compiler did. It serves the Inlining
-and Bounds checks sections of [SKILL.md](../SKILL.md), which give the four attribute forms and
-the rule that every attribute needs a number.
+bounds-check probes, and the commands that show what the compiler did. It holds the Inlining
+and Bounds checks rules for [SKILL.md](../SKILL.md): the four attribute forms, the safe shapes
+that remove a check, and the rule that every attribute needs a number.
 
 All figures come from rustc 1.97.0 unless the text names 1.98.1. The host is
 `aarch64-apple-darwin` unless the text names another target.
 
-Sections: where the inliner stops and how to probe it; the compile-time price of `#[inline]`;
-what each attribute becomes; `#[cold]` and `cold_path`; IR, symbol, and assembly checks;
-proving the win; the hot and cold split, and outlining; special-casing small sizes;
-vectorization and SIMD; bounds-check probes; triage.
+Sections: [Inlining](#inlining); [Bounds checks](#bounds-checks); where the inliner stops and
+how to probe it; the compile-time price of `#[inline]`; what each attribute becomes; `#[cold]` and
+`cold_path`; IR, symbol, and assembly checks; proving the win; the hot and cold split, and
+outlining; special-casing small sizes; vectorization and SIMD; bounds-check probes; triage.
+
+## Inlining
+
+Four forms, and they are not a strength dial:
+
+| Form | Meaning | Reach for it |
+| --- | --- | --- |
+| none | The compiler decides | Almost always |
+| `#[inline]` | Raises willingness, and permits cross-crate inlining | A large function a profile shows called across a crate boundary |
+| `#[inline(always)]` | Effectively a command | One hot call site, after a measurement |
+| `#[inline(never)]` | Suppresses it | The cold half of a hot and cold split |
+
+**Do not sprinkle `#[inline]` on small public helpers.** rustc already ships some bodies to
+downstream crates with no attribute and no LTO: a non-generic function whose optimized MIR
+holds no call (intrinsics excepted), no drop of a non-trivial value, no unwind cleanup, and at
+most 100 MIR statements. One remaining call disqualifies it at any size. rustc skips this
+inference in incremental builds and at `opt-level = 0`, and the MIR inliner that removes small
+calls runs only at `opt-level` 2 and 3. Add the attribute when the profile names the function,
+because every downstream crate compiles the body again.
+
+**An inline attribute ships one body, not its callees.** Across a crate boundary, `#[inline]`
+on `f` ships only `f`. A call to `g` survives inside the inlined `f` unless `g` also qualifies,
+carries its own attribute, or the build uses LTO. That is the usual reason an
+`#[inline(always)]` on a dependency function measures as no change.
+
+**Mark the rare path `#[cold]`, and pair it with `#[inline(never)]`.** `#[cold]` lowers to
+the LLVM `cold` function attribute, which biases branch layout and register allocation away
+from that edge. It does not imply `noinline`: measured on 1.97.0, a small `#[cold]` callee
+was inlined into its caller whole, and no `cold` attribute survived in the IR at all. The
+second attribute is what gets the body out of the hot function.
+
+```rust
+#[cold]
+#[inline(never)]
+fn report_corrupt(offset: usize) -> std::io::Error {
+    std::io::Error::other(format!("corrupt record at {offset}"))
+}
+```
+
+For a rare branch that is not its own function, call `core::hint::cold_path()` as the first
+statement of that branch (Rust 1.95). On 1.98.1 it puts `branch_weights` on the branch in the
+IR. The code stays inline.
+
+Read [inlining-and-codegen.md](inlining-and-codegen.md) when you split a
+hot call site from cold ones, outline a rare path, count a function's MIR statements, price the
+compile time of `#[inline]`, or read the IR to see what was inlined.
 
 ## Where the inliner actually stops
 
@@ -416,6 +462,44 @@ use std::simd::u8x16;
 
 Write the intrinsics per architecture behind `#[cfg(target_arch = ...)]`, and keep a plain scalar
 fallback for every other target.
+
+## Bounds checks
+
+An index expression is checked unless the compiler can prove the index is in range. The
+check is cheap, and the branch it adds is what blocks vectorization.
+
+Three safe shapes remove it, in order of preference:
+
+1. Iterate. `v.iter().copied().sum()` has no index to check.
+2. Reslice first: `let s = &v[..n];`, then index `s` with `0..n`. The length and the loop
+   bound are now the same value.
+3. `assert!(n <= v.len())` once, ahead of the loop.
+
+Measured on 1.97.0 aarch64 at `-O`, all three removed the check, and the naive
+`for i in 0..n { t += v[i]; }` kept it. Confirm each change with the assembly probe in
+[Verify and pin the win](../SKILL.md#verify-and-pin-the-win).
+
+For a constant chunk size, split with `as_chunks::<N>()` (Rust 1.88): each full chunk is a
+`[T; N]`, so constant indexes into it need no check. Clippy 1.98 warns on `chunks_exact(N)`
+with a constant `N` by default (`chunks_exact_to_as_chunks`) when the crate's `rust-version` is
+1.88 or later, or unset, so a `-D warnings` gate fails on the older form.
+
+Vectorization also needs the right optimization level. rustc runs the loop vectorizer only at
+`opt-level` 2 and 3, and the SLP vectorizer only at 3, so under `"s"` or `"z"` no rewrite of the
+scalar loop turns the vectorizer back on. Raise the hot crate alone with
+`[profile.release.package.<name>] opt-level = 3`, and also the crate that instantiates its
+generic code. If the crate must stay at `"s"` or `"z"`, write the loop with `core::arch`
+intrinsics: they do not depend on the vectorizer, and the `rust-unsafe` skill covers the calls
+that need `unsafe`.
+
+Reach for `get_unchecked` only when all these shapes, `as_chunks` included, fail and a
+benchmark justifies it. It is `unsafe` and it needs a SAFETY comment that proves the bound; the
+`rust-unsafe` skill holds the rules. Clippy's `missing_asserts_for_indexing` finds the sites
+mechanically, from the `restriction` group.
+
+Read [inlining-and-codegen.md](inlining-and-codegen.md) when the MSRV is
+below 1.88 or the chunk size is known only at run time, or when you need the probe functions,
+the vector-instruction counts, or a `core::arch` example.
 
 ## Bounds checks: the probe evidence
 

@@ -4,6 +4,7 @@ Deep material for [SKILL.md](../SKILL.md). Every quoted diagnostic comes from ru
 edition 2024, on aarch64-apple-darwin. The size and allocation claims are runnable probes: copy
 one into a scratch binary and run it. Read only the section that matches the task.
 
+- [Store a callable in a field](#store-a-callable-in-a-field)
 - [A generic callable field cannot be named](#a-generic-callable-field-cannot-be-named)
 - [Declare your own callable trait](#declare-your-own-callable-trait)
 - [Arc and Rc of `dyn Fn` do not implement `Fn`](#arc-and-rc-of-dyn-fn-do-not-implement-fn)
@@ -16,9 +17,48 @@ one into a scratch binary and run it. Read only the section that matches the tas
 - [Composite outputs: GAT against a lifetime on the trait](#composite-outputs-gat-against-a-lifetime-on-the-trait)
 - [Repeat the opaque return type in an RPITIT impl](#repeat-the-opaque-return-type-in-an-rpitit-impl)
 
+## Store a callable in a field
+
+Four shapes, and the choice is not stylistic.
+
+| Field type | Size | Captures | Different expressions in one `Vec` | Caller can name the type | Allocates |
+| --- | --- | --- | --- | --- | --- |
+| `F` on `struct S<F: Fn(u32)>` | Size of `F`. 0 for a non-capturing closure | Yes | No, `E0308` | No, `E0747` / `E0562` | No |
+| `Box<dyn Fn(u32)>` | Two machine words, fat pointer | Yes | Yes | Yes | Only if the closure value is not zero-sized |
+| `fn(u32)` | One machine word | **No** | Yes | Yes | No |
+| `B` on `struct S<B: MyTrait>` with a blanket impl | Size of `B`. 0 for a user unit struct | Yes | No | Yes, if the user declares a named type | No |
+
+The coercion to `fn(u32)` is silent: no warning, no lint. Read
+[storing-callables.md](storing-callables.md#field-sizes-are-measurable) when you
+need the size probe.
+
+`Box` of a zero-sized value does not call the allocator. A non-capturing closure is a ZST, and so
+is a closure that captures only zero-sized values. Measure the closure value with `size_of_val`;
+capture presence alone is not the rule. Read
+[storing-callables.md](storing-callables.md#boxdyn-fn-allocates-for-a-non-zero-sized-closure-value)
+when you must prove an allocation claim.
+
+A caller cannot write the type of a generic callable field. A `fn` item path in type position is
+`error[E0747]: constant provided when a type was expected` ("function item types cannot be named
+directly"). Returning `-> Gadget<impl Fn(u32)>` only defers the problem: a field typed
+`Gadget<impl Fn(u32)>` is ``error[E0562]: `impl Trait` is not allowed in field types``. The
+generic parameter does not block `dyn`: implement your own trait for `Gadget<F>` and box that.
+Read [storing-callables.md](storing-callables.md#a-generic-callable-field-cannot-be-named)
+when you need the three compile-checked examples.
+
+A public generic type that stores user-supplied behaviour declares its own one-method trait plus
+a blanket impl over `FnOnce`. Callers keep passing closures, and a caller who needs a nameable,
+zero-sized callable implements the trait for a unit struct. Coherence accepts both impls because
+of the orphan rule: only the crate that defines the struct can implement `FnOnce` for it, and that
+crate does not. The same holds for any foreign trait, such as `Display`. There is no stable
+shortcut: `type OnDrop = impl FnOnce(u32);` in an associated type is still `error[E0658]` on
+1.98.1, issue #63063. Read
+[storing-callables.md](storing-callables.md#declare-your-own-callable-trait) when you
+write the trait.
+
 ## A generic callable field cannot be named
 
-`SKILL.md` states the rule. These are the three compile-checked examples.
+[Store a callable in a field](#store-a-callable-in-a-field) states the rule. These are the three compile-checked examples.
 
 A function item has no surface syntax. In type position the parser reads the path as a const
 generic argument, so the diagnostic is about constants:

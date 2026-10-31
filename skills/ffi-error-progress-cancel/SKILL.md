@@ -88,6 +88,8 @@ Each item prevents a defect that a green Rust test suite does not show.
 - **Never cancel by panicking or by killing a thread.** Since Rust 1.81 a panic
   that reaches an `extern "C"` boundary aborts the process, and a killed thread
   leaks every lock it held. The `rust-panic-safety` skill owns the panic policy.
+  Without it, wrap each export body in `std::panic::catch_unwind`, return an error
+  code for a caught panic, and keep `panic = "unwind"` in the shipping profile.
 - **Teardown never blocks.** Mobile teardown only signals cancel and callback
   release. It never joins a worker in `onCleared`, `deinit`, or on the main
   thread (section 4).

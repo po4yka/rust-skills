@@ -2,7 +2,7 @@
 
 Read this file when you install or review a panic hook. It holds the catalog's single copy of
 the report block; other skills point here. The rules in the "Report the panic without exposing
-its payload" section of `SKILL.md` apply to every line of it.
+its payload" section of `hosts-hooks-and-tasks.md` apply to every line of it.
 
 ```rust
 #[derive(Clone, Copy)]

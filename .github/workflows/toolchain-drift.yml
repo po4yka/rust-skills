@@ -1,0 +1,64 @@
+name: Toolchain drift
+
+# checks/rust-toolchain.toml pins the Rust release every example is checked against, and the
+# skills date their claims to it ("as of Rust 1.98.1"). Nothing else notices when stable moves
+# on. This job compares the pin with the stable channel once a week and opens one issue, with
+# the skills whose dated claims need a re-probe. It never changes the pin: a toolchain move is a
+# catalog actualization (docs/releasing.md).
+
+on:
+  schedule:
+    - cron: '43 7 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  stable:
+    name: Pinned toolchain against Rust stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compare the pin with the stable channel
+        id: probe
+        run: |
+          set -euo pipefail
+          status=0
+          python3 scripts/drift-report.py toolchain > /tmp/body.md || status=$?
+          cat /tmp/body.md
+          case "$status" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            10) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$status" ;;
+          esac
+          pinned="$(python3 -c 'import tomllib; print(tomllib.load(open("checks/rust-toolchain.toml", "rb"))["toolchain"]["channel"])')"
+          echo "pinned=${pinned}" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the drift issue
+        if: steps.probe.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PINNED: ${{ steps.probe.outputs.pinned }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf '\nRun: %s\n' "$RUN_URL" >> /tmp/body.md
+          title="Rust stable is ahead of the pinned ${PINNED}"
+          gh label create toolchain-drift --force --color 1D76DB \
+            --description "The pinned toolchain is behind Rust stable" > /dev/null
+          number="$(gh issue list --label toolchain-drift --state open --json number,title \
+            --jq ".[] | select(.title == \"${title}\") | .number" | head -n 1)"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file /tmp/body.md
+            echo "updated issue #${number}"
+          else
+            gh issue create --title "$title" --label toolchain-drift --body-file /tmp/body.md
+          fi

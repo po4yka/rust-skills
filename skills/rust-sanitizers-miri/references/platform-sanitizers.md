@@ -148,7 +148,8 @@ rooted device.
 A sync-mode tombstone gives the tagged address and the access kind (read or
 write). An async-mode tombstone gives neither: reproduce in sync mode to find
 the access. Resolve the Rust frames with `addr2line` against the build that
-still carries symbols. See the `rust-debugging` skill.
+still carries symbols. See the `rust-debugging` skill; without it, run `ndk-stack` or
+`llvm-addr2line` against the unstripped `.so` from the same build.
 
 ### What MTE catches
 

@@ -6,7 +6,7 @@ thread that Rust created. Thread attachment and detachment stay in
 
 Contents: why `FindClass` fails; build one complete startup cache; dynamic
 features and custom loaders; preserve names through R8; test the supported
-worker path; failure triage.
+worker path; failure triage; class lookup from attached threads.
 
 ## Why `FindClass` fails
 
@@ -155,3 +155,17 @@ test and exercise the feature loader contract separately.
 | Callback calls the wrong overload | Cached descriptor does not match the managed declaration | Regenerate the descriptor and fail initialization when ID lookup fails. |
 | Dynamic feature cannot unload | A process-lifetime global reference pins its class loader | Move that class to a feature-owned cache with explicit teardown or reload. |
 | Intermittent crash after feature reload | A callback retained an ID from the old class | Stop old callbacks before replacing the class and ID cache. |
+
+## Class lookup from attached threads
+
+`FindClass` on a newly attached native thread uses the system class loader,
+which cannot see application classes. Resolve stable application classes in
+`JNI_OnLoad`, which runs in the loader context of `System.loadLibrary`. Promote
+each class to a global reference, cache its method and field IDs with it, and
+publish the cache only after every lookup and registration succeeds. Never
+cache a local `jclass` or an env handle. For a dynamic feature or a custom
+loader, pass a `Class` or a `ClassLoader` from managed code; a process-lifetime
+global class reference pins its loader. Read
+[android-class-loading.md](android-class-loading.md)
+before you add an application-class lookup, cache a method or field ID, enable
+R8 for a JNI surface, or test a callback from a Rust-created thread.

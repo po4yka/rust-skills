@@ -1,0 +1,101 @@
+{
+  "name": "rust-skills",
+  "description": "Agent skills for production Rust, as the full catalog or as one bundle per subject. Pin a release with po4yka/rust-skills#<tag>.",
+  "owner": {
+    "name": "po4yka",
+    "url": "https://github.com/po4yka"
+  },
+  "plugins": [
+    {
+      "name": "rust-skills",
+      "source": "./",
+      "description": "All 44 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router."
+    },
+    {
+      "name": "rust-skills-language",
+      "source": "./",
+      "description": "Language, interfaces, and code discipline: 13 Rust agent skills.",
+      "skills": [
+        "./skills/rust-compiler-errors",
+        "./skills/rust-borrow-semantics",
+        "./skills/rust-pattern-semantics",
+        "./skills/rust-discipline",
+        "./skills/rust-code-style",
+        "./skills/rust-crate-architecture",
+        "./skills/rust-lints",
+        "./skills/rust-macros",
+        "./skills/rust-iterator-impl",
+        "./skills/rust-variance",
+        "./skills/rust-callback-bounds",
+        "./skills/rust-type-erasure",
+        "./skills/rust-cli"
+      ]
+    },
+    {
+      "name": "rust-skills-build",
+      "source": "./",
+      "description": "Build, dependencies, and supply chain: 9 Rust agent skills.",
+      "skills": [
+        "./skills/cargo-workflows",
+        "./skills/rust-crate-release",
+        "./skills/rust-native-linking",
+        "./skills/rust-serde",
+        "./skills/rust-security",
+        "./skills/rust-android-build",
+        "./skills/rust-ios-build",
+        "./skills/rust-wasm",
+        "./skills/rust-embedded-no-std"
+      ]
+    },
+    {
+      "name": "rust-skills-testing",
+      "source": "./",
+      "description": "Correctness and testing: 4 Rust agent skills.",
+      "skills": [
+        "./skills/rust-tdd",
+        "./skills/rust-test-tools",
+        "./skills/rust-sanitizers-miri",
+        "./skills/rust-panic-safety"
+      ]
+    },
+    {
+      "name": "rust-skills-concurrency",
+      "source": "./",
+      "description": "Concurrency and unsafe code: 6 Rust agent skills.",
+      "skills": [
+        "./skills/memory-model",
+        "./skills/rust-async-internals",
+        "./skills/rust-unsafe",
+        "./skills/rust-pin-projection",
+        "./skills/rust-send-sync",
+        "./skills/rust-event-loop-state"
+      ]
+    },
+    {
+      "name": "rust-skills-production",
+      "source": "./",
+      "description": "Networking, database, performance, debugging, and observability: 7 Rust agent skills.",
+      "skills": [
+        "./skills/rust-performance",
+        "./skills/rust-hot-path",
+        "./skills/rust-copy-on-write",
+        "./skills/rust-debugging",
+        "./skills/rust-observability",
+        "./skills/rust-networking",
+        "./skills/rust-database"
+      ]
+    },
+    {
+      "name": "rust-skills-ffi",
+      "source": "./",
+      "description": "FFI and platform boundaries: 5 Rust agent skills.",
+      "skills": [
+        "./skills/rust-jni",
+        "./skills/rust-swift-ffi",
+        "./skills/uniffi-boundary",
+        "./skills/uniffi-packaging-versioning",
+        "./skills/ffi-error-progress-cancel"
+      ]
+    }
+  ]
+}

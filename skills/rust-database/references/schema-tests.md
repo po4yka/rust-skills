@@ -3,6 +3,19 @@
 Test database setup, the minimum CI matrix, and cancellation test points behind
 "Test the real schema" and "Make cancellation safe" in `SKILL.md`.
 
+## Test the real schema
+
+Run database integration tests against the same engine and major version as
+production. An in-memory substitute does not prove SQL syntax, isolation,
+locking, collation, extensions, or migration behavior.
+
+Use an isolated database or schema per test worker. Do not rely only on
+transaction rollback for test isolation. It cannot model code that opens
+another connection, commits internally, or tests migrations.
+
+Do not mark a database test as flaky because it exposed an unbounded retry,
+missing lock, shared schema, or unsafe cleanup.
+
 ## Isolated test databases
 
 Use an isolated database or schema per test worker. Give each one a generated,

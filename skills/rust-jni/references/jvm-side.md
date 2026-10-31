@@ -58,3 +58,40 @@ Registry rules:
   session occupies the same slot. Never issue `0`; keep it as the failure value.
 - Surface setup failures as Java exceptions, not as magic return values, unless
   the return value is already documented as a status code.
+
+## The JVM side and session handles
+
+- Serialize every call that touches a session handle unless the Rust side
+  documents that handle as thread-safe: a use-after-free of a handle is a
+  native abort.
+- Make a `jlong` session handle an opaque generational registry key (a non-zero
+  slot index plus a generation, checked under the registry lock on every call).
+  Never expose a `Box::into_raw` pointer: a caller can forge any integer, and
+  Rust cannot check that an address is live.
+- The blocking behaviour of each method and every structured (JSON) payload are
+  compatibility contracts. Change both sides in one patch, with contract tests
+  on both sides.
+
+Read [jvm-side.md](jvm-side.md) when you write the Kotlin
+binding class (library loading, the `private external fun` layout) or design a
+handle-based session surface.
+
+## Add or rename a native method
+
+The library file name and every registered or exported method are compatibility
+boundaries. Change them only together with the JVM call sites, and do all steps
+in one patch: a half-applied patch is a run-time linkage error.
+
+1. Inventory the current surface from the source tree:
+
+   ```bash
+   rg -n 'native_method!|jni_mangle|fn Java_|JNI_OnLoad' --type rust
+   rg -n 'external fun|\bnative\b[^;]*\(|System\.loadLibrary' --type kotlin --type java
+   ```
+
+2. Declare the `private external fun` on the binding class. Add a
+   `native_method!` entry to the registration list (default), or a
+   `#[jni_mangle]` export whose body is the guard expression.
+3. Keep the blocking behaviour, the error surface (Java exceptions), and the
+   synchronization model of the class on both sides.
+4. Run the checks in [Verify](../SKILL.md#verify).

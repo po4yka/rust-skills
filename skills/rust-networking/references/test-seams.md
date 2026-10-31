@@ -16,6 +16,19 @@ test.
 | Shutdown deadline | Keep one handler open; assert that the serve future returns within the shutdown deadline |
 | Header-read timeout | Send a partial request header; assert that the server closes the connection after the header timeout |
 
+## Test deterministic seams
+
+`#[tokio::test(start_paused = true)]` needs tokio's `test-util` feature. Do not
+combine `start_paused` with real sockets: auto-advance fires the deadline while
+the socket waits.
+
+Do not assert only the final error string. Assert the attempt count, elapsed
+virtual time, bytes consumed, connection count, and error class.
+
+Run the smallest affected tests first. Then run the workspace network tests
+once, with test-runner retries off (for cargo-nextest, pass `--retries 0`). A
+runner retry can hide a flaky network contract.
+
 ## Sources
 
 - [tokio time](https://docs.rs/tokio/latest/tokio/time/): timeout cancellation and paused clocks.

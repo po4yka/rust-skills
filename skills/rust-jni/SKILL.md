@@ -210,87 +210,19 @@ you map any other Kotlin type or throw a specific exception class.
 
 ## The JVM side and session handles
 
-- Serialize every call that touches a session handle unless the Rust side
-  documents that handle as thread-safe: a use-after-free of a handle is a
-  native abort.
-- Make a `jlong` session handle an opaque generational registry key (a non-zero
-  slot index plus a generation, checked under the registry lock on every call).
-  Never expose a `Box::into_raw` pointer: a caller can forge any integer, and
-  Rust cannot check that an address is live.
-- The blocking behaviour of each method and every structured (JSON) payload are
-  compatibility contracts. Change both sides in one patch, with contract tests
-  on both sides.
-
-Read [references/jvm-side.md](references/jvm-side.md) when you write the Kotlin
-binding class (library loading, the `private external fun` layout) or design a
-handle-based session surface.
+Read `references/jvm-side.md` when you write the Kotlin binding class, serialize calls on a session handle, change a blocking behaviour or a JSON payload, or design a handle-based `jlong` session surface.
 
 ## Add or rename a native method
 
-The library file name and every registered or exported method are compatibility
-boundaries. Change them only together with the JVM call sites, and do all steps
-in one patch: a half-applied patch is a run-time linkage error.
-
-1. Inventory the current surface from the source tree:
-
-   ```bash
-   rg -n 'native_method!|jni_mangle|fn Java_|JNI_OnLoad' --type rust
-   rg -n 'external fun|\bnative\b[^;]*\(|System\.loadLibrary' --type kotlin --type java
-   ```
-
-2. Declare the `private external fun` on the binding class. Add a
-   `native_method!` entry to the registration list (default), or a
-   `#[jni_mangle]` export whose body is the guard expression.
-3. Keep the blocking behaviour, the error surface (Java exceptions), and the
-   synchronization model of the class on both sides.
-4. Run the checks in [Verify](#verify).
+Read `references/jvm-side.md` when you add, rename, or remove a native method, or change the library file name: all steps go in one patch with the JVM call sites.
 
 ## Thread attachment
 
-A thread that Rust created (a tokio worker, a `std::thread`, a raw pthread)
-must attach before it calls Java, and must be detached before it exits, or ART
-aborts the process. The crate detaches every thread that attached through its
-API (at guard drop, scope end, or thread exit), so do not add a second detach.
-Only a thread that attached through raw `AttachCurrentThread` (C, C++,
-`jni::sys`) needs its own `pthread_key_create` destructor.
-
-Capture the `JavaVM` once at load, and make more handles with `vm.clone()` or,
-on 0.22, `JavaVM::singleton()`. Call `from_raw` only on a raw pointer that the
-host hands you: `JNI_OnLoad`, or `ndk_context` in a NativeActivity app. Never
-rebuild a handle from `vm.get_raw()`.
-
-- On 0.22, use `vm.attach_current_thread(|env| ..)` (stays attached) for a
-  worker that calls back many times. Use `attach_current_thread_for_scope`
-  (detaches when the closure returns) only for a one-off call: it pays the
-  attach cost on every call. An attach call does not change an existing
-  attachment.
-- Every 0.22 attach call pushes a new local frame for the closure. An exception
-  that the closure leaves pending is cleared and returned as
-  `Error::CaughtJavaException`. Log or propagate that `Err`; never discard it.
-- 0.22 has no daemon attachment, so the desktop or server JVM hang in
-  [Failure triage](#failure-triage) applies: shut down the Rust runtime and
-  join every attached thread before `main` returns.
-- On 0.21, bind the guard to a name (`let _guard = vm.attach_current_thread()?;`):
-  a bare statement or `let _ =` detaches before the next JNI call. Use
-  `attach_current_thread_permanently` for a long-lived 0.21 worker.
-
-Read [references/jni-threading-and-callbacks.md](references/jni-threading-and-callbacks.md)
-when you write an attach call, wire a callback, build the load-time cache, or
-ask the JVM to act on a native socket.
+Read `references/jni-threading-and-callbacks.md` when a thread that Rust created (a tokio worker, a `std::thread`, a raw pthread) calls Java, or when you write an attach call, wire a callback, or build the load-time cache.
 
 ## Class lookup from attached threads
 
-`FindClass` on a newly attached native thread uses the system class loader,
-which cannot see application classes. Resolve stable application classes in
-`JNI_OnLoad`, which runs in the loader context of `System.loadLibrary`. Promote
-each class to a global reference, cache its method and field IDs with it, and
-publish the cache only after every lookup and registration succeeds. Never
-cache a local `jclass` or an env handle. For a dynamic feature or a custom
-loader, pass a `Class` or a `ClassLoader` from managed code; a process-lifetime
-global class reference pins its loader. Read
-[references/android-class-loading.md](references/android-class-loading.md)
-before you add an application-class lookup, cache a method or field ID, enable
-R8 for a JNI surface, or test a callback from a Rust-created thread.
+Read `references/android-class-loading.md` when a Rust-created thread looks up an application class, or before you cache a method or field ID, enable R8 for a JNI surface, or test a callback from a Rust-created thread.
 
 ## Local reference frames
 
@@ -304,28 +236,7 @@ and promote an object that you keep between calls with `env.new_global_ref(obj)`
 
 ## The env must not cross an await point
 
-The env handle is `!Send + !Sync`. Holding it across `.await` in a `Send` future
-does not compile. The danger is the "fix" that makes it compile:
-
-```rust
-// FORBIDDEN: leaks the env and lies about its lifetime.
-let env_static: &'static mut Env<'static> = Box::leak(Box::new(env));
-
-// FORBIDDEN: same lie, no allocation.
-let env_static: &'static mut Env<'static> = unsafe { std::mem::transmute(env) };
-
-// FORBIDDEN: captures the env in a task that another thread may run.
-tokio::spawn(async move { env.call_method(/* ... */); });
-```
-
-Use the env synchronously, extract owned data, then spawn. The task captures a
-`JavaVM` clone and a global reference, never an env or a local reference. A
-JVM thread that calls a native method is not a Tokio runtime thread, so a bare
-`tokio::spawn` panics there. Spawn through a `Handle` that the library keeps in
-its load-time cache. Never `unwrap` a JNI error on a path that can run during
-shutdown: the JVM may already be tearing the thread down. Read
-[references/jni-threading-and-callbacks.md](references/jni-threading-and-callbacks.md)
-when you spawn async work from a native method; it has the worked example.
+Read `references/jni-threading-and-callbacks.md` when a native method starts async work, or when an env or a local reference is near an `.await`, a `tokio::spawn`, a `Box::leak`, or a `transmute`.
 
 ## Hot-path data
 

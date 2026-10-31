@@ -1,0 +1,9 @@
+# Every path that changes what an agent reads, or what proves it correct, needs the owner's
+# review. Branch protection enforces this only when "Require review from Code Owners" is on.
+/skills/          @po4yka
+/checks/          @po4yka
+/scripts/         @po4yka
+/.github/         @po4yka
+/.claude-plugin/  @po4yka
+/bundles.toml     @po4yka
+/AGENTS.snippet.md @po4yka

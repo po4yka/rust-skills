@@ -16,6 +16,7 @@ Contents:
 - `PhantomData` markers for raw-pointer structs
 - `union` for C interop only
 - Symbol collision in `cdylib` crates
+- Zero-copy buffer handoff
 
 ## Never reference a field of a `#[repr(packed)]` struct
 
@@ -487,6 +488,23 @@ other name still collides with no diagnostic. The JNI convention,
 for uniqueness across all native libraries that the host process can load at the same time,
 including libraries you do not own. The third inventory command in [SKILL.md](../SKILL.md) lists
 every unmangled export.
+
+## Zero-copy buffer handoff
+
+A slice built over a foreign caller's buffer without a copy needs three caller guarantees for the
+whole call. State them in the SAFETY comment and again at the foreign call site:
+
+1. The pointer is non-null and aligned for the element type.
+2. Access is exclusive: the caller does not read or write concurrently.
+3. The buffer stays valid for the entire call.
+
+For a slice over a memory mapping, the mapping must outlive the slice, and nothing may mutate
+the region while the slice is live. An output lifetime that appears in no argument is unbounded:
+the caller picks it, up to `'static`, and nothing checks the choice. std's
+`slice::from_raw_parts` has this shape and makes the caller bound it by annotation. Prefer to tie
+it to an input. Otherwise keep such a function private, and make the owning type hold the
+mapping so that the borrow checker enforces the relationship. Read
+[A slice over a caller-owned buffer or a mapping](#a-slice-over-a-caller-owned-buffer-or-a-mapping) when you build such a slice.
 
 ## Related
 

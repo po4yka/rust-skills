@@ -12,6 +12,7 @@ Contents:
 - Aliasing models: Stacked Borrows and Tree Borrows
 - Miri invocations, and FFI code that Miri cannot run
 - Clippy invocations for unsafe
+- Manual `unsafe impl Send` or `Sync`; reference fabrication
 
 Miri messages below were measured on Miri nightly-2026-05-15 unless a line says otherwise. The
 numbers in `<N>` and `allocN` change from run to run.
@@ -343,3 +344,38 @@ cargo clippy --locked --all-targets -- \
 Use the command line only to try a lint out. Once you keep a lint, move it into
 `[workspace.lints]` so that CI and every developer get the same result. See the `rust-lints`
 skill.
+
+## Manual `unsafe impl Send` or `Sync`
+
+The compiler accepts a manual `unsafe impl Send` or `Sync` without a check, also after a field
+gains an `Rc<_>`; a data race or a double free follows at run time. Often a field-type change
+removes the need for the impl; the `rust-send-sync` skill, when it is installed, shows how.
+Before you write the impl:
+
+1. List every field type. Confirm that each is `Send` or `Sync`, or state why the wrapper keeps
+   the invariant despite the field.
+2. Check every `&self` method, derives included. A derived `Debug`, `Clone`, `PartialEq`, or
+   `Hash` hands `&T` to `T`'s own impl on whichever thread calls it.
+3. Assert the auto trait on each field type, not on the wrapper, because the manual impl is
+   unconditional. `clippy::non_send_fields_in_send_ty` (nursery) flags a non-`Send` field under
+   a manual `Send` impl.
+4. Write a `// SAFETY:` comment on the impl that names the fields audited and the argument.
+
+Objects from a C or C++ library are usually not thread-safe, even when the Rust binding
+compiles. Read [miri-and-aliasing.md](miri-and-aliasing.md) when you write
+the impl; it has the field assertion and the derive leak.
+
+## Reference fabrication
+
+Never hand a caller a `&T` or a `&mut T` built from `RefCell::as_ptr`. It skips the borrow
+counter, so a later `borrow_mut()` succeeds and safe code mutates behind a live shared
+reference. Yield `Ref<'a, T>`. Miri reports it only when a test interleaves the reference with a
+mutation, so treat it as undefined behavior on inspection. A reference derived from
+`UnsafeCell::get` must still obey the aliasing rules: no two live `&mut`, and no mutation under a
+live `&T`.
+
+Never fabricate a `&String` from a `&str` with `ManuallyDrop<String>` and
+`String::from_raw_parts`. It breaks the allocator and capacity contract, and Miri accepts it
+under every model because that contract is a library rule. Accept `&str` or `impl AsRef<str>`.
+Read [miri-and-aliasing.md](miri-and-aliasing.md) when you review either
+pattern.

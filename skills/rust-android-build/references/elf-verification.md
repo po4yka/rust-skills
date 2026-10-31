@@ -5,7 +5,8 @@ the size gate fails. It says what to inspect in each built library, in what orde
 size regression, and how to wire the checks into CI.
 
 Contents: check order; file and ELF header; LOAD alignment; `DT_NEEDED` and prebuilt `GNU_RELRO`;
-exported symbols; build ID; size gate, size audit, and linker size flags; CI wiring; triage.
+exported symbols; build ID; size gate, size audit, and linker size flags; CI wiring; triage; common
+traps; the exported-symbol allowed set and allowlist diff.
 
 All commands use the NDK LLVM tools. Resolve them once:
 
@@ -117,7 +118,7 @@ line passes.
 
 ## 5. Exported symbol allowlist
 
-Use the allowlist diff from [SKILL.md](../SKILL.md): `llvm-readelf --dyn-syms --wide`, keep
+Use the allowlist diff from [Exported symbols](#exported-symbols): `llvm-readelf --dyn-syms --wide`, keep
 defined `GLOBAL` or `WEAK` symbols of type `FUNC` or `OBJECT`, and compare with the sorted
 expected set in both directions. Do not filter `llvm-objdump -T` output on ` DF `: that keeps
 functions only, so an exported `#[unsafe(no_mangle)] pub static` passes.
@@ -204,3 +205,60 @@ carry, so it folds little Rust code.
 | No build-ID note | The `--build-id=sha1` flag is missing, `RUSTFLAGS` replaced the config flags, or cargo ran outside the workspace root | Check the config tables, the environment, and the working directory |
 | Size grew on every ABI at once | LTO stopped applying, or the build used the dev profile | Confirm the profile that the build selected |
 | Size grew on one ABI only | A target-specific code path or an intrinsic fallback | `llvm-nm --size-sort` on that target's unstripped `.so`, or `cargo bloat` on a `cdylib` package |
+
+## Common traps
+
+- A prebuilt `.so` that ships next to the Rust library (a `DT_NEEDED` entry or a `jniLibs`
+  sibling) keeps its own alignment. A static C archive linked into the Rust `cdylib` takes the
+  final link's alignment. Rebuild a prebuilt with a linker option in its own build system; a
+  linker option in `CFLAGS` does not reach the final link.
+- An `mmap` or `mprotect` size that assumes a 4096-byte page is not 16 KiB aligned. The kernel
+  rounds the mapping up, and the code keeps using its smaller size. Read the page size at run
+  time: `sysconf(_SC_PAGESIZE)` in C, `libc::sysconf(libc::_SC_PAGESIZE)` in Rust.
+- For an undefined `PAGE_SIZE` in C code on a 64-bit ABI, replace the macro with
+  `sysconf(_SC_PAGESIZE)`. Do not define `__BIONIC_DEPRECATED_PAGE_SIZE_MACRO`, because it
+  restores `4096` and hides the bug.
+
+## Exported symbols
+
+rustc owns the export list of a `cdylib`. It passes its own `-Wl,--version-script` and
+`-Wl,--no-undefined-version`, and it exports every `#[unsafe(no_mangle)]` and
+`#[unsafe(export_name)]` item in the crate graph, even one in a dependency that the library never
+calls, under fat LTO too. A checked-in `--version-script` does not narrow that list: with Rust
+1.98.1 and NDK r30 `ld.lld`, `global: Java_*; local: *;` left a `#[unsafe(no_mangle)]` helper
+exported, and a map that names an absent symbol, such as `JNI_OnUnload`, breaks the link. Do not
+add a version script. Remove a leak at its source: delete the attribute, or turn off the
+dependency feature that adds it.
+
+The allowed set depends on the boundary:
+
+- JNI name-based binding: `JNI_OnLoad` and `JNI_OnUnload` when the crate defines them, and the
+  `Java_*` methods.
+- `RegisterNatives`: `JNI_OnLoad`, and `JNI_OnUnload` when defined. Registered methods need no
+  exported name.
+- UniFFI: the `external fun` functions that the generated Kotlin file declares in `UniffiLib` and
+  `IntegrityCheckingUniffiLib` (bound with JNA `Native.register`), plus the `UNIFFI_META_*` data
+  symbols that the UniFFI macros export, plus `JNI_OnLoad` when the crate defines one to seed
+  `JavaVM::singleton()` for callback threads. Kotlin generation writes no C header (as of
+  uniffi-bindgen 0.32.2). A `<namespace>FFI.h` header exists only when the build also generates
+  Swift. The generated code does not declare the `UNIFFI_META_*` symbols, and uniffi-bindgen
+  reads them from the unstripped library, so do not remove them.
+
+Derive `expected-exports.txt` from the JNI registration table, or for UniFFI from the
+`external fun` names in those two Kotlin objects. Add the `UNIFFI_META_*` names from the dynamic
+symbols of the same build, and `JNI_OnLoad` when the crate defines it. Sort the file, and compare it with the defined dynamic symbols of each final
+`.so`:
+
+```bash
+"$NDK_BIN/llvm-readelf" --dyn-syms --wide <lib-dir>/arm64-v8a/libnative.so \
+  | awk '$5 ~ /^(GLOBAL|WEAK)$/ && $7 != "UND" && $4 ~ /^(FUNC|OBJECT)$/ {print $8}' \
+  | sort -u > actual-exports.txt
+comm -23 actual-exports.txt expected-exports.txt > unexpected-exports.txt
+comm -13 actual-exports.txt expected-exports.txt > missing-exports.txt
+test ! -s unexpected-exports.txt && test ! -s missing-exports.txt
+```
+
+The filter keeps data symbols (`OBJECT`, for example a `#[unsafe(no_mangle)] pub static`) and drops
+imports (`UND`) such as `__cxa_finalize`. An unexpected symbol is an ABI leak: any process that
+can `dlopen` the library can call it, and it pins the signature. A missing name-based export fails
+at run time with `UnsatisfiedLinkError`.

@@ -35,3 +35,20 @@ let mut bomb = AbortOnUnwind { armed: true };
 // ... section that must complete or kill the process ...
 bomb.armed = false;
 ```
+
+## `UnwindSafe` and `AssertUnwindSafe`
+
+`catch_unwind` requires the closure to be `UnwindSafe`. The bound is a warning, not a proof:
+it marks values that a panic could leave in a broken but observable state. `&mut T` and
+interior-mutable types are not `UnwindSafe`.
+
+```rust
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
+// The compiler cannot prove `state` is consistent after a panic. You must.
+let result = catch_unwind(AssertUnwindSafe(|| run(&mut state)));
+```
+
+When you write `AssertUnwindSafe`, add a comment that names the invariant you checked, in the
+same style as a `SAFETY` comment. If you cannot name one, restore the invariant instead: drop
+the object, rebuild it, or mark it poisoned so later calls fail fast.

@@ -1,7 +1,7 @@
 # Preludes for the memory-model skill. Format: checks/README.md.
 
 [[block]]
-file = "memory-model/SKILL.md"
+file = "memory-model/references/ordering-patterns.md"
 section = "Pattern 4: reference counting"
 block = 1
 setup = '''

@@ -3,7 +3,7 @@
 # SKILL.md
 
 [[block]]
-file = "rust-panic-safety/SKILL.md"
+file = "rust-panic-safety/references/unwind-state.md"
 section = "`UnwindSafe` and `AssertUnwindSafe`"
 block = 1
 items = '''

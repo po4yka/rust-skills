@@ -1,0 +1,27 @@
+# Version updates for the harness. Nothing here ships to consumers.
+#
+# Cargo stays lockfile-only: a requirement bump in checks/Cargo.toml changes which crate
+# version the skill examples are checked against, and that is a catalog decision with its own
+# comment in the manifest (criterion and alloca, for example). crate-drift.yml reports newer
+# major versions instead.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: tuesday
+    commit-message:
+      prefix: chore
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /checks
+    schedule:
+      interval: weekly
+      day: tuesday
+    versioning-strategy: lockfile-only
+    commit-message:
+      prefix: chore(checks)
+    open-pull-requests-limit: 5
