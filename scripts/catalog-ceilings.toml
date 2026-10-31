@@ -1,7 +1,9 @@
 # Accepted values above a hard limit in scripts/validate-skills.py. A ratchet:
 # the validator fails when a listed value grows, and asks for the entry to be
 # lowered or removed when it shrinks. Never raise an entry to make a change
-# pass; move material to references/ or shorten the text instead.
+# pass; move material to references/ or shorten the text instead. One exception:
+# a commit that adds a cross-bundle fallback sentence may raise body_tokens for
+# that skill by the size of the sentence, and its message must say so.
 #
 # Regenerate after a change that shrinks a value:
 #   python3 scripts/validate-skills.py --emit-ceilings > scripts/catalog-ceilings.toml
