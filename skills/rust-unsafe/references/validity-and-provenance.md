@@ -3,6 +3,9 @@
 Use this reference before you turn bytes into a typed value, create a reference from a raw
 pointer, or perform pointer arithmetic through an integer address.
 
+Contents: invalid typed values; reference creation; provenance; review procedure;
+`mem::zeroed` and `MaybeUninit`; authoritative references.
+
 ## Invalid typed values are immediate undefined behavior
 
 Every Rust type has a validity invariant. Creating a value outside that invariant is undefined
@@ -89,6 +92,21 @@ and rustc warns on it since 1.91 (`integer_to_ptr_transmutes`); use `without_pro
 
 Miri is evidence for the executed path. It is not a proof for unexecuted layouts, schedules, or
 foreign code.
+
+## `mem::zeroed` and `MaybeUninit`
+
+`mem::zeroed()` is sound only when the documented contract of the exact type proves that
+all-zero bytes is a valid value, and the SAFETY comment must cite that contract. `repr(C)` and
+an output-only C API do not prove it. Zero is never valid for `NonNull`, `NonZero`, a
+reference, `Box`, or a function pointer, and for `bool` or an enum only as `false` or a declared
+discriminant. Do not use `zeroed()` for a type with a non-trivial `Drop`: the destructor later
+runs on a value that no constructor built. Use `MaybeUninit<T>` when the proof is absent. Call
+`assume_init` only after the API reports that it wrote a complete, valid `T`.
+
+Creating an invalid typed value is immediate undefined behavior, even if code never reads it.
+Read [validity-and-provenance.md](validity-and-provenance.md) when you
+create a reference from a raw pointer, initialize a type from bytes, or convert a pointer through
+an integer address.
 
 ## Authoritative references
 

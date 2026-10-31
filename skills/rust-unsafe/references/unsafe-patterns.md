@@ -16,6 +16,8 @@ Contents:
 - Pointer arithmetic and `NonNull`
 - Transmute table and `dyn` lifetime extension; broken UTF-8; `black_box`
 - A `Drop` impl that cannot abort the process
+- Drop hazards; unsafe operations and declarations; pointer arithmetic, syscalls, and
+  unmangled exports
 
 ## Safety comment format
 
@@ -699,3 +701,47 @@ impl BufferedWriter {
 
 The auto-trait proofs, the two reference fabrications, the aliasing models, and the Miri and
 clippy invocations are in [miri-and-aliasing.md](miri-and-aliasing.md).
+
+## Drop hazards
+
+Soundness must not depend on `Drop` running. Safe code skips a destructor with `mem::forget`,
+`Box::leak`, `ManuallyDrop::new`, an `Rc` or `Arc` cycle, or `process::exit`. So an API whose
+soundness needs a guard's destructor is unsound. For example, if only a `Drop` unregisters a
+pointer to borrowed data that foreign code holds, a forgotten guard leaves that pointer dangling.
+Make a forgotten guard impossible or harmless, as `thread::scope` does:
+it keeps the scope inside a closure and joins every thread itself. A future inside `select!` can
+be dropped at any `.await`, so its correctness must not depend on its `Drop` either.
+
+`Drop::drop` must not panic. A panic in a destructor during an unwind aborts the process with
+`panic in a destructor during cleanup`, and `catch_unwind` cannot catch it. Move fallible
+cleanup, such as `self.flush().unwrap()`, into a `close()` or `flush()` that returns `Result`,
+and let `drop()` only log. Read [unsafe-patterns.md](unsafe-patterns.md)
+when you write that pair.
+
+## Unsafe operations and declarations
+
+An `unsafe` block permits five operations: a raw-pointer dereference, an unsafe function call, an
+access to a `static mut` or an unsafe `extern` static, a union field read, and inline assembly.
+If a block does none of these, delete it. Taking a raw pointer needs no `unsafe`:
+`&raw mut SOME_STATIC_MUT` (1.82) and `&raw const my_union.field` (1.92). An `unsafe impl`, an
+unsafe attribute, and an `unsafe extern` block are declarations; each needs its own review and
+its own SAFETY comment. `unsafe trait` binds the implementor and `unsafe fn` binds the caller, so
+put each `# Safety` section where its obligation sits. Read
+[unsafe-patterns.md](unsafe-patterns.md) when you declare an
+`unsafe trait`, or when you need the full list of unsafe calls.
+
+## Pointer arithmetic, syscalls, and unmangled exports
+
+`ptr.add(n)` is undefined behavior once the result leaves the allocation, even with no
+dereference; `wrapping_add` is always sound to compute. Pointer methods return a new pointer, so
+assign a cursor back: `self.ptr = unsafe { self.ptr.add(1) };`. Check every syscall return value
+and convert `io::Error::last_os_error()`; never discard `errno`. Duplicate a descriptor that a
+foreign caller passes in (`BorrowedFd::borrow_raw`, then `try_clone_to_owned`) before you own it,
+or the foreign runtime closes it under you. Read
+[unsafe-patterns.md](unsafe-patterns.md) when you write pointer
+arithmetic, `offset_from`, `NonNull`, or a `getsockopt`, `ioctl`, C union, or descriptor wrapper.
+
+When two libraries in one process export the same unmangled symbol, the linker silently picks
+one, and the wrong function runs. Read
+[ffi-layout-rules.md](ffi-layout-rules.md) when you add a
+`#[unsafe(no_mangle)]` or `#[unsafe(export_name)]` export.

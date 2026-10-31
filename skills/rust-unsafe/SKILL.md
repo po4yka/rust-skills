@@ -148,19 +148,7 @@ this table.
 
 ## Drop hazards
 
-Soundness must not depend on `Drop` running. Safe code skips a destructor with `mem::forget`,
-`Box::leak`, `ManuallyDrop::new`, an `Rc` or `Arc` cycle, or `process::exit`. So an API whose
-soundness needs a guard's destructor is unsound. For example, if only a `Drop` unregisters a
-pointer to borrowed data that foreign code holds, a forgotten guard leaves that pointer dangling.
-Make a forgotten guard impossible or harmless, as `thread::scope` does:
-it keeps the scope inside a closure and joins every thread itself. A future inside `select!` can
-be dropped at any `.await`, so its correctness must not depend on its `Drop` either.
-
-`Drop::drop` must not panic. A panic in a destructor during an unwind aborts the process with
-`panic in a destructor during cleanup`, and `catch_unwind` cannot catch it. Move fallible
-cleanup, such as `self.flush().unwrap()`, into a `close()` or `flush()` that returns `Result`,
-and let `drop()` only log. Read [references/unsafe-patterns.md](references/unsafe-patterns.md)
-when you write that pair.
+Read `references/unsafe-patterns.md` when soundness could depend on a `Drop` running (a guard, a registration, a future in `select!`), or when a `Drop::drop` can fail or panic.
 
 ## One unsafe block breaks local reasoning
 
@@ -182,38 +170,11 @@ reproducing test; only a decode loop fails on invalid UTF-8.
 
 ## Manual `unsafe impl Send` or `Sync`
 
-The compiler accepts a manual `unsafe impl Send` or `Sync` without a check, also after a field
-gains an `Rc<_>`; a data race or a double free follows at run time. Often a field-type change
-removes the need for the impl; the `rust-send-sync` skill, when it is installed, shows how.
-Before you write the impl:
-
-1. List every field type. Confirm that each is `Send` or `Sync`, or state why the wrapper keeps
-   the invariant despite the field.
-2. Check every `&self` method, derives included. A derived `Debug`, `Clone`, `PartialEq`, or
-   `Hash` hands `&T` to `T`'s own impl on whichever thread calls it.
-3. Assert the auto trait on each field type, not on the wrapper, because the manual impl is
-   unconditional. `clippy::non_send_fields_in_send_ty` (nursery) flags a non-`Send` field under
-   a manual `Send` impl.
-4. Write a `// SAFETY:` comment on the impl that names the fields audited and the argument.
-
-Objects from a C or C++ library are usually not thread-safe, even when the Rust binding
-compiles. Read [references/miri-and-aliasing.md](references/miri-and-aliasing.md) when you write
-the impl; it has the field assertion and the derive leak.
+Read `references/miri-and-aliasing.md` before you write or review a manual `unsafe impl Send` or `Sync`, including one on a wrapper of a C or C++ object.
 
 ## Reference fabrication
 
-Never hand a caller a `&T` or a `&mut T` built from `RefCell::as_ptr`. It skips the borrow
-counter, so a later `borrow_mut()` succeeds and safe code mutates behind a live shared
-reference. Yield `Ref<'a, T>`. Miri reports it only when a test interleaves the reference with a
-mutation, so treat it as undefined behavior on inspection. A reference derived from
-`UnsafeCell::get` must still obey the aliasing rules: no two live `&mut`, and no mutation under a
-live `&T`.
-
-Never fabricate a `&String` from a `&str` with `ManuallyDrop<String>` and
-`String::from_raw_parts`. It breaks the allocator and capacity contract, and Miri accepts it
-under every model because that contract is a library rule. Accept `&str` or `impl AsRef<str>`.
-Read [references/miri-and-aliasing.md](references/miri-and-aliasing.md) when you review either
-pattern.
+Read `references/miri-and-aliasing.md` when code builds a `&T` or `&mut T` from `RefCell::as_ptr` or `UnsafeCell::get`, or a `&String` from `ManuallyDrop<String>` and `String::from_raw_parts`.
 
 ## Pointer reads from untrusted byte buffers
 
@@ -245,47 +206,15 @@ parser.
 
 ## `mem::zeroed` and `MaybeUninit`
 
-`mem::zeroed()` is sound only when the documented contract of the exact type proves that
-all-zero bytes is a valid value, and the SAFETY comment must cite that contract. `repr(C)` and
-an output-only C API do not prove it. Zero is never valid for `NonNull`, `NonZero`, a
-reference, `Box`, or a function pointer, and for `bool` or an enum only as `false` or a declared
-discriminant. Do not use `zeroed()` for a type with a non-trivial `Drop`: the destructor later
-runs on a value that no constructor built. Use `MaybeUninit<T>` when the proof is absent. Call
-`assume_init` only after the API reports that it wrote a complete, valid `T`.
-
-Creating an invalid typed value is immediate undefined behavior, even if code never reads it.
-Read [references/validity-and-provenance.md](references/validity-and-provenance.md) when you
-create a reference from a raw pointer, initialize a type from bytes, or convert a pointer through
-an integer address.
+Read `references/validity-and-provenance.md` when you call `mem::zeroed` or `assume_init`, create a reference from a raw pointer, initialize a type from bytes, or convert a pointer through an integer address.
 
 ## Zero-copy buffer handoff
 
-A slice built over a foreign caller's buffer without a copy needs three caller guarantees for the
-whole call. State them in the SAFETY comment and again at the foreign call site:
-
-1. The pointer is non-null and aligned for the element type.
-2. Access is exclusive: the caller does not read or write concurrently.
-3. The buffer stays valid for the entire call.
-
-For a slice over a memory mapping, the mapping must outlive the slice, and nothing may mutate
-the region while the slice is live. An output lifetime that appears in no argument is unbounded:
-the caller picks it, up to `'static`, and nothing checks the choice. std's
-`slice::from_raw_parts` has this shape and makes the caller bound it by annotation. Prefer to tie
-it to an input. Otherwise keep such a function private, and make the owning type hold the
-mapping so that the borrow checker enforces the relationship. Read
-[references/ffi-layout-rules.md](references/ffi-layout-rules.md) when you build such a slice.
+Read `references/ffi-layout-rules.md` when you build a slice over a foreign caller's buffer or a memory mapping without a copy.
 
 ## Unsafe operations and declarations
 
-An `unsafe` block permits five operations: a raw-pointer dereference, an unsafe function call, an
-access to a `static mut` or an unsafe `extern` static, a union field read, and inline assembly.
-If a block does none of these, delete it. Taking a raw pointer needs no `unsafe`:
-`&raw mut SOME_STATIC_MUT` (1.82) and `&raw const my_union.field` (1.92). An `unsafe impl`, an
-unsafe attribute, and an `unsafe extern` block are declarations; each needs its own review and
-its own SAFETY comment. `unsafe trait` binds the implementor and `unsafe fn` binds the caller, so
-put each `# Safety` section where its obligation sits. Read
-[references/unsafe-patterns.md](references/unsafe-patterns.md) when you declare an
-`unsafe trait`, or when you need the full list of unsafe calls.
+Read `references/unsafe-patterns.md` when you decide whether a block needs `unsafe`, or write an `unsafe impl`, an unsafe attribute, an `unsafe extern` block, an `unsafe trait`, or a `# Safety` section.
 
 ## Panics and unwinding at the FFI boundary
 
@@ -311,19 +240,7 @@ or extend the lifetime bound of a `dyn` raw pointer.
 
 ## Pointer arithmetic, syscalls, and unmangled exports
 
-`ptr.add(n)` is undefined behavior once the result leaves the allocation, even with no
-dereference; `wrapping_add` is always sound to compute. Pointer methods return a new pointer, so
-assign a cursor back: `self.ptr = unsafe { self.ptr.add(1) };`. Check every syscall return value
-and convert `io::Error::last_os_error()`; never discard `errno`. Duplicate a descriptor that a
-foreign caller passes in (`BorrowedFd::borrow_raw`, then `try_clone_to_owned`) before you own it,
-or the foreign runtime closes it under you. Read
-[references/unsafe-patterns.md](references/unsafe-patterns.md) when you write pointer
-arithmetic, `offset_from`, `NonNull`, or a `getsockopt`, `ioctl`, C union, or descriptor wrapper.
-
-When two libraries in one process export the same unmangled symbol, the linker silently picks
-one, and the wrong function runs. Read
-[references/ffi-layout-rules.md](references/ffi-layout-rules.md) when you add a
-`#[unsafe(no_mangle)]` or `#[unsafe(export_name)]` export.
+Read `references/unsafe-patterns.md` when you write pointer arithmetic (`add`, `offset_from`, `NonNull`), a syscall, `getsockopt`, `ioctl`, C union, or descriptor wrapper, or an `#[unsafe(no_mangle)]` or `#[unsafe(export_name)]` export.
 
 ## Related skills
 
