@@ -423,9 +423,20 @@ skills/<skill-name>/
 └── references/*.md           # optional deep material, linked from SKILL.md
 
 AGENTS.md                     # the SKILL.md contract and the authoring rules
-scripts/validate-skills.py    # frontmatter, size, link, routing, and README checks
-scripts/test_validate_skills.py # tests for the catalog rules
+AGENTS.snippet.md             # the always-on router to paste into a consuming repository
+bundles.toml                  # install bundles: bundle -> ordered skill names
+.claude-plugin/               # plugin manifest and marketplace, one plugin per bundle
+CHANGELOG.md                  # one section per tagged catalog actualization
+SECURITY.md                   # what a security report covers and where to send it
+docs/releasing.md             # tagging, plugin versioning, evaluations, repository settings
+scripts/validate-skills.py    # frontmatter, size, link, routing, bundle, budget, README checks
+scripts/catalog-ceilings.toml # accepted values over a limit; they may only shrink
+scripts/drift-report.py       # toolchain and crate drift report for the weekly workflows
+scripts/test_*.py             # tests for the catalog rules and the drift report
 tests/routing-cases.md        # phrase -> skill, checked against every description
+evals/routing/                # prompts, negative cases, and the runner for routing accuracy
+evals/plugin/                 # one plugin-eval case per bundle
+.github/workflows/            # CI, skills-CLI compatibility, drift reports, plugin eval
 checks/check.sh               # one command that runs every CI gate
 checks/rust-toolchain.toml    # the pinned toolchain and compile target
 checks/Cargo.toml             # the crates that examples may use
@@ -436,7 +447,8 @@ checks/test_*.py              # tests for extraction, the classifier, and the lo
 research/                     # primary-source findings and catalog decisions
 ```
 
-Only `skills/` is published. The rest is tooling; `npx skills add` never sees it.
+Only `skills/` is published. The rest is tooling: `npx skills add` and `gh skill` see only
+`skills/`, and the plugin loads only the skill directories its entry names.
 
 ## Scope
 
@@ -458,14 +470,27 @@ invocations, and failure triage that a codebase learns the hard way.
   error fails the gate. Portable `rust,run` blocks are also compiled and executed on the native
   CI host.
 - Pinned versions age. Where a skill names a crate or tool version, treat it as the version the
-  rule was written against, and confirm it against your `Cargo.lock`.
+  rule was written against, and confirm it against your `Cargo.lock`. Weekly workflows open an
+  issue when Rust stable or a crate in `checks/Cargo.toml` moves past the pin.
+- The always-on skill listing is small. Claude Code keeps it within 1% of the context window
+  (about 2,000 tokens on a 200K window) and drops whole descriptions when it overflows; Codex
+  keeps only a prefix of each. All 44 descriptions cost about 9,300 tokens, so on a 200K window
+  install one bundle, and paste [AGENTS.snippet.md](AGENTS.snippet.md) into the consuming
+  repository so the agent can still name the skill it needs.
+- After context compaction, Claude Code re-injects an invoked skill body with at most 5,000
+  tokens per skill. Most bodies are larger, so the tail of a long skill can drop out of a long
+  session. Each body keeps its triage tables and verifier commands first for this reason, and
+  the validator holds every body at or below its current size until it reaches 4,800 estimated
+  tokens.
 - A few thresholds are defaults rather than measured limits, for example the Android `.so`
   size-growth budget and the minimum age of a new crate in supply-chain vetting. The skills say
   so at the point of use.
 - The routing check is static: it proves that each description still contains the phrases in
   `tests/routing-cases.md`, not that an agent routes correctly. The blind routing evaluation of
   the 2026-09 revision is in
-  [research/catalog-actualization-2026-09.md](research/catalog-actualization-2026-09.md).
+  [research/catalog-actualization-2026-09.md](research/catalog-actualization-2026-09.md); its
+  method is now reproducible from [evals/](evals/README.md). Report a misroute with the
+  misroute issue form.
 
 ## Contributing
 

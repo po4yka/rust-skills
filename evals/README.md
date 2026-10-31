@@ -18,7 +18,7 @@ the catalog commit, the client version, and the exact model IDs (`docs/releasing
   near-miss: it shares surface terms with the skill but belongs to a sibling, or to no skill
   (`"expected": "none"`, 2 prompts). Each row has `id`, `skill`, `kind`, `prompt`, `expected`,
   `accepted_alternates`, and `source`. The prompts were written from the skill bodies at catalog
-  commit `705b91c`, blind to the descriptions; `source` names the section each one came from at
+  commit `5d5f470`, blind to the descriptions; `source` names the section each one came from at
   that commit, and a later move into `references/` does not update it.
 - `negative-cases.md`: phrases a description must not claim. `scripts/validate-skills.py`
   enforces it on every run.
