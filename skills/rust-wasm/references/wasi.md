@@ -26,9 +26,12 @@ wasm-tools component wit target/wasm32-wasip2/release/<binary>.wasm
 wasmtime run target/wasm32-wasip2/release/<binary>.wasm
 ```
 
-Use native `wasm32-wasip2` and `wit-bindgen` tooling for new components. Do not
-introduce `cargo-component` without a project-specific requirement; it is being
-deprecated in favor of native Cargo builds.
+Use native `wasm32-wasip2` and `wit-bindgen` tooling for new components. Plain
+`cargo build --target wasm32-wasip2` produces a component (Rust 1.82 and later).
+Do not introduce `cargo-component` without a project-specific requirement. Its
+README (0.21.1, as of 2026-10) calls it experimental, and a newer release can
+break the build of an existing project. The same README still points to
+`cargo component` for a project with non-WASI WIT interfaces.
 
 ## Select async I/O for WASI
 
