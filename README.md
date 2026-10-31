@@ -117,8 +117,8 @@ npx skills add po4yka/rust-skills --skill rust-performance rust-hot-path rust-co
 npx skills add po4yka/rust-skills --skill rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel
 ```
 
-`--skill` takes space-separated names; a comma-separated list matches no skill in
-`skills@1.7.0`.
+`--skill` takes space-separated names; a comma-separated list matches no skill (checked on
+`skills@1.7.0` and `1.7.4`).
 
 </details>
 

@@ -2,7 +2,7 @@
 #
 # Cargo stays lockfile-only: a requirement bump in checks/Cargo.toml changes which crate
 # version the skill examples are checked against, and that is a catalog decision with its own
-# comment in the manifest (criterion stays on 0.7, for example). crate-drift.yml reports newer
+# comment in the manifest (criterion and alloca, for example). crate-drift.yml reports newer
 # major versions instead.
 version: 2
 updates:

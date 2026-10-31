@@ -26,6 +26,10 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ### Changed
 
+- The toolchain pin moves to Rust 1.99.1, with an audit pass over 32 skills: corrected API
+  claims, `compile_fail` tags on drop-check examples, and new triage rows (#6). The harness
+  checks examples against criterion 0.8 and parking_lot 0.13, and the skills CLI pin is 1.7.4.
+- Tokio 1.53.3 in the harness, and `AsyncFd` registration safety in `rust-async-internals` (#2).
 - The README install section leads with a bundle and states what each install path pins.
 - The trailing sections of the twelve largest skill bodies move to `references/`.
 - Twelve skills state the rule behind a cross-bundle reference in one sentence.
