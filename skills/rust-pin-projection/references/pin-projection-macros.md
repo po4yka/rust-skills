@@ -103,8 +103,8 @@ fn by_ref(s: &mut S) -> u32 {
 }
 ```
 
-The error says ``expected `S`, found `&mut S` ``, and its help line names
-`unreachable_pin_macro_type_constraint`. Change the parameter to `Pin<&mut S>`, or take `s: S` by
+The error says ``expected `S`, found `&mut S` ``. On 1.97 and 1.98 its help line also names
+`unreachable_pin_macro_type_constraint`; 1.99 prints no help line. Change the parameter to `Pin<&mut S>`, or take `s: S` by
 value and write `takes(pin!(s))`. Never use `unsafe { Pin::new_unchecked(s) }` here, because the
 caller can still move `*s` after the call returns.
 
