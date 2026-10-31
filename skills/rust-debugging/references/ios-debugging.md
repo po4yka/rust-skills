@@ -48,7 +48,9 @@ cargo build --locked -p my-ffi --target aarch64-apple-ios-sim   # simulator (App
 
 ## Sanitizers in Xcode
 
-The Xcode Address Sanitizer and Thread Sanitizer switches instrument only the code that Xcode
-compiles. They do not instrument a prebuilt Rust `staticlib`. Xcode ASan still catches some heap
-errors in it through allocator interception. Run ASan or TSan on a host target for Rust coverage
-(the `rust-sanitizers-miri` skill).
+The Xcode Address Sanitizer and Thread Sanitizer switches instrument only the Swift, C, and
+Objective-C code that Xcode compiles. They do not instrument a prebuilt Rust `staticlib`, so ASan
+checks no Rust memory access: a Rust out-of-bounds read or use after free goes unreported. ASan
+still intercepts `malloc` and `free` for the whole process. It therefore catches a double free or
+an invalid free on the Rust side when Rust uses the default `System` allocator. Run ASan or TSan
+on a host target for Rust coverage (the `rust-sanitizers-miri` skill).
