@@ -1,15 +1,64 @@
 # Type size reduction
 
-Deep material for the "Type size" section of [SKILL.md](../SKILL.md): how to read a
+Deep material for type size in [SKILL.md](../SKILL.md): the Type size rules, how to read a
 `-Zprint-type-sizes` block, what a wrapper costs per field, the exact clippy boundaries, and how
 to guard a size once you measured it.
 
-Sections: read a `-Zprint-type-sizes` block; merge fields under one wrapper; shrink the index
-type; freeze a `Vec` into `Box<[T]>`, and the cost of the conversion; probe the copy boundary;
-the clippy gates; guard the size; order of attack.
+Sections: [Type size](#type-size); read a `-Zprint-type-sizes` block; merge fields under one
+wrapper; shrink the index type; freeze a `Vec` into `Box<[T]>`, and the cost of the conversion;
+probe the copy boundary; the clippy gates; guard the size; order of attack.
 
 All figures below were measured on rustc 1.97.0. Layout is an unspecified implementation detail.
 Re-measure on your toolchain before you depend on a number.
+
+## Type size
+
+A type that is instantiated often is worth shrinking. Two thresholds matter.
+
+**The inline-copy boundary.** Above it, a move or copy becomes a `memcpy` call. It is
+target-dependent, and the widely quoted 128 bytes is the x86_64 number only.
+
+| Target | Copies inline up to | First size that calls `memcpy` |
+| --- | --- | --- |
+| `x86_64-unknown-linux-gnu` | 128 bytes | 129 bytes |
+| `aarch64-apple-darwin` | 256 bytes | 257 bytes |
+
+Measure at `-O`. At `opt-level = 0` the boundary drops to 32 bytes on both targets, so a
+debug build tells you nothing about the shipped one.
+
+**Cache lines.** A type scanned in a loop wants to fit one 64-byte line. This threshold is
+far below the copy boundary and is the one that usually decides a scan-heavy workload.
+
+**Box the outsized variant.** An enum is as large as its largest variant. Boxing that variant
+shrinks every value, including the small ones.
+
+```rust
+type Payload = [u8; 100];
+
+enum Inline { Ping, Seq(i32), Body(i32, Payload) }
+enum Boxed { Ping, Seq(i32), Body(Box<(i32, Payload)>) }
+
+const _: () = assert!(std::mem::size_of::<Inline>() == 108);
+const _: () = assert!(std::mem::size_of::<Boxed>() == 16);
+```
+
+The trade is one heap allocation whenever the boxed variant is built. It wins when that
+variant is rare. Boxing a hot variant trades a size win for an allocation on the common
+path and loses. Clippy's `large_enum_variant` suggests this fix, but only when the largest
+and second-largest variants differ by more than 200 bytes. It never looks at the total.
+
+**Drop the words you do not use.** `Vec<T>` is 3 words, `Box<[T]>` is 2 once the length is
+final, and `ThinVec<T>` (`thin-vec` crate) is 1 for a vector that is often empty in a hot type.
+
+**Keep the default repr.** `#[repr(C)]` turns off field reordering: `{ a: u8, b: u64, c: u8 }`
+is 16 bytes by default and 24 under `#[repr(C)]`. Apply it only where a layout contract needs
+it: an FFI type (the `rust-unsafe` skill holds the contract) or a byte-view derive such as
+`ByteHash`.
+
+Read [type-size-reduction.md](type-size-reduction.md) when you read a
+`-Zprint-type-sizes` block, freeze a `Vec` into `Box<[T]>` (a `collect` into it is not a
+cheaper path), merge wrapped fields, narrow indices, probe the copy boundary on your target, or
+tune the clippy size thresholds.
 
 ## Read one `-Zprint-type-sizes` block
 

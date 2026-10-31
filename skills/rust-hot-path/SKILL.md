@@ -22,11 +22,11 @@ toolchain before you depend on an exact figure.
 | `SipHasher`, `hashbrown` hot | Hasher choice | [Lookups](#lookups) |
 | `write`, `read` syscalls dominate | Missing buffering | [I/O](#io) |
 | `malloc`, `free`, `__rust_alloc` hot | Allocation rate | [Allocation rate](#allocation-rate) |
-| `memcpy` hot with no obvious copy | A type crossed the inline-copy boundary | [Type size](#type-size) |
+| `memcpy` hot with no obvious copy | A type crossed the inline-copy boundary | [type-size-reduction.md](references/type-size-reduction.md#type-size) |
 | `memmove` under `Vec::remove` or `Vec::insert` | Each call shifts the tail. Use `swap_remove` when order does not matter, `VecDeque` for a queue, one `retain` for many removals | — |
-| `core::panicking::panic_bounds_check` in the disassembly | Bounds checks the compiler could not remove | [Bounds checks](#bounds-checks) |
-| A scalar loop where you expected vector code | Bounds checks, or `opt-level` 1, `"s"`, or `"z"` | [Bounds checks](#bounds-checks) |
-| Function entry and exit costs, many small calls | Inlining | [Inlining](#inlining) |
+| `core::panicking::panic_bounds_check` in the disassembly | Bounds checks the compiler could not remove | [inlining-and-codegen.md](references/inlining-and-codegen.md#bounds-checks) |
+| A scalar loop where you expected vector code | Bounds checks, or `opt-level` 1, `"s"`, or `"z"` | [inlining-and-codegen.md](references/inlining-and-codegen.md#bounds-checks) |
+| Function entry and exit costs, many small calls | Inlining | [inlining-and-codegen.md](references/inlining-and-codegen.md#inlining) |
 | Nothing stands out, the work itself is the cost | Algorithm or data structure. Stop here | — |
 
 The last row is the common one. A better algorithm beats every rule below. Reach for this
@@ -226,136 +226,21 @@ type such as `SmallVec` or `ArrayVec`, an `Rc`/`Arc` refactor, a formatting loop
 
 ## Type size
 
-A type that is instantiated often is worth shrinking. Two thresholds matter.
-
-**The inline-copy boundary.** Above it, a move or copy becomes a `memcpy` call. It is
-target-dependent, and the widely quoted 128 bytes is the x86_64 number only.
-
-| Target | Copies inline up to | First size that calls `memcpy` |
-| --- | --- | --- |
-| `x86_64-unknown-linux-gnu` | 128 bytes | 129 bytes |
-| `aarch64-apple-darwin` | 256 bytes | 257 bytes |
-
-Measure at `-O`. At `opt-level = 0` the boundary drops to 32 bytes on both targets, so a
-debug build tells you nothing about the shipped one.
-
-**Cache lines.** A type scanned in a loop wants to fit one 64-byte line. This threshold is
-far below the copy boundary and is the one that usually decides a scan-heavy workload.
-
-**Box the outsized variant.** An enum is as large as its largest variant. Boxing that variant
-shrinks every value, including the small ones.
-
-```rust
-type Payload = [u8; 100];
-
-enum Inline { Ping, Seq(i32), Body(i32, Payload) }
-enum Boxed { Ping, Seq(i32), Body(Box<(i32, Payload)>) }
-
-const _: () = assert!(std::mem::size_of::<Inline>() == 108);
-const _: () = assert!(std::mem::size_of::<Boxed>() == 16);
-```
-
-The trade is one heap allocation whenever the boxed variant is built. It wins when that
-variant is rare. Boxing a hot variant trades a size win for an allocation on the common
-path and loses. Clippy's `large_enum_variant` suggests this fix, but only when the largest
-and second-largest variants differ by more than 200 bytes. It never looks at the total.
-
-**Drop the words you do not use.** `Vec<T>` is 3 words, `Box<[T]>` is 2 once the length is
-final, and `ThinVec<T>` (`thin-vec` crate) is 1 for a vector that is often empty in a hot type.
-
-**Keep the default repr.** `#[repr(C)]` turns off field reordering: `{ a: u8, b: u64, c: u8 }`
-is 16 bytes by default and 24 under `#[repr(C)]`. Apply it only where a layout contract needs
-it: an FFI type (the `rust-unsafe` skill holds the contract) or a byte-view derive such as
-`ByteHash`.
-
-Read [references/type-size-reduction.md](references/type-size-reduction.md) when you read a
-`-Zprint-type-sizes` block, freeze a `Vec` into `Box<[T]>` (a `collect` into it is not a
-cheaper path), merge wrapped fields, narrow indices, probe the copy boundary on your target, or
-tune the clippy size thresholds.
+Read [type-size-reduction.md](references/type-size-reduction.md#type-size) when `memcpy` is hot
+with no obvious copy, or a type is instantiated often: it holds the target copy boundaries, the
+cache-line threshold, boxing the outsized variant, `ThinVec` and `Box<[T]>`, and the `repr` rule.
 
 ## Bounds checks
 
-An index expression is checked unless the compiler can prove the index is in range. The
-check is cheap, and the branch it adds is what blocks vectorization.
-
-Three safe shapes remove it, in order of preference:
-
-1. Iterate. `v.iter().copied().sum()` has no index to check.
-2. Reslice first: `let s = &v[..n];`, then index `s` with `0..n`. The length and the loop
-   bound are now the same value.
-3. `assert!(n <= v.len())` once, ahead of the loop.
-
-Measured on 1.97.0 aarch64 at `-O`, all three removed the check, and the naive
-`for i in 0..n { t += v[i]; }` kept it. Confirm each change with the assembly probe in
-[Verify and pin the win](#verify-and-pin-the-win).
-
-For a constant chunk size, split with `as_chunks::<N>()` (Rust 1.88): each full chunk is a
-`[T; N]`, so constant indexes into it need no check. Clippy 1.98 warns on `chunks_exact(N)`
-with a constant `N` by default (`chunks_exact_to_as_chunks`) when the crate's `rust-version` is
-1.88 or later, or unset, so a `-D warnings` gate fails on the older form.
-
-Vectorization also needs the right optimization level. rustc runs the loop vectorizer only at
-`opt-level` 2 and 3, and the SLP vectorizer only at 3, so under `"s"` or `"z"` no rewrite of the
-scalar loop turns the vectorizer back on. Raise the hot crate alone with
-`[profile.release.package.<name>] opt-level = 3`, and also the crate that instantiates its
-generic code. If the crate must stay at `"s"` or `"z"`, write the loop with `core::arch`
-intrinsics: they do not depend on the vectorizer, and the `rust-unsafe` skill covers the calls
-that need `unsafe`.
-
-Reach for `get_unchecked` only when all these shapes, `as_chunks` included, fail and a
-benchmark justifies it. It is `unsafe` and it needs a SAFETY comment that proves the bound; the
-`rust-unsafe` skill holds the rules. Clippy's `missing_asserts_for_indexing` finds the sites
-mechanically, from the `restriction` group.
-
-Read [references/inlining-and-codegen.md](references/inlining-and-codegen.md) when the MSRV is
-below 1.88 or the chunk size is known only at run time, or when you need the probe functions,
-the vector-instruction counts, or a `core::arch` example.
+Read [inlining-and-codegen.md](references/inlining-and-codegen.md#bounds-checks) when the
+disassembly shows `panic_bounds_check` or a loop you expected to vectorize stays scalar: it holds
+the three safe shapes, `as_chunks`, the `opt-level` rule, and the bar for `get_unchecked`.
 
 ## Inlining
 
-Four forms, and they are not a strength dial:
-
-| Form | Meaning | Reach for it |
-| --- | --- | --- |
-| none | The compiler decides | Almost always |
-| `#[inline]` | Raises willingness, and permits cross-crate inlining | A large function a profile shows called across a crate boundary |
-| `#[inline(always)]` | Effectively a command | One hot call site, after a measurement |
-| `#[inline(never)]` | Suppresses it | The cold half of a hot and cold split |
-
-**Do not sprinkle `#[inline]` on small public helpers.** rustc already ships some bodies to
-downstream crates with no attribute and no LTO: a non-generic function whose optimized MIR
-holds no call (intrinsics excepted), no drop of a non-trivial value, no unwind cleanup, and at
-most 100 MIR statements. One remaining call disqualifies it at any size. rustc skips this
-inference in incremental builds and at `opt-level = 0`, and the MIR inliner that removes small
-calls runs only at `opt-level` 2 and 3. Add the attribute when the profile names the function,
-because every downstream crate compiles the body again.
-
-**An inline attribute ships one body, not its callees.** Across a crate boundary, `#[inline]`
-on `f` ships only `f`. A call to `g` survives inside the inlined `f` unless `g` also qualifies,
-carries its own attribute, or the build uses LTO. That is the usual reason an
-`#[inline(always)]` on a dependency function measures as no change.
-
-**Mark the rare path `#[cold]`, and pair it with `#[inline(never)]`.** `#[cold]` lowers to
-the LLVM `cold` function attribute, which biases branch layout and register allocation away
-from that edge. It does not imply `noinline`: measured on 1.97.0, a small `#[cold]` callee
-was inlined into its caller whole, and no `cold` attribute survived in the IR at all. The
-second attribute is what gets the body out of the hot function.
-
-```rust
-#[cold]
-#[inline(never)]
-fn report_corrupt(offset: usize) -> std::io::Error {
-    std::io::Error::other(format!("corrupt record at {offset}"))
-}
-```
-
-For a rare branch that is not its own function, call `core::hint::cold_path()` as the first
-statement of that branch (Rust 1.95). On 1.98.1 it puts `branch_weights` on the branch in the
-IR. The code stays inline.
-
-Read [references/inlining-and-codegen.md](references/inlining-and-codegen.md) when you split a
-hot call site from cold ones, outline a rare path, count a function's MIR statements, price the
-compile time of `#[inline]`, or read the IR to see what was inlined.
+Read [inlining-and-codegen.md](references/inlining-and-codegen.md#inlining) when you add, remove,
+or review `#[inline]`, `#[inline(always)]`, `#[inline(never)]`, `#[cold]`, or
+`core::hint::cold_path()`.
 
 ## Related skills
 
