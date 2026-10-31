@@ -573,8 +573,8 @@ skills = ["rust-c"]
 
     def test_the_cross_ref_ceiling_accepts_known_gaps_but_not_new_ones(self):
         body = "The `rust-c` skill owns it.\n"
-        self.assertEqual(self.cross_refs(body, {"cross_refs": {"rust-a/SKILL.md": 1}}), [])
-        found = self.cross_refs(body + "\nThe `rust-c` skill again.\n", {"cross_refs": {"rust-a/SKILL.md": 1}})
+        self.assertEqual(self.cross_refs(body, {"cross_refs": {"rust-a": 1}}), [])
+        found = self.cross_refs(body + "\nThe `rust-c` skill again.\n", {"cross_refs": {"rust-a": 1}})
         self.assertEqual(len(found), 1)
         self.assertIn("accepted ceiling is 1", found[0])
 

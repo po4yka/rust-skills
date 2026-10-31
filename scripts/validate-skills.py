@@ -697,27 +697,29 @@ def cross_ref_violations(bundles: dict[str, list[str]]) -> list[tuple[str, int, 
 
 
 def check_cross_refs(bundles: dict[str, list[str]], ceilings: dict) -> None:
+    # Counted per skill, not per file, so a section can move between SKILL.md and
+    # references/ without touching the ceiling.
     accepted = ceilings.get("cross_refs", {})
     counts: dict[str, int] = {}
     for rel, line, sibling, _ in cross_ref_violations(bundles):
-        counts[rel] = counts.get(rel, 0) + 1
-        if rel.removeprefix("skills/") not in accepted:
+        skill = rel.split("/")[1]
+        counts[skill] = counts.get(skill, 0) + 1
+        if skill not in accepted:
             fail(
                 f"{rel}:{line}",
                 f"names the `{sibling}` skill, which is in another bundle, with no fallback; "
                 f"state the rule it owns in one sentence with a command or API name",
             )
-    for key, allowed in sorted(accepted.items()):
-        rel = f"skills/{key}"
-        count = counts.get(rel, 0)
+    for skill, allowed in sorted(accepted.items()):
+        count = counts.get(skill, 0)
         if count > allowed:
             fail(
-                rel,
+                f"skills/{skill}",
                 f"has {count} cross-bundle references with no fallback; its accepted ceiling "
                 f"is {allowed}. Add a fallback sentence (run --report cross-refs)",
             )
         elif count < allowed:
-            warn("scripts/catalog-ceilings.toml", f"lower cross_refs.\"{key}\" to {count}" if count else f"remove cross_refs.\"{key}\"")
+            warn("scripts/catalog-ceilings.toml", f"lower cross_refs.{skill} to {count}" if count else f"remove cross_refs.{skill}")
 
 
 def description_claims(description: str) -> str:
@@ -813,10 +815,10 @@ def emit_ceilings(bundles: dict[str, list[str]]) -> str:
         out += ["[body_tokens]"] + [f"{n} = {t}" for n, t in sorted(heavy.items())] + [""]
     counts: dict[str, int] = {}
     for rel, *_ in cross_ref_violations(bundles):
-        key = rel.removeprefix("skills/")
-        counts[key] = counts.get(key, 0) + 1
+        skill = rel.split("/")[1]
+        counts[skill] = counts.get(skill, 0) + 1
     if counts:
-        out += ["[cross_refs]"] + [f'"{k}" = {v}' for k, v in sorted(counts.items())] + [""]
+        out += ["[cross_refs]"] + [f"{k} = {v}" for k, v in sorted(counts.items())] + [""]
     return "\n".join(out)
 
 
