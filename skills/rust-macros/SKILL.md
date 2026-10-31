@@ -100,7 +100,7 @@ caller's imports and local items.
 | The path names | Emit | Because |
 | --- | --- | --- |
 | An item of the macro's own crate | `$crate::render(...)` | A bare `render` fails in every other crate with E0425. `crate::render` names the caller's crate, and `clippy::crate_in_macro_def` flags it |
-| A standard-library item | `::core::result::Result`. Use `::std::` or `::alloc::` only for an item that `core` does not have | A bare `Result` resolves to the caller's `type Result<T> = ...` alias. `::std::` and `::alloc::` fail with E0433 in a `#![no_std]` caller; to serve one, re-export the item through `$crate::__private` |
+| A standard-library item | `::core::result::Result`. For an `alloc` item, put `pub use alloc::vec::Vec;` in `$crate::__private` and emit `$crate::__private::Vec`. Emit `::std::` only for an item that neither `core` nor `alloc` has, and only when no `#![no_std]` caller is supported. Do not emit `::alloc::` | A bare `Result` resolves to the caller's `type Result<T> = ...` alias. `::std::` fails with E0433 in a `#![no_std]` caller. `::alloc::` fails with E0433 in every caller that does not write `extern crate alloc;`, ordinary std crates included, because `alloc` is not in their extern prelude (verified on Rust 1.98.1) |
 | An item of a dependency of the macro crate | Re-export it (`#[doc(hidden)] pub mod __private { pub use dep_name; }`) and emit `$crate::__private::dep_name::Item`. From a derive, re-export it from the facade and emit `::facade::__private::dep_name::Item` | `::dep_name` resolves in the caller's crate, and the caller may not depend on `dep_name` |
 | The derive attribute | `#[::core::derive(...)]` when the macro crate's `rust-version` is 1.96 or later, else `#[::core::prelude::v1::derive(...)]` | `derive` also resolves at the call site. Rust 1.95 rejects `::core::derive` with E0433 |
 
@@ -240,10 +240,11 @@ Prefer a shape that halves the input per step, because expansion time grows with
 The braces around an arm body are delimiters, not a block. `() => { 42; }` expands to the
 statement `42;`, and `let x = val!();` needs an expression. The
 `semicolon_in_expressions_from_macros` lint rejects it, deny-by-default since Rust 1.91.
-On Rust 1.98.1 the lint fires only when the macro is defined in the crate that invokes it. An
-invocation from `tests/*.rs` or a downstream crate compiles without a warning. The 1.99 beta
-adds a separate lint that also covers macros from other crates, so downstream builds can
-report the defect once 1.99 is stable.
+That lint fires only when the macro is defined in the crate that invokes it. Up to Rust 1.98.1,
+an invocation from `tests/*.rs` or a downstream crate compiles without a warning. Rust 1.99
+adds `semicolon_in_expressions_from_non_local_macros`, warn-by-default and part of
+`future_incompatible`, for a macro from another crate. On 1.99.1 a downstream build under
+`-D warnings` fails on the defect.
 
 Remove the `;` after the last expression. When the body needs statements, add an inner block
 with double braces: `() => {{ let base = 40; base + 2 }}`.
