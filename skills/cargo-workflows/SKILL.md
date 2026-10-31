@@ -122,7 +122,8 @@ components = ["rustfmt", "clippy"]
 ```
 
 - Pin an exact release. Do not pin 1.98.0: it can emit a trait-object vtable with a null function
-  pointer, and 1.98.1 fixes it.
+  pointer, and 1.98.1 fixes it. Do not pin 1.99.0: it miscompiles FFI `bool` return values on
+  x86_64 (rust#163911), and 1.99.1 fixes it.
 - In CI, run `rustup toolchain install` with no arguments before the first cargo command. It
   installs the toolchain that `rust-toolchain.toml` names (rustup 1.28+), so the install is a
   logged step and not an implicit side effect. rustup 1.29.1 warns about implicit installs.

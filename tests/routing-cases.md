@@ -292,6 +292,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | PinnedDrop | rust-pin-projection |
 | address-sensitive | rust-pin-projection |
 | unreachable_pin_macro_type_constraint | rust-pin-projection |
+| expected S, found &mut S | rust-pin-projection |
 | covariant | rust-variance |
 | contravariant | rust-variance |
 | subtyping | rust-variance |

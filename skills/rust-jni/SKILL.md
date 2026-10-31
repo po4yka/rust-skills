@@ -163,7 +163,8 @@ write a name-based export or debug a `No implementation found` error.
 
 - A hand-written export uses `#[unsafe(no_mangle)]` (required in edition 2024,
   accepted since Rust 1.82) and `extern "system"`. `#![forbid(unsafe_code)]`
-  rejects that attribute ("usage of the unsafe `#[no_mangle]` attribute") but
+  rejects that attribute ("usage of the unsafe `no_mangle` attribute" on 1.99,
+  `#[no_mangle]` in the backticks on 1.98) but
   passes the exports that `native_method!` or `#[jni_mangle]` generate, so the
   lint does not prove that a crate has no exports.
 - Leave `pub` off an export that takes a raw pointer, such as `JNI_OnLoad`.
@@ -197,8 +198,11 @@ carry input data or internal detail, set the `error_policy` property of
 `native_method!`, or pass a fixed-message policy (the `rust-panic-safety` skill
 has one) to `resolve`.
 
-Convert a `JString` inside the env scope. Return `std::ptr::null_mut()` for a
-`null` `String?`, not an empty string. A `ByteArray` parameter copies; see
+Convert a `JString` inside the env scope. Return Java `null` for a `null`
+`String?`, not an empty string: `Ok(JString::null())` from a `native_method!` or
+`EnvUnowned` export that returns `Result<JString>`, and `std::ptr::null_mut()`
+only from an export that returns a raw `jstring`. `Ok(std::ptr::null_mut())` in a
+`Result<JString>` is E0308. A `ByteArray` parameter copies; see
 [Hot-path data](#hot-path-data). Read
 [references/types-and-exceptions.md](references/types-and-exceptions.md) when
 you map any other Kotlin type or throw a specific exception class.

@@ -219,7 +219,8 @@ crate that calls C through a safe wrapper crate. Set it per crate, never in
 
 An export attribute is unsafe code. `#[unsafe(no_mangle)]`, `#[unsafe(export_name)]`, and
 `#[unsafe(link_section)]` fail `forbid(unsafe_code)` (1.98.1: ``usage of the unsafe
-`#[no_mangle]` attribute``). A crate that hand-writes an export therefore owns `unsafe`. An
+`#[no_mangle]` attribute``; 1.99.1 drops the `#[ ]`: ``usage of the unsafe `no_mangle`
+attribute``). A crate that hand-writes an export therefore owns `unsafe`. An
 export that a proc macro generates, such as jni 0.22's `#[jni_mangle]`, passes the lint (verified
 on 1.98.1); see [Binding and FFI crates](#binding-and-ffi-crates).
 

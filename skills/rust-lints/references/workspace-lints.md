@@ -20,7 +20,7 @@ missing_docs                 = "warn"
 unused_lifetimes             = "warn"
 unreachable_pub              = "warn"
 elided_lifetimes_in_paths    = "warn"
-let_underscore_drop          = "deny"   # catches `let _ = guard;` swallowing Drop
+let_underscore_drop          = "deny"   # `let _ = make_guard();` drops the guard at once
 dropping_references          = "deny"   # drop(&guard) does nothing; only drop(guard) releases
 unconditional_recursion      = "deny"   # warn by default; catches a body that calls only itself
 non_ascii_idents             = "deny"
