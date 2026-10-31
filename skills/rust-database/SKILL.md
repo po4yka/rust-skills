@@ -262,108 +262,20 @@ when you write the classifier; it has a runnable PostgreSQL example.
 
 ## Deploy migrations in compatible phases
 
-Use one migration history. Store checksums. Never edit a migration that ran in
-any shared environment, because its checksum and applied state no longer match.
-Add a forward migration that corrects it.
-
-Serialize migration execution with one deployment job or a database advisory
-lock. Do not let every application instance race to migrate on startup. Give
-the runner a finite lock wait and statement timeout. Record the applied
-version, checksum, start time, finish time, and failure.
-
-Use this order for a rolling deployment:
-
-1. **Expand:** add nullable columns, tables, indexes, or compatible constraints.
-2. **Backfill:** update old rows in bounded batches that can resume.
-3. **Switch:** deploy code that reads the new form and stops depending on the
-   old form. Dual-write only when the transition needs it.
-4. **Verify:** prove backfill completion and new-code adoption with queries and
-   metrics.
-5. **Contract:** remove old columns, constraints, indexes, and compatibility
-   code in a later deployment.
-
-Do not add a required column with no safe value while old binaries still write
-the table. Do not rename or drop an object while old binaries still use it.
-Keep the expand state compatible with both the old and new application.
-
-Build large indexes with the engine's online or concurrent mode when required.
-Put non-transactional DDL, such as PostgreSQL `CREATE INDEX CONCURRENTLY`, in
-its own migration (sqlx: first line `-- no-transaction`) and make its restart
-behavior explicit. Inspect invalid or partial artifacts after a failed run.
-MySQL DDL commits implicitly, so a multi-statement MySQL migration is not
-atomic.
-
-For a destructive migration, verify a restore path and measure the lock and
-rewrite cost on production-shaped data. A rollback file is not a backup. Data
-removed by a down migration can be unrecoverable.
-
-Use the repository's migration tool. The target rules in "Verify and finish"
-apply to every mutating command. Read the
-[sqlx section](references/engine-and-driver-notes.md#sqlx) of the reference
-for the `sqlx migrate` commands when the repository uses sqlx.
+Read `references/migrations.md` when you write, order, or run a schema
+migration.
 
 ## Budget database connections
 
-Calculate a deployment-wide budget before you set one process pool:
-
-```text
-usable connections = server maximum - admin reserve - migration reserve - other clients
-per-instance maximum = floor(usable connections / maximum live instances)
-```
-
-Include rolling deployment overlap, autoscaling maximum, workers, scheduled
-jobs, and local sidecars in `maximum live instances`. Keep an admin reserve so
-an operator can connect during saturation. Keep a migration reserve when the
-migration runner uses a separate connection.
-
-Use a bounded admission limit before pool acquisition when the pool has no
-bounded waiter queue. Reject overload before work holds memory or other scarce
-resources.
-
-Create one pool per database identity and process. Do not create a pool per
-request, task, repository object, or transaction. Key a pool by every property
-that changes routing or identity: endpoint, database, role, TLS identity, and
-session policy.
-
-Release a connection as soon as its database work ends. Do not hold a pooled
-connection while you wait for HTTP, a message broker, user input, a long CPU
-task, or a retry delay. Close the pool during graceful shutdown after admitted
-database work finishes.
-
-Read [references/pool-operations.md](references/pool-operations.md) when you
-set pool timeouts, lifetime, health checks, or startup behavior, or add pool
-metrics.
+Read `references/pool-operations.md` when you size a pool or set its timeouts,
+lifetime, health checks, startup behavior, or metrics.
 
 ## Choose isolation from the invariant
 
-Write the invariant and the conflicting schedule before you choose an
-isolation level. Use the lowest level that the database documents as sufficient
-for that schedule. Prefer a unique, foreign-key, exclusion, or check
-constraint, or an explicit lock, when it makes the invariant simpler and
-cheaper. Read
-[references/isolation-and-retry.md](references/isolation-and-retry.md) when
-you pick the control for an invariant.
-
-Do not use `SELECT` followed by `UPDATE` as concurrency control at read
-committed isolation unless a constraint, row lock, or compare-and-swap predicate
-closes the race, because two transactions can pass the same check at the same
-time.
-
-Acquire multiple locks in a stable order. Keep lock scopes short. A deadlock can
-still occur through another code path, so classify and handle the database's
-deadlock-victim error.
+Read `references/isolation-and-retry.md` when you choose an isolation level,
+a constraint, or a lock order for an invariant.
 
 ## Test the real schema
 
-Run database integration tests against the same engine and major version as
-production. An in-memory substitute does not prove SQL syntax, isolation,
-locking, collation, extensions, or migration behavior.
-
-Use an isolated database or schema per test worker. Do not rely only on
-transaction rollback for test isolation. It cannot model code that opens
-another connection, commits internally, or tests migrations. Read
-[references/schema-tests.md](references/schema-tests.md) when you set up test
-databases or the CI matrix.
-
-Do not mark a database test as flaky because it exposed an unbounded retry,
-missing lock, shared schema, or unsafe cleanup.
+Read `references/schema-tests.md` when you write a database integration test,
+set up test databases, or build the CI matrix.

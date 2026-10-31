@@ -1,8 +1,36 @@
 # Pool operations
 
-Pool controls, startup behavior, and pool metrics behind "Budget database
-connections" in `SKILL.md`. Engine and crate defaults are in
-`engine-and-driver-notes.md`.
+The deployment-wide connection budget, pool controls, startup behavior, and
+pool metrics behind "Budget database connections" in `SKILL.md`. Engine and
+crate defaults are in `engine-and-driver-notes.md`.
+
+## Budget database connections
+
+Calculate a deployment-wide budget before you set one process pool:
+
+```text
+usable connections = server maximum - admin reserve - migration reserve - other clients
+per-instance maximum = floor(usable connections / maximum live instances)
+```
+
+Include rolling deployment overlap, autoscaling maximum, workers, scheduled
+jobs, and local sidecars in `maximum live instances`. Keep an admin reserve so
+an operator can connect during saturation. Keep a migration reserve when the
+migration runner uses a separate connection.
+
+Use a bounded admission limit before pool acquisition when the pool has no
+bounded waiter queue. Reject overload before work holds memory or other scarce
+resources.
+
+Create one pool per database identity and process. Do not create a pool per
+request, task, repository object, or transaction. Key a pool by every property
+that changes routing or identity: endpoint, database, role, TLS identity, and
+session policy.
+
+Release a connection as soon as its database work ends. Do not hold a pooled
+connection while you wait for HTTP, a message broker, user input, a long CPU
+task, or a retry delay. Close the pool during graceful shutdown after admitted
+database work finishes.
 
 ## Pool controls
 
