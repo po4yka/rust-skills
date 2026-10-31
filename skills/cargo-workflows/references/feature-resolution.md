@@ -8,7 +8,7 @@ Contents:
 
 - Test supported feature products
 - Pitfall: feature unification enables features in `no_std` crates
-- Pitfall: an inherited dependency cannot turn default features off
+- Pitfall: an inherited dependency cannot turn default features off before Cargo 1.99
 
 ## Test supported feature products
 
@@ -74,16 +74,17 @@ features it needs. Move a dependency that only tests need to `[dev-dependencies]
 
 Reference: [Cargo feature resolver version 2](https://doc.rust-lang.org/cargo/reference/features.html#feature-resolver-version-2).
 
-## Pitfall: an inherited dependency cannot turn default features off
+## Pitfall: an inherited dependency cannot turn default features off before Cargo 1.99
 
-An inherited dependency (`foo = { workspace = true }`) accepts only `optional` and `features`
-beside `workspace`. `features` adds to the features of the `[workspace.dependencies]` entry. When
-the workspace entry keeps default features on, a member cannot turn them off:
+An inherited dependency (`foo = { workspace = true }`) accepts `optional` and `features` beside
+`workspace`. `features` adds to the features of the `[workspace.dependencies]` entry. When the
+workspace entry keeps default features on, `default-features = false` in the member behaves as
+follows:
 
-| Member edition | Result on Cargo 1.98.1 (measured) |
-|----------------|-----------------------------------|
-| 2024 | Hard error: `` `default-features = false` cannot override workspace's `default-features` `` |
-| 2021 and older | Warning: `` `default-features` is ignored for foo, since `default-features` was not specified for `workspace.dependencies.foo` ``. The default features stay on. |
+| Member edition | Cargo 1.98.1 (measured) | Cargo 1.99.1 (measured) |
+|----------------|-------------------------|-------------------------|
+| 2024 | Hard error: `` `default-features = false` cannot override workspace's `default-features` `` | The override works: the default features are off |
+| 2021 and older | Warning: `` `default-features` is ignored for foo, since `default-features` was not specified for `workspace.dependencies.foo` ``. The default features stay on. | Ignored with a warning. The default features stay on. |
 
 The 2021 case is the dangerous one. A target table such as
 `[target.'cfg(target_arch = "wasm32")'.dependencies] foo = { workspace = true, default-features = false }`
@@ -102,9 +103,9 @@ cargo tree --locked --target <triple> -e features -i <dep>
 Compare the output with the host resolution. A default feature that appears on a target where
 the member disabled it confirms the problem.
 
-Cargo 1.99, due 2026-10-01 and not stable as of Rust 1.98.1, lets an edition-2024 member override
-an inherited `default-features`. Do not rely on it until the pinned toolchain is 1.99 or later and
-the member is on edition 2024.
+Rely on the Cargo 1.99 member override only when the member is on edition 2024 and both its
+`rust-version` and the pinned toolchain are 1.99 or later. An older Cargo fails to load that
+manifest. In every other case, use the fix above; it works on every Cargo version.
 
 Reference: [inheriting a dependency from a workspace](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#inheriting-a-dependency-from-a-workspace);
 Cargo issue #11779, closed as expected behaviour.

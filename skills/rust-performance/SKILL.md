@@ -62,7 +62,7 @@ Before you claim a performance change, have evidence for each line that applies:
 | Linux stacks wrong, or no function names, under `cargo flamegraph` or `perf` | `rust-lld` without `--no-rosegment`, or a build without debug info | Profile the `profiling` profile; pass `-Wl,--no-rosegment` through `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` |
 | Stacks stop at the same depth in deep call chains | DWARF mode copies only 64000 bytes of stack per sample | Add `-Cforce-frame-pointers=yes` to `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`, rebuild, and run `cargo flamegraph --profile profiling --cmd "record -F 997 --call-graph fp" --bin myapp` |
 | Stacks cut off only in `--call-graph fp` mode | No frame pointers in your code | Add `-C force-frame-pointers=yes` through `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` or the config file, not `RUSTFLAGS` |
-| A flag from `.cargo/config.toml` has no effect | `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` is set and replaces it | Unset it, or move every flag to one config level |
+| A flag from `.cargo/config.toml` has no effect | `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` is set and replaces it, or a `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` value hides a `[build] rustflags` entry | Unset it, or move every flag to one config level; check the `rustc` line of `cargo build -v` |
 | Frames or reports show raw `_R...` names | The tool predates v0 mangling, the default since Rust 1.97 | Upgrade the tool, or pipe text output through `rustfilt`; see `rust-debugging` |
 | Symbolication shows `<unknown>` | Stripped library | Use the unstripped `.so` from `target/<triple>/<profile>/`, not the packaged copy |
 | `cargo flamegraph --locked` fails with `unexpected argument` | `cargo flamegraph` has no `--locked` | Run `cargo build --locked ...` first, then `cargo flamegraph` without it |
@@ -101,7 +101,7 @@ cargo build --locked --profile profiling --bin myapp
 cargo flamegraph --profile profiling --bin myapp -- --workers 4
 ```
 
-Set `--no-rosegment` only for the profiling build and the `cargo flamegraph` run, as above. In the repository config it also reaches shipped builds and puts read-only data in an executable segment. `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` joins the config-file `[target]` rustflags; a plain `RUSTFLAGS` replaces every config-file entry. Read [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) when a first `cargo flamegraph` run fails or shows broken stacks, when you profile a test, example, or benchmark, or when you interpret a flamegraph pattern. Width is the share of samples; the left-to-right order is alphabetical, not time.
+Set `--no-rosegment` only for the profiling build and the `cargo flamegraph` run, as above. In the repository config it also reaches shipped builds and puts read-only data in an executable segment. `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` joins the config-file `[target]` rustflags, and it makes Cargo drop every `[build] rustflags` entry without a warning, because Cargo reads `build.rustflags` only when no target rustflags match. Copy the `[build] rustflags` entries, such as `--cfg tokio_unstable` or `-C target-cpu`, into the same variable, or the profiled binary is not the one you ship. A plain `RUSTFLAGS` replaces every config-file entry. Read [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) when a first `cargo flamegraph` run fails or shows broken stacks, when you profile a test, example, or benchmark, or when you interpret a flamegraph pattern. Width is the share of samples; the left-to-right order is alphabetical, not time.
 
 Heap profiles:
 
@@ -153,7 +153,7 @@ Declare `harness = false` for every benchmark target in the crate manifest, othe
 
 ```bash
 cargo bench --locked --workspace --no-run      # compile every benchmark, measure nothing
-cargo test --locked --workspace --benches      # run each Criterion benchmark once (smoke test)
+cargo test --locked --workspace --benches      # run each Criterion and Gungraun >= 0.20 benchmark once (smoke test)
 
 # Run one suite, or one benchmark function
 cargo bench --locked -p my-crate --bench decode
@@ -185,7 +185,7 @@ The global `rayon` pool starts one thread per logical CPU, or `RAYON_NUM_THREADS
 
 ## 8. Profiles and LTO
 
-Cargo reads `[profile.*]` only from the workspace-root manifest. A table in a member crate or in a dependency is discarded, so a library crate cannot ship optimization settings to its consumers. Profile names other than `dev`, `release`, `test` and `bench` are your own convention.
+Cargo reads `[profile.*]` only from the workspace-root manifest. A table in a member crate or in a dependency is discarded, so a library crate cannot ship optimization settings to its consumers. Profile names other than `dev`, `release`, `test`, `bench`, and, since Cargo 1.99, `debug` are your own convention. As of Cargo 1.99.1 the built-in `debug` profile equals `dev`; Cargo 1.98 and earlier reject `[profile.debug]` as a reserved name.
 
 ```toml
 [profile.release]

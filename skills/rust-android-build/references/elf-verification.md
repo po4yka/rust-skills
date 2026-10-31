@@ -4,9 +4,9 @@ Read this file when you write or change the release gate script for the Rust `.s
 the size gate fails. It says what to inspect in each built library, in what order, how to audit a
 size regression, and how to wire the checks into CI.
 
-Contents: check order; file and ELF header; LOAD alignment; `DT_NEEDED`; exported symbols; build
-ID; size gate, size audit, and linker size flags; CI wiring; triage; common traps; the exported-symbol
-allowed set and allowlist diff.
+Contents: check order; file and ELF header; LOAD alignment; `DT_NEEDED` and prebuilt `GNU_RELRO`;
+exported symbols; build ID; size gate, size audit, and linker size flags; CI wiring; triage; common
+traps; the exported-symbol allowed set and allowlist diff.
 
 All commands use the NDK LLVM tools. Resolve them once:
 
@@ -88,6 +88,33 @@ Rebuild a misaligned prebuilt with a linker option in its build system, for exam
 `LDFLAGS=-Wl,-z,max-page-size=16384` or CMake
 `target_link_options(<target> PRIVATE "-Wl,-z,max-page-size=16384")`. A linker option in `CFLAGS`
 does not reach the final link.
+
+Also check the `GNU_RELRO` segment of each prebuilt `.so` on a 64-bit ABI. The Android 16 KB
+page-size guide (developer.android.com/guide/practices/page-sizes, read 2026-10-31) says that a
+RELRO end (`VirtAddr` plus `MemSiz`) that is not 16 KB aligned crashes the app with a
+segmentation fault. The rule applies when `GNU_RELRO` shares a `LOAD` segment with writable data
+such as `.data` or `.bss`. A RELRO that fills its own `LOAD` passes. A link with NDK r27 or older
+can produce the bad layout. Rebuild it with both `-Wl,-z,max-page-size=16384` and
+`-Wl,-z,common-page-size=16384`, or with NDK r28 or later. The LOAD check above does not catch
+this layout. Run this check once per prebuilt file:
+
+```bash
+so=<lib-dir>/arm64-v8a/libprebuilt.so
+read -r rstart rsize < <("$NDK_BIN/llvm-readelf" -lW "$so" | awk '$1 == "GNU_RELRO" {print $3, $6}') || true
+if [ -n "${rstart:-}" ]; then
+  rend=$(( rstart + rsize ))
+  while read -r lstart lsize; do
+    lend=$(( lstart + lsize ))
+    if (( lstart <= rstart && rend < lend && rend % 0x4000 != 0 )); then
+      printf 'FAIL %s: GNU_RELRO ends at 0x%x inside a LOAD that ends at 0x%x\n' "$so" "$rend" "$lend"
+      exit 1
+    fi
+  done < <("$NDK_BIN/llvm-readelf" -lW "$so" | awk '$1 == "LOAD" {print $3, $6}')
+fi
+```
+
+Columns 3 and 6 of a program-header line are `VirtAddr` and `MemSiz`. A file with no `GNU_RELRO`
+line passes.
 
 ## 5. Exported symbol allowlist
 
@@ -209,14 +236,17 @@ The allowed set depends on the boundary:
   `Java_*` methods.
 - `RegisterNatives`: `JNI_OnLoad`, and `JNI_OnUnload` when defined. Registered methods need no
   exported name.
-- UniFFI: the functions that the generated C header declares, plus the `UNIFFI_META_*` data
+- UniFFI: the `external fun` functions that the generated Kotlin file declares in `UniffiLib` and
+  `IntegrityCheckingUniffiLib` (bound with JNA `Native.register`), plus the `UNIFFI_META_*` data
   symbols that the UniFFI macros export, plus `JNI_OnLoad` when the crate defines one to seed
-  `JavaVM::singleton()` for callback threads. The header does not declare the `UNIFFI_META_*`
-  symbols, and uniffi-bindgen reads them from the unstripped library, so do not remove them.
+  `JavaVM::singleton()` for callback threads. Kotlin generation writes no C header (as of
+  uniffi-bindgen 0.32.2). A `<namespace>FFI.h` header exists only when the build also generates
+  Swift. The generated code does not declare the `UNIFFI_META_*` symbols, and uniffi-bindgen
+  reads them from the unstripped library, so do not remove them.
 
-Derive `expected-exports.txt` from the JNI registration table or the UniFFI header. For UniFFI, add
-the `UNIFFI_META_*` names from the dynamic symbols of the same build, and `JNI_OnLoad` when the
-crate defines it. Sort the file, and compare it with the defined dynamic symbols of each final
+Derive `expected-exports.txt` from the JNI registration table, or for UniFFI from the
+`external fun` names in those two Kotlin objects. Add the `UNIFFI_META_*` names from the dynamic
+symbols of the same build, and `JNI_OnLoad` when the crate defines it. Sort the file, and compare it with the defined dynamic symbols of each final
 `.so`:
 
 ```bash

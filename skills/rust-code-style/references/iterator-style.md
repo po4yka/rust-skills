@@ -15,18 +15,36 @@ Do not mix a side effect and a pure expression in the same statement. Either com
 value and return it, or declare a binding and then mutate it:
 
 ```rust
-// Good. Pure computation.
-let key = format!("{host}:{port}");
+use std::collections::HashMap;
 
-// Good. Mutation in its own statements.
-let mut map = HashMap::new();
-map.insert(key, value);
+fn build(host: &str, port: u16, value: u64) -> HashMap<String, u64> {
+    // Good. Pure computation.
+    let key = format!("{host}:{port}");
 
-// Bad. A side effect hides inside an expression.
-let result = map.entry(key).or_insert_with(|| {
-    log::info!("cache miss"); // hidden side effect
-    compute_value()
-});
+    // Good. Mutation in its own statements.
+    let mut map = HashMap::new();
+    map.insert(key, value);
+    map
+}
+```
+
+Do not hide a side effect inside an expression:
+
+```rust
+use std::collections::HashMap;
+
+fn compute_value() -> u64 {
+    42
+}
+
+fn lookup(map: &mut HashMap<String, u64>, key: String) -> u64 {
+    // Bad. A side effect hides inside an expression.
+    let result = map.entry(key).or_insert_with(|| {
+        log::info!("cache miss"); // hidden side effect
+        compute_value()
+    });
+    *result
+}
 ```
 
 ## Iterator combinators stay pure

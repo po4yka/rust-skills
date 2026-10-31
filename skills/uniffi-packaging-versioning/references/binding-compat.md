@@ -87,8 +87,10 @@ CI by accident and hides the drift it exists to catch.
    enforce one final newline. Editor and Git settings can change checked-in
    files; without this step the `--check` gate fails on invisible characters.
 5. Rename `<crate_name>FFI.modulemap` to `module.modulemap`, the name that you
-   stage into Apple slices. `uniffi-bindgen generate` always writes
-   `<ffi_module_filename>.modulemap`.
+   stage into Apple slices. `uniffi-bindgen generate` writes
+   `<ffi_module_filename>.modulemap` when `bindings.swift.generate_module_map`
+   is unset or `true` (as of UniFFI 0.32.2). With `false`, it writes no
+   modulemap, and this step and step 6 have no modulemap to handle.
 6. Compare or copy **every** generated file, not only the Kotlin and Swift
    sources. The C header and the modulemap are part of the contract.
 7. Remove the temporary directory on both the success and the failure path.

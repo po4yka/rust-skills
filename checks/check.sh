@@ -8,12 +8,13 @@
 # The one exception is the skills-CLI discovery gate, which needs npx: this
 # script says so out loud when it has to skip it, and CI always runs it.
 # `cargo check` type-checks without linking, so the Linux target works on any
-# host with no cross-linker installed.
+# host with no cross-linker installed. The one C build script in the harness
+# (alloca, from criterion) needs clang on a non-Linux host; see below.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="x86_64-unknown-linux-gnu"
-SKILLS_CLI_VERSION="1.7.0"
+SKILLS_CLI_VERSION="1.7.4"
 
 # gen.py, cargo, and analyze.py share examples/, manifest.json, check.json, and
 # check.err. Hold one checkout-scoped process lock across the complete sequence
@@ -50,6 +51,22 @@ python3 gen.py
 # toolchain compiled the examples, and a pin that silently failed looks
 # identical to one that worked.
 echo "==> toolchain: $(rustc --version), $(cargo --version)"
+
+# criterion 0.8 depends on alloca, whose build script compiles alloca.c for the
+# target even under `cargo check`. alloca.c includes only <stddef.h> and
+# <stdint.h>, which clang ships itself, so clang builds it for the Linux target
+# with no Linux sysroot, and `cargo check` never links the object. On a host
+# that is not x86_64 Linux, cc would otherwise look for x86_64-linux-gnu-gcc,
+# which a macOS host does not have. A CC_x86_64_unknown_linux_gnu that the
+# caller set wins.
+HOST="$(rustc -vV | sed -n 's/^host: //p')"
+if [ "$HOST" != "$TARGET" ] && [ -z "${CC_x86_64_unknown_linux_gnu:-}" ] &&
+    command -v clang > /dev/null 2>&1; then
+    export CC_x86_64_unknown_linux_gnu=clang
+    export CFLAGS_x86_64_unknown_linux_gnu="-ffreestanding"
+    export AR_x86_64_unknown_linux_gnu="$(command -v llvm-ar || command -v ar)"
+    echo "==> host $HOST: building target C sources with clang --target=$TARGET"
+fi
 
 echo "==> compile-checking examples (target: $TARGET)"
 # cargo exits non-zero on the illustrative fragments and on every compile_fail

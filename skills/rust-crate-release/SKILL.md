@@ -160,6 +160,9 @@ cargo +<msrv> test --locked -p <package> --all-targets
 cargo +<msrv> test --locked -p <package> --doc
 ```
 
+Run each `--doc` line only when the package has a library target. On a bin-only package it fails
+with `no library targets found in package`.
+
 When the package fetches from a third-party registry or over SSH git and the MSRV is below
 1.96.1, do not let the MSRV Cargo download. Older Cargo has credential-leak and libssh2 CVEs.
 Vendor with a toolchain at 1.96.1 or later, and add `--offline` to each MSRV command. The
@@ -260,7 +263,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked -p <package> --all-features --no-d
 ```
 
 Replace `--all-features` with the supported sets when features conflict. `--all-targets` does not
-run doctests, so keep the `--doc` line. The `rust-lints` skill, when it is installed, owns the
+run doctests, so keep the `--doc` line when the package has a library target. The `rust-lints` skill, when it is installed, owns the
 `cargo doc` gate. This per-package form leaves out `--document-private-items`: it checks the
 public docs that docs.rs renders.
 Run the advisory gate that the repository uses,

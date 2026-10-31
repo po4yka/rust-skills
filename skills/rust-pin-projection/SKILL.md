@@ -1,6 +1,6 @@
 ---
 name: rust-pin-projection
-description: Use when adding Pin to a signature, writing a self-referential struct or other address-sensitive type, or projecting a pinned reference into a field (pin projection, structural pinning) by hand or with pin-project or pin-project-lite. Also for choosing between std::pin::pin!, Box::pin, and Pin::new_unchecked; PhantomPinned and Unpin semantics; PinnedDrop; and pin errors such as "PhantomPinned cannot be unpinned", E0596 "cannot borrow data in dereference of Pin", or an E0308 that names unreachable_pin_macro_type_constraint. Not for polling, wakers, or cancel safety; use rust-async-internals.
+description: Use when adding Pin to a signature, writing a self-referential struct or other address-sensitive type, or projecting a pinned reference into a field (pin projection, structural pinning) by hand or with pin-project or pin-project-lite. Also for choosing between std::pin::pin!, Box::pin, and Pin::new_unchecked; PhantomPinned and Unpin semantics; PinnedDrop; and pin errors such as "PhantomPinned cannot be unpinned", E0596 "cannot borrow data in dereference of Pin", or an E0308 at a pin! call that says expected S, found &mut S (1.98 adds unreachable_pin_macro_type_constraint). Not for polling, wakers, or cancel safety; use rust-async-internals.
 license: BSD-3-Clause
 ---
 
@@ -21,7 +21,7 @@ Borrows model.
 | `PhantomPinned`, or a claim that a type "cannot move" | [Unpin does not mean movable](#unpin-does-not-mean-movable) |
 | `error[E0277]: PhantomPinned cannot be unpinned` | [Get a value pinned](#get-a-value-pinned) |
 | `error[E0515]` or `error[E0716]` at a `pin!` | [How long a pin! value lives](#how-long-a-pin-value-lives) |
-| `error[E0308]` that names `unreachable_pin_macro_type_constraint` | [pin! of a &mut reference](#pin-of-a-mut-reference) |
+| `error[E0308]` at `pin!(s)`: ``expected `S`, found `&mut S` `` (1.97 and 1.98 also name `unreachable_pin_macro_type_constraint`) | [pin! of a &mut reference](#pin-of-a-mut-reference) |
 | `error[E0382]: use of moved value` on a `Pin<&mut T>` | [Reborrow before each call](#reborrow-before-each-call) |
 | Miri: `allocN has been freed, so this pointer is dangling` | [Never pin a named stack binding](#never-pin-a-named-stack-binding) |
 | Miri: `tag does not exist in the borrow stack`, invalidated by a `mem::swap` | [Obligation 1](#obligation-1-structural-unpin) |
@@ -322,7 +322,8 @@ a `pin!` nested in a tuple, a struct literal, `Some(..)`, or a match arm.
 Since Rust 1.97, `pin!(r)` with `r: &mut T` always gives `Pin<&mut &mut T>`. Rustc 1.88 to 1.96
 sometimes coerced it to `Pin<&mut T>` and so pinned a value that the caller could still move. A call
 such as `takes(pin!(s))` with `s: &mut S` now fails with ``error[E0308]: expected `S`, found
-`&mut S` ``, and the help line names `unreachable_pin_macro_type_constraint`.
+`&mut S` ``. On 1.97 and 1.98 a help line also names `unreachable_pin_macro_type_constraint`;
+1.99 reworked the macro and prints only the mismatch and a note that points into `core::pin`.
 
 - Do not fix it with `unsafe { Pin::new_unchecked(s) }`: the caller can still move `*s` after the
   call returns. Take `Pin<&mut S>` so that the owner pins the value, or use `Pin::new(s)` when the

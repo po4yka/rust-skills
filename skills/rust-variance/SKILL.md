@@ -42,7 +42,10 @@ fn con<'a, 'b: 'a>(x: C<&'a u8>) -> C<&'b u8> { x }   // compiles => contravaria
 fn cov_lt<'a, 'b: 'a>(x: S<'b>) -> S<'a> { x }        // compiles => covariant in 'a
 ```
 
-Run one command. Pass a real output path; `-o /dev/null` fails for an unrelated reason:
+Run one command. Pass a real output path. Never pass `-o /dev/null`: rustc writes a temporary
+file and renames it onto the output path. As root, which is common in containers and CI, the
+rename replaces the `/dev/null` device with a regular file, and the command still exits 0
+(rustc 1.98.1, Linux). As a normal user, the rename fails:
 
 ```bash
 rustc --edition 2024 --crate-type lib --emit=metadata probe.rs -o probe.rmeta
@@ -247,7 +250,7 @@ satisfied only by a callable whose `Output` **is** `&'a str`. `&'static str` is 
 A named function has its own zero-sized item type, and the `Fn` impl on that type fixes
 `Output = &'static str`. So this fails:
 
-```rust,compile_fail
+```rust,compile_fail,E0597
 fn service_name() -> &'static str { "Service" }
 
 fn main() {

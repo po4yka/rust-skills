@@ -10,7 +10,7 @@
 .zed/
 *.swp
 
-# Python bytecode from the harness scripts
+# Python bytecode from scripts/ and checks/
 __pycache__/
 
 # Evaluation results: they need a key, so they are recorded in research/, not here

@@ -54,8 +54,8 @@ defect reached production.
 | Lint | Defect class it catches |
 |------|-------------------------|
 | `mem_forget` = deny, plus `std::mem::forget` in `disallowed-methods` | Leaking `Drop` on a resource-bearing type: an open file, a native handle, a GPU surface, a lock guard. The resource is never released and nothing reports it. |
-| `let_underscore_drop` = deny | `let _ = guard;` drops an RAII guard immediately instead of holding it. The critical section then has no lock, and the code compiles cleanly. |
-| `dropping_references` (rustc, warn by default) = deny | `drop(&guard)` instead of `drop(guard)`. `drop<T>(_: T)` is generic and `&G` is a valid `T`, so the call type-checks and does nothing; the guard lives to the end of its scope. Message: `calls to std::mem::drop with a reference instead of an owned value does nothing`. Verified on rustc 1.98.1: the compiler's own `help` suggests `let _ = &g;`, which is the same no-op with the warning gone. Neither form releases the guard. Only `drop(g)` does. Deny this lint together with `let_underscore_drop`; between them they close both ways an RAII guard silently stops guarding. |
+| `let_underscore_drop` = deny | `let _ = make_guard();` drops the new guard at the end of the statement, so the critical section that follows has no lock, and the code compiles cleanly. The lint also fires on `let _ = guard;` for a bound guard. That statement does not move or drop the guard: it lives to the end of its scope, so it does not release a lock early either. Only `drop(guard)` releases it. Verified on rustc 1.98.1. |
+| `dropping_references` (rustc, warn by default) = deny | `drop(&guard)` instead of `drop(guard)`. `drop<T>(_: T)` is generic and `&G` is a valid `T`, so the call type-checks and does nothing; the guard lives to the end of its scope. Message: `calls to std::mem::drop with a reference instead of an owned value does nothing`. Verified on rustc 1.98.1: the compiler's own `help` suggests `let _ = &g;`, which is the same no-op with the warning gone. Neither form releases the guard. Only `drop(g)` does. Deny this lint together with `let_underscore_drop`. `let_underscore_drop` catches a guard that drops too early, and this lint catches a release call that releases nothing. |
 | `undocumented_unsafe_blocks` | An `unsafe` block with no `// SAFETY:` comment. The invariant was never stated, so no reviewer can check it and no later author can preserve it. |
 | `multiple_unsafe_ops_per_block` | One `// SAFETY:` comment covering several unsafe operations. The comment then justifies at most one of them. |
 | `missing_safety_doc` | A `pub unsafe fn` with no `# Safety` rustdoc section. The caller has no stated contract to satisfy. |
@@ -71,7 +71,7 @@ defect reached production.
 | `missing_asserts_for_indexing` (restriction) | Index sites where one `assert!` would let the compiler drop the bounds checks. It fires on `s[0] + s[1] + s[2]` with no preceding `assert!(s.len() > 2)`. It is the only automated way to find these sites. Restriction, so no default level and no config in this skill turns it on; run it as a one-off audit: `cargo clippy --locked --workspace -- -W clippy::missing_asserts_for_indexing`. See `rust-hot-path`. |
 | `ptr_arg` (style, not perf) | A `&Vec<T>` or `&mut Vec<T>` parameter where `&[T]` or `&mut [T]` works. It forces every caller to own a `Vec`. It is warn by default, so most projects see it, but a config that enables only `clippy::perf` misses it. The win is small and it is per call, not per iteration: measured on rustc 1.97.0 aarch64 at `-C opt-level=3`, for a body of `v.iter().sum()`, the `&Vec<u32>` version starts with two extra loads (the pointer and the length out of the `Vec` header) that the `&[u32]` version does not need, because a slice arrives in two registers. Both bodies came to 60 instructions. The suppression matrix below says when the owned reference is the right answer. |
 | `exhaustive_enums`, `exhaustive_structs` | A public enum or struct without `#[non_exhaustive]`. Adding a field or a variant later is then a breaking change for every downstream match or literal. |
-| `disallowed_methods` on `std::ptr::read` | A misaligned read from a byte buffer that came from I/O or FFI. `ptr::read` requires an aligned pointer, so a misaligned read is undefined behavior on every target, and it faults in practice on aarch64. Use `read_unaligned`. The entry does not catch the `p.read()` method on `*const T` or `*mut T` (clippy 0.1.98); `cast_ptr_alignment` catches the cast that makes the pointer misaligned. |
+| `disallowed_methods` on `std::ptr::read` | A misaligned read from a byte buffer that came from I/O or FFI. `ptr::read` requires an aligned pointer, so a misaligned read is undefined behavior on every target. The optimizer can miscompile it on any target. It can fault on a strict-alignment target. aarch64 Linux and x86_64 permit a misaligned plain load (but not a misaligned atomic or exclusive access), so a passing test there does not prove the code correct. Use `read_unaligned`. The entry does not catch the `p.read()` method on `*const T` or `*mut T` (clippy 0.1.98); `cast_ptr_alignment` catches the cast that makes the pointer misaligned. |
 | `disallowed_methods` on `std::env::set_var` | A mutation of the process environment after threads have started. It is not thread-safe. |
 | `arithmetic_side_effects`, `integer_division`, `modulo_arithmetic` | Unchecked integer arithmetic: overflow, truncation, divide-by-zero. A release build wraps silently; a debug build panics. Both outcomes are wrong. `arithmetic_side_effects` fires on integer operators only, so it does not cover float math. |
 | `indexing_slicing` | `buf[i]` on data whose length came from outside the program. Use `.get()` and handle the `None`. |
@@ -165,13 +165,14 @@ with ASan on the host or HWASan on a device. See `rust-unsafe` and `rust-sanitiz
 Add these only when the workspace runs an async runtime. A synchronous,
 compute-bound workspace - even one with data parallelism - gains nothing from
 them, and carrying dead lint config trains readers to ignore the config.
+Merge these keys into the existing `[workspace.lints.clippy]` table. A second
+table header, or a key the table already has, is a TOML parse error. The strict
+template in [workspace-lints.md](workspace-lints.md) already sets `large_futures`.
 
 ```toml
-[workspace.lints.clippy]
 await_holding_lock         = "deny"  # a blocking guard held across .await deadlocks the executor
 await_holding_refcell_ref  = "deny"  # a RefCell borrow held across .await panics on re-entry
 await_holding_invalid_type = "warn"
-large_futures              = "warn"
 ```
 
 Do not ban `std::sync::Mutex` or `RwLock` with `disallowed-types`.

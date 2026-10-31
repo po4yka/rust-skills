@@ -293,7 +293,7 @@ Consequences to hold:
 because it also blocks a move to a worker thread. Write `()` in the marker, not your own `T`: a
 marker that names `T` also changes variance. Read
 [references/phantomdata-markers.md](references/phantomdata-markers.md) when you design a marker:
-it has the marker table with variance, and the marker that removes only `Send`.
+it has the auto-trait marker table, and the marker that removes only `Send`.
 
 ## Auto traits leak out of `impl Trait` and `async fn`
 

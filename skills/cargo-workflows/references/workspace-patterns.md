@@ -66,7 +66,8 @@ flate2     = { version = "1", default-features = false, features = ["rust_backen
 libm       = "0.2.16"     # Bit-identical transcendentals
 ```
 
-Members inherit the entry and can add `features` and `optional`. Nothing else:
+Members inherit the entry and can add `features` and `optional`. Since Cargo 1.99, an edition-2024
+member can also set `default-features = false`:
 
 ```toml
 [dependencies]
@@ -75,9 +76,9 @@ my-domain.workspace = true
 tokio = { workspace = true, features = ["rt", "net"] }
 ```
 
-A member cannot turn off a default feature that the workspace entry keeps on. On Cargo 1.98 an
-edition-2024 member gets a hard error, and an older-edition member gets a warning and keeps the
-default features. The mechanism and the fix are in
+Before Cargo 1.99, a member cannot turn off a default feature that the workspace entry keeps on.
+On Cargo 1.98 an edition-2024 member gets a hard error. On every Cargo version an older-edition
+member gets a warning and keeps the default features. The mechanism and the fix are in
 [feature-resolution.md](feature-resolution.md).
 
 ## When to pin exactly

@@ -122,7 +122,8 @@ components = ["rustfmt", "clippy"]
 ```
 
 - Pin an exact release. Do not pin 1.98.0: it can emit a trait-object vtable with a null function
-  pointer, and 1.98.1 fixes it.
+  pointer, and 1.98.1 fixes it. Do not pin 1.99.0: it miscompiles FFI `bool` return values on
+  x86_64 (rust#163911), and 1.99.1 fixes it.
 - In CI, run `rustup toolchain install` with no arguments before the first cargo command. It
   installs the toolchain that `rust-toolchain.toml` names (rustup 1.28+), so the install is a
   logged step and not an implicit side effect. rustup 1.29.1 warns about implicit installs.
@@ -244,10 +245,8 @@ cargo rustc --locked --profile <profile> --target aarch64-apple-ios \
   `build.build-dir` (Cargo 1.91+) moves them, and their layout is not stable.
 - Put `[profile.*]` sections only in the root manifest. Cargo ignores a member's profiles and
   warns `profiles for the non root package will be ignored`.
-- `panic = "abort"` turns every `catch_unwind` guard into dead code. Keep `panic = "unwind"` on
-  a profile that builds an FFI artifact when an entry point must return an error to the host
-  instead of aborting the process. Since Rust 1.81, a panic that reaches an `extern "C"` or
-  `extern "system"` boundary aborts. The guard pattern lives in the `rust-panic-safety` skill.
+- The `rust-panic-safety` skill, when it is installed, owns the `panic` setting of a profile
+  that builds an FFI artifact, and the guard pattern.
 - Keep one FFI crate, a thin translation layer over the pure-logic crates. The `rust-jni`,
   `uniffi-boundary`, `uniffi-packaging-versioning`, and `ffi-error-progress-cancel` skills own the
   entry points and the boundary design.

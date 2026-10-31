@@ -162,11 +162,8 @@ Enable `clippy::large_stack_arrays` (pedantic) as the mechanical check. Its defa
 `array-size-threshold` is 16384 bytes, the same limit. Measured on clippy 1.98.1, it flags
 `Box::new([0u8; 20000])` with `allocating a local array larger than 16384 bytes`.
 
-`Vec::into_boxed_slice` is not free. It calls `shrink_to_fit` whenever capacity exceeds length,
-which issues a `realloc` that may move the buffer. Measured with a `Vec<u32>` at length 3:
-capacity 3 and capacity 4 keep the data pointer; capacity 8 and capacity 1000 move it. State the
-cost as "may cost a full copy when capacity is meaningfully above length", not as "always
-copies". The reverse direction has no such cost: `<[T]>::into_vec` never reallocates. When the
+`Vec::into_boxed_slice` is not free when capacity exceeds length. The `rust-hot-path` skill, when
+it is installed, owns the measured pointer and capacity table and its allocator caveat. When the
 length is exact, build the boxed slice straight from the iterator, which allocates once:
 
 ```rust

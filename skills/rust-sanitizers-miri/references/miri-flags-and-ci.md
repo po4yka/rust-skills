@@ -2,7 +2,7 @@
 
 The full MIRIFLAGS table and a GitHub Actions example for the jobs in
 `SKILL.md`. The job commands and the flag hazards are in `SKILL.md`, section 9.
-The CI rules that protect secrets are in `SKILL.md`, section 12.
+The CI rules that protect secrets are in `SKILL.md`, section 5 ("Nightly and cache rules").
 
 ## MIRIFLAGS reference
 

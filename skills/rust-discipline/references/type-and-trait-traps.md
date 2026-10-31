@@ -32,10 +32,14 @@ Contents:
 
 **Severity: WARNING on hot paths**
 
-`fn(T) -> T` copies the value in and out. Above the target's inline-copy boundary, each move is a
-`memcpy` call that `#[inline]` and `panic = "abort"` do not remove, and rustc does not rewrite it
-into `&mut T` mutation. The `rust-hot-path` skill, when it is installed, has the boundary per
-target and the probe that measures it.
+`fn(T) -> T` copies the value in and out at every call that is not inlined. Above the target's
+inline-copy boundary, each such move is a `memcpy` call. When the optimizer inlines the callee, it
+can remove the copies, so the cost depends on an inlining decision that you do not control and
+that changes between builds. Measured on x86_64-unknown-linux-gnu with rustc 1.98.1 `-O`, a loop
+of `s = transform(s)` on the 1032-byte struct below has no `memcpy` inside the loop when
+`transform` is inlined, and two `memcpy` calls per iteration under `#[inline(never)]`. Measure
+the shipped build; do not assume either result. The `rust-hot-path` skill, when it is installed,
+has the boundary per target and the probe that measures it.
 
 ```rust
 struct BigState {
@@ -43,7 +47,7 @@ struct BigState {
     counter: u64,
 }
 
-// BAD on a hot path: forces a memcpy in and a memcpy out
+// BAD on a hot path: a memcpy in and a memcpy out whenever the call is not inlined
 fn transform(mut state: BigState) -> BigState {
     state.counter += 1;
     state

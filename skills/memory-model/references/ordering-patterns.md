@@ -146,11 +146,11 @@ fn main() {
   [platform-memory-models.md](platform-memory-models.md#platform-memory-models)
   when you choose between the weak and strong form on an LL/SC target or in a
   hot loop.
-- **`fetch_update` is being renamed.** Use `update` (the closure always returns
-  a value) or `try_update` (the closure returns `Option`). Both are stable since
-  1.95. `try_update` has the same arguments and result as `fetch_update`, so
-  rename the call. The std source marks `fetch_update` deprecated since 1.99.0:
-  on 1.98 only the allow-by-default `deprecated_in_future` lint reports it, and
-  Rust 1.99 (due 2026-10-01) makes it a `deprecated` warning that fails a
-  `-D warnings` gate. Keep `fetch_update` only while `rust-version` is below
-  1.95.
+- **`fetch_update` is deprecated since Rust 1.99.** Use `update` (the closure
+  always returns a value) or `try_update` (the closure returns `Option`). Both
+  are stable since 1.95. `try_update` has the same arguments and result as
+  `fetch_update`, so rename the call. On 1.98 only the allow-by-default
+  `deprecated_in_future` lint reports it. On 1.99.1 every call emits a
+  `deprecated` warning ("renamed to `try_update` for consistency"), which fails
+  a `-D warnings` gate. Keep `fetch_update` only while `rust-version` is below
+  1.95, and put `#[allow(deprecated)]` with a reason on that call.

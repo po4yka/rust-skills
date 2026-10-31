@@ -147,10 +147,10 @@ returns. Android never destroys the VM.
 
 ```rust
 let vm = &JNI_CACHE.get().expect("JNI_OnLoad must populate JNI_CACHE").vm;
-let _guard = vm.attach_current_thread()?;   // RAII guard
-let env = _guard.deref_mut();               // &mut JNIEnv
+let mut guard = vm.attach_current_thread()?;   // RAII guard, must be `mut`
+let env = &mut *guard;                         // &mut JNIEnv through DerefMut
 env.call_method(&listener, "onUpdate", "(I)V", &[update.into()])?;
-// Drop of `_guard` calls DetachCurrentThread.
+// Drop of `guard` calls DetachCurrentThread.
 ```
 
 | Mistake | Result |
@@ -407,10 +407,10 @@ does not compile. The danger is the "fix" that makes it compile:
 
 ```rust
 // FORBIDDEN: leaks the env and lies about its lifetime.
-let env_static: &'static mut JNIEnv = Box::leak(Box::new(env));
+let env_static: &'static mut Env<'static> = Box::leak(Box::new(env));
 
 // FORBIDDEN: same lie, no allocation.
-let env_static: &'static mut JNIEnv = unsafe { std::mem::transmute(env) };
+let env_static: &'static mut Env<'static> = unsafe { std::mem::transmute(env) };
 
 // FORBIDDEN: captures the env in a task that another thread may run.
 tokio::spawn(async move { env.call_method(/* ... */); });

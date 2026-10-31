@@ -50,7 +50,7 @@ The snippets use 0.22 unless the text says 0.21. Read
 | Native abort with no exception, and the guard never runs | The `cdylib` profile sets `panic = "abort"` | Accept the abort, or build that profile with `panic = "unwind"` |
 | Native crash with no Rust message in logcat | No logger or panic hook in the outermost Rust bootstrap | Initialize logging and the redacted hook there; see the `rust-panic-safety` skill |
 | Crash in a callback long after the call returned | A local reference or an env was stored between calls | Store a global reference and a `JavaVM` clone |
-| `ClassNotFoundException` only on a Rust-created thread | `FindClass` used the system loader | Use the `JNI_OnLoad` class cache, or a `Class` or `ClassLoader` from managed code |
+| `ClassNotFoundException` only on a Rust-created thread, or on `jni` 0.22 `Err(Error::NoClassDefFound { .. })` from `Env::find_class` (the crate clears the exception) | `FindClass` used the system loader | Use the `JNI_OnLoad` class cache, or a `Class` or `ClassLoader` from managed code |
 | Corruption after passing a direct `ByteBuffer` | The Java buffer was collected while Rust held the slice | Hold a global reference to the buffer |
 | `improper_ctypes_definitions` on `JNI_OnLoad` | `JavaVM` taken by value on 0.22 | Take `*mut jni::sys::JavaVM` and call `JavaVM::from_raw` |
 
@@ -130,7 +130,8 @@ extern "system" fn JNI_OnLoad(raw_vm: *mut jni::sys::JavaVM, _reserved: *mut c_v
             log::error!("JNI_OnLoad failed: {error}");
             JNI_ERR
         }
-        // A payload's Drop can panic again. JNI_OnLoad runs once: leak it, never mem::forget.
+        // A payload's Drop can panic again. JNI_OnLoad runs once, so leak it. Use ManuallyDrop:
+        // the `rust-lints` floor denies mem::forget (`mem_forget`). That is policy, not a hazard.
         Err(payload) => {
             let _leaked = std::mem::ManuallyDrop::new(payload);
             JNI_ERR
@@ -163,7 +164,8 @@ write a name-based export or debug a `No implementation found` error.
 
 - A hand-written export uses `#[unsafe(no_mangle)]` (required in edition 2024,
   accepted since Rust 1.82) and `extern "system"`. `#![forbid(unsafe_code)]`
-  rejects that attribute ("usage of the unsafe `#[no_mangle]` attribute") but
+  rejects that attribute ("usage of the unsafe `no_mangle` attribute" on 1.99,
+  `#[no_mangle]` in the backticks on 1.98) but
   passes the exports that `native_method!` or `#[jni_mangle]` generate, so the
   lint does not prove that a crate has no exports.
 - Leave `pub` off an export that takes a raw pointer, such as `JNI_OnLoad`.
@@ -197,8 +199,11 @@ carry input data or internal detail, set the `error_policy` property of
 `native_method!`, or pass a fixed-message policy (the `rust-panic-safety` skill
 has one) to `resolve`.
 
-Convert a `JString` inside the env scope. Return `std::ptr::null_mut()` for a
-`null` `String?`, not an empty string. A `ByteArray` parameter copies; see
+Convert a `JString` inside the env scope. Return Java `null` for a `null`
+`String?`, not an empty string: `Ok(JString::null())` from a `native_method!` or
+`EnvUnowned` export that returns `Result<JString>`, and `std::ptr::null_mut()`
+only from an export that returns a raw `jstring`. `Ok(std::ptr::null_mut())` in a
+`Result<JString>` is E0308. A `ByteArray` parameter copies; see
 [Hot-path data](#hot-path-data). Read
 [references/types-and-exceptions.md](references/types-and-exceptions.md) when
 you map any other Kotlin type or throw a specific exception class.

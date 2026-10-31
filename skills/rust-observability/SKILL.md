@@ -46,14 +46,19 @@ emission.
 ```bash
 cargo test --locked -p <observability-crate>
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo tree -p <library-crate> -e normal -i tracing-subscriber  # expect "nothing to print"
+cargo tree --locked -p <library-crate> -e normal --target all --prefix none > deps.txt
+if grep -q '^tracing-subscriber ' deps.txt; then echo 'FAIL: library links tracing-subscriber'; exit 1; fi
 cargo tree -e features -i tracing --workspace  # no library under a max_level_* feature
 cargo tree -e features -i log --workspace      # the same for log
 ```
 
 Run the `tracing-subscriber` check once for each engine crate and inner FFI
-crate. When no workspace crate uses `tracing-subscriber`, it exits 101 with
-"did not match any packages". That is also a pass.
+crate. Gate on the `grep`, not on the exit status of an inverted
+`cargo tree -i tracing-subscriber`. That command exits 101 with "did not match
+any packages" when the library is clean, and it also exits 0 when it prints the
+dependency path of a real failure. Do not write `! grep`: `set -e` ignores a
+negated command. The `cargo tree` line above fails only when
+Cargo itself fails, so a wrong `-p` name stops the gate instead of passing it.
 
 Run the hot-path search on each crate that does per-item or per-byte work. It
 finds rule 5 candidates for review. The pattern leaves out `error!` and `warn!`,

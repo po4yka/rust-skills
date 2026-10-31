@@ -66,7 +66,7 @@ publish. Local builds, signing for a local smoke, and inspection need none.
 | No build-ID note in the `.so` | `--build-id=sha1` absent for that target | `llvm-readelf -n` and the config tables |
 | AGP cannot extract native debug metadata | Cargo stripped the input | `strip = "none"` in the selected profile |
 | `.so` grew after a dependency change | New transitive crate, or lost LTO | The selected profile, then `llvm-nm --size-sort` on the unstripped `.so` or `cargo bloat --crates` on a `cdylib` package |
-| A panic aborts instead of raising a Java exception | `panic = "abort"`, or the nightly `panic = "immediate-abort"`, in the selected profile | Inspect the profile that the build selected |
+| A panic aborts instead of raising a Java exception | `panic = "abort"`, or the nightly `panic = "immediate-abort"`, in the selected profile | Inspect the profile that the build selected; the `rust-panic-safety` skill owns the policy |
 | Parallel ABI builds run one after another | A shared `CARGO_TARGET_DIR` | One target directory per ABI |
 
 ## Link flags in `.cargo/config.toml`
@@ -208,11 +208,9 @@ panic = "unwind"
 debug = "line-tables-only"  # no debugger variables; use true for an LLDB session
 ```
 
-- Keep `panic = "unwind"` in every Android profile when the boundary contract turns a panic into a
-  Java exception or an error value. With `panic = "abort"` or the nightly
-  `panic = "immediate-abort"`, `catch_unwind` cannot run, and a panic kills the app process. Use an
-  aborting profile only when the production contract accepts process termination, and do not call
-  it panic containment. The `rust-panic-safety` skill owns the boundary policy.
+- With `panic = "abort"` or the nightly `panic = "immediate-abort"`, a panic kills the app process
+  instead of raising a Java exception. The `rust-panic-safety` skill, when it is installed, owns
+  the choice between unwind and abort and the boundary policy.
 - Keep `strip = "none"`. The packaging step strips the shipped copy and extracts symbols from the
   unstripped input. A Cargo-stripped input destroys the symbol file.
 - Measure `opt-level` (`"z"`, `"s"`, `3`), `lto`, and `codegen-units` changes on the real `.so`
