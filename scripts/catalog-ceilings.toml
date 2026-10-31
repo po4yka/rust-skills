@@ -55,7 +55,7 @@ rust-test-tools = 7384
 rust-type-erasure = 7392
 rust-unsafe = 5768
 rust-variance = 7825
-rust-wasm = 7846
+rust-wasm = 5679
 uniffi-boundary = 7207
 uniffi-packaging-versioning = 7166
 
