@@ -1,0 +1,34 @@
+# Preludes for the rust-type-erasure skill. Format: checks/README.md.
+
+# The trait pair and the store come from the rung-three block. The section names
+# no items for `Extractor`, and the block elides the impl body with `/* ... */`,
+# so the stub trait is empty: the prelude checks the impl header and its bound.
+[[block]]
+file = "rust-type-erasure/SKILL.md"
+section = "The helper bound is `for<'x>`, not `'static`"
+block = 1
+items = '''
+trait Owner: 'static { type Element<'a>: Element<'a, Owner = Self>; }
+trait Element<'a>: 'a { type Owner: Owner<Element<'a> = Self>; }
+trait Extractor {}
+struct State<T>(T);
+'''
+
+[[block]]
+file = "rust-type-erasure/SKILL.md"
+section = "Where it breaks: an extractor that detaches the lifetime"
+block = 1
+items = '''
+use std::any::TypeId;
+use std::cell::UnsafeCell;
+use std::collections::HashMap;
+use std::marker::PhantomData;
+
+trait AnyDrop {}
+impl<T> AnyDrop for T {}
+
+struct AnyMap<'a> {
+    invariant: PhantomData<UnsafeCell<&'a mut ()>>,
+    table: HashMap<TypeId, Box<dyn AnyDrop + 'a>>,
+}
+'''

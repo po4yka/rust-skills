@@ -1,0 +1,28 @@
+# Preludes for the rust-code-style skill. Format: checks/README.md.
+
+# The two workspace crates stand in as crate-root modules: a path such as
+# `app_protocol::FrameKind` resolves to either one in edition 2018 and later.
+[[block]]
+file = "rust-code-style/SKILL.md"
+section = "Import style"
+block = 1
+items = '''
+mod app_protocol { pub enum FrameKind {} }
+mod app_telemetry { pub struct SpanId(pub u64); }
+mod types { pub struct SharedState; }
+mod util { pub fn format_duration(d: std::time::Duration) -> String { todo!() } }
+'''
+
+[[block]]
+file = "rust-code-style/references/iterator-style.md"
+section = "Iterator combinators stay pure"
+block = 1
+items = '''
+struct Item { active: bool, name: String }
+struct Registry;
+impl Registry { fn register(&mut self, name: &str) { todo!() } }
+'''
+setup = '''
+let items: Vec<Item> = todo!();
+let mut registry: Registry = todo!();
+'''

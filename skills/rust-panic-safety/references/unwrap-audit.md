@@ -116,7 +116,7 @@ input. You trade a small cost for a caught bug.
 no guard catches an abort.
 
 ```rust
-let mut buf = Vec::new();
+let mut buf: Vec<u8> = Vec::new();
 buf.try_reserve(len).map_err(|_| Error::TooLarge)?;
 ```
 

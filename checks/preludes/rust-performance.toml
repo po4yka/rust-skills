@@ -1,0 +1,45 @@
+# Preludes for the rust-performance skill. Format: checks/README.md.
+
+[[block]]
+file = "rust-performance/references/benchmarking.md"
+section = "Throughput"
+block = 1
+items = '''
+fn decode(input: &[u8]) -> Vec<u8> { todo!() }
+'''
+
+[[block]]
+file = "rust-performance/references/benchmarking.md"
+section = "Expensive setup"
+block = 1
+items = '''
+use criterion::{BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
+use std::time::Duration;
+
+struct Scene;
+fn load_fixture_scene() -> Scene { todo!() }
+fn render_to_buffer(scene: &Scene, px: u32) -> Vec<u8> { todo!() }
+'''
+
+[[block]]
+file = "rust-performance/references/benchmarking.md"
+section = "4. Statistical configuration and the verdict"
+block = 1
+items = '''
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::time::Duration;
+
+fn bench_throughput(c: &mut Criterion) { todo!() }
+'''
+
+[[block]]
+file = "rust-performance/references/benchmarking.md"
+section = "5. Wall time, CPU time, and async benchmarks"
+block = 1
+items = '''
+use criterion::Criterion;
+use std::hint::black_box;
+
+async fn async_operation(input: u64) -> u64 { todo!() }
+'''

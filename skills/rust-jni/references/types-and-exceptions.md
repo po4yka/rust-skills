@@ -40,13 +40,20 @@ match env.throw_new(class.borrowed(), message.borrowed()) {
     Ok(()) | Err(jni::errors::Error::JavaException) => {}
     Err(other) => log::error!("failed to throw IOException: {other}"),
 }
+```
 
-// jni 0.21: both arguments accept &str.
+On `jni` 0.21, both arguments accept `&str`. The 0.22 `throw_new` rejects this call, because
+`&str` and `String` do not implement `AsRef<JNIStr>`:
+
+```rust
+let err = std::io::Error::other("the write failed");
+
+// jni 0.21 only.
 let _ = env.throw_new("java/io/IOException", err.to_string());
 ```
 
 On 0.22, `throw_new` returns `Err(Error::JavaException)` after it throws. The
-match above accepts that value, because the pending exception is the intended
+match in the 0.22 block accepts that value, because the pending exception is the intended
 result. Return a default value in the same arm, and make no further JNI call.
 The JVM sees the exception when the native function returns. The pending-exception
 rules for other calls are in [../SKILL.md](../SKILL.md). To inspect a pending

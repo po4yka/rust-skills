@@ -28,13 +28,17 @@ compact_str = "0.10"
 # criterion 0.8 depends on `alloca` on unix and windows, whose build script
 # compiles one C file for the target. check.sh points that build at clang on a
 # host that is not x86_64 Linux; see the comment there.
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 crossbeam-queue = "0.3"
+dhat = "0.3"
 futures = "0.3"
 hyper-util = { version = "0.1", features = ["full"] }
 # 7.0.2 drops bitmaps and moves to imbl-sized-chunks 0.2 (RUSTSEC-2026-0292).
 imbl = "7.0.2"
 jni = "0.22"
+# The jni skill also documents the 0.21 API. A prelude brings it into scope for one
+# block with `use jni021 as jni;`, which shadows 0.22 there.
+jni021 = { package = "jni", version = "0.21" }
 libc = "0.2"
 # Type-check `fuzz_target!`, but do not build or link the C++ fuzzing runtime.
 libfuzzer-sys = { version = "0.4", default-features = false }
@@ -56,6 +60,9 @@ reqwest = { version = "0.13", default-features = false, features = ["json"] }
 rpds = "1.2"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
+# Postgres driver only, no TLS and no query macros: the examples use the
+# runtime API (Connection::begin, Transaction::commit, query builders).
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio"] }
 serde_json = "1"
 smallvec = "1"
 syn = { version = "3", features = ["full"] }

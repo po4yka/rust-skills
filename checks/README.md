@@ -81,8 +81,11 @@ method that the crate does not have — all look like they need a tag and do not
 `analyze.py` sorts every failing example:
 
 - **fragment** — every error is a name that the surrounding prose defines.
-  A missing harness dependency or disabled dependency feature is a suspect,
-  because it can hide all later type errors in the block.
+  rustc gives such a name an error type and checks nothing that touches it, so
+  a fragment is only partly checked. A fragment fails the gate unless
+  `fragments.txt` lists it; see [Preludes](#preludes). A missing harness
+  dependency or disabled dependency feature is a suspect, because it can hide
+  all later type errors in the block.
 - **artifact** — the extraction caused it: a `&self` method body lifted into a
   free function, a doc comment with nothing after it.
 - **low** — only "type annotations needed", which the real context supplies.
@@ -90,7 +93,7 @@ method that the crate does not have — all look like they need a tag and do not
 
 ## The gates
 
-Four checks run before the buckets, and each one fails the build:
+These checks run on the buckets, and each one fails the build:
 
 1. **Coverage.** Every example `gen.py` wrote has to appear in cargo's output.
    A block that silently stopped being compiled is a coverage drop, and a
@@ -100,7 +103,8 @@ Four checks run before the buckets, and each one fails the build:
 3. **compile_fail.** Every block tagged `compile_fail` has to fail, and has to
    produce the error codes its fence names. A demonstration that starts
    compiling after a language change is a claim the catalog can no longer make.
-4. **Suspects.** Every remaining failure is bucketed, and a bucket outside the
+4. **Fragments.** A fragment that `fragments.txt` does not list fails the run.
+5. **Suspects.** Every remaining failure is bucketed, and a bucket outside the
    baseline fails the run.
 
 After these gates, `check.sh` compiles and executes each run block on the native
@@ -116,6 +120,60 @@ into a failure and prints what cargo wrote to `check.err`.
 `check.sh` prints the resolved `rustc` and `cargo` version for the same reason:
 cargo's own output is redirected into `check.json`, so without that line a CI
 log cannot show which toolchain compiled the examples.
+
+## Preludes
+
+A block often uses a name that the prose around it defines in words: a
+`Session` type, a `conn` value, a `handle` the caller passes in. Without that
+name the block is a fragment, and rustc checks nothing that touches it. A wrong
+method, a wrong argument type, or a value used after a move then passes the
+gate. Earlier audits found exactly those defects in fragments.
+
+`checks/preludes/<skill>.toml` supplies the missing names to one block, so the
+whole block is type-checked. The skill text does not change:
+
+```toml
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"   # relative to skills/
+section = "Syscall, ioctl, union, and descriptor wrappers"   # nearest heading, exact
+block = 2      # 1-based ordinal of the rust fence in that section, all modes counted
+items = '''
+use std::os::fd::AsRawFd;
+'''
+setup = '''
+let sock: std::net::UdpSocket = todo!();
+'''
+```
+
+`gen.py` appends `items` at the crate root, after the block, and puts `setup`
+at the start of the statement wrapper's body. Three more keys change the
+wrapper of a statement block:
+
+| Key | Effect | Use it for |
+| --- | --- | --- |
+| `method_of = "Store"`, optional `receiver = "&mut self"` | The wrapper becomes `impl Store { async fn __ex(&self) ... }`. Generics are allowed: `"<T: Send> Worker<T>"` | A block lifted from a method body that uses `self` |
+| `returns = "Result<(), Error>"` | Replaces the wrapper's `Result<(), Box<dyn Error>>` | A block that returns its own error type |
+| `shape = "item"` | Keeps the block at the crate root, with no wrapper function | A block with a macro or attribute that must expand there, such as a UniFFI derive or `#[global_allocator]` |
+
+`setup`, `method_of`, and `returns` are allowed only on a statement block. A prelude applies to a `compile` or `compile_fail` block, never
+to `run`. `gen.py` fails when a prelude matches no block, so after you move a
+block, rename its heading, or add a block above it in the same section, update
+the key. When the gate reports a new fragment, it prints the key to use.
+
+Write each name the way the prose or the real crate defines it. Prefer a real
+import to a stub. A stub function has the signature the prose implies and
+`todo!()` as its body. A value from context is `let x: T = todo!();` in
+`setup`. Never shape a stub so that a wrong block compiles: when the block is
+wrong against the real API, fix the block.
+
+`fragments.txt` lists the fragments accepted as known, by signature
+(`file :: section :: block hash`). It holds two blocks that no faithful prelude
+can complete, each with its reason. Add an entry only for such a block, and
+write down why. Every other block in the catalog compiles in full.
+
+The harness also holds `jni` 0.21 as `jni021`. A prelude with
+`use jni021 as jni;` checks a block that documents the 0.21 API against the
+real 0.21 crate.
 
 ## The baseline
 

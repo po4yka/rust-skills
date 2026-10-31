@@ -1,0 +1,54 @@
+# Preludes for the rust-test-tools skill. Format: checks/README.md.
+
+# The crate under test and the reference implementation stand in as crate-root
+# modules; a fuzz target reaches them by the same paths. The explicit
+# `use std::result::Result;` keeps gen.py from inserting its `Result` alias
+# above the block, where it would push `#![no_main]` out of first place.
+[[block]]
+file = "rust-test-tools/SKILL.md"
+section = "cargo-fuzz"
+block = 1
+items = '''
+mod my_crate {
+    pub mod wire {
+        use std::result::Result;
+        pub struct Header;
+        #[derive(Debug)]
+        pub struct ParseError;
+        pub fn parse_header(data: &[u8]) -> Result<Header, ParseError> { todo!() }
+    }
+}
+'''
+
+[[block]]
+file = "rust-test-tools/SKILL.md"
+section = "Differential testing"
+block = 1
+items = '''
+mod my_crate {
+    use std::result::Result;
+    #[derive(Debug)]
+    pub struct DecodeError;
+    pub fn decode(data: &[u8]) -> Result<String, DecodeError> { todo!() }
+}
+mod reference_impl {
+    #[derive(Debug)]
+    pub struct Error(pub i32);
+    pub fn decode(data: &[u8]) -> Result<String, Error> { todo!() }
+}
+'''
+
+[[block]]
+file = "rust-test-tools/references/mutation-testing.md"
+section = 'Assert specific values, not only "no panic"'
+block = 1
+items = '''
+use std::time::Duration;
+
+#[derive(Debug, PartialEq)]
+struct TtlError;
+fn compute_ttl(header: &str) -> Result<Duration, TtlError> { todo!() }
+'''
+setup = '''
+let input: &str = todo!();
+'''

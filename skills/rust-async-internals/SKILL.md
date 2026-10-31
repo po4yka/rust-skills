@@ -107,13 +107,13 @@ loop {
     tokio::select! {
         biased;
         _ = cancel.cancelled() => break,  // always polled first
-        msg = rx.recv() => process(msg),
+        Some(msg) = rx.recv() => process(msg),
     }
 }
 ```
 
-Without `biased`, `select!` picks a random arm to poll first, so the loop can still process a few
-more messages after cancellation fires. `biased;` with the `cancelled()` arm first makes shutdown
+Without `biased`, `select!` polls the arms in random order, so the loop can process a few more
+messages after cancellation. `biased;` with the `cancelled()` arm first makes shutdown
 win on the next iteration. Under `biased;`, never put an always-ready data arm above the shutdown
 arm: that order starves it. Give every long-lived `select!` loop a `cancelled()` arm unless
 another arm ends the loop on shutdown. Otherwise shutdown hangs.

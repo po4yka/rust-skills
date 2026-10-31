@@ -1,0 +1,137 @@
+# Preludes for the rust-unsafe skill. Format: checks/README.md.
+
+[[block]]
+file = "rust-unsafe/references/ffi-layout-rules.md"
+section = "A slice over a caller-owned buffer or a mapping"
+block = 1
+items = '''
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("image dimensions overflow")]
+    DimensionsOverflow,
+}
+'''
+setup = '''
+let ptr: *mut u8 = todo!();
+let width: u32 = todo!();
+let height: u32 = todo!();
+'''
+
+[[block]]
+file = "rust-unsafe/references/ffi-layout-rules.md"
+section = "Pass a closure to C as data plus a function pointer"
+block = 1
+items = '''
+// The rust-panic-safety skill's helper, verbatim.
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = 'A hand-rolled `extern "C"` entry point'
+block = 1
+items = '''
+#[derive(Debug)]
+enum Error {
+    InvalidRequest,
+}
+
+fn render_pixels(pixels: &mut [u8], width: u32, height: u32, spec: &str) -> Result<(), Error> {
+    todo!()
+}
+
+// The rust-panic-safety skill's helper, verbatim.
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = "Syscall, ioctl, union, and descriptor wrappers"
+block = 1
+items = '''
+fn make_ifr_name() -> [libc::c_char; libc::IFNAMSIZ] {
+    todo!()
+}
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = "Reads and writes that create no reference"
+block = 1
+setup = '''
+let ptr: *const u32 = todo!();
+let dst: *mut u32 = todo!();
+let new_val: u32 = todo!();
+let src: *const u32 = todo!();
+let count: usize = todo!();
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = "Pointer arithmetic"
+block = 1
+setup = '''
+let ptr: *const u32 = todo!();
+let start: *const u32 = todo!();
+let end: *const u32 = todo!();
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = "Pointer arithmetic"
+block = 2
+items = '''
+struct Buffer {
+    bytes: Vec<u8>,
+}
+
+impl Buffer {
+    fn new() -> Self {
+        todo!()
+    }
+}
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = "A `Drop` impl that cannot abort the process"
+block = 1
+items = '''
+struct BufferedWriter {
+    inner: std::io::BufWriter<std::fs::File>,
+}
+
+impl BufferedWriter {
+    fn flush(&mut self) -> std::io::Result<()> {
+        todo!()
+    }
+}
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = "Syscall, ioctl, union, and descriptor wrappers"
+block = 3
+returns = "Result<(), Error>"
+items = '''
+use std::io;
+use std::os::fd::AsRawFd;
+
+enum Error {
+    Ioctl(&'static str, io::Error),
+}
+'''
+setup = '''
+let sock: std::net::UdpSocket = todo!();
+let ifr: libc::ifreq = todo!();
+'''

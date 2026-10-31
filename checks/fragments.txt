@@ -1,0 +1,15 @@
+# Fragments accepted as known: blocks whose every compile error is an unresolved
+# name, and for which no faithful prelude in checks/preludes/ exists. rustc
+# checks nothing that touches such a name, so keep this list short and say why
+# each entry is here. CI fails on a fragment that is not listed.
+# Regenerate the signatures with:
+#   python3 checks/analyze.py check.json --emit-fragments
+#
+# A lib.rs that declares file modules (`mod config;`). E0583 needs the module
+# files, and inline `mod config {}` bodies would remove the lesson.
+rust-code-style/references/module-layout.md :: `lib.rs` is the table of contents :: fa1b2717
+#
+# Three forbidden forms side by side, with a `/* ... */` placeholder and one env
+# used three times. The first two forms compile on purpose (that is the danger
+# the prose names) and the third cannot, so no single prelude is faithful.
+rust-jni/references/jni-threading-and-callbacks.md :: The env must not cross an await point :: 074a8814

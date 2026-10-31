@@ -257,25 +257,54 @@ def require_cargo_ran(path: str, finished: bool, seen: set[str]) -> None:
     sys.exit(1)
 
 
+def bucket(diagnostics: list[dict]) -> tuple[str, list[dict]]:
+    """Return the bucket of one failing example and, for a suspect, its errors."""
+    unresolved = [d for d in diagnostics if not is_resolution(d)]
+    if len(unresolved) < len(diagnostics):
+        unresolved = [d for d in unresolved if not is_resolution_cascade(d)]
+    if not unresolved:
+        return "fragment", []
+    if all(is_artifact(d) for d in unresolved):
+        return "artifact", []
+    real = [d for d in unresolved if not is_artifact(d)]
+    if all(code_of(d) in LOW_CODES for d in real):
+        return "low", []
+    return "suspect", [d for d in real if code_of(d) not in LOW_CODES]
+
+
 def classify(errors: dict[str, list[dict]]):
     fragment = artifact = low = 0
     suspects: dict[str, list[dict]] = {}
     for example, diagnostics in errors.items():
-        unresolved = [d for d in diagnostics if not is_resolution(d)]
-        if len(unresolved) < len(diagnostics):
-            unresolved = [d for d in unresolved if not is_resolution_cascade(d)]
-        if not unresolved:
+        kind, real = bucket(diagnostics)
+        if kind == "fragment":
             fragment += 1
-            continue
-        if all(is_artifact(d) for d in unresolved):
+        elif kind == "artifact":
             artifact += 1
-            continue
-        real = [d for d in unresolved if not is_artifact(d)]
-        if all(code_of(d) in LOW_CODES for d in real):
+        elif kind == "low":
             low += 1
-            continue
-        suspects[example] = [d for d in real if code_of(d) not in LOW_CODES]
+        else:
+            suspects[example] = real
     return fragment, artifact, low, suspects
+
+
+def fragment_examples(errors: dict[str, list[dict]]) -> list[str]:
+    """Names of the examples whose every error is an unresolved name.
+
+    rustc gives an unresolved name an error type and type-checks the rest of
+    the block with it, so every expression that touches that name escapes the
+    check. A fragment is a block the gate cannot judge, and it fails the run
+    unless fragments.txt lists it. The fix is a prelude in checks/preludes/.
+    """
+    return sorted(name for name, diagnostics in errors.items() if bucket(diagnostics)[0] == "fragment")
+
+
+def load_signatures(path: str) -> set[str]:
+    return {
+        line.strip()
+        for line in open(path, encoding="utf-8")
+        if line.strip() and not line.startswith("#")
+    }
 
 
 def run_failures(manifest: dict, errors: dict[str, list[dict]]) -> list[str]:
@@ -352,6 +381,20 @@ def main() -> int:
 
     signatures = sorted({signature(e, d) for e, d in suspects.items()})
 
+    def fragment_signature(example: str) -> str:
+        info = manifest.get(example, {})
+        return f"{info.get('file', '?')} :: {info.get('section', '?')} :: {info.get('hash', '?')}"
+
+    fragments = fragment_examples(compile_errors)
+    fragment_signatures = sorted({fragment_signature(e) for e in fragments})
+
+    if "--emit-fragments" in args:
+        print("# Fragments accepted as known: blocks whose every error is an unresolved name.")
+        print("# Regenerate with:")
+        print("#   python3 checks/analyze.py check.json --emit-fragments > checks/fragments.txt")
+        print("\n".join(fragment_signatures))
+        return 0
+
     if "--emit-baseline" in args:
         print("# Compile suspects accepted as known. Regenerate with:")
         print("#   python3 checks/analyze.py check.json --emit-baseline > checks/baseline.txt")
@@ -363,13 +406,32 @@ def main() -> int:
     checked = modes["compile"]
     clean = checked - len(compile_errors)
 
+    if "--check-fragments" in args:
+        known_fragments = load_signatures(args[args.index("--check-fragments") + 1])
+        new_fragments = [s for s in fragment_signatures if s not in known_fragments]
+        if new_fragments:
+            print(f"FAIL: {len(new_fragments)} new fragment(s) not in fragments.txt:\n")
+            print("\n".join(f"  + {s}" for s in new_fragments))
+            print("\nPrelude keys (file, section, block) for these blocks:\n")
+            for example in fragments:
+                if fragment_signature(example) in new_fragments:
+                    info = manifest.get(example, {})
+                    print(f"  file = {info.get('file')!r}, section = {info.get('section')!r}, block = {info.get('block')}")
+            print(
+                "\nEvery error in these blocks is a name the block does not define. rustc"
+                " checks\nnothing that touches such a name, so a wrong call or a type"
+                " mismatch there\npasses. Add the names to checks/preludes/<skill>.toml (see"
+                " checks/README.md), or\nmake the block complete."
+            )
+            return 1
+        stale_fragments = sorted(known_fragments - set(fragment_signatures))
+        if stale_fragments:
+            print(f"note: {len(stale_fragments)} fragments.txt entr(ies) no longer occur; remove them:")
+            print("\n".join(f"  - {s}" for s in stale_fragments))
+
     if "--check-baseline" in args:
         baseline_path = args[args.index("--check-baseline") + 1]
-        known = {
-            line.strip()
-            for line in open(baseline_path, encoding="utf-8")
-            if line.strip() and not line.startswith("#")
-        }
+        known = load_signatures(baseline_path)
         new = [s for s in signatures if s not in known]
         stale = sorted(known - set(signatures))
         if new:
@@ -400,6 +462,11 @@ def main() -> int:
                 " Name the expected code in the fence to pin what they prove."
             )
         print(f"OK: no new compile suspects ({len(signatures)} known, all in the baseline)")
+        with_prelude = sum(1 for info in manifest.values() if info.get("prelude"))
+        print(
+            f"OK: {len(fragments)} fragment(s), all listed in fragments.txt;"
+            f" {with_prelude} block(s) type-checked with a prelude"
+        )
         return 0
 
     total = sum(modes.values())

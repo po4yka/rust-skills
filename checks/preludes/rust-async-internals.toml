@@ -1,0 +1,93 @@
+# Preludes for the rust-async-internals skill. Format: checks/README.md.
+
+[[block]]
+file = "rust-async-internals/SKILL.md"
+section = "Put shutdown first with `biased`"
+block = 1
+items = '''
+pub struct Msg;
+fn process(_msg: Msg) { todo!() }
+'''
+setup = '''
+let cancel: tokio_util::sync::CancellationToken = todo!();
+let mut rx: tokio::sync::mpsc::Receiver<Msg> = todo!();
+'''
+
+# `Result<()>` and `Error` in the block are the anyhow names.
+[[block]]
+file = "rust-async-internals/references/cancellation-and-shutdown.md"
+section = "Spawn-and-join firewall for critical sections"
+block = 1
+items = '''
+use std::sync::Arc;
+use anyhow::{Error, Result};
+use tokio::net::TcpStream;
+pub struct Db;
+impl Db {
+    pub async fn insert(&self, _data: &[u8]) -> Result<()> { todo!() }
+}
+async fn read_message(_stream: &TcpStream) -> Result<Vec<u8>> { todo!() }
+async fn send_ack(_stream: &TcpStream) -> Result<()> { todo!() }
+'''
+
+[[block]]
+file = "rust-async-internals/references/cancellation-and-shutdown.md"
+section = "Disabled select! branches"
+block = 1
+items = '''
+async fn prepare_then_wait() { todo!() }
+async fn ready() { todo!() }
+'''
+
+[[block]]
+file = "rust-async-internals/references/cancellation-and-shutdown.md"
+section = "CancellationToken idioms"
+block = 2
+items = '''
+pub struct Work;
+async fn do_work() -> Work { todo!() }
+fn process(_value: Work) { todo!() }
+'''
+setup = '''
+let parent: CancellationToken = todo!();
+'''
+
+# runtime: the &'static Runtime that runtime() in "Shared runtime" returns.
+# fd: the owned duplicate of rule 3; cancel: the token of rule 6.
+[[block]]
+file = "rust-async-internals/references/runtime-and-foreign-threads.md"
+section = "Enter the runtime from a foreign thread"
+block = 1
+items = '''
+use std::os::fd::OwnedFd;
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+pub struct Config;
+pub struct Stats;
+async fn run_session(
+    _config: Config,
+    _fd: OwnedFd,
+    _cancel: CancellationToken,
+    _stats: Arc<Stats>,
+) -> anyhow::Result<()> {
+    todo!()
+}
+'''
+setup = '''
+let runtime: &'static tokio::runtime::Runtime = todo!();
+let config: Config = todo!();
+let fd: OwnedFd = todo!();
+let cancel: CancellationToken = todo!();
+let stats: Arc<Stats> = todo!();
+'''
+
+[[block]]
+file = "rust-async-internals/references/cancellation-and-shutdown.md"
+section = "sqlx transactions"
+block = 1
+items = '''
+use sqlx::Connection;
+'''
+setup = '''
+let mut conn: sqlx::PgConnection = todo!();
+'''

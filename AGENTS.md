@@ -176,6 +176,10 @@ sentence, which may raise `body_tokens` by its own size. `--report budget` print
 Every ` ```rust ` block in `skills/` is read, and its fence decides what happens to it; the rules
 are under "Authoring conventions" above, and `checks/README.md` has the phases and commands.
 `checks/baseline.txt` is empty and should stay empty: fix the example instead of adding a line.
+A block that names a type or value the prose defines is a fragment, and rustc checks nothing that
+touches that name. Supply the name in `checks/preludes/<skill>.toml`. A fragment that
+`checks/fragments.txt` does not list fails the gate; that file holds two blocks no prelude can
+complete, so do not add to it.
 Add a crate to `checks/Cargo.toml` when a skill starts using it, or every block that imports it
 silently degrades to a fragment.
 

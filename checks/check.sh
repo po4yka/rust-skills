@@ -75,8 +75,8 @@ echo "==> compile-checking examples (target: $TARGET)"
 cargo check --locked --examples --target "$TARGET" --keep-going --message-format=json \
     > check.json 2> check.err || true
 
-echo "==> gating: coverage, compile_fail, and the suspect baseline"
-python3 analyze.py check.json --check-baseline baseline.txt
+echo "==> gating: coverage, compile_fail, fragments, and the suspect baseline"
+python3 analyze.py check.json --check-fragments fragments.txt --check-baseline baseline.txt
 
 echo "==> running behavior probes on the native host"
 RUN_DIR="$(mktemp -d)"
