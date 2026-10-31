@@ -50,14 +50,14 @@ asked to choose. What it does not prove:
 
 ## `plugin/`: a real client
 
-Six cases, one per bundle of `bundles.toml`. Each `prompt.md` is a natural request that never
+Six cases, one per bundle of `bundles.toml`. Each `case.yaml` holds a natural request that never
 names a skill. Two graders per case:
 
-- `skill-fired.md` (`tool_used: Skill` with an `input_match` on the skill name) records whether
-  the agent loaded the expected skill. The CLI reports it as an indicator, not as part of the
-  score, because the no-plugin arm cannot load it.
-- `cites-verifier.md` (an LLM rubric) passes when the answer gives the verifier command that the
-  skill owns. This part is scored in both arms, so the reported delta is what the plugin adds.
+- `skill-fired` in `case.yaml` (`tool_used: Skill` with an `input_match` on the skill name)
+  records whether the agent loaded the expected skill. The CLI reports it as an indicator, not as
+  part of the score, because the no-plugin arm cannot load it.
+- `graders/cites-verifier.md` (an LLM rubric) passes when the answer gives the verifier command
+  that the skill owns. It is scored in both arms, so the reported delta is what the plugin adds.
 
 ```bash
 claude plugin eval . --eval-dir evals/plugin --trust-plugin --threshold 0.8 \
