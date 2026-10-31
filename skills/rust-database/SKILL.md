@@ -94,8 +94,8 @@ cargo deny --config deny.toml --locked check advisories
 - `cargo tree` prints the locked sqlx version for the 0.9.0 floor in "Make
   cancellation safe".
 - `cargo deny` with `unsound = "all"` (or `cargo audit --deny warnings`) gates
-  the driver crates against known advisories. The `rust-security` skill owns
-  that policy.
+  the driver crates against known advisories (the `rust-security` skill owns
+  that policy).
 
 Run a mutating migration command (`sqlx migrate run`, a down migration, or a
 DDL script) only against a disposable test database or an environment the user

@@ -70,7 +70,8 @@ The change is complete when every row that applies to it is green.
 | Dispatch that still contains `unsafe` does not alias | When a nightly toolchain with the `miri` component is installed, `cargo +nightly miri test --locked` on the dispatch tests. Otherwise report the dispatch as not checked by Miri | Paths the tests do not reach |
 
 The `rust-sanitizers-miri` skill, when it is installed, owns the Miri flags and the Stacked
-Borrows and Tree Borrows policy.
+Borrows and Tree Borrows policy. Without it, gate on the default Stacked Borrows run and treat
+`MIRIFLAGS="-Zmiri-tree-borrows"` as a second opinion.
 
 A re-locked `Mutex` usually fails as a hang (std may also panic), and an always-enqueuing
 `while let` drain fails as a hang. libtest warns after 60 seconds and never ends the test.

@@ -101,4 +101,5 @@ detail that the boundary error refuses to carry. Enforce it by construction:
 
 Review the visitor as an allowlist. A denylist of "sensitive" field names fails
 the first time somebody adds a field. The `rust-observability` skill owns the
-subscriber setup.
+subscriber setup. Without it, install the subscriber once, at process bootstrap,
+with `tracing::subscriber::set_global_default`.

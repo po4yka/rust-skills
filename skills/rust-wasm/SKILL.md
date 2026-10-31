@@ -304,7 +304,9 @@ needs nightly `-Zbuild-std`, so do not design a stable product around it.
 
 A panic hook improves diagnostics. It does not recover the computation. Use the
 `rust-panic-safety` skill, when it is installed, when a library changes the
-panic strategy or depends on unwind behavior.
+panic strategy or depends on unwind behavior. Without it, confirm the strategy
+with `rustc --print cfg --target <triple>`: under `panic="abort"`,
+`catch_unwind` catches nothing.
 
 ## Use the host async model
 

@@ -330,7 +330,7 @@ the risks the type carries:
   assert the field values, not only `is_ok()`. Include aliases, absent sections, and unknown keys.
 - **Written output.** Compare the serialized form with a golden file, so a rename or a new
   `rename_all` shows up as a diff. The `rust-test-tools` skill, when it is installed, has the
-  golden mechanics. When an older build must read the new output, parse the golden file with the
+  golden mechanics; without it, rewrite a fixture only in a run that sets `BLESS_GOLDENS=1`. When an older build must read the new output, parse the golden file with the
   released type. For a crate published to a registry, add a renamed dev-dependency on the same
   crate: `old = { package = "<crate>", version = "=<last>" }`.
 - **Empty and absent values.** Round-trip empty strings, collections, maps, and `None` for every

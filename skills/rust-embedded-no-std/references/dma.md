@@ -9,7 +9,8 @@ Treat DMA as concurrent access by hardware. Keep its buffer alive and at a
 stable address until completion. Transfer ownership to the driver when its API
 supports that model. Apply the chip's cache clean and invalidate rules. The
 `rust-unsafe` skill, when it is installed, has the raw-pointer and
-SAFETY-comment rules for a raw DMA buffer API.
+SAFETY-comment rules for a raw DMA buffer API. Without it, put a `// SAFETY:`
+comment above every `unsafe` block that names the invariant the transfer needs.
 
 ## Ordering
 

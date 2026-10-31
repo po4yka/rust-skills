@@ -235,7 +235,8 @@ rg '\.to_mut\(\)\.' --type rust -n
 
 `struct Header<'a> { name: Cow<'a, str> }` is a borrowing struct. The lifetime spreads to
 every signature that mentions it, exactly like a `&'a mut T` field. The `rust-discipline`
-skill, when it is installed, covers lifetime infection in general.
+skill, when it is installed, covers lifetime infection in general. Without it, give a
+long-lived struct an owned field (`String`) or a generic parameter, so it carries no lifetime.
 
 Two failures arrive together:
 
