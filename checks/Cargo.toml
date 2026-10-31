@@ -25,10 +25,10 @@ arrayvec = "0.7"
 axum = "0.8"
 bytes = "1"
 compact_str = "0.10"
-# Stays on 0.7. criterion 0.8 depends on `alloca`, whose build script needs a
-# Linux C compiler, so the Linux-target type check would stop working on other
-# hosts. The API the examples use is the same in 0.7 and 0.8.
-criterion = { version = "0.7", features = ["html_reports"] }
+# criterion 0.8 depends on `alloca` on unix and windows, whose build script
+# compiles one C file for the target. check.sh points that build at clang on a
+# host that is not x86_64 Linux; see the comment there.
+criterion = { version = "0.8", features = ["html_reports"] }
 crossbeam-queue = "0.3"
 futures = "0.3"
 hyper-util = { version = "0.1", features = ["full"] }
