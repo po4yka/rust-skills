@@ -192,12 +192,13 @@ the release job rebuilds them from the tagged revision. A committed artifact
 goes stale, and the `--check` gate does not catch it.
 
 Keep one FFI crate. Put every platform-facing export in it, so there is one
-checksum set, one artifact name, and one version. A second Rust `staticlib` in
-the same app is likely to conflict (Rust Reference, linkage), and two UniFFI
-libraries in one iOS app define the same C types (uniffi-rs #2802).
+checksum set, one artifact name, and one version. The `rust-ios-build` skill,
+when it is installed, owns the one-staticlib-per-app rule. Two UniFFI libraries
+in one iOS app also define the same C types (uniffi-rs #2802).
 
-Keep unwinding in the packaging profile. UniFFI catches a panic at the exported
-call, and `panic = "abort"` turns that panic into a process abort.
+The `rust-panic-safety` skill, when it is installed, owns the `panic` profile
+setting. Under `panic = "abort"`, a panic in an export ends the process instead
+of reaching Kotlin or Swift as an internal error.
 
 Select the crate type on the packaging command, not in the manifest:
 
