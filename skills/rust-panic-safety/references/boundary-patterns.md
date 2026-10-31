@@ -241,9 +241,10 @@ unsafe extern "C" fn on_event(ctx: *mut std::ffi::c_void, code: i32) -> i32 {
         Err(payload) => {
             discard_panic_payload(payload);
             // Latch the stable category so the next owning call can report it.
+            // Relaxed: the code is the whole message, and no other write is published.
             CALLBACK_FAILURE.store(
                 Status::Panic as i32,
-                std::sync::atomic::Ordering::Release,
+                std::sync::atomic::Ordering::Relaxed,
             );
             Status::Panic as i32
         }
@@ -333,9 +334,10 @@ pub unsafe extern "C" fn lib_run_blocking(handle: *mut Session) -> i32 {
     let poison = || {
         // SAFETY: the entry-point contract keeps `handle` live for this call.
         // The independent atomic does not inspect potentially torn state.
+        // Relaxed: the flag publishes no other write; a reader only fails fast.
         unsafe { &*handle }
             .poisoned
-            .store(true, std::sync::atomic::Ordering::Release);
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     };
     match result {
         Ok(Ok(())) => 0,
