@@ -178,9 +178,13 @@ lives. When you export an `async fn`:
   `#[uniffi::export(async_runtime = "tokio")]` and the `tokio` feature of `uniffi`. Without
   it, the crate compiles, and the first poll panics with `there is no reactor running, must be
   called from the context of a Tokio 1.x runtime`.
-- The attribute runs Tokio resources on the fallback runtime of `async-compat`: one
-  current-thread runtime on one dedicated thread, separate from any runtime the crate builds.
-  `tokio::spawn` tasks from the export share that thread, and `block_in_place` panics there.
+- The attribute runs Tokio resources on the fallback runtime of `async-compat`, separate from
+  any runtime the crate builds. With default features, it is one current-thread runtime on one
+  dedicated thread. `tokio::spawn` tasks from the export share that thread, and
+  `block_in_place` panics there. As of `async-compat` 0.2.6 (2026-09-10), the `multi-thread`
+  feature makes the fallback runtime a multi-thread worker pool. Features unify, so any crate
+  in the dependency graph can turn it on for the whole binary. Check it with
+  `cargo tree -e features -i async-compat`.
   When the crate owns a process runtime, spawn the work onto its `Handle` and await the
   `JoinHandle`. That needs no `async_runtime` attribute.
 - Do not make the primary constructor (`new`) async. Kotlin and Python bindgen fail with
