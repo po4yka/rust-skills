@@ -146,8 +146,16 @@ let sock: std::net::UdpSocket = todo!();
 ```
 
 `gen.py` appends `items` at the crate root, after the block, and puts `setup`
-at the start of the statement wrapper's body. `setup` is allowed only on a
-statement block. A prelude applies to a `compile` or `compile_fail` block, never
+at the start of the statement wrapper's body. Three more keys change the
+wrapper of a statement block:
+
+| Key | Effect | Use it for |
+| --- | --- | --- |
+| `method_of = "Store"`, optional `receiver = "&mut self"` | The wrapper becomes `impl Store { async fn __ex(&self) ... }`. Generics are allowed: `"<T: Send> Worker<T>"` | A block lifted from a method body that uses `self` |
+| `returns = "Result<(), Error>"` | Replaces the wrapper's `Result<(), Box<dyn Error>>` | A block that returns its own error type |
+| `shape = "item"` | Keeps the block at the crate root, with no wrapper function | A block with a macro or attribute that must expand there, such as a UniFFI derive or `#[global_allocator]` |
+
+`setup`, `method_of`, and `returns` are allowed only on a statement block. A prelude applies to a `compile` or `compile_fail` block, never
 to `run`. `gen.py` fails when a prelude matches no block, so after you move a
 block, rename its heading, or add a block above it in the same section, update
 the key. When the gate reports a new fragment, it prints the key to use.
@@ -159,8 +167,13 @@ import to a stub. A stub function has the signature the prose implies and
 wrong against the real API, fix the block.
 
 `fragments.txt` lists the fragments accepted as known, by signature
-(`file :: section :: block hash`). The target is an empty file. Add an entry
-only for a block that no faithful prelude can complete, and write down why.
+(`file :: section :: block hash`). It holds two blocks that no faithful prelude
+can complete, each with its reason. Add an entry only for such a block, and
+write down why. Every other block in the catalog compiles in full.
+
+The harness also holds `jni` 0.21 as `jni021`. A prelude with
+`use jni021 as jni;` checks a block that documents the 0.21 API against the
+real 0.21 crate.
 
 ## The baseline
 

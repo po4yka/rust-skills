@@ -350,8 +350,8 @@ invocations, and failure triage that a codebase learns the hard way.
 
 - Every ` ```rust ` block without the `rust,ignore` tag is extracted and type-checked in CI
   against the toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.99.1 on edition 2024.
-  An untagged block can fail only on a name that the surrounding prose defines; any other compile
-  error fails the gate. Portable `rust,run` blocks are also compiled and executed on the native
+  A name that the surrounding prose defines comes from a per-block prelude in `checks/preludes/`,
+  so the block is type-checked in full; any compile error fails the gate. Portable `rust,run` blocks are also compiled and executed on the native
   CI host.
 - Pinned versions age. Where a skill names a crate or tool version, treat it as the version the
   rule was written against, and confirm it against your `Cargo.lock`.

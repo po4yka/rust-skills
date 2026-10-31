@@ -167,8 +167,9 @@ run block, a `compile_fail` block that compiled or missed the code its fence nam
 fragment, or a compile error the analyzer cannot attribute to an undefined symbol or to the
 extraction wrapper.
 
-`checks/baseline.txt` and `checks/fragments.txt` are empty and should stay empty. When the gate
-reports a new suspect, fix the example. Add a baseline line only for a failure no fence tag can
+`checks/baseline.txt` is empty and should stay empty. `checks/fragments.txt` holds two blocks
+that no prelude can complete; do not add to it. When the gate reports a new fragment, add a
+prelude. When it reports a new suspect, fix the example. Add a baseline line only for a failure no fence tag can
 express, with a comment saying why. Add a crate to `checks/Cargo.toml` when a skill starts using
 it, or every block that imports it silently degrades to a fragment. `checks/README.md` has the
 full description.
