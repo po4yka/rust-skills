@@ -11,17 +11,17 @@ Measured on rustc 1.98.1, edition 2024, and on 1.88.0 and 1.97.1 for the attribu
 | Where the `unsafe` comes from | Result under `#![forbid(unsafe_code)]` |
 | --- | --- |
 | A hand-written `unsafe { ... }` block, or an `unsafe extern` block | ``error: usage of an `unsafe` block``, or ``usage of an `unsafe extern` block``. The build fails. |
-| `#[unsafe(no_mangle)]`, `#[unsafe(export_name)]`, or `#[unsafe(link_section)]` in the crate | One error per attribute on every edition-2024 toolchain. Since 1.98: ``usage of the unsafe `#[no_mangle]` attribute``. Before 1.98: ``declaration of a `no_mangle` function``, and the same `declaration of ...` form for the other two. |
-| Other unsafe attributes, such as `#[unsafe(naked)]` | Rejected only since 1.98: ``usage of the unsafe `#[naked]` attribute``. 1.88 to 1.97 build it with no diagnostic. |
+| `#[unsafe(no_mangle)]`, `#[unsafe(export_name)]`, or `#[unsafe(link_section)]` in the crate | One error per attribute on every edition-2024 toolchain. Since 1.99: ``usage of the unsafe `no_mangle` attribute``. On 1.98: ``usage of the unsafe `#[no_mangle]` attribute``. Before 1.98: ``declaration of a `no_mangle` function``, and the same `declaration of ...` form for the other two. |
+| Other unsafe attributes, such as `#[unsafe(naked)]` | Rejected only since 1.98: ``usage of the unsafe `#[naked]` attribute`` on 1.98, ``usage of the unsafe `naked` attribute`` since 1.99. 1.88 to 1.97 build it with no diagnostic. Search logs for `usage of the unsafe`, which matches both forms. |
 | A `macro_rules!` defined in the same crate | The same block error at the macro body, with the call site marked `in this macro invocation` |
 | A `macro_rules!` or a proc macro from a dependency crate | No diagnostic. The unsafe block runs, and an injected `#[unsafe(no_mangle)]` export builds. |
 
 ```rust,compile_fail
 #![forbid(unsafe_code)]
 
-// Rejected on every edition-2024 toolchain. Since 1.98 the message is
-// "usage of the unsafe `#[no_mangle]` attribute"; before 1.98 it was
-// "declaration of a `no_mangle` function".
+// Rejected on every edition-2024 toolchain. Since 1.99 the message is
+// "usage of the unsafe `no_mangle` attribute"; 1.98 prints `#[no_mangle]`
+// in the backticks; before 1.98 it was "declaration of a `no_mangle` function".
 #[unsafe(no_mangle)]
 pub extern "C" fn exported() {}
 ```

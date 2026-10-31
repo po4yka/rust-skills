@@ -282,55 +282,68 @@ ownership invariants; only the non-null assertion applies.
 
 ## Wrapping a caller-owned buffer in a library object
 
-Some C++ libraries can render into a buffer the caller allocated. The wrapper object must not
-outlive the buffer, and the type system cannot express that across the boundary, so the rule
-goes in the contract and the object stays private.
+Some C and C++ libraries render into a buffer that the caller allocated. The wrapper object must
+not outlive the buffer, and nothing else may touch the buffer while the object exists. Encode
+both rules with a lifetime: the wrapper holds a `PhantomData<&'buf mut [u8]>`, so the borrow
+checker enforces them and the constructor stays a safe function.
+
+Before you write this wrapper, read the signature of the binding crate's own wrap function. A
+safe binding often returns a borrowing type already. Calling a safe function inside `unsafe`
+only produces an `unused_unsafe` warning, and returning an owned type from it discards the
+lifetime that the binding enforces.
 
 ```rust
-/// # Safety
-/// `pixels` must stay valid and exclusively writable for the whole lifetime of
-/// the returned surface. The surface must be dropped before `pixels` is released
-/// or read from any other context.
-unsafe fn surface_from_buffer(
-    pixels: &mut [u8],
-    width: i32,
-    height: i32,
-) -> Option<Surface> {
-    let width_usize = usize::try_from(width).ok()?;
-    let height_usize = usize::try_from(height).ok()?;
-    let row_bytes = width_usize.checked_mul(4)?;
-    let required_bytes = row_bytes.checked_mul(height_usize)?;
-    if width == 0 || height == 0 || pixels.len() < required_bytes {
-        return None;
+use std::marker::PhantomData;
+use std::ptr::NonNull;
+
+#[repr(C)]
+pub struct RawSurface {
+    _private: [u8; 0],
+}
+
+unsafe extern "C" {
+    /// Renders into `pixels` without copying, until `surface_destroy`.
+    fn surface_wrap(pixels: *mut u8, width: i32, height: i32, row_bytes: usize) -> *mut RawSurface;
+    fn surface_destroy(surface: *mut RawSurface);
+}
+
+/// A surface that renders into a buffer the caller owns.
+pub struct Surface<'buf> {
+    raw: NonNull<RawSurface>,
+    _pixels: PhantomData<&'buf mut [u8]>,
+}
+
+impl<'buf> Surface<'buf> {
+    pub fn wrap(pixels: &'buf mut [u8], width: i32, height: i32) -> Option<Self> {
+        let width_usize = usize::try_from(width).ok()?;
+        let height_usize = usize::try_from(height).ok()?;
+        let row_bytes = width_usize.checked_mul(4)?;
+        let required_bytes = row_bytes.checked_mul(height_usize)?;
+        if width_usize == 0 || height_usize == 0 || pixels.len() < required_bytes {
+            return None;
+        }
+        // SAFETY: the checked calculations prove that `pixels` holds `height` rows of
+        // `row_bytes` bytes. The `'buf` borrow keeps the buffer alive and exclusive
+        // until `Drop` destroys the surface.
+        let raw = unsafe { surface_wrap(pixels.as_mut_ptr(), width, height, row_bytes) };
+        NonNull::new(raw).map(|raw| Surface { raw, _pixels: PhantomData })
     }
-    let info = ImageInfo::new(
-        (width, height),
-        ColorType::RGBA8888,
-        AlphaType::Premul,
-        ColorSpace::new_srgb(),
-    );
-    // SAFETY: the checked calculations prove that `pixels` holds the complete
-    // image, and the caller guarantees that it outlives the returned surface.
-    unsafe { surfaces::wrap_pixels(&info, pixels, row_bytes, None) }
+}
+
+impl Drop for Surface<'_> {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from `surface_wrap`, and `Drop` runs exactly once.
+        unsafe { surface_destroy(self.raw.as_ptr()) }
+    }
 }
 ```
 
-When the library hands back a pixmap view, use its safe byte slice and copy out
-immediately. Do not reconstruct a slice from a caller-supplied height. Do not
-store the view or let it escape the scope where the owning object is alive.
-
-```rust
-fn read_pixels(surface: &mut Surface) -> Vec<u8> {
-    let Some(pixmap) = surface.peek_pixels() else {
-        return Vec::new();
-    };
-    pixmap.bytes().map_or_else(Vec::new, <[u8]>::to_vec)
-}
-```
-
-The pixmap computes its byte extent from its own image information and row
-stride. A copy into an owned `Vec` costs one memcpy and removes the raw-pointer,
-length, and lifetime obligations.
+When the library hands back a view into memory that it owns, copy the bytes out immediately
+through the binding's safe byte slice. Do not reconstruct a slice from a caller-supplied height.
+Do not store the view or let it escape the scope where the owning object is alive. The
+binding computes the byte extent of the view from its own image information and row stride. A
+copy into an owned `Vec` costs one memcpy and removes the raw-pointer, length, and lifetime
+obligations.
 
 ## Syscall, ioctl, union, and descriptor wrappers
 
@@ -390,12 +403,18 @@ if rc < 0 {
 ```
 
 A C union field read is unsafe because the compiler cannot know which variant was written last.
-Zero the struct first, then write before you read:
+A write to a `Copy` union field is safe, so it takes no `unsafe` block; an `unsafe` block around
+it only produces an `unused_unsafe` warning. Zero the struct first, write the field, and put the
+`unsafe` block and its SAFETY comment on the read. Match the field type: the `libc` flag
+constants are `c_int`, and `ifru_flags` is `c_short`.
 
 ```rust
-// SAFETY: `ifr` was zeroed above, and `ifru_flags` is written before any read.
-unsafe {
-    ifr.ifr_ifru.ifru_flags = IFF_TUN | IFF_NO_PI;
+fn tun_flags() -> libc::c_short {
+    // SAFETY: `ifreq` is plain C data, and all-zero bytes are a valid `ifreq`.
+    let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
+    ifr.ifr_ifru.ifru_flags = (libc::IFF_TUN | libc::IFF_NO_PI) as libc::c_short;
+    // SAFETY: `ifru_flags` is the union field written last.
+    unsafe { ifr.ifr_ifru.ifru_flags }
 }
 ```
 
