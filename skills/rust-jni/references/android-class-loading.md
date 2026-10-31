@@ -149,7 +149,7 @@ test and exercise the feature loader contract separately.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `ClassNotFoundException` only on a Rust-created thread | Direct `FindClass` selected the system loader | Use the startup cache or an explicit application loader. |
+| `ClassNotFoundException` only on a Rust-created thread, or on `jni` 0.22 `Err(Error::NoClassDefFound { .. })` from `Env::find_class` with no pending exception | Direct `FindClass` selected the system loader | Use the startup cache or an explicit application loader. |
 | Library load fails after a package rename | `JNI_OnLoad` still uses the old internal class name | Update the lookup and managed declaration in one patch. Keep the early failure. |
 | Release fails but debug passes | R8 removed or renamed a string-only class or member | Add a narrow keep rule and run the minified instrumentation test. |
 | Callback calls the wrong overload | Cached descriptor does not match the managed declaration | Regenerate the descriptor and fail initialization when ID lookup fails. |
