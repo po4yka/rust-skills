@@ -301,7 +301,8 @@ when you need the three compile-checked examples.
 A public generic type that stores user-supplied behaviour declares its own one-method trait plus
 a blanket impl over `FnOnce`. Callers keep passing closures, and a caller who needs a nameable,
 zero-sized callable implements the trait for a unit struct. Coherence accepts both impls because
-`fn_traits` is unstable, so no crate can implement `FnOnce` for that struct. There is no stable
+of the orphan rule: only the crate that defines the struct can implement `FnOnce` for it, and that
+crate does not. The same holds for any foreign trait, such as `Display`. There is no stable
 shortcut: `type OnDrop = impl FnOnce(u32);` in an associated type is still `error[E0658]` on
 1.98.1, issue #63063. Read
 [storing-callables.md](references/storing-callables.md#declare-your-own-callable-trait) when you

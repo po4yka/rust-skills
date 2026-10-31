@@ -44,7 +44,7 @@ projection still matters.
 | Named struct field | The closure can capture only that field |
 | Array or slice index, sub-slice, or array pattern | The closure always captures the complete array or slice |
 | Field of a packed struct | The closure captures a safe prefix or the complete packed value to avoid an unaligned reference |
-| Dereference through `Box<T>` | The compiler can capture the boxed field precisely |
+| Dereference through `Box<T>` | A non-`move` closure that borrows the boxed field captures only that field. A `move` closure, or a by-value use of the field, captures the complete `Box`, and a later use of the `Box` fails with E0382 |
 | Dereference through `Rc<T>` or custom `Deref` | The closure captures the smart pointer, not an invented interior place |
 | Raw-pointer dereference | Unsafe access and capture ownership are separate proofs |
 | `match`, `if let`, `let .. else`, or `matches!` on an enum with more than one variant | The discriminant read captures the place by shared borrow, even when the pattern binds nothing |

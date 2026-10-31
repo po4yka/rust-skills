@@ -64,7 +64,7 @@ impl<F: Fn(u32)> Run for Gadget<F> { fn run(&self) { (self.f)(1) } }
 fn main() {
     let a = Gadget { f: |x| assert_eq!(x, 1) };
     let b = Gadget { f: |x| assert!(x > 0) };
-    // E0308: `a` and `b` come from different closure expressions.
+    // `vec![a, b]` is E0308: `a` and `b` come from different closure expressions.
     let v: Vec<Box<dyn Run>> = vec![Box::new(a), Box::new(b)];
     for g in &v { g.run(); }
 }
@@ -103,9 +103,10 @@ fn main() {
 ```
 
 Coherence accepts the second impl, here and across a crate boundary, because `ReportNotUsed` does
-not satisfy `FnOnce(u32)` and rustc knows every impl a local type has. The `fn_traits` gate keeps
-this true: no crate can add the `FnOnce` impl that would create the overlap. The payoff is in the
-two `size_of` lines: one `u32` against two machine words.
+not satisfy `FnOnce(u32)` and rustc knows every impl a local type has. The orphan rule keeps this
+true: only the crate that defines `ReportNotUsed` can implement a foreign trait such as `FnOnce` for
+it. The `fn_traits` gate is not the reason; a blanket impl over `Display` behaves the same. The
+payoff is in the two `size_of` lines: one `u32` against two machine words.
 
 ## Arc and Rc of `dyn Fn` do not implement `Fn`
 
@@ -389,9 +390,9 @@ error: unconstrained opaque type
 ```
 
 `std::mem::DropGuard` is also unstable: E0658 for the library feature `drop_guard`, issue
-#144426. And `fn_traits` is nightly-gated, which is why no user type can
-implement `FnOnce` on stable — and why the blanket-impl pattern in
-[Declare your own callable trait](#declare-your-own-callable-trait) is coherent.
+#144426. `fn_traits` is also nightly-gated, so no user type can implement `FnOnce` on stable. That
+gate does not make the blanket-impl pattern in
+[Declare your own callable trait](#declare-your-own-callable-trait) coherent; the orphan rule does.
 
 ## Composite outputs: RPITIT
 
