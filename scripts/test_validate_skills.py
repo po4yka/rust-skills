@@ -362,5 +362,273 @@ class TestRoutingGuard(unittest.TestCase):
         )
 
 
+class HarnessRules(unittest.TestCase):
+    """Rules that guard the install surface: bundles, budgets, router, references."""
+
+    def setUp(self):
+        self.saved = {
+            k: getattr(validate_skills, k)
+            for k in ("ROOT", "SKILLS_DIR", "README", "BUNDLES", "SNIPPET", "NEGATIVE", "CEILINGS")
+        }
+        validate_skills.failures.clear()
+        validate_skills.warnings.clear()
+        validate_skills.descriptions.clear()
+        validate_skills.bodies.clear()
+
+    def tearDown(self):
+        for key, value in self.saved.items():
+            setattr(validate_skills, key, value)
+        validate_skills.descriptions.clear()
+        validate_skills.bodies.clear()
+
+    def use_tree(self, tmp: str, files: dict[str, str]) -> pathlib.Path:
+        root = pathlib.Path(tmp)
+        for name, content in files.items():
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(content, encoding="utf-8")
+        validate_skills.ROOT = root
+        validate_skills.SKILLS_DIR = root / "skills"
+        validate_skills.README = root / "README.md"
+        validate_skills.BUNDLES = root / "bundles.toml"
+        validate_skills.SNIPPET = root / "AGENTS.snippet.md"
+        validate_skills.NEGATIVE = root / "negative-cases.md"
+        validate_skills.CEILINGS = root / "ceilings.toml"
+        return root
+
+    BUNDLES = """[bundles.core]
+skills = ["rust-a", "rust-b"]
+
+[bundles.edge]
+skills = ["rust-c"]
+"""
+    README = "## Install\n\n| Bundle |\n| --- |\n| `core` |\n| `edge` |\n\n## Next\n"
+
+    # Bundle membership and the README install table.
+
+    def test_bundles_that_cover_each_skill_once_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"bundles.toml": self.BUNDLES, "README.md": self.README})
+            bundles = validate_skills.load_bundles()
+            validate_skills.check_bundles(bundles, {"rust-a", "rust-b", "rust-c"})
+        self.assertEqual(validate_skills.failures, [])
+
+    def test_a_skill_in_no_bundle_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"bundles.toml": self.BUNDLES, "README.md": self.README})
+            validate_skills.check_bundles(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c", "rust-d"})
+        self.assertEqual(len(validate_skills.failures), 1)
+        self.assertIn("'rust-d' is in no bundle", validate_skills.failures[0])
+
+    def test_a_skill_in_two_bundles_fails(self):
+        bundles = self.BUNDLES.replace('["rust-c"]', '["rust-c", "rust-a"]')
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"bundles.toml": bundles, "README.md": self.README})
+            validate_skills.check_bundles(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
+        self.assertEqual(len(validate_skills.failures), 1)
+        self.assertIn("2 bundles", validate_skills.failures[0])
+
+    def test_a_bundle_missing_from_the_install_table_fails(self):
+        readme = self.README.replace("| `edge` |\n", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"bundles.toml": self.BUNDLES, "README.md": readme})
+            validate_skills.check_bundles(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
+        self.assertEqual(len(validate_skills.failures), 1)
+        self.assertIn("'edge' has no row in the Install table", validate_skills.failures[0])
+
+    # Description budget: total and per bundle, with the ratchet.
+
+    def budget(self, sizes: dict[str, int], ceilings: dict | None = None) -> list[str]:
+        validate_skills.descriptions.update({name: "x" * n for name, n in sizes.items()})
+        bundles = {"core": ["rust-a", "rust-b"], "edge": ["rust-c"]}
+        validate_skills.check_description_budget(bundles, ceilings or {})
+        return list(validate_skills.failures)
+
+    def test_a_catalog_under_the_total_passes(self):
+        self.assertEqual(self.budget({"rust-a": 2000, "rust-b": 2000, "rust-c": 2000}), [])
+
+    def test_a_catalog_over_the_total_fails(self):
+        found = self.budget({"rust-a": 4900, "rust-b": 0, "rust-c": 4900} | {f"rust-{i}": 1100 for i in range(10)})
+        self.assertTrue(any("descriptions total" in f and "limit is 20,000" in f for f in found), found)
+
+    def test_the_total_warns_before_it_fails(self):
+        self.budget({"rust-a": 2000, "rust-b": 0, "rust-c": 2000} | {f"rust-{i}": 1450 for i in range(10)})
+        self.assertTrue(any("over 18,000" in w for w in validate_skills.warnings))
+
+    def test_a_ratcheted_total_may_stay_but_not_grow(self):
+        sizes = {"rust-a": 2000, "rust-b": 0, "rust-c": 2000} | {f"rust-{i}": 1700 for i in range(10)}
+        self.assertEqual(self.budget(sizes, {"description": {"total": 21000}}), [])
+        validate_skills.failures.clear()
+        validate_skills.descriptions.clear()
+        sizes["rust-0"] += 1
+        found = self.budget(sizes, {"description": {"total": 21000}})
+        self.assertTrue(any("limit is 21,000" in f for f in found), found)
+
+    def test_a_bundle_over_the_listing_budget_fails(self):
+        found = self.budget({"rust-a": 2600, "rust-b": 2600, "rust-c": 100})
+        self.assertEqual(len(found), 1)
+        self.assertIn("bundle 'core'", found[0])
+
+    def test_a_ratcheted_bundle_may_stay_but_not_grow(self):
+        sizes = {"rust-a": 2600, "rust-b": 2600, "rust-c": 100}
+        self.assertEqual(self.budget(sizes, {"bundle_descriptions": {"core": 5200}}), [])
+        validate_skills.failures.clear()
+        self.assertEqual(len(self.budget(sizes, {"bundle_descriptions": {"core": 5199}})), 1)
+
+    # Body token cap, with the ratchet.
+
+    def body_check(self, chars: int, ceilings: dict | None = None) -> list[str]:
+        validate_skills.bodies["rust-a"] = "x" * chars
+        validate_skills.check_body_tokens(ceilings or {})
+        return list(validate_skills.failures)
+
+    def test_a_body_under_the_cap_passes(self):
+        self.assertEqual(self.body_check(int(validate_skills.MAX_BODY_TOKENS * validate_skills.CHARS_PER_TOKEN)), [])
+
+    def test_a_body_over_the_cap_fails(self):
+        found = self.body_check(int(validate_skills.MAX_BODY_TOKENS * validate_skills.CHARS_PER_TOKEN) + 3)
+        self.assertEqual(len(found), 1)
+        self.assertIn("the limit is 4,800", found[0])
+
+    def test_a_body_over_the_warning_line_warns(self):
+        self.assertEqual(self.body_check(int(4600 * validate_skills.CHARS_PER_TOKEN)), [])
+        self.assertTrue(any("over 4,500" in w for w in validate_skills.warnings))
+
+    def test_a_ratcheted_body_may_shrink_but_not_grow(self):
+        chars = 6000 * 2.5
+        self.assertEqual(self.body_check(int(chars), {"body_tokens": {"rust-a": 6000}}), [])
+        self.assertEqual(self.body_check(int(chars) - 250, {"body_tokens": {"rust-a": 6000}}), [])
+        self.assertTrue(any("lower body_tokens.rust-a" in w for w in validate_skills.warnings))
+        found = self.body_check(int(chars) + 3, {"body_tokens": {"rust-a": 6000}})
+        self.assertEqual(len(found), 1)
+        self.assertIn("accepted ceiling is 6,000", found[0])
+
+    # The router snippet.
+
+    def snippet(self, text: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"AGENTS.snippet.md": text})
+            validate_skills.check_snippet({"rust-a", "rust-b"})
+        return list(validate_skills.failures)
+
+    def test_a_snippet_that_routes_to_each_skill_once_passes(self):
+        self.assertEqual(self.snippet("| E0382 | rust-a |\n| a macro | rust-b |\n"), [])
+
+    def test_a_snippet_missing_a_skill_fails(self):
+        found = self.snippet("| E0382 | rust-a |\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("'rust-b' appears 0 times", found[0])
+
+    def test_a_snippet_naming_a_skill_twice_fails(self):
+        found = self.snippet("| E0382 | rust-a |\n| a macro | rust-b |\n| also | rust-a |\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("'rust-a' appears 2 times", found[0])
+
+    def test_a_skill_name_inside_a_longer_name_does_not_count(self):
+        found = self.snippet("| E0382 | rust-a |\n| a macro | rust-b |\n| x | rust-a-extra |\n")
+        self.assertEqual(found, [])
+
+    def test_a_long_snippet_fails(self):
+        found = self.snippet("| E0382 | rust-a |\n| a macro | rust-b |\n" + "filler\n" * 59)
+        self.assertEqual(len(found), 1)
+        self.assertIn("limit is 60", found[0])
+
+    # Cross-bundle references and their fallback.
+
+    def cross_refs(self, body: str, ceilings: dict | None = None) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"skills/rust-a/SKILL.md": body, "skills/rust-b/SKILL.md": "", "skills/rust-c/SKILL.md": ""})
+            bundles = {"core": ["rust-a", "rust-b"], "edge": ["rust-c"]}
+            validate_skills.check_cross_refs(bundles, ceilings or {})
+        return list(validate_skills.failures)
+
+    def test_a_same_bundle_reference_needs_no_fallback(self):
+        self.assertEqual(self.cross_refs("The `rust-b` skill owns that.\n"), [])
+
+    def test_a_bare_cross_bundle_reference_fails(self):
+        found = self.cross_refs("# T\n\nRead on.\nThe `rust-c` skill owns that.\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("SKILL.md:4", found[0])
+        self.assertIn("`rust-c`", found[0])
+
+    def test_a_fallback_in_the_same_sentence_passes(self):
+        self.assertEqual(self.cross_refs("Run `cargo deny check` (the `rust-c` skill owns the policy).\n"), [])
+
+    def test_a_fallback_in_the_next_sentence_passes(self):
+        self.assertEqual(self.cross_refs("The `rust-c` skill owns it. Without it, run `cargo audit`.\n"), [])
+
+    def test_a_fallback_two_sentences_away_does_not_count(self):
+        found = self.cross_refs("The `rust-c` skill owns it. Read on. Run `cargo audit`.\n")
+        self.assertEqual(len(found), 1)
+
+    def test_a_skill_name_is_not_a_fallback(self):
+        found = self.cross_refs("The `rust-c` skill owns it, with `rust-b`.\n")
+        self.assertEqual(len(found), 1)
+
+    def test_a_reference_inside_a_code_block_is_ignored(self):
+        self.assertEqual(self.cross_refs("```text\nthe `rust-c` skill\n```\n"), [])
+
+    def test_a_table_cell_is_its_own_sentence(self):
+        found = self.cross_refs("| Miri | the `rust-c` skill | on a schedule |\n")
+        self.assertEqual(len(found), 1)
+
+    def test_the_cross_ref_ceiling_accepts_known_gaps_but_not_new_ones(self):
+        body = "The `rust-c` skill owns it.\n"
+        self.assertEqual(self.cross_refs(body, {"cross_refs": {"rust-a/SKILL.md": 1}}), [])
+        found = self.cross_refs(body + "\nThe `rust-c` skill again.\n", {"cross_refs": {"rust-a/SKILL.md": 1}})
+        self.assertEqual(len(found), 1)
+        self.assertIn("accepted ceiling is 1", found[0])
+
+    # Negative routing cases.
+
+    NEGATIVE = """| Phrase | Must not appear in | Owner | Collision |
+| --- | --- | --- | --- |
+| loom | rust-a | rust-b | test tool |
+"""
+
+    def negative(self, descriptions: dict[str, str]) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"negative-cases.md": self.NEGATIVE})
+            validate_skills.check_negative_cases(descriptions)
+        return list(validate_skills.failures)
+
+    def test_a_rival_without_the_phrase_passes(self):
+        self.assertEqual(self.negative({"rust-a": "Use when writing tests first.", "rust-b": "Use for loom."}), [])
+
+    def test_a_rival_claiming_the_phrase_fails(self):
+        found = self.negative({"rust-a": "Use when writing tests or a Loom model.", "rust-b": "Use for loom."})
+        self.assertEqual(len(found), 1)
+        self.assertIn("rust-a", found[0])
+
+    def test_a_not_for_boundary_may_name_the_phrase(self):
+        found = self.negative({"rust-a": "Use when writing tests first. Not for loom; use rust-b.", "rust-b": "loom"})
+        self.assertEqual(found, [])
+
+    def test_an_unknown_skill_fails(self):
+        found = self.negative({"rust-a": "Use when writing tests first."})
+        self.assertEqual(len(found), 1)
+        self.assertIn("'rust-b'", found[0])
+
+
+class TestRealCatalogHarness(unittest.TestCase):
+    """The shipped bundles, snippet, and negative cases satisfy their own rules."""
+
+    def test_the_repository_passes_the_harness_rules(self):
+        validate_skills.failures.clear()
+        validate_skills.warnings.clear()
+        validate_skills.descriptions.clear()
+        validate_skills.bodies.clear()
+        for skill_dir in sorted(validate_skills.SKILLS_DIR.iterdir()):
+            validate_skills.check_skill(skill_dir)
+        names = set(validate_skills.descriptions)
+        bundles = validate_skills.load_bundles()
+        ceilings = validate_skills.load_ceilings()
+        validate_skills.check_bundles(bundles, names)
+        validate_skills.check_snippet(names)
+        validate_skills.check_negative_cases(validate_skills.descriptions)
+        validate_skills.check_body_tokens(ceilings)
+        validate_skills.check_cross_refs(bundles, ceilings)
+        self.assertEqual(validate_skills.failures, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

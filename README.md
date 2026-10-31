@@ -22,17 +22,115 @@ gate. Nothing is skipped in silence.
 
 ## Install
 
+Install one bundle, not the whole catalog. A bundle is one subject group of the catalog below.
+The full catalog costs about 9,300 tokens of always-on skill listing (as `claude plugin details`
+projects it), and a client with a 200K-token window keeps about 2,000: Claude Code then drops
+whole descriptions, and those skills stop loading. Five bundles fit that budget. `language`
+(about 2,700 tokens) does not; on a 200K window, add the router snippet below with it. The
+bundles are defined in [bundles.toml](bundles.toml).
+
+| Bundle | Subject | Skills | Plugin |
+| --- | --- | ---: | --- |
+| `language` | Language, interfaces, and code discipline | 13 | `rust-skills-language` |
+| `build` | Build, dependencies, and supply chain | 9 | `rust-skills-build` |
+| `testing` | Correctness and testing | 4 | `rust-skills-testing` |
+| `concurrency` | Concurrency and unsafe code | 6 | `rust-skills-concurrency` |
+| `production` | Networking, database, performance, debugging, and observability | 7 | `rust-skills-production` |
+| `ffi` | FFI and platform boundaries | 5 | `rust-skills-ffi` |
+
+Each path below pins something different. Pick the first one your client supports.
+
+**1. `gh skill`, pinned to a release tag (reproducible).** GitHub CLI 2.90.0 or later installs
+one skill per command at the exact tag or commit you name, and `gh skill update` skips a pinned
+skill. It pins the content; it does not pin which skills a bundle contains, so copy the list for
+your bundle from [bundles.toml](bundles.toml).
+
 ```bash
-npx skills add po4yka/rust-skills
+gh skill install po4yka/rust-skills rust-unsafe --pin v0.3.0
 ```
 
-> [!TIP]
-> You do not need the whole catalog. `npx skills add po4yka/rust-skills --skill rust-unsafe`
-> installs one skill, and `npx skills use po4yka/rust-skills@rust-unsafe` reads it as a prompt
-> without installing anything.
+<details>
+<summary><b><code>gh skill</code> command for each bundle</b></summary>
+
+```bash
+# language
+for s in rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-discipline rust-code-style rust-crate-architecture rust-lints rust-macros rust-iterator-impl rust-variance rust-callback-bounds rust-type-erasure rust-cli; do
+  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+done
+# build
+for s in cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std; do
+  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+done
+# testing
+for s in rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety; do
+  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+done
+# concurrency
+for s in memory-model rust-async-internals rust-unsafe rust-pin-projection rust-send-sync rust-event-loop-state; do
+  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+done
+# production
+for s in rust-performance rust-hot-path rust-copy-on-write rust-debugging rust-observability rust-networking rust-database; do
+  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+done
+# ffi
+for s in rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel; do
+  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+done
+```
+
+</details>
+
+**2. Claude Code plugin marketplace, pinned by the marketplace ref.** Add the marketplace at a
+release tag, then install a bundle plugin. The installed plugin records the commit SHA of that
+tag as its version, and it changes only when you add the marketplace at a newer tag. Without the
+`#v0.3.0` suffix the marketplace tracks `main`.
+
+```text
+/plugin marketplace add po4yka/rust-skills#v0.3.0
+/plugin install rust-skills-language@rust-skills
+```
+
+The plugin names are in the table above; `rust-skills@rust-skills` is the full catalog.
+
+**3. `npx skills add`, unpinned (convenience).** The `skills` CLI installs the default branch as
+it is at that moment. Its lockfile stores content hashes, not a commit or a tag, so a git tag of
+this repository pins nothing for it. `npx skills update` moves every installed skill to `main`
+HEAD, and `npx skills check` is an alias of `update`: neither one reports drift without applying
+it.
 
 <details>
-<summary><b>All install options</b></summary>
+<summary><b><code>npx skills add</code> command for each bundle</b></summary>
+
+```bash
+# language
+npx skills add po4yka/rust-skills --skill rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-discipline rust-code-style rust-crate-architecture rust-lints rust-macros rust-iterator-impl rust-variance rust-callback-bounds rust-type-erasure rust-cli
+# build
+npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std
+# testing
+npx skills add po4yka/rust-skills --skill rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety
+# concurrency
+npx skills add po4yka/rust-skills --skill memory-model rust-async-internals rust-unsafe rust-pin-projection rust-send-sync rust-event-loop-state
+# production
+npx skills add po4yka/rust-skills --skill rust-performance rust-hot-path rust-copy-on-write rust-debugging rust-observability rust-networking rust-database
+# ffi
+npx skills add po4yka/rust-skills --skill rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel
+```
+
+`--skill` takes space-separated names; a comma-separated list matches no skill in
+`skills@1.7.0`.
+
+</details>
+
+> [!TIP]
+> With more than about 15 skills installed, or on any client with a 200K-token window, also paste
+> [AGENTS.snippet.md](AGENTS.snippet.md) into the consuming repository's `AGENTS.md` or
+> `CLAUDE.md`. It is a 60-line symptom-to-skill table that stays in context when the client
+> truncates or drops descriptions from its skill listing, so the agent still knows which skill to
+> load by name.
+
+<details>
+<summary><b>All <code>npx skills</code> options</b></summary>
 
 <br>
 
@@ -45,8 +143,14 @@ npx skills add po4yka/rust-skills
 | Target one agent | `npx skills add po4yka/rust-skills --agent claude-code` |
 | Every skill into every agent, no prompts | `npx skills add po4yka/rust-skills --all` |
 | Copy files instead of symlinking | `npx skills add po4yka/rust-skills --copy` |
-| Update installed skills to the latest catalog | `npx skills update` |
+| Update installed skills to `main` HEAD | `npx skills update` |
 | Remove one skill | `npx skills remove --skill rust-unsafe` |
+
+The `skills` CLI installs into Claude Code, Codex, Cursor, OpenCode, and other supported agents.
+Run `npx skills --help` for the current flag list. The CLI is open source at
+[vercel-labs/skills](https://github.com/vercel-labs/skills); its README lists the supported agents.
+
+</details>
 
 > **Checkout data-loss warning:** Never run `skills remove` from this
 > repository's checkout. The CLI can treat the source `skills/` directory as
@@ -54,11 +158,11 @@ npx skills add po4yka/rust-skills
 > skill cannot be recovered from Git. Run removal from the project that owns
 > the installation or from a scratch directory outside this checkout.
 
-The `skills` CLI installs into Claude Code, Codex, Cursor, OpenCode, and other supported agents.
-Run `npx skills --help` for the current flag list. The CLI is open source at
-[vercel-labs/skills](https://github.com/vercel-labs/skills); its README lists the supported agents.
-
-</details>
+A single skill installs on its own, but it names sibling skills for work it does not own. A
+sibling in the same bundle is present when you install the bundle. A reference into another
+bundle should carry a one-sentence fallback that states the rule, so a partial install degrades
+instead of dead-ending; `python3 scripts/validate-skills.py --report cross-refs` lists the
+references that do not have one yet.
 
 ## Which skill do I need?
 

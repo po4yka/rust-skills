@@ -1,0 +1,85 @@
+# Install bundles. Each bundle is one README catalog group, in README order.
+#
+# A bundle is the unit a consumer installs: its descriptions fit the always-on
+# skill listing of a 200K-context client, and its skills name one another
+# freely. A reference from one bundle into another must carry a one-sentence
+# fallback, because a consumer who installed one bundle does not have the other.
+#
+# scripts/validate-skills.py checks that every skill is in exactly one bundle,
+# that every bundle has a row in the README install table, and that each
+# bundle's descriptions stay inside the listing budget. .claude-plugin/
+# marketplace.json carries one plugin entry per bundle; keep the two in step.
+
+[bundles.language]
+title = "Language, interfaces, and code discipline"
+skills = [
+    "rust-compiler-errors",
+    "rust-borrow-semantics",
+    "rust-pattern-semantics",
+    "rust-discipline",
+    "rust-code-style",
+    "rust-crate-architecture",
+    "rust-lints",
+    "rust-macros",
+    "rust-iterator-impl",
+    "rust-variance",
+    "rust-callback-bounds",
+    "rust-type-erasure",
+    "rust-cli",
+]
+
+[bundles.build]
+title = "Build, dependencies, and supply chain"
+skills = [
+    "cargo-workflows",
+    "rust-crate-release",
+    "rust-native-linking",
+    "rust-serde",
+    "rust-security",
+    "rust-android-build",
+    "rust-ios-build",
+    "rust-wasm",
+    "rust-embedded-no-std",
+]
+
+[bundles.testing]
+title = "Correctness and testing"
+skills = [
+    "rust-tdd",
+    "rust-test-tools",
+    "rust-sanitizers-miri",
+    "rust-panic-safety",
+]
+
+[bundles.concurrency]
+title = "Concurrency and unsafe code"
+skills = [
+    "memory-model",
+    "rust-async-internals",
+    "rust-unsafe",
+    "rust-pin-projection",
+    "rust-send-sync",
+    "rust-event-loop-state",
+]
+
+[bundles.production]
+title = "Networking, database, performance, debugging, and observability"
+skills = [
+    "rust-performance",
+    "rust-hot-path",
+    "rust-copy-on-write",
+    "rust-debugging",
+    "rust-observability",
+    "rust-networking",
+    "rust-database",
+]
+
+[bundles.ffi]
+title = "FFI and platform boundaries"
+skills = [
+    "rust-jni",
+    "rust-swift-ffi",
+    "uniffi-boundary",
+    "uniffi-packaging-versioning",
+    "ffi-error-progress-cancel",
+]
