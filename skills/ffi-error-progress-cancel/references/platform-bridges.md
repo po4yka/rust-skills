@@ -189,9 +189,11 @@ Points that matter:
   both key bytes and per-entry overhead.
 - Use `LaunchReservation` when Rust launches the worker. A failed launch drops
   the guard and releases the entry. After a successful launch, call `commit`.
-  The registry exports no release to the host. When the host launches the
-  engine call and that call never starts, the TTL reaps the reservation.
-- `release` runs on every worker exit path. Use a worker guard with `Drop` so a
+  The registry exports no reservation release to the host. When the host
+  launches the engine call and that call never starts, the TTL reaps the
+  reservation. This is not the callback registration release in
+  [mobile-lifecycle.md](mobile-lifecycle.md), which the host does call.
+- `release` (the reservation release) runs on every worker exit path. Use a worker guard with `Drop` so a
   `?` early return cannot skip it.
 - Reap reservations that never reach `register` after a short startup TTL.
   Reap on every registry operation so abandoned reservations cannot exhaust
@@ -324,7 +326,8 @@ error from leaving the wrapper.
 
 If the collector cancels before the launched body runs, the body never starts
 (`CoroutineStart.DEFAULT`). `awaitClose` still sets the reserved flag, and the
-registry TTL reaps the reservation. Do not add a host-side release call.
+registry TTL reaps the reservation. Do not add a host-side reservation release
+call.
 
 ### Backpressure
 
