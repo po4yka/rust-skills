@@ -1,0 +1,76 @@
+# Preludes for the rust-tdd skill. Format: checks/README.md.
+
+# The queue and the target enum are copied from the reference implementation and
+# the target-enum blocks of the same file. `TransportError` carries the two
+# variants the fake returns.
+[[block]]
+file = "rust-tdd/references/fault-injection.md"
+section = "A fake that consults the queue"
+block = 1
+items = '''
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Debug)]
+pub enum TransportError {
+    Io,
+    Timeout,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransportFault {
+    Start,
+    Send,
+    Receive,
+    Stop,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FaultOutcome {
+    Error,
+    Timeout,
+    Drop,
+    Reset,
+    MalformedPayload,
+    BlankPayload,
+    Panic,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FaultScope {
+    OneShot,
+    Persistent,
+}
+
+#[derive(Clone, Debug)]
+pub struct FaultSpec<T> {
+    pub target: T,
+    pub outcome: FaultOutcome,
+    pub scope: FaultScope,
+    pub message: Option<String>,
+    pub payload: Option<Vec<u8>>,
+}
+
+pub struct FaultQueue<T> {
+    specs: Mutex<VecDeque<FaultSpec<T>>>,
+}
+
+impl<T> Default for FaultQueue<T> {
+    fn default() -> Self {
+        Self { specs: Mutex::new(VecDeque::new()) }
+    }
+}
+
+impl<T: PartialEq> FaultQueue<T> {
+    pub fn take(&self, target: &T) -> Option<FaultOutcome> {
+        let mut specs = self.specs.lock().expect("fault queue lock poisoned");
+        let index = specs.iter().position(|spec| &spec.target == target)?;
+        let outcome = specs[index].outcome.clone();
+        if specs[index].scope == FaultScope::OneShot {
+            specs.remove(index);
+        }
+        Some(outcome)
+    }
+}
+'''

@@ -1,0 +1,107 @@
+# Preludes for the rust-jni skill. Format: checks/README.md.
+
+[[block]]
+file = "rust-jni/references/jni-threading-and-callbacks.md"
+section = "jni 0.22: attach with a closure"
+block = 1
+items = '''
+// The load-time cache from "Build the load-time cache", reduced to the field this block reads.
+struct JniCache {
+    vm: jni::JavaVM,
+}
+
+static JNI_CACHE: std::sync::OnceLock<JniCache> = std::sync::OnceLock::new();
+'''
+setup = '''
+let listener: jni::objects::Global<jni::objects::JObject<'static>> = todo!();
+let service: jni::objects::Global<jni::objects::JObject<'static>> = todo!();
+let update: jni::sys::jint = todo!();
+'''
+
+[[block]]
+file = "rust-jni/references/jni-threading-and-callbacks.md"
+section = "Option A: pass the fd over a Unix socket with SCM_RIGHTS"
+block = 1
+items = '''
+use std::io::{self, IoSlice, Read};
+use std::os::fd::{AsRawFd, RawFd};
+use std::os::unix::net::UnixStream;
+'''
+
+[[block]]
+file = "rust-jni/references/jni-threading-and-callbacks.md"
+section = "Option B: direct JNI callback"
+block = 1
+items = '''
+use jni::JavaVM;
+use jni::objects::{Global, JObject};
+use std::io;
+use std::os::fd::RawFd;
+'''
+
+[[block]]
+file = "rust-jni/references/jni-threading-and-callbacks.md"
+section = "Local reference frames"
+block = 1
+items = '''
+struct Client {
+    host: String,
+}
+
+fn notify_listener<'local>(
+    env: &mut jni::Env<'local>,
+    s: jni::objects::JString<'local>,
+) -> jni::errors::Result<()> {
+    todo!()
+}
+'''
+setup = '''
+let clients: Vec<Client> = todo!();
+let env: &mut jni::Env<'_> = todo!();
+'''
+
+[[block]]
+file = "rust-jni/references/types-and-exceptions.md"
+section = "Throw a Java exception"
+block = 1
+setup = '''
+let env: &mut jni::Env<'_> = todo!();
+'''
+
+[[block]]
+file = "rust-jni/references/types-and-exceptions.md"
+section = "Throw a Java exception"
+block = 2
+items = '''
+use jni021 as jni;
+'''
+setup = '''
+let mut env: jni::JNIEnv<'_> = todo!();
+'''
+
+[[block]]
+file = "rust-jni/references/jni-threading-and-callbacks.md"
+section = "jni 0.21: bind the RAII guard"
+block = 1
+items = '''
+use jni021 as jni;
+
+// The 0.21 load-time cache, reduced to the field this block reads.
+struct JniCache {
+    vm: jni::JavaVM,
+}
+
+static JNI_CACHE: std::sync::OnceLock<JniCache> = std::sync::OnceLock::new();
+'''
+setup = '''
+let listener: jni::objects::GlobalRef = todo!();
+let update: jni::sys::jint = todo!();
+'''
+
+[[block]]
+file = "rust-jni/references/uniffi-vs-raw-jni.md"
+section = "Proc-macro form"
+block = 1
+# The UniFFI derive and export macros must expand at the crate root, next to
+# the block's own `setup_scaffolding!()`.
+shape = "item"

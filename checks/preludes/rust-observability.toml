@@ -1,0 +1,94 @@
+# Preludes for the rust-observability skill. Format: checks/README.md.
+
+[[block]]
+file = "rust-observability/SKILL.md"
+section = "Add an emission"
+block = 1
+items = '''
+#[derive(Clone, Copy)]
+pub enum DecodeStage { Header, Body }
+impl DecodeStage {
+    pub fn code(self) -> &'static str { todo!() }
+}
+pub struct Item;
+pub struct Output;
+#[derive(Debug)]
+pub struct EngineError;
+'''
+
+# Record and EventRing as the "bounded event ring" section defines them; the
+# snapshot serializes the drained records, so Record is Serialize here.
+[[block]]
+file = "rust-observability/references/embedded-telemetry-surface.md"
+section = "The snapshot entry point"
+block = 1
+items = '''
+use std::sync::LazyLock;
+#[derive(serde::Serialize)]
+pub struct Record;
+pub struct EventRing;
+impl EventRing {
+    pub fn drain(&self) -> Vec<Record> { todo!() }
+    pub fn dropped(&self) -> u64 { todo!() }
+}
+#[derive(serde::Serialize)]
+pub struct CounterValues { pub items: u64, pub bytes: u64, pub errors: u64 }
+pub struct Counters;
+impl Counters {
+    /// Relaxed loads of the AtomicU64 counters, one pass.
+    pub fn read(&self) -> CounterValues { todo!() }
+}
+static COUNTERS: Counters = Counters;
+static EVENT_RING: LazyLock<EventRing> = LazyLock::new(|| todo!());
+#[derive(serde::Serialize)]
+pub struct TelemetrySnapshot {
+    pub counters: CounterValues,
+    pub events: Vec<Record>,
+    pub dropped_events: u64,
+}
+'''
+
+# The vocabulary tables of "The vocabulary lives in exactly one place".
+[[block]]
+file = "rust-observability/references/redaction-and-field-vocabulary.md"
+section = "The redacting visitor"
+block = 1
+items = '''
+pub const COUNT_FIELDS: &[&str] = &["item_count", "byte_count"];
+pub const FLAG_FIELDS: &[&str] = &["cancelled"];
+/// Maps a value of an ENUM_FIELDS name to its known case; None drops it.
+pub fn enum_case(_name: &str, _value: &str) -> Option<&'static str> { todo!() }
+'''
+
+[[block]]
+file = "rust-observability/references/redaction-and-field-vocabulary.md"
+section = "What a sink receives"
+block = 1
+items = '''
+use tracing::Level;
+pub enum FieldValue {
+    Enum(&'static str),
+    Count(u64),
+    Flag(bool),
+}
+'''
+
+# The error type exposes its frozen kind enum, which has a stable code().
+[[block]]
+file = "rust-observability/references/redaction-and-field-vocabulary.md"
+section = "What a sink receives"
+block = 2
+items = '''
+#[derive(Clone, Copy)]
+pub enum ErrorKind { Io, Encode }
+impl ErrorKind {
+    pub fn code(self) -> &'static str { todo!() }
+}
+pub struct ExportError;
+impl ExportError {
+    pub fn kind(&self) -> ErrorKind { todo!() }
+}
+'''
+setup = '''
+let err: ExportError = todo!();
+'''

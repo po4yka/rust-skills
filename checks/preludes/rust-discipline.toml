@@ -1,0 +1,18 @@
+# Preludes for the rust-discipline skill. Format: checks/README.md.
+
+[[block]]
+file = "rust-discipline/references/type-and-trait-traps.md"
+section = "Integer overflow panics in debug and wraps in release"
+block = 1
+items = '''
+#[derive(Debug)]
+enum Error { Overflow }
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("overflow") }
+}
+impl std::error::Error for Error {}
+'''
+setup = '''
+let a: u32 = todo!();
+let b: u32 = todo!();
+'''

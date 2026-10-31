@@ -1,0 +1,15 @@
+# Preludes for the rust-hot-path skill. Format: checks/README.md.
+
+[[block]]
+file = "rust-hot-path/references/allocation-reduction.md"
+section = "Pin an allocation count with `dhat`"
+block = 1
+# A tests/*.rs file: the #[global_allocator] static must stay at the crate root.
+shape = "item"
+items = '''
+mod my_crate {
+    pub fn parse(_input: &str) -> Vec<(String, String)> {
+        todo!()
+    }
+}
+'''

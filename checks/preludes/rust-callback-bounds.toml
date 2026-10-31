@@ -1,0 +1,12 @@
+# Preludes for the rust-callback-bounds skill. Format: checks/README.md.
+
+[[block]]
+file = "rust-callback-bounds/references/closure-capture-semantics.md"
+section = "Capture precision depends on the projection"
+block = 2
+items = '''
+struct Field(String);
+struct Owner { field: Field }
+fn make_owner() -> Owner { todo!() }
+fn use_field(field: &Field) { todo!() }
+'''

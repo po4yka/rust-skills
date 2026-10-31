@@ -1,0 +1,45 @@
+# Preludes for the rust-security skill. Format: checks/README.md.
+
+# One error enum serves the three core-rule blocks; each block uses its own variants.
+[[block]]
+file = "rust-security/references/untrusted-input.md"
+section = "Never trust a length field before you allocate"
+block = 1
+items = '''
+#[derive(Debug)]
+enum ParseError {
+    TooLarge { declared: u32, cap: u32 },
+    Truncated { declared: u32, remaining: usize },
+    TooDeep { cap: usize },
+    InvalidGeometry(&'static str),
+}
+'''
+
+[[block]]
+file = "rust-security/references/untrusted-input.md"
+section = "Limit recursion depth"
+block = 1
+items = '''
+struct Node;
+#[derive(Debug)]
+enum ParseError {
+    TooLarge { declared: u32, cap: u32 },
+    Truncated { declared: u32, remaining: usize },
+    TooDeep { cap: usize },
+    InvalidGeometry(&'static str),
+}
+'''
+
+[[block]]
+file = "rust-security/references/untrusted-input.md"
+section = "Validate floating-point input"
+block = 1
+items = '''
+#[derive(Debug)]
+enum ParseError {
+    TooLarge { declared: u32, cap: u32 },
+    Truncated { declared: u32, remaining: usize },
+    TooDeep { cap: usize },
+    InvalidGeometry(&'static str),
+}
+'''

@@ -1,0 +1,63 @@
+# Preludes for the rust-pin-projection skill. Format: checks/README.md.
+
+# SelfRef exactly as SKILL.md ("Get a value pinned") defines it.
+[[block]]
+file = "rust-pin-projection/SKILL.md"
+section = "Never pin a named stack binding"
+block = 1
+items = '''
+struct SelfRef { buf: [u8; 4], ptr: *const u8, _p: std::marker::PhantomPinned }
+impl SelfRef {
+    fn new(v: u8) -> Self { SelfRef { buf: [v; 4], ptr: std::ptr::null(), _p: std::marker::PhantomPinned } }
+    fn init(self: std::pin::Pin<&mut Self>) {
+        // SAFETY: no field is moved out; only `ptr` is written.
+        let this = unsafe { self.get_unchecked_mut() };
+        this.ptr = this.buf.as_ptr();
+    }
+    /// # Safety
+    /// Call only after `init`, and only while the value has not moved.
+    #[allow(dead_code)]
+    unsafe fn read(&self) -> u8 { unsafe { *self.ptr } }
+}
+'''
+
+[[block]]
+file = "rust-pin-projection/references/pin-projection-macros.md"
+section = "A destructor that moves a pinned field"
+block = 1
+items = '''
+struct SelfRef { buf: [u8; 4], ptr: *const u8, _p: std::marker::PhantomPinned }
+impl SelfRef {
+    fn new(v: u8) -> Self { SelfRef { buf: [v; 4], ptr: std::ptr::null(), _p: std::marker::PhantomPinned } }
+    #[allow(dead_code)]
+    fn init(self: std::pin::Pin<&mut Self>) {
+        // SAFETY: no field is moved out; only `ptr` is written.
+        let this = unsafe { self.get_unchecked_mut() };
+        this.ptr = this.buf.as_ptr();
+    }
+    /// # Safety
+    /// Call only after `init`, and only while the value has not moved.
+    #[allow(dead_code)]
+    unsafe fn read(&self) -> u8 { unsafe { *self.ptr } }
+}
+'''
+
+[[block]]
+file = "rust-pin-projection/references/pin-projection-macros.md"
+section = "A pinning pointer that pins nothing"
+block = 1
+items = '''
+struct SelfRef { buf: [u8; 4], ptr: *const u8, _p: std::marker::PhantomPinned }
+impl SelfRef {
+    fn new(v: u8) -> Self { SelfRef { buf: [v; 4], ptr: std::ptr::null(), _p: std::marker::PhantomPinned } }
+    fn init(self: std::pin::Pin<&mut Self>) {
+        // SAFETY: no field is moved out; only `ptr` is written.
+        let this = unsafe { self.get_unchecked_mut() };
+        this.ptr = this.buf.as_ptr();
+    }
+    /// # Safety
+    /// Call only after `init`, and only while the value has not moved.
+    #[allow(dead_code)]
+    unsafe fn read(&self) -> u8 { unsafe { *self.ptr } }
+}
+'''

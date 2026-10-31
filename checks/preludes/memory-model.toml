@@ -1,0 +1,9 @@
+# Preludes for the memory-model skill. Format: checks/README.md.
+
+[[block]]
+file = "memory-model/SKILL.md"
+section = "Pattern 4: reference counting"
+block = 1
+setup = '''
+let count: &std::sync::atomic::AtomicUsize = todo!();
+'''

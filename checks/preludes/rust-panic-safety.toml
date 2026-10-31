@@ -1,0 +1,478 @@
+# Preludes for the rust-panic-safety skill. Format: checks/README.md.
+
+# SKILL.md
+
+[[block]]
+file = "rust-panic-safety/SKILL.md"
+section = "`UnwindSafe` and `AssertUnwindSafe`"
+block = 1
+items = '''
+pub struct State;
+fn run(state: &mut State) {
+    todo!()
+}
+'''
+setup = '''
+let mut state: State = todo!();
+'''
+
+[[block]]
+file = "rust-panic-safety/SKILL.md"
+section = "The guard pattern: hand-rolled C ABI"
+block = 1
+items = '''
+pub enum Error {
+    InvalidInput,
+    Io(std::io::Error),
+}
+fn render_into(buf: &mut [u8]) -> std::result::Result<(), Error> {
+    todo!()
+}
+'''
+
+# references/boundary-patterns.md
+
+[[block]]
+file = "rust-panic-safety/references/boundary-patterns.md"
+section = "Returning a pointer or an opaque handle"
+block = 1
+items = '''
+pub enum Error {
+    InvalidInput,
+}
+pub struct Session;
+impl Session {
+    pub fn new(config: &str) -> std::result::Result<Session, Error> {
+        todo!()
+    }
+}
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+
+[[block]]
+file = "rust-panic-safety/references/boundary-patterns.md"
+section = "Returning a pointer or an opaque handle"
+block = 2
+items = '''
+pub struct Session;
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+
+[[block]]
+file = "rust-panic-safety/references/boundary-patterns.md"
+section = "Out-parameters"
+block = 1
+items = '''
+#[repr(i32)]
+pub enum Status {
+    Ok = 0,
+    InvalidInput = -1,
+    NotFound = -2,
+    Io = -3,
+    Busy = -4,
+    Panic = -99,
+}
+pub enum Error {
+    InvalidInput,
+}
+fn measure(bytes: &[u8]) -> std::result::Result<usize, Error> {
+    todo!()
+}
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+
+[[block]]
+file = "rust-panic-safety/references/boundary-patterns.md"
+section = "Callbacks that foreign code invokes"
+block = 1
+items = '''
+#[repr(i32)]
+pub enum Status {
+    Ok = 0,
+    InvalidInput = -1,
+    NotFound = -2,
+    Io = -3,
+    Busy = -4,
+    Panic = -99,
+}
+pub enum Error {
+    InvalidInput,
+}
+pub struct State;
+impl State {
+    fn handle(&self, code: i32) -> std::result::Result<(), Error> {
+        todo!()
+    }
+}
+static CALLBACK_FAILURE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+
+[[block]]
+file = "rust-panic-safety/references/boundary-patterns.md"
+section = "Async work behind a synchronous boundary"
+block = 1
+items = '''
+#[repr(i32)]
+pub enum Status {
+    Ok = 0,
+    InvalidInput = -1,
+    NotFound = -2,
+    Io = -3,
+    Busy = -4,
+    Panic = -99,
+}
+pub enum SessionError {
+    TaskPanicked,
+    Cancelled,
+}
+pub struct Session {
+    runtime: tokio::runtime::Runtime,
+    poisoned: std::sync::atomic::AtomicBool,
+}
+impl Session {
+    async fn run(&self) -> std::result::Result<(), SessionError> {
+        todo!()
+    }
+}
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+
+[[block]]
+file = "rust-panic-safety/references/boundary-patterns.md"
+section = "Async work behind a synchronous boundary"
+block = 2
+items = '''
+pub enum SessionError {
+    TaskPanicked,
+    Cancelled,
+}
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+setup = '''
+let handle: tokio::task::JoinHandle<u64> = todo!();
+'''
+
+# references/jni-boundary.md
+
+[[block]]
+file = "rust-panic-safety/references/jni-boundary.md"
+section = "Error policy with a fixed message"
+block = 1
+items = '''
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+
+# references/panic-hook.md
+# `PanicSite` lives inside the block, so the sink stubs go in `setup` to share its scope.
+
+[[block]]
+file = "rust-panic-safety/references/panic-hook.md"
+section = "(top)"
+block = 1
+setup = '''
+fn write_platform_panic(event: &'static str, site: PanicSite, line: u32, column: u32) {
+    todo!()
+}
+fn report_other_library_panics(info: &std::panic::PanicHookInfo<'_>) {
+    todo!()
+}
+'''
+
+# references/unwrap-audit.md
+# One typed error for the whole file, with a variant for each replacement it shows.
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "`Result` with an error type"
+block = 1
+items = '''
+#[derive(serde::Deserialize)]
+struct Config {
+    name: String,
+}
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("invalid config")]
+    InvalidConfig(serde_json::Error),
+    #[error("missing host")]
+    MissingHost,
+    #[error("truncated input")]
+    Truncated,
+    #[error("value too large")]
+    TooLarge,
+    #[error("arithmetic overflow")]
+    Overflow,
+    #[error("missing environment variable {0}")]
+    MissingEnv(&'static str),
+}
+'''
+setup = '''
+let raw: &str = todo!();
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "`Option` from input"
+block = 1
+items = '''
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("invalid config")]
+    InvalidConfig(serde_json::Error),
+    #[error("missing host")]
+    MissingHost,
+    #[error("truncated input")]
+    Truncated,
+    #[error("value too large")]
+    TooLarge,
+    #[error("arithmetic overflow")]
+    Overflow,
+    #[error("missing environment variable {0}")]
+    MissingEnv(&'static str),
+}
+'''
+setup = '''
+let url: reqwest::Url = todo!();
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "Indexing and slicing"
+block = 1
+items = '''
+const HEADER_LEN: usize = 16;
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("invalid config")]
+    InvalidConfig(serde_json::Error),
+    #[error("missing host")]
+    MissingHost,
+    #[error("truncated input")]
+    Truncated,
+    #[error("value too large")]
+    TooLarge,
+    #[error("arithmetic overflow")]
+    Overflow,
+    #[error("missing environment variable {0}")]
+    MissingEnv(&'static str),
+}
+'''
+setup = '''
+let buf: &[u8] = todo!();
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "Numeric conversion"
+block = 1
+items = '''
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("invalid config")]
+    InvalidConfig(serde_json::Error),
+    #[error("missing host")]
+    MissingHost,
+    #[error("truncated input")]
+    Truncated,
+    #[error("value too large")]
+    TooLarge,
+    #[error("arithmetic overflow")]
+    Overflow,
+    #[error("missing environment variable {0}")]
+    MissingEnv(&'static str),
+}
+'''
+setup = '''
+let buf: &[u8] = todo!();
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "Numeric conversion"
+block = 2
+items = '''
+const MAX_U32: u32 = u32::MAX;
+'''
+setup = '''
+let buf: &[u8] = todo!();
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "Arithmetic"
+block = 1
+items = '''
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("invalid config")]
+    InvalidConfig(serde_json::Error),
+    #[error("missing host")]
+    MissingHost,
+    #[error("truncated input")]
+    Truncated,
+    #[error("value too large")]
+    TooLarge,
+    #[error("arithmetic overflow")]
+    Overflow,
+    #[error("missing environment variable {0}")]
+    MissingEnv(&'static str),
+}
+'''
+setup = '''
+let offset: usize = todo!();
+let len: usize = todo!();
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "Allocation"
+block = 1
+items = '''
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("invalid config")]
+    InvalidConfig(serde_json::Error),
+    #[error("missing host")]
+    MissingHost,
+    #[error("truncated input")]
+    Truncated,
+    #[error("value too large")]
+    TooLarge,
+    #[error("arithmetic overflow")]
+    Overflow,
+    #[error("missing environment variable {0}")]
+    MissingEnv(&'static str),
+}
+'''
+setup = '''
+let len: usize = todo!();
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "Environment and configuration at startup"
+block = 1
+items = '''
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("invalid config")]
+    InvalidConfig(serde_json::Error),
+    #[error("missing host")]
+    MissingHost,
+    #[error("truncated input")]
+    Truncated,
+    #[error("value too large")]
+    TooLarge,
+    #[error("arithmetic overflow")]
+    Overflow,
+    #[error("missing environment variable {0}")]
+    MissingEnv(&'static str),
+}
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "Step 5: the `#[expect]` contract"
+block = 1
+setup = '''
+let map: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+let key: String = todo!();
+'''
+
+[[block]]
+file = "rust-panic-safety/references/jni-boundary.md"
+section = "Method entry point on `jni` 0.21"
+block = 1
+items = '''
+use jni021 as jni;
+use jni::JNIEnv;
+use jni::objects::JObject;
+use jni::sys::{jint, jlong};
+use std::sync::Arc;
+
+pub enum SessionError {
+    InvalidHandle,
+    Failed,
+}
+
+pub struct Session;
+impl Session {
+    fn start(&self) -> Result<(), SessionError> {
+        todo!()
+    }
+}
+
+// The prose: lookup decodes the jlong as a generational ID and clones an Arc<Session>.
+pub struct SessionRegistry;
+impl SessionRegistry {
+    fn lookup(&self, _handle: jlong) -> Result<Arc<Session>, SessionError> {
+        todo!()
+    }
+}
+static SESSION_REGISTRY: SessionRegistry = SessionRegistry;
+
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "Lock acquisition"
+block = 1
+method_of = "Service"
+items = '''
+pub struct Service {
+    state: std::sync::Mutex<std::collections::HashMap<String, u64>>,
+}
+'''
+
+[[block]]
+file = "rust-panic-safety/references/unwrap-audit.md"
+section = "Lock acquisition"
+block = 2
+method_of = "Service"
+items = '''
+pub struct Service {
+    state: std::sync::Mutex<std::collections::HashMap<String, u64>>,
+}
+'''
