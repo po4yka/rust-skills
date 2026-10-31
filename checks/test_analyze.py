@@ -140,6 +140,16 @@ class TestExcuses(unittest.TestCase):
         )
         self.assertIn("ex", suspects)
 
+    def test_fragment_examples_lists_only_fragments(self):
+        names = analyze.fragment_examples(
+            {
+                "frag": [error("E0425", "cannot find value `conn` in this scope")],
+                "real": [error("E0308", "mismatched types")],
+                "mixed": [error("E0425", "cannot find value `x` in this scope"), error("E0308", "mismatched types")],
+            }
+        )
+        self.assertEqual(names, ["frag"])
+
     def test_wrapper_damage_is_not_a_suspect(self):
         _, artifact, _, suspects = analyze.classify(
             {"ex": [error("E0424", "expected value, found module `self`")]}

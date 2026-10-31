@@ -1,0 +1,83 @@
+# Fragments accepted as known: blocks whose every error is an unresolved name.
+# Regenerate with:
+#   python3 checks/analyze.py check.json --emit-fragments > checks/fragments.txt
+ffi-error-progress-cancel/SKILL.md :: Rust side :: a54839db
+ffi-error-progress-cancel/SKILL.md :: The boundary enum is flat :: 2bd7d7ae
+ffi-error-progress-cancel/references/platform-bridges.md :: Checkpoint helper :: 3e3927ac
+ffi-error-progress-cancel/references/platform-bridges.md :: Partial output cleanup :: 8bd2dd43
+memory-model/SKILL.md :: Pattern 4: reference counting :: 9851b865
+rust-async-internals/SKILL.md :: Put shutdown first with `biased` :: a6fad135
+rust-async-internals/references/cancellation-and-shutdown.md :: CancellationToken idioms :: 29c901e2
+rust-async-internals/references/cancellation-and-shutdown.md :: Disabled select! branches :: 23846286
+rust-async-internals/references/cancellation-and-shutdown.md :: Spawn-and-join firewall for critical sections :: 6e234ad0
+rust-async-internals/references/cancellation-and-shutdown.md :: sqlx transactions :: 645c5c16
+rust-async-internals/references/runtime-and-foreign-threads.md :: Enter the runtime from a foreign thread :: af5ebbe1
+rust-callback-bounds/references/closure-capture-semantics.md :: Capture precision depends on the projection :: 97e4a6f8
+rust-code-style/SKILL.md :: Import style :: 2737fba8
+rust-code-style/references/iterator-style.md :: Iterator combinators stay pure :: 495304a0
+rust-code-style/references/module-layout.md :: `lib.rs` is the table of contents :: fa1b2717
+rust-crate-architecture/references/dependency-direction.md :: Fix B: the lower crate needs behavior :: 4a562224
+rust-crate-architecture/references/dependency-direction.md :: Splitting a crate :: 4ec88ca5
+rust-discipline/references/type-and-trait-traps.md :: Integer overflow panics in debug and wraps in release :: fbde0210
+rust-hot-path/references/allocation-reduction.md :: Pin an allocation count with `dhat` :: 81952461
+rust-jni/SKILL.md :: The env must not cross an await point :: 074a8814
+rust-jni/references/jni-threading-and-callbacks.md :: Local reference frames :: ab3a9791
+rust-jni/references/jni-threading-and-callbacks.md :: Option A: pass the fd over a Unix socket with SCM_RIGHTS :: e01acb45
+rust-jni/references/jni-threading-and-callbacks.md :: Option B: direct JNI callback :: c46a88b5
+rust-jni/references/jni-threading-and-callbacks.md :: jni 0.21: bind the RAII guard :: 4e4291b7
+rust-jni/references/jni-threading-and-callbacks.md :: jni 0.22: attach with a closure :: 2a806be0
+rust-jni/references/types-and-exceptions.md :: Throw a Java exception :: a61c3bfa
+rust-jni/references/uniffi-vs-raw-jni.md :: Proc-macro form :: bff58063
+rust-networking/references/stack-defaults.md :: rustls crypto provider :: bc1c21e9
+rust-observability/SKILL.md :: Add an emission :: 75825edd
+rust-observability/references/embedded-telemetry-surface.md :: The snapshot entry point :: 228d16ff
+rust-observability/references/redaction-and-field-vocabulary.md :: The redacting visitor :: c1a320b4
+rust-observability/references/redaction-and-field-vocabulary.md :: What a sink receives :: 00ed91c7
+rust-observability/references/redaction-and-field-vocabulary.md :: What a sink receives :: e1f5ded6
+rust-panic-safety/SKILL.md :: The guard pattern: hand-rolled C ABI :: 3b264dbf
+rust-panic-safety/SKILL.md :: `UnwindSafe` and `AssertUnwindSafe` :: db3f67bc
+rust-panic-safety/references/boundary-patterns.md :: Async work behind a synchronous boundary :: 47989e08
+rust-panic-safety/references/boundary-patterns.md :: Async work behind a synchronous boundary :: 84ff8f79
+rust-panic-safety/references/boundary-patterns.md :: Callbacks that foreign code invokes :: 34689881
+rust-panic-safety/references/boundary-patterns.md :: Out-parameters :: bac52913
+rust-panic-safety/references/boundary-patterns.md :: Returning a pointer or an opaque handle :: 4d9ddd89
+rust-panic-safety/references/boundary-patterns.md :: Returning a pointer or an opaque handle :: 7a7c71ad
+rust-panic-safety/references/jni-boundary.md :: Error policy with a fixed message :: 3bf5de05
+rust-panic-safety/references/jni-boundary.md :: Method entry point on `jni` 0.21 :: 0b76d369
+rust-panic-safety/references/panic-hook.md :: (top) :: 0626f512
+rust-panic-safety/references/unwrap-audit.md :: Allocation :: a74928b1
+rust-panic-safety/references/unwrap-audit.md :: Arithmetic :: 2e70db69
+rust-panic-safety/references/unwrap-audit.md :: Environment and configuration at startup :: 9b1ed0eb
+rust-panic-safety/references/unwrap-audit.md :: Indexing and slicing :: 08358efe
+rust-panic-safety/references/unwrap-audit.md :: Lock acquisition :: 9bc6a17a
+rust-panic-safety/references/unwrap-audit.md :: Lock acquisition :: acec4fbb
+rust-panic-safety/references/unwrap-audit.md :: Numeric conversion :: 4897581e
+rust-panic-safety/references/unwrap-audit.md :: Numeric conversion :: 65d09a23
+rust-panic-safety/references/unwrap-audit.md :: Step 5: the `#[expect]` contract :: c29a37af
+rust-panic-safety/references/unwrap-audit.md :: `Option` from input :: 16b6a5d5
+rust-panic-safety/references/unwrap-audit.md :: `Result` with an error type :: 1d696f99
+rust-performance/references/benchmarking.md :: 4. Statistical configuration and the verdict :: 389d1718
+rust-performance/references/benchmarking.md :: 5. Wall time, CPU time, and async benchmarks :: 96bd161c
+rust-performance/references/benchmarking.md :: Expensive setup :: 4b34f8df
+rust-performance/references/benchmarking.md :: Throughput :: e22fda68
+rust-pin-projection/SKILL.md :: Never pin a named stack binding :: 6fd85fe4
+rust-pin-projection/references/pin-projection-macros.md :: A destructor that moves a pinned field :: 2bc5859a
+rust-pin-projection/references/pin-projection-macros.md :: A pinning pointer that pins nothing :: faeaa494
+rust-security/references/untrusted-input.md :: Limit recursion depth :: fb135ae6
+rust-security/references/untrusted-input.md :: Never trust a length field before you allocate :: 310c3b31
+rust-security/references/untrusted-input.md :: Validate floating-point input :: 055a3c49
+rust-tdd/references/fault-injection.md :: A fake that consults the queue :: 170b5045
+rust-test-tools/SKILL.md :: Differential testing :: bf5df83f
+rust-test-tools/SKILL.md :: cargo-fuzz :: 1282dc99
+rust-test-tools/references/mutation-testing.md :: Assert specific values, not only "no panic" :: cd69b2d5
+rust-type-erasure/SKILL.md :: The helper bound is `for<'x>`, not `'static` :: 3f418367
+rust-type-erasure/SKILL.md :: Where it breaks: an extractor that detaches the lifetime :: 0d2f7a87
+rust-unsafe/references/ffi-layout-rules.md :: A slice over a caller-owned buffer or a mapping :: 03d458d7
+rust-unsafe/references/ffi-layout-rules.md :: Pass a closure to C as data plus a function pointer :: 445cc69b
+rust-unsafe/references/unsafe-patterns.md :: A `Drop` impl that cannot abort the process :: d6a57123
+rust-unsafe/references/unsafe-patterns.md :: A hand-rolled `extern "C"` entry point :: 6ba32bce
+rust-unsafe/references/unsafe-patterns.md :: Pointer arithmetic :: 8ee204d4
+rust-unsafe/references/unsafe-patterns.md :: Pointer arithmetic :: a579995d
+rust-unsafe/references/unsafe-patterns.md :: Reads and writes that create no reference :: 314a9ebc
+rust-unsafe/references/unsafe-patterns.md :: Syscall, ioctl, union, and descriptor wrappers :: b3e379f6
+rust-unsafe/references/unsafe-patterns.md :: Syscall, ioctl, union, and descriptor wrappers :: dc133b46
