@@ -1,6 +1,6 @@
 ---
 name: rust-copy-on-write
-description: Use when choosing between borrowed and owned data at an API boundary (Cow<str>, Cow<[T]>, to_mut, into_owned, a Cow struct field), or when clone cost drives a data-structure choice (Arc<str>, Arc<[T]>, the persistent collection crates im, imbl, rpds). Not for an allocation site that a profile already names; use `rust-hot-path`. Triggers on "Cow", "copy-on-write", "borrowed or owned", "borrow or clone", "clone cost", "persistent collection", "immutable data structure", "structural sharing", or "zero-copy string parse".
+description: Use when choosing between borrowed and owned data at an API boundary (Cow<str>, Cow<[T]>, to_mut, into_owned), including a function that a profile shows allocating a new String or Vec on every call although most inputs come back unchanged, or when clone cost drives a data-structure choice (Arc<str>, the persistent collection crates im, imbl, rpds). Not for other allocation cuts at a named hot spot (use rust-hot-path). Triggers on "copy-on-write", "borrowed or owned", "clone cost", "structural sharing".
 license: BSD-3-Clause
 ---
 

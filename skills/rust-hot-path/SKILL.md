@@ -1,6 +1,6 @@
 ---
 name: rust-hot-path
-description: Use when changing Rust code at a hot spot that a profile or benchmark already names, for example cutting allocations (with_capacity, reserve_exact, clone_from, workhorse buffers, SmallVec, ThinVec, swap_remove), shrinking a type (print-type-sizes, memcpy, large_enum_variant), choosing a hasher (FxHashMap, HashDoS), removing a bounds check, placing inline(always) or cold attributes or a cold path hint, or buffering I/O (BufWriter). Not for choosing or running a profiler; use `rust-performance`. Triggers on "reduce allocations", "too many allocations", "this type is too big", "which hasher".
+description: Use when changing Rust code at a hot spot that a profile or benchmark already names, such as cutting allocations (with_capacity, reserve_exact, clone_from, SmallVec, ThinVec, swap_remove), shrinking a type (print-type-sizes, memcpy, large_enum_variant), choosing a hasher (FxHashMap), removing a bounds check, placing inline(always) or a cold path hint, or buffering I/O (BufWriter). Not for choosing a profiler (use rust-performance) or input most calls return unchanged (use rust-copy-on-write). Triggers on "reduce allocations", "too many allocations", "this type is too big", "which hasher".
 license: BSD-3-Clause
 ---
 

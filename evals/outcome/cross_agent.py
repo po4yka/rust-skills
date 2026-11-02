@@ -797,7 +797,11 @@ def probe(args: argparse.Namespace) -> int:
 # --- run -----------------------------------------------------------------------------------------
 
 def tasks(args: argparse.Namespace) -> list[tuple[str, str, int]]:
-    configs = [c for c in CONFIGS if CONFIGS[c][0] in args.agents.split(",")]
+    wanted = set(filter(None, args.configs.split(","))) or set(CONFIGS)
+    unknown = wanted - set(CONFIGS)
+    if unknown:
+        raise SystemExit(f"unknown configuration(s): {sorted(unknown)}")
+    configs = [c for c in CONFIGS if CONFIGS[c][0] in args.agents.split(",") and c in wanted]
     return [(case, config, k) for case in case_names(args.case) for k in range(1, args.runs + 1)
             for config in configs]
 
@@ -1147,6 +1151,7 @@ def main() -> int:
     parser.add_argument("--case", default="*", help="glob over case names")
     parser.add_argument("--agents", default="claude,codex")
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--configs", default="", help="comma-separated configurations; default: all four")
     parser.add_argument("--jobs-per-agent", type=int, default=2)
     parser.add_argument("--claude-home", type=Path, default=DEFAULT_CLAUDE_HOME)
     parser.add_argument("--codex-home", type=Path, default=DEFAULT_CODEX_HOME)
