@@ -67,6 +67,14 @@ jobs:
           version="$(grep '^CLAUDE_CODE_VERSION=' checks/check.sh | cut -d'"' -f2)"
           python3 checks/plugin_install.py --claude "npx -y -p @anthropic-ai/claude-code@${version} claude"
 
+      # Codex reads the same marketplace file. This step proves each plugin
+      # loads exactly its skills there too, on the Codex version check.sh pins.
+      - name: Check Codex installs every plugin with exactly its skills
+        run: |
+          set -euo pipefail
+          version="$(grep '^CODEX_VERSION=' checks/check.sh | cut -d'"' -f2)"
+          python3 checks/plugin_install.py --codex "npx -y @openai/codex@${version}"
+
   examples:
     name: Compile-check examples
     runs-on: ubuntu-latest

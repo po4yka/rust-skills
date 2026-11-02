@@ -12,8 +12,8 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 - Install bundles in `bundles.toml`: six subject groups that each install as one unit. Five fit
   the always-on skill listing of a 200K-context client; `language` is over that budget and is
   held by the ratchet.
-- A Claude Code plugin manifest and a marketplace with one plugin per bundle plus the full
-  catalog, pinned by adding the marketplace at a release tag.
+- A Claude Code plugin marketplace with one plugin per bundle plus the full catalog, pinned by
+  adding the marketplace at a release tag.
 - `AGENTS.snippet.md`, a 60-line symptom-to-skill router for a consuming repository's
   always-on instructions.
 - Validator rules: bundle membership, a description budget per bundle and in total, a body token
@@ -29,12 +29,21 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 - Weekly toolchain-drift and crate-drift workflows that open an issue.
 - `SECURITY.md`, `CODEOWNERS`, a pull request template, and a misroute issue form.
 - Plugin gates: the validator checks `.claude-plugin/marketplace.json` against `bundles.toml`
-  (entries, skill lists, skill counts, root source, no `version`), and
+  (entries, skill lists, skill counts, root source, license, no `version`, no root
+  `plugin.json`), and
   `checks/plugin_install.py` installs every plugin with the pinned Claude Code CLI and compares
   what it loads with its bundle. Both run in `checks/check.sh` and in CI.
+- Codex support: Codex 0.166.0 installs the full catalog and every bundle from the same
+  marketplace (`codex plugin marketplace add po4yka/rust-skills`). `checks/plugin_install.py
+  --codex` checks that each plugin puts exactly its skills in front of the model, in
+  `checks/check.sh` and in CI.
 
 ### Changed
 
+- For consumers who track `main`: `.claude-plugin/plugin.json` is gone, and each marketplace
+  entry is its whole manifest. Codex installs no bundle while a root manifest names another
+  plugin. In Claude Code a skill is now namespaced by its plugin (`rust-skills-testing:rust-tdd`),
+  not by `rust-skills:`.
 - The toolchain pin moves to Rust 1.99.1, with an audit pass over 32 skills: corrected API
   claims, `compile_fail` tags on drop-check examples, and new triage rows (#6). The harness
   checks examples against criterion 0.8 and parking_lot 0.13, and the skills CLI pin is 1.7.4.

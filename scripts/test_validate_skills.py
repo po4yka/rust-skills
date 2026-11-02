@@ -443,26 +443,33 @@ skills = ["rust-c"]
 
     # The plugin marketplace: one entry per bundle, in step with bundles.toml.
 
-    MANIFEST = {"name": "kit", "skills": ["./skills"]}
-
     def entries(self) -> list[dict]:
+        license = {"license": "BSD-3-Clause"}
         return [
-            {"name": "kit", "source": "./", "description": "All 3 Rust agent skills."},
+            {"name": "kit", "source": "./", "description": "All 3 Rust agent skills.", **license},
             {
                 "name": "kit-core",
                 "source": "./",
                 "description": "Core: 2 Rust agent skills.",
                 "skills": ["./skills/rust-a", "./skills/rust-b"],
+                **license,
             },
-            {"name": "kit-edge", "source": "./", "description": "Edge: 1 Rust agent skills.", "skills": ["./skills/rust-c"]},
+            {
+                "name": "kit-edge",
+                "source": "./",
+                "description": "Edge: 1 Rust agent skills.",
+                "skills": ["./skills/rust-c"],
+                **license,
+            },
         ]
 
-    def marketplace(self, entries: list[dict], manifest: dict | None = None) -> list[str]:
+    def marketplace(self, entries: list[dict], manifest: dict | None = None, top: dict | None = None) -> list[str]:
         files = {
             "bundles.toml": self.BUNDLES,
-            ".claude-plugin/plugin.json": json.dumps(manifest or self.MANIFEST),
-            ".claude-plugin/marketplace.json": json.dumps({"name": "kit", "plugins": entries}),
+            ".claude-plugin/marketplace.json": json.dumps({"name": "kit", **(top or {}), "plugins": entries}),
         }
+        if manifest is not None:
+            files[".claude-plugin/plugin.json"] = json.dumps(manifest)
         with tempfile.TemporaryDirectory() as tmp:
             self.use_tree(tmp, files)
             validate_skills.check_marketplace(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
@@ -489,9 +496,9 @@ skills = ["rust-c"]
         # One `version` that is not bumped freezes every consumer on it.
         entries = self.entries()
         entries[2]["version"] = "1.0.0"
-        found = self.marketplace(entries, {**self.MANIFEST, "version": "1.0.0"})
-        self.assertEqual(len(found), 2)
-        self.assertTrue(all("`version`" in f for f in found))
+        found = self.marketplace(entries)
+        self.assertEqual(len(found), 1)
+        self.assertIn("`version`", found[0])
 
     def test_a_source_other_than_the_root_fails(self):
         # A github source with a ref loads every skill, not the bundle.
@@ -518,26 +525,37 @@ skills = ["rust-c"]
         self.assertEqual(len(found), 1)
         self.assertIn("'kit-edge' appears 2 times", found[0])
 
-    def test_a_marketplace_named_unlike_the_plugin_fails(self):
-        found = self.marketplace(self.entries(), {"name": "other", "skills": ["./skills"]})
-        self.assertTrue(any("must equal the plugin.json name" in f for f in found))
-
-    def test_a_manifest_that_does_not_load_the_whole_catalog_fails(self):
-        found = self.marketplace(self.entries(), {"name": "kit", "skills": ["./skills/rust-a"]})
+    def test_a_root_plugin_json_fails(self):
+        # Codex refuses every bundle whose name differs from the root manifest.
+        found = self.marketplace(self.entries(), {"name": "kit"})
         self.assertEqual(len(found), 1)
-        self.assertIn('skills must be ["./skills"]', found[0])
+        self.assertIn("plugin.json: must not exist", found[0])
+
+    def test_a_codex_or_portable_root_manifest_fails(self):
+        for path in (".codex-plugin/plugin.json", "plugin.json"):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as tmp:
+                validate_skills.failures.clear()
+                files = {
+                    "bundles.toml": self.BUNDLES,
+                    ".claude-plugin/marketplace.json": json.dumps({"name": "kit", "plugins": self.entries()}),
+                    path: json.dumps({"name": "kit"}),
+                }
+                self.use_tree(tmp, files)
+                validate_skills.check_marketplace(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
+                self.assertEqual(len(validate_skills.failures), 1)
+                self.assertTrue(validate_skills.failures[0].startswith(f"{path}: must not exist"))
+
+    def test_an_entry_without_the_license_fails(self):
+        entries = self.entries()
+        del entries[1]["license"]
+        found = self.marketplace(entries)
+        self.assertEqual(len(found), 1)
+        self.assertIn('license must be "BSD-3-Clause"', found[0])
 
     def test_a_top_level_marketplace_version_fails(self):
-        files = {
-            "bundles.toml": self.BUNDLES,
-            ".claude-plugin/plugin.json": json.dumps(self.MANIFEST),
-            ".claude-plugin/marketplace.json": json.dumps({"name": "kit", "version": "1", "plugins": self.entries()}),
-        }
-        with tempfile.TemporaryDirectory() as tmp:
-            self.use_tree(tmp, files)
-            validate_skills.check_marketplace(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
-        self.assertEqual(len(validate_skills.failures), 1)
-        self.assertIn("top-level `version`", validate_skills.failures[0])
+        found = self.marketplace(self.entries(), top={"version": "1"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("top-level `version`", found[0])
 
     def test_a_name_that_is_not_a_string_fails_without_a_crash(self):
         entries = self.entries()

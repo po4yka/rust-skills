@@ -18,7 +18,7 @@ skills/<name>/references/*.md   optional deep material, loaded on demand
 README.md                       the catalog table, the install bundles, and the routing graph
 bundles.toml                    install bundles: bundle -> ordered skill names
 AGENTS.snippet.md               the always-on router a consumer pastes; every skill once
-.claude-plugin/                 plugin manifest and marketplace, one plugin per bundle
+.claude-plugin/                 the plugin marketplace for Claude Code and Codex, one plugin per bundle
 scripts/validate-skills.py      catalog checks (tests: scripts/test_validate_skills.py)
 scripts/catalog-ceilings.toml   ratchet: accepted values over a limit, which may only shrink
 scripts/drift-report.py         toolchain and crate drift report behind the weekly workflows
@@ -141,8 +141,8 @@ bash checks/check.sh
 ```
 
 A green run locally means a green run in CI. The gates that can be missing are the skills-CLI
-discovery step and the Claude Code plugin install step, which both need `npx`; `check.sh` says
-so when it skips them. `check.sh` writes only under `checks/` and a temporary directory, so run
+discovery step and the Claude Code and Codex plugin install steps, which all need `npx`;
+`check.sh` says so when it skips them. `check.sh` writes only under `checks/` and a temporary directory, so run
 and rerun it without asking.
 
 ### 1. Catalog structure
@@ -163,7 +163,8 @@ and rerun it without asking.
   row; `AGENTS.snippet.md` names every skill exactly once in at most 60 lines;
 - `.claude-plugin/marketplace.json` has the full-catalog plugin and one `<name>-<bundle>` plugin
   per bundle, each with source `"./"`, the bundle's skills in `bundles.toml` order, a correct
-  "N Rust agent skills" count, and no `version` (`docs/releasing.md` says why);
+  "N Rust agent skills" count, the BSD-3-Clause license, and no `version`; and no
+  `.claude-plugin/plugin.json` exists (`docs/releasing.md` says why for both);
 - descriptions stay under 5,000 characters per bundle (about 2,000 tokens, the skill listing of
   a 200K-context client) and 20,000 in total, and each body stays under 4,800 estimated tokens
   (characters / 2.5; the calibration is in `research/token-calibration-2026-10.md`);
@@ -194,7 +195,7 @@ YAML parser: a `: ` in a description once hid a whole skill, and a ` #` cut one 
 `plain_scalar_problem` in `scripts/validate-skills.py` rejects both, but the CLI is the only
 end-to-end proof.
 
-Last, `check.sh` runs `checks/plugin_install.py` with the Claude Code CLI that
+Next, `check.sh` runs `checks/plugin_install.py` with the Claude Code CLI that
 `CLAUDE_CODE_VERSION` in `check.sh` pins. In a throwaway config directory it runs
 `claude plugin validate .`, adds this checkout as a marketplace, installs the full-catalog plugin
 and one plugin per bundle, and compares the skills of `claude plugin details` with `skills/` and
@@ -202,6 +203,15 @@ and one plugin per bundle, and compares the skills of `claude plugin details` wi
 touch `~/.claude`. Run it after any edit to `.claude-plugin/` or `bundles.toml`. A green result
 proves what a local-path install loads, which Claude Code reads in place; it does not prove a
 GitHub install, which copies the plugin to the cache.
+
+Last, `check.sh` runs the same script with the Codex CLI that `CODEX_VERSION` pins. Codex
+copies the whole marketplace root into its cache, ignored build output included, so the script
+first exports the files git tracks or would track. For each plugin it uses a new throwaway
+`CODEX_HOME` and an environment without `OPENAI_*` or `CODEX_*` variables, runs
+`codex plugin marketplace add` on the export and `codex plugin add`, and compares the plugin's
+skills in `codex debug prompt-input`, the list a session puts in front of the model, with
+`skills/` and `bundles.toml`. It does not prove a Git-hosted marketplace or a model's choice of
+skill.
 
 ### What `main` enforces
 
