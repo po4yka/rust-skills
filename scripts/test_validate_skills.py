@@ -441,6 +441,25 @@ skills = ["rust-c"]
         self.assertEqual(len(validate_skills.failures), 1)
         self.assertIn("'edge' has no row in the Install table", validate_skills.failures[0])
 
+    COUNTED_README = ("## Install\n\n| Bundle | Subject | Skills | Plugin |\n| --- | --- | ---: | --- |\n"
+                      "| `core` | Core | 2 | `p-core` |\n| `edge` | Edge | 1 | `p-edge` |\n\n## Next\n")
+
+    def test_install_table_counts_that_match_the_bundles_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"bundles.toml": self.BUNDLES, "README.md": self.COUNTED_README})
+            validate_skills.check_bundles(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
+        self.assertEqual(validate_skills.failures, [])
+
+    def test_a_stale_install_table_count_fails(self):
+        # A skill joins `core`, and the README row still says 2.
+        bundles = self.BUNDLES.replace('["rust-a", "rust-b"]', '["rust-a", "rust-b", "rust-d"]')
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"bundles.toml": bundles, "README.md": self.COUNTED_README})
+            validate_skills.check_bundles(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c", "rust-d"})
+        self.assertEqual(len(validate_skills.failures), 1)
+        self.assertIn("'core' shows 2 skills in the Install table; bundles.toml lists 3",
+                      validate_skills.failures[0])
+
     # The plugin marketplace: one entry per bundle, in step with bundles.toml.
 
     def entries(self) -> list[dict]:

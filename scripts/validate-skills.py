@@ -524,7 +524,27 @@ def check_bundles(bundles: dict[str, list[str]], skill_names: set[str]) -> None:
     if install is None:
         fail("README.md", "Install section is missing")
         return
-    rows = set(re.findall(r"^\|\s*`?([a-z0-9-]+)`?\s*\|", install.group(1), re.M))
+    rows: set[str] = set()
+    skills_col = None  # index of the "Skills" column in the current table, if it has one
+    for line in install.group(1).splitlines():
+        if not line.startswith("|"):
+            skills_col = None
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if "Skills" in cells:
+            skills_col = cells.index("Skills")
+            continue
+        match = re.fullmatch(r"`?([a-z0-9-]+)`?", cells[0])
+        if match is None:
+            continue
+        bundle = match.group(1)
+        rows.add(bundle)
+        # The count is written by hand, so it falls behind when a skill joins a bundle.
+        if bundle in bundles and skills_col is not None and skills_col < len(cells):
+            shown, actual = cells[skills_col], len(bundles[bundle])
+            if shown != str(actual):
+                fail("README.md", f"bundle {bundle!r} shows {shown} skills in the Install table; "
+                                  f"bundles.toml lists {actual}")
     for bundle in sorted(set(bundles) - rows):
         fail("README.md", f"bundle {bundle!r} has no row in the Install table")
 
