@@ -507,22 +507,49 @@ def render_trace(actions: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def tree_diff(before: Path, after: Path) -> str:
-    """A unified diff of the workspace, without build output and git internals."""
+def tree_diff(before: Path, after: Path, budget: int = 200_000) -> str:
+    """A unified diff of the workspace without build output and git internals.
+
+    Source files come first: an agent can leave a large tree behind (one run copied a cargo
+    registry into its workspace), so binary and large files are only counted, and the diff stops
+    at `budget` characters with a count of what it did not show."""
     def files(root: Path) -> dict[str, Path]:
         found = {}
-        for path in sorted(root.rglob("*")):
+        for path in root.rglob("*"):
             rel = path.relative_to(root)
-            if path.is_file() and rel.parts[0] not in ("target", ".git"):
-                found[str(rel)] = path
+            if rel.parts[0] in ("target", ".git") or not path.is_file() or path.is_symlink():
+                continue
+            found[str(rel)] = path
         return found
+
+    def text(path: Path | None) -> list[str] | None:
+        if path is None:
+            return []
+        if path.stat().st_size > 256_000:
+            return None
+        data = path.read_bytes()
+        if b"\0" in data:
+            return None
+        return data.decode("utf-8", errors="replace").splitlines(keepends=True)
+
     old, new = files(before), files(after)
-    chunks = []
-    for rel in sorted(old.keys() | new.keys()):
-        a = old[rel].read_text(errors="replace").splitlines(keepends=True) if rel in old else []
-        b = new[rel].read_text(errors="replace").splitlines(keepends=True) if rel in new else []
-        if a != b:
-            chunks += difflib.unified_diff(a, b, f"a/{rel}", f"b/{rel}")
+    order = sorted(old.keys() | new.keys(), key=lambda rel: (rel.startswith("."), rel.count("/"), rel))
+    chunks: list[str] = []
+    size, skipped = 0, {}
+    for rel in order:
+        a, b = text(old.get(rel)), text(new.get(rel))
+        if a is not None and b is not None and a == b:
+            continue
+        if a is None or b is None or size > budget:
+            top = rel.split("/")[0] + ("/" if "/" in rel else "")
+            if not (a is not None and b is not None) or size > budget:
+                skipped[top] = skipped.get(top, 0) + 1
+                continue
+        piece = "".join(difflib.unified_diff(a, b, f"a/{rel}", f"b/{rel}"))
+        chunks.append(piece)
+        size += len(piece)
+    for top, count in sorted(skipped.items()):
+        chunks.append(f"[{count} more changed file(s) under {top} not shown: binary, large, or over budget]\n")
     return "".join(chunks) or "(no file changed)"
 
 
@@ -943,6 +970,13 @@ def label_for(seed: str, case_name: str, config: str, k: int) -> str:
     return f"run-{digest[:8]}"
 
 
+def final_diff(run_dir: Path) -> str:
+    """Recomputes the diff (bounded) and stores it next to the run."""
+    diff = tree_diff(run_dir / "pristine", run_dir / "workspace")
+    (run_dir / "final.diff").write_text(diff)
+    return diff
+
+
 def grade_one(case: dict, run_dir: Path, args: argparse.Namespace, names: list[str]) -> dict:
     meta = json.loads((run_dir / "meta.json").read_text())
     norm = json.loads((run_dir / "normalized.json").read_text())
@@ -960,7 +994,7 @@ def grade_one(case: dict, run_dir: Path, args: argparse.Namespace, names: list[s
         view = {
             "trace": clip(redact(render_trace(norm["actions"]), run_dir, names), TRACE_LIMIT),
             "final": redact(norm["final"], run_dir, names),
-            "diff": clip(redact((run_dir / "final.diff").read_text(errors="replace"), run_dir, names), DIFF_LIMIT),
+            "diff": clip(redact(final_diff(run_dir), run_dir, names), DIFF_LIMIT),
         }
         criteria = "\n\n".join(f"[{g['name']}]\n{g['criteria']}" for g in judged)
         evidence = "\n\n".join(

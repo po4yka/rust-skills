@@ -315,6 +315,21 @@ class CaseGraders(unittest.TestCase):
         self.assertIn("+new", diff)
         self.assertNotIn("junk", diff)
 
+    def test_tree_diff_puts_source_first_and_counts_what_it_skips(self):
+        a, b = pathlib.Path(tempfile.mkdtemp()), pathlib.Path(tempfile.mkdtemp())
+        (a / "src").mkdir()
+        (b / "src").mkdir()
+        (a / "src" / "lib.rs").write_text("old\n")
+        (b / "src" / "lib.rs").write_text("new\n")
+        (b / ".cargo-home").mkdir()
+        (b / ".cargo-home" / "blob.crate").write_bytes(b"\0" * 10)
+        for i in range(50):
+            (b / ".cargo-home" / f"f{i}.rs").write_text("x\n" * 2000)
+        diff = ca.tree_diff(a, b, budget=1_000)
+        self.assertTrue(diff.startswith("--- a/src/lib.rs"))
+        self.assertIn("under .cargo-home/ not shown", diff)
+        self.assertLess(len(diff), 20_000)
+
     def test_every_judged_grader_has_criteria(self):
         for name in ca.case_names("*"):
             for grader in ca.load_case(name)["graders"]:
