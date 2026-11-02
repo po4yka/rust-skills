@@ -1,0 +1,11 @@
+[package]
+name = "tally"
+version = "0.5.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]

@@ -40,10 +40,11 @@ cd "$ROOT/checks"
 # The classifier decides which compile failures the catalog may ignore. A wrong
 # entry in its excuse list turns a broken example into a passing one, so the
 # excuse list has its own tests and they run before anything depends on them.
-echo "==> unit tests: catalog rules, drift report, routing runner, check locking, plugin install, and the classifier"
+echo "==> unit tests: catalog rules, drift report, eval lints, check locking, plugin install, and the classifier"
 python3 "$ROOT/scripts/test_validate_skills.py" 2>&1 | tail -3
 python3 "$ROOT/scripts/test_drift_report.py" 2>&1 | tail -3
 python3 "$ROOT/evals/routing/test_run.py" 2>&1 | tail -3
+python3 "$ROOT/evals/outcome/test_check.py" 2>&1 | tail -3
 python3 test_with_lock.py 2>&1 | tail -3
 python3 test_plugin_install.py 2>&1 | tail -3
 python3 test_gen.py 2>&1 | tail -3
@@ -98,6 +99,13 @@ done < <(
     python3 -c 'import json; print("\n".join(k for k, v in json.load(open("manifest.json", encoding="utf-8")).items() if v["mode"] == "run"))'
 )
 echo "  ${run_count} behavior probe(s) passed"
+
+# Each outcome case plants a defect in a small std-only crate. The gate builds every fixture
+# offline on the pinned toolchain, checks that `cargo test` does what cases.toml says, and
+# requires each probe to fail on the fixture and to pass on the reference fix in solution/, so a
+# fixture cannot lose its defect without a red build.
+echo "==> outcome evaluation suite: case structure and planted defects (no key, no network)"
+python3 "$ROOT/evals/outcome/check.py"
 
 echo "==> skills CLI discovers every skill"
 if command -v npx > /dev/null 2>&1; then

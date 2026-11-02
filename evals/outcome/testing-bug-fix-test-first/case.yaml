@@ -1,0 +1,46 @@
+schema_version: "1.1"
+name: testing-bug-fix-test-first
+description: >-
+  The testing bundle, outcome case. A customer report names one call site of a shared parsing
+  helper; a second function repeats the same defective logic. The rust-tdd skill owns the bug-fix
+  cycle: reproduce first, fix at the root, find the copies, keep the regression tests.
+tags: [outcome, testing, rust-tdd]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 40
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
+  env:
+    CARGO_NET_OFFLINE: "true"
+  prompt: >-
+    A customer's invoice shows $12.05 for an item that the CSV export lists as `WIDGET,1,12.5`.
+    Please fix the bug in this crate.
+expected_outcome: >-
+  A test reproduces the report through the public API and is run red before the fix. The fix is
+  in parse_fixed, which every amount routes through. parse_rate_bps, which repeats the defective
+  logic, is fixed too and gets its own regression test. The final cargo test run is green and the
+  report gives the red failure and the test count.
+graders:
+  # An indicator, not part of the score: the no-plugin arm cannot load the skill.
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?rust-tdd"'
+  - name: fixed-at-the-root
+    type: llm
+    focus: {source: file, path: src/lib.rs}
+    criteria: >-
+      PASS if the shared helper `parse_fixed` (or the single function that replaced it) now scales
+      a short fraction to `scale` digits, so that `parse_amount("12.5")` returns 1250, and
+      `InvoiceLine::from_str` still gets its price through that helper.
+      FAIL if the fix is a special case inside `InvoiceLine::from_str` or `parse_amount` alone,
+      for example padding the price string at the call site, while `parse_fixed` keeps the defect.
+  - name: copy-also-fixed
+    type: llm
+    focus: {source: file, path: src/lib.rs}
+    criteria: >-
+      PASS if `parse_rate_bps("7.5")` now returns 750: either `parse_rate_bps` delegates to the
+      fixed helper, or its own copy of the fraction logic is fixed the same way.
+      FAIL if `parse_rate_bps` still adds the raw fraction digits, so that "7.5" gives 705.

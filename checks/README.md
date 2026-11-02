@@ -37,6 +37,8 @@ python3 checks/plugin_install.py --claude "npx -y -p @anthropic-ai/claude-code@<
                                               # every plugin loads exactly its bundle
 python3 checks/test_gen.py                     # executable-fence rules
 python3 checks/test_analyze.py                # the failure classifier itself
+python3 evals/outcome/test_check.py           # the outcome-suite lint
+python3 evals/outcome/check.py                # outcome fixtures: build, test, probes; offline
 python3 checks/gen.py                         # blocks -> checks/examples/
 cd checks
 cargo check --locked --examples --keep-going --message-format=json > check.json

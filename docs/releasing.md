@@ -63,6 +63,19 @@ claude plugin eval . --eval-dir evals/plugin --trust-plugin --threshold 0.8 \
 
 The `Plugin eval` workflow (`.github/workflows/plugin-eval.yml`) runs the same command on
 `workflow_dispatch` with pinned model IDs. Run `evals/routing/run.py` for each provider you can.
+
+Run the outcome evaluation before a tag that changes a skill with an outcome case, and after a
+change to a case. It measures the delta between the plugin arm and the no-plugin arm; it has no
+pass mark:
+
+```bash
+claude plugin eval . --eval-dir evals/outcome --trust-plugin --scaffold \
+  --allow-tools Bash Write Edit --concurrency 4 --max-cost-usd 40 --no-publish \
+  --json eval-results.json
+```
+
+The same workflow runs it when you choose the `outcome` suite.
+
 Record each result in `research/` with the date, the catalog commit, the client version, and the
 exact model IDs of the agent and of the judge. `evals/README.md` says what each suite proves.
 
