@@ -39,6 +39,7 @@ Open a reference only when the diff matches its row.
 | [`references/argument-shapes.md`](references/argument-shapes.md) | picks a parameter, callback, or return shape on a `pub` signature, or makes a concrete parameter generic |
 | [`references/drop-and-raii.md`](references/drop-and-raii.md) | adds a `Drop` impl, a guard type, or cleanup that must survive a panic |
 | [`references/type-level-api.md`](references/type-level-api.md) | adds a newtype, a sealed trait, a typestate, a `#[non_exhaustive]` type, or a `const` generic |
+| [`references/api-conventions.md`](references/api-conventions.md) | names a `pub` method, constructor, getter, or conversion, or derives the traits of a `pub` type |
 | [`references/review-checklist.md`](references/review-checklist.md) | is under a review request or a merge gate that asks for a full pass |
 
 ---
@@ -93,8 +94,7 @@ Keep an iterator's extra reference out of a public bound. `items.iter().find(pre
 
 `fn items_mut(&mut self) -> &mut Vec<String>` puts `Vec` in the public signature. A later switch
 to `Box<[String]>` breaks every caller with `E0599: no method named 'push' found for mutable
-reference '&mut [String]'`, which reads like a caller mistake and ships as a patch release. The
-read accessor `-> &[String]` survives the same switch untouched. Inside one crate a
+reference '&mut [String]'`, which reads like a caller mistake and ships as a patch release. Inside one crate a
 `&mut Vec<T>` accessor costs nothing; apply the rule to a published API.
 
 ```rust
@@ -141,7 +141,7 @@ when the caller releases its `Arc`: measured at 1 entry held, 0 callbacks fired,
 
 A `&'a mut H` field infects every use site with the lifetime `'a`. You then cannot store the
 struct in another struct, you cannot return it from a function, and `Vec<Processor<'_>>` is
-impossible. This is **lifetime infection**.
+impossible.
 
 ```rust
 trait Handler {}
@@ -177,10 +177,9 @@ fn use_both(_a: Processor<Box<dyn Handler>>, _b: Processor<&mut dyn Handler>) {}
 
 The method receiver decides which pointers can forward at all, and a bridge blanket impl
 `impl<T: Other> Handler for T` makes every forwarding impl `E0119`. Settle both before the trait
-ships, and generate the impls with a macro. In a recursive method, take `&mut W` with
+ships. In a recursive method, take `&mut W` with
 `W: Handler + ?Sized`, not `impl Handler` by value: that form passes `cargo check` and fails
-`cargo build` at the recursion limit. Read
-[`references/trait-resolution.md`](references/trait-resolution.md) when you add a forwarding impl.
+`cargo build` at the recursion limit.
 
 Find candidates, then check each hit for a `&'_ mut` field:
 
