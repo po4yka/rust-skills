@@ -65,7 +65,7 @@ structural mapping.
 | Map iteration (random order) | Any order is faithful; sort before output when the original sorts |
 | `range` over a string (runes) | `char_indices()`; the index is a byte offset in both languages |
 | Integer overflow (wraps silently) | `wrapping_*` where the original depends on it |
-| A shift by the bit width or more (gives 0) | `checked_shl` with a fallback to 0: Rust panics in debug builds and masks the count in release builds |
+| A shift by the bit width or more | Go gives 0 for a left shift and an unsigned right shift, and the sign for a signed right shift (`int64(-8) >> 64` is `-1`; checked with Go 1.27). Port it as `x.checked_shl(n).unwrap_or(0)`, and for a signed right shift as `x.checked_shr(n).unwrap_or(if x < 0 { -1 } else { 0 })`: Rust panics in debug builds and masks the count in release builds |
 | A `string` that holds invalid UTF-8 | `&[u8]` or `Vec<u8>`, and `utf8_chunks` where text is needed; a `&str` cannot hold it |
 
 ## JavaScript and TypeScript
