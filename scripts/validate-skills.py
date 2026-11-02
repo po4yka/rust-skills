@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
 import tomllib
@@ -542,34 +543,41 @@ SKILL_COUNT = re.compile(r"\b(\d+) Rust agent skills\b")
 def check_marketplace(bundles: dict[str, list[str]], skill_names: set[str]) -> None:
     """The marketplace offers the full catalog and each bundle, exactly as bundles.toml has them.
 
-    A plugin version is the commit SHA only while no `version` is set; one
-    `version` string that is not bumped freezes every consumer, so none is
-    allowed (docs/releasing.md). An entry loads only the skill directories it
-    lists only when its source is the repository root, so every entry uses "./".
+    Claude Code and Codex both read this one file, and each entry is the whole
+    plugin manifest. Codex installs an entry only when no plugin.json at the
+    root names a different plugin, so there is no plugin.json. A plugin version
+    is the commit SHA only while no `version` is set; one `version` string that
+    is not bumped freezes every consumer, so none is allowed (docs/releasing.md).
+    An entry loads only the skill directories it lists only when its source is
+    the repository root, so every entry uses "./".
     """
-    where_manifest = ".claude-plugin/plugin.json"
     where = ".claude-plugin/marketplace.json"
-    manifest = load_json(PLUGIN_MANIFEST, where_manifest)
+    # Every root manifest that Claude Code or Codex reads. lexists: a dangling
+    # symlink is still a manifest path a client tries to open.
+    for manifest in (PLUGIN_MANIFEST, ROOT / ".codex-plugin" / "plugin.json", ROOT / "plugin.json"):
+        if os.path.lexists(manifest):
+            fail(
+                str(manifest.relative_to(ROOT)),
+                "must not exist; Codex then refuses every bundle whose name differs from it. "
+                "Put plugin metadata in the marketplace entries",
+            )
     market = load_json(MARKETPLACE, where)
-    if manifest is None or market is None:
+    if market is None:
         return
 
-    full = manifest.get("name")
-    if "version" in manifest:
-        fail(where_manifest, "sets `version`; the plugin version must be the commit SHA, so remove it")
-    if manifest.get("skills") != ["./skills"]:
-        fail(where_manifest, 'skills must be ["./skills"], the whole catalog')
+    full = market.get("name")
+    if not isinstance(full, str):
+        fail(where, "name must be a string")
+        return
     if "version" in market:
         fail(where, "sets a top-level `version`; remove it")
-    if market.get("name") != full:
-        fail(where, f"name is {market.get('name')!r}; it must equal the plugin.json name {full!r}")
 
     entries = market.get("plugins")
     if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
         fail(where, "plugins must be a list of objects")
         return
-    # None marks the full catalog, which loads plugin.json's ./skills.
-    expected: dict[str, list[str] | None] = {str(full): None}
+    # None marks the full catalog, which loads the default skills/ directory.
+    expected: dict[str, list[str] | None] = {full: None}
     expected |= {f"{full}-{bundle}": skills for bundle, skills in bundles.items()}
     seen: list[str] = []
     for index, entry in enumerate(entries):
@@ -586,11 +594,13 @@ def check_marketplace(bundles: dict[str, list[str]], skill_names: set[str]) -> N
             fail(where, f'{label} source must be "./", the repository root, or the entry loads every skill')
         if "version" in entry:
             fail(where, f"{label} sets `version`; remove it so the version stays the commit SHA")
+        if entry.get("license") != "BSD-3-Clause":
+            fail(where, f'{label} license must be "BSD-3-Clause"')
         skills = expected[name]
         count = len(skill_names) if skills is None else len(skills)
         if skills is None:
             if "skills" in entry:
-                fail(where, f"{label} is the full catalog; it must not list skills, plugin.json does")
+                fail(where, f"{label} is the full catalog; it must not list skills, so skills/ loads whole")
         else:
             want = [f"./skills/{skill}" for skill in skills]
             if entry.get("skills") != want:

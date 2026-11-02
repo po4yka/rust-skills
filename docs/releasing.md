@@ -36,6 +36,12 @@ skill directories that its `skills` list names; a `github` or `url` source with 
 every skill under `skills/` for every bundle (measured with Claude Code 2.1.316). The pin is the
 marketplace ref that the consumer adds, so the release commit has no manifest field to change.
 
+Codex reads the same file as a legacy-compatible marketplace. There is no
+`.claude-plugin/plugin.json`, and each marketplace entry is the whole plugin manifest. Codex
+installs an entry only when no root `plugin.json` names a different plugin, so a root manifest
+would block all six bundles (measured with Codex 0.166.0). `scripts/validate-skills.py` fails
+when the file exists.
+
 ## Plugin versioning
 
 Claude Code supports two versioning styles for a plugin, and they exclude each other:
@@ -46,10 +52,14 @@ Claude Code supports two versioning styles for a plugin, and they exclude each o
   commit is a new version, and a consumer who added the marketplace at a tag stays on that tag's
   commit.
 
-This repository uses the second style. `.claude-plugin/plugin.json` and every marketplace entry
-have no `version` field. Do not add one: a `version` that is set once and not bumped freezes
-every consumer on that release. `claude plugin validate` warns about the missing field; that
-warning is expected, so do not run it with `--strict` in CI.
+This repository uses the second style. No marketplace entry has a `version` field. Do not add
+one: a `version` that is set once and not bumped freezes every consumer on that release.
+
+Codex does not use the commit SHA. It installs every entry with the version `local` and keeps
+that copy until the consumer runs `codex plugin add` again (measured on a local marketplace,
+Codex 0.166.0). A consumer who added the marketplace with `--ref <tag>` stays on that tag; the
+README tells them how to move. A consumer on `main` gets a release after
+`codex plugin marketplace upgrade` and a new `codex plugin add`.
 
 ## Evaluations before a tag
 
