@@ -7,6 +7,15 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-02
+
+The first catalog that installs as a plugin. One plugin marketplace serves Claude Code and Codex,
+with one plugin per install bundle and one for the full catalog, and CI installs every plugin in
+both clients. The toolchain pin moves to Rust 1.99.1 after an audit pass, and the new
+`rust-port` skill brings the catalog to 45 skills. `evals/outcome/` now measures what an agent
+produces with the catalog and without it, in both clients; the first baseline is in
+`research/outcome-baseline-2026-11.md`.
+
 ### Added
 
 - README: how to keep the plugins up to date. Claude Code: a marketplace with no ref and
@@ -17,7 +26,6 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
   cargo gates, and a post-edit hook for Claude Code (`.claude/settings.json`) and Codex
   (`.codex/hooks.json`) runs `scripts/validate-skills.py` after an edit to a catalog file and
   gives its problems to the agent.
-
 - Install bundles in `bundles.toml`: six subject groups that each install as one unit. Five fit
   the always-on skill listing of a 200K-context client; `language` is over that budget and is
   held by the ratchet.
@@ -50,6 +58,16 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
   phrase of `tests/routing-cases.md` after Codex shortens the descriptions to fit its skill-list
   budget. The gate isolates `HOME` as well as `CODEX_HOME`, because Codex also lists the skills
   under `~/.agents/skills`, and it fails when any other skill shares the list.
+- `rust-port`, in the testing bundle: port C, C++, Python, Go, or JavaScript to Rust with no
+  change in output. It has a triage table of 12 traps that change output, a `rust,run` probe of
+  its Rust-side claims, and an outcome case (#18).
+- Compile-gate preludes: `checks/preludes/<skill>.toml` supplies the names that the prose
+  defines, so rustc checks a fragment block too. `analyze.py --check-fragments` fails on a
+  fragment that `checks/fragments.txt` does not list, and that file drops from 80 entries to
+  2 (#8).
+- A cross-agent outcome runner, `evals/outcome/cross_agent.py`: the outcome cases on Claude Code
+  and Codex, each with and without the catalog, from isolated login homes, scored by one blind
+  judge (#14). `grade --regrade` judges changed graders again on the recorded runs (#16).
 
 ### Changed
 
@@ -58,12 +76,17 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
   plugin. In Claude Code a skill is now namespaced by its plugin (`rust-skills-testing:rust-tdd`),
   not by `rust-skills:`.
 - The toolchain pin moves to Rust 1.99.1, with an audit pass over 32 skills: corrected API
-  claims, `compile_fail` tags on drop-check examples, and new triage rows (#6). The harness
+  claims, `compile_fail` tags on drop-check examples, and new triage rows (#3, #4, #6). The harness
   checks examples against criterion 0.8 and parking_lot 0.13, and the skills CLI pin is 1.7.4.
 - Tokio 1.53.3 in the harness, and `AsyncFd` registration safety in `rust-async-internals` (#2).
 - The README install section leads with a bundle and states what each install path pins.
 - The trailing sections of the twelve largest skill bodies move to `references/`.
 - Twelve skills state the rule behind a cross-bundle reference in one sentence.
+- Four descriptions lead with the symptom a user sees: `rust-swift-ffi`, `rust-copy-on-write`,
+  `rust-hot-path`, and `rust-borrow-semantics`. A profiled allocation of input that most calls
+  return unchanged now routes to `rust-copy-on-write` (#17, `research/routing-fix-2026-11.md`).
+- Three outcome graders now score what their case asks, and the baseline is re-graded on the
+  recorded runs (#16).
 
 ## [0.2.0] - 2026-09-25
 
@@ -85,6 +108,7 @@ binary releases. The harness came with it: frontmatter and link validation, the 
 `tests/routing-cases.md`, and a gate that type-checks every `rust` block, requires
 `compile_fail` blocks to fail with their named code, and runs `rust,run` probes.
 
-[Unreleased]: https://github.com/po4yka/rust-skills/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/po4yka/rust-skills/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/po4yka/rust-skills/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/po4yka/rust-skills/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/po4yka/rust-skills/releases/tag/v0.1.0
