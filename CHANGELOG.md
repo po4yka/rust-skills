@@ -9,6 +9,10 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ### Added
 
+- README: how to keep the plugins up to date. Claude Code: a marketplace with no ref and
+  **Enable auto-update**. Codex: `codex plugin marketplace upgrade`. Both: committed team
+  settings (`.claude/settings.json` with `extraKnownMarketplaces` and `autoUpdate`,
+  `.codex/config.toml` with `[marketplaces]` and `[plugins]`).
 - Fast feedback for agents that edit this repository: `bash checks/check.sh --fast` skips the
   cargo gates, and a post-edit hook for Claude Code (`.claude/settings.json`) and Codex
   (`.codex/hooks.json`) runs `scripts/validate-skills.py` after an edit to a catalog file and
