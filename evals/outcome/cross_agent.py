@@ -242,7 +242,10 @@ def agent_command(config: str, case: dict, run_dir: Path, args: argparse.Namespa
         "codex", "exec", "--json", "--output-last-message", str(run_dir / "final.txt"),
         "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
         "--sandbox", "workspace-write", "--add-dir", str(run_dir / "cargo-home"),
-        "--disable", "apps", "--disable", "hooks",
+        # The ChatGPT account prefetches curated plugins into CODEX_HOME and loads their skills;
+        # the probe caught about 50 of them on 2026-11-02. None of them belongs in a run.
+        "--disable", "apps", "--disable", "hooks", "--disable", "plugins", "--disable", "remote_plugin",
+        "--disable", "plugin_discovery_prefetch", "--disable", "skill_search",
         "-c", 'approval_policy="never"', "--cd", str(workspace),
     ]
     if args.codex_model:
