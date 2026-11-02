@@ -52,8 +52,9 @@ Rules:
 - `name` must equal the directory name. Use lowercase letters, digits, and hyphens.
 - `description` is one line, 1024 characters maximum. It is the only text an agent reads before
   it decides to open the skill, and some runtimes keep only its start when many skills are
-  installed. Start with `Use when` and the task, then put the strongest trigger terms in the
-  first sentence. Say what the skill covers in one clause. Prefer categories of user intent over
+  installed: Codex 0.166.0 cuts each description to share one skill-list budget, so the start
+  is the part every runtime shows. Start with `Use when` and the task, then put the strongest
+  trigger terms in the first sentence. Say what the skill covers in one clause. Prefer categories of user intent over
   keyword lists; keep exact tokens a user pastes (error codes, lint, tool, crate, and API names).
   Aim for 300 to 600 characters. Do not write "you", a capability inventory, or a catch-all such
   as "any Rust change". Add a "not for X" boundary only where a sibling skill is a likely misroute.
@@ -128,9 +129,11 @@ The body starts at an `# Title` heading directly after the frontmatter.
    `.claude-plugin/marketplace.json`. Every skill appears exactly once in each.
 
 4. Add at least one row to `tests/routing-cases.md`: a phrase a user is likely to type, and the
-   new skill. The phrase must appear in the new `description`. A skill with no routing case
-   fails validation. The check is a regression lint, not proof that routing works: do not add a
-   keyword to a description only to satisfy it.
+   new skill. The phrase must appear in the new `description`, early enough that Codex still
+   shows it once the new skill shares the bundle's budget. CI checks both; `check.sh` checks the
+   Codex part only when `npx` is available. A skill with
+   no routing case fails validation. The check is a regression lint, not proof that routing
+   works: do not add a keyword to a description only to satisfy it.
 
 ## How to verify a change locally
 
@@ -212,6 +215,17 @@ first exports the files git tracks or would track. For each plugin it uses a new
 skills in `codex debug prompt-input`, the list a session puts in front of the model, with
 `skills/` and `bundles.toml`. It does not prove a Git-hosted marketplace or a model's choice of
 skill.
+
+The same Codex run checks what each description still says after Codex shortens it. Codex
+shares one budget for the skill list among every listed skill and cuts each description to fit.
+In a fresh install, with only Codex's four own skills beside the plugin, every bundle must show
+every `tests/routing-cases.md` phrase of its skills; one cut-off phrase fails the gate. Fix a
+failure by moving the phrase toward the start of its description, or by shortening the
+descriptions of that bundle. The full-catalog plugin only prints its count, because it
+overflows the budget. Codex also lists the skills under `~/.agents/skills`, so the gate moves
+`HOME` to a throwaway directory as well, and it fails when any other skill shares the list. A
+green result covers the default budget of a fresh install; a consumer with other skills
+installed sees shorter descriptions.
 
 ### What `main` enforces
 

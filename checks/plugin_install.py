@@ -28,6 +28,7 @@ Exit status is 0 when every plugin loads exactly its skills, 1 otherwise.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -42,6 +43,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 BUNDLES = ROOT / "bundles.toml"
+ROUTING = ROOT / "tests" / "routing-cases.md"
+VALIDATOR = ROOT / "scripts" / "validate-skills.py"
+# The skills Codex 0.166.0 lists in a fresh CODEX_HOME and HOME. Any other
+# non-plugin entry shares the skill-list budget and makes the measurement
+# depend on one machine.
+CODEX_BUILTIN_SKILLS = {"imagegen", "openai-docs", "skill-creator", "skill-installer"}
 
 # `claude plugin details` prints `  Skills (N)  a, b, c`. It has no --json.
 # `[ \t]` and not `\s`: the match must not run on into the `Agents (0)` line.
@@ -95,26 +102,98 @@ def strings(value: object) -> list[str]:
     return []
 
 
-def parse_codex_skills(prompt_input: str, plugin: str) -> list[str] | None:
-    """The skills of `plugin` in `codex debug prompt-input` output, or None when it has no skill list."""
+def codex_entries(prompt_input: str) -> list[tuple[str, str]] | None:
+    """(name, shown description) for every entry of the Codex skill list, or None when there is none.
+
+    The name is `<plugin>:<skill>` for a plugin skill. The description is the
+    text Codex shows the model, which it shortens when skills share its budget;
+    the trailing `(file: ...)` location is removed.
+    """
     try:
         text = "\n".join(strings(json.loads(prompt_input)))
     except json.JSONDecodeError:
         return None
-    if CODEX_HEADING not in text:
+    # The heading on a line of its own: Codex's instructions also quote it in prose.
+    heading = re.search(rf"^{re.escape(CODEX_HEADING)}[ \t]*$", text, re.M)
+    if heading is None:
         return None
+    # The list ends at the next heading; later bullets are not skills.
+    block = text[heading.end() :]
+    end = re.search(r"^#", block, re.M)
+    block = block if end is None else block[: end.start()]
+    entries = []
+    # Any name without spaces, so no listed skill escapes the foreign check.
+    for name, shown in re.findall(r"^- (\S+?):(?: (.*))?$", block, re.M):
+        # Greedy, then strip only the last location, so a ` (file: ` inside the
+        # text survives; rstrip covers CRLF output.
+        entries.append((name, re.sub(r" \(file: [^()\n]*\)$", "", shown.rstrip())))
+    return entries
+
+
+def parse_codex_listing(prompt_input: str, plugin: str) -> list[tuple[str, str]] | None:
+    """(skill, shown description) for each skill of `plugin`, or None when the output has no skill list."""
+    entries = codex_entries(prompt_input)
+    if entries is None:
+        return None
+    prefix = f"{plugin}:"
+    return [(name[len(prefix) :], shown) for name, shown in entries if name.startswith(prefix)]
+
+
+def foreign_skills(prompt_input: str, plugin: str) -> list[str]:
+    """Listed skills that are neither the plugin's nor Codex's own. They share the budget."""
+    entries = codex_entries(prompt_input) or []
+    return sorted(
+        name for name, _ in entries if not name.startswith(f"{plugin}:") and name not in CODEX_BUILTIN_SKILLS
+    )
+
+
+def parse_codex_skills(prompt_input: str, plugin: str) -> list[str] | None:
+    """The skills of `plugin` in `codex debug prompt-input` output, or None when it has no skill list."""
+    listing = parse_codex_listing(prompt_input, plugin)
     # No set(): a skill that Codex lists twice must show as a mismatch.
-    return sorted(re.findall(rf"^- {re.escape(plugin)}:([a-z0-9-]+): ", text, re.M))
+    return None if listing is None else sorted(skill for skill, _ in listing)
+
+
+def routing_cases() -> list[tuple[str, str]]:
+    """(phrase, skill) rows of tests/routing-cases.md, read by scripts/validate-skills.py itself."""
+    spec = importlib.util.spec_from_file_location("validate_skills", VALIDATOR)
+    assert spec and spec.loader, f"cannot load {VALIDATOR}"
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    rows, _ = validator.routing_rows(ROUTING.read_text(encoding="utf-8"))
+    return rows
+
+
+def hidden_phrases(listing: list[tuple[str, str]], cases: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """(skill, phrase) for each routing phrase that the shown descriptions do not contain.
+
+    Case-insensitive, as scripts/validate-skills.py compares a phrase with the
+    full description.
+    """
+    shown = dict(listing)
+    return sorted(
+        {(skill, phrase) for phrase, skill in cases if skill in shown and phrase.lower() not in shown[skill].lower()}
+    )
 
 
 def codex_env(home: Path) -> dict[str, str]:
-    """The caller's environment without any OpenAI or Codex setting, with a throwaway CODEX_HOME.
+    """The caller's environment without any OpenAI or Codex setting, with a throwaway CODEX_HOME and HOME.
 
     A key or a sandbox flag from the caller would put a local run on a path
-    that CI, which has neither, never takes.
+    that CI, which has neither, never takes. HOME moves too: Codex also lists
+    the skills under ~/.agents/skills, and they share the skill-list budget.
+    npm keeps the caller's cache and ~/.npmrc, so npx uses the same registry
+    and does not download the CLI again.
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith(("OPENAI_", "CODEX_"))}
+    # npm reads npm_config_* case-insensitively; keep a key the caller already set.
+    present = {k.lower() for k in env}
+    for key, value in (("npm_config_cache", Path.home() / ".npm"), ("npm_config_userconfig", Path.home() / ".npmrc")):
+        if key not in present:
+            env[key] = str(value)
     env["CODEX_HOME"] = str(home)
+    env["HOME"] = str(home / "home")
+    (home / "home").mkdir(parents=True, exist_ok=True)
     return env
 
 
@@ -228,8 +307,18 @@ def check_claude(command: list[str], manifest: dict, expected: dict[str, list[st
 
 
 def check_codex(command: list[str], manifest: dict, expected: dict[str, list[str]]) -> int | None:
-    """Failed plugin count, or None when Codex cannot even start the check."""
+    """Failed plugin count, or None when Codex cannot even start the check.
+
+    A bundle plugin also fails when Codex shortens a description so far that a
+    routing phrase of tests/routing-cases.md is cut off: the model never sees
+    that phrase, so it cannot route a request by it. The full-catalog plugin
+    only reports its count; it overflows the budget by design.
+    """
     marketplace = manifest["name"]
+    if not ROUTING.is_file():
+        print(f"cannot check Codex visibility: {ROUTING.relative_to(ROOT)} is missing", file=sys.stderr)
+        return None
+    cases = routing_cases()
     # Codex can leave log or database files behind while the directory goes away.
     with tempfile.TemporaryDirectory(prefix="codex-install-", ignore_cleanup_errors=True) as scratch:
         version_home = Path(tempfile.mkdtemp(prefix="home-", dir=scratch))
@@ -265,11 +354,26 @@ def check_codex(command: list[str], manifest: dict, expected: dict[str, list[str
                 failed += 1
                 continue
             prompt = run("debug", "prompt-input")
-            loaded = parse_codex_skills(prompt.stdout, plugin) if prompt.returncode == 0 else None
+            listing = parse_codex_listing(prompt.stdout, plugin) if prompt.returncode == 0 else None
+            loaded = None if listing is None else sorted(skill for skill, _ in listing)
             if not compare(target, loaded, skills, "`codex debug prompt-input`"):
                 if loaded is None:
                     print(output(prompt)[-2000:])
                 failed += 1
+                continue
+            foreign = foreign_skills(prompt.stdout, plugin)
+            if foreign:
+                # They share the budget, so every shortened description depends on this host.
+                print(f"  {target}: other skills share the Codex list: {', '.join(foreign)}")
+                failed += 1
+            else:
+                lost = hidden_phrases(listing or [], cases)
+                total = len({(phrase, skill) for phrase, skill in cases if skill in skills})
+                print(f"    {total - len(lost)} of {total} routing phrases visible in Codex")
+                if plugin != marketplace:
+                    for skill, phrase in lost:
+                        print(f"    Codex cuts {phrase!r} off the description of {skill}; move it toward the start")
+                    failed += bool(lost)
         return failed
 
 
@@ -304,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
     if broken:
         return 1
     if failed or problems:
-        print(f"FAIL: {failed} plugin install(s) do not load their skills; {len(problems)} entry problem(s)")
+        print(f"FAIL: {failed} plugin check(s) failed; {len(problems)} entry problem(s)")
         return 1
     print(f"OK: all {len(present)} plugins load exactly their skills")
     return 0

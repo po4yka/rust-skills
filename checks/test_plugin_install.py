@@ -98,14 +98,16 @@ class TestParseCodexSkills(unittest.TestCase):
 
     def test_the_codex_environment_drops_caller_keys(self):
         import os
+        import tempfile
         from unittest import mock
 
-        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "x", "CODEX_SANDBOX": "seatbelt", "HOME": "/h"}):
-            env = plugin_install.codex_env(pathlib.Path("/tmp/codex-home"))
-        self.assertEqual(env["CODEX_HOME"], "/tmp/codex-home")
-        self.assertNotIn("OPENAI_API_KEY", env)
-        self.assertNotIn("CODEX_SANDBOX", env)
-        self.assertEqual(env["HOME"], "/h")
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "x", "CODEX_SANDBOX": "seatbelt", "PATH": "/p"}):
+                env = plugin_install.codex_env(pathlib.Path(tmp))
+            self.assertEqual(env["CODEX_HOME"], tmp)
+            self.assertNotIn("OPENAI_API_KEY", env)
+            self.assertNotIn("CODEX_SANDBOX", env)
+            self.assertEqual(env["PATH"], "/p")
 
     def test_the_export_holds_tracked_files_and_no_build_output(self):
         import tempfile
@@ -122,6 +124,144 @@ class TestParseCodexSkills(unittest.TestCase):
 
     def test_output_that_is_not_json_is_unreadable(self):
         self.assertIsNone(plugin_install.parse_codex_skills("Error: failed to resolve CODEX_HOME", "rust-skills"))
+
+
+def codex_prompt(*lines: str) -> str:
+    return json.dumps([{"content": [{"text": "### Available skills\n" + "\n".join(lines) + "\n"}]}])
+
+
+class TestCodexVisibility(unittest.TestCase):
+    """Routing phrases that Codex cuts off a shortened description."""
+
+    def test_the_shown_description_excludes_the_file_reference(self):
+        listing = plugin_install.parse_codex_listing(CODEX_PROMPT, "rust-skills-testing")
+        self.assertEqual(listing[0], ("rust-tdd", "Use when writing Rust code test-first."))
+
+    def test_a_file_reference_inside_the_text_survives(self):
+        prompt = codex_prompt("- p:s: Use when editing (file: Cargo.toml) or (file: x (file: r1/s/SKILL.md)")
+        self.assertEqual(
+            plugin_install.parse_codex_listing(prompt, "p"), [("s", "Use when editing (file: Cargo.toml) or (file: x")]
+        )
+
+    def test_a_carriage_return_does_not_keep_the_file_reference(self):
+        prompt = codex_prompt("- p:s: Use when SKILL is cut (file: r1/s/SKILL.md)\r")
+        self.assertEqual(plugin_install.parse_codex_listing(prompt, "p"), [("s", "Use when SKILL is cut")])
+
+    def test_a_phrase_cut_off_the_description_is_hidden(self):
+        listing = [("rust-tdd", "Use when writing Rust code test-fi")]
+        cases = [("test-first", "rust-tdd"), ("WRITING RUST", "rust-tdd"), ("loom", "rust-unsafe"), ("test-first", "rust-tdd")]
+        # Case-insensitive like the validator, one result for a duplicate row, and
+        # a skill outside the listing is not measured.
+        self.assertEqual(plugin_install.hidden_phrases(listing, cases), [("rust-tdd", "test-first")])
+
+    def test_skills_from_outside_the_plugin_and_codex_are_foreign(self):
+        prompt = codex_prompt(
+            "- imagegen: Generate images. (file: r0/imagegen/SKILL.md)",
+            "- p:s: Ours. (file: r1/s/SKILL.md)",
+            "- my-home-skill: From ~/.agents/skills. (file: r2/x/SKILL.md)",
+            "- other:t: Another plugin. (file: r3/t/SKILL.md)",
+        )
+        self.assertEqual(plugin_install.foreign_skills(prompt, "p"), ["my-home-skill", "other:t"])
+
+    def test_the_codex_environment_moves_home_and_keeps_the_npm_cache(self):
+        import os
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"npm_config_cache": "/c"}):
+            env = plugin_install.codex_env(pathlib.Path(tmp))
+            self.assertEqual(env["HOME"], str(pathlib.Path(tmp) / "home"))
+            self.assertTrue(pathlib.Path(env["HOME"]).is_dir())
+            self.assertEqual(env["npm_config_cache"], "/c")
+
+    def test_a_skill_with_an_unusual_name_or_no_description_is_still_foreign(self):
+        prompt = codex_prompt("- MySkill: From /etc/codex/skills. (file: r0/x/SKILL.md)", "- bare:", "- p:s: Ours.")
+        self.assertEqual(plugin_install.foreign_skills(prompt, "p"), ["MySkill", "bare"])
+
+    def test_the_heading_quoted_in_prose_is_not_the_list(self):
+        # Codex 0.166.0 names the heading in its instructions before the real one.
+        text = 'Skills are listed under "### Available skills".\n## When to use\n- rule: not a skill\n### Available skills\n- p:s: Ours.\n'
+        self.assertEqual(plugin_install.parse_codex_listing(json.dumps([text]), "p"), [("s", "Ours.")])
+        self.assertEqual(plugin_install.foreign_skills(json.dumps([text]), "p"), [])
+
+    def test_bullets_after_the_skill_list_are_not_skills(self):
+        prompt = json.dumps([{"text": "### Available skills\n- p:s: Ours.\n### How to use skills\n- note: not a skill\n"}])
+        self.assertEqual(plugin_install.foreign_skills(prompt, "p"), [])
+
+    def test_routing_cases_are_the_validator_rows(self):
+        spec = importlib.util.spec_from_file_location("validate_skills", plugin_install.VALIDATOR)
+        assert spec and spec.loader
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        rows, _ = validator.routing_rows(plugin_install.ROUTING.read_text(encoding="utf-8"))
+        self.assertEqual(plugin_install.routing_cases(), rows)
+        self.assertIn(("cargo nextest", "cargo-workflows"), rows)
+
+
+# A stand-in for the Codex CLI: it remembers the last `plugin add` target in
+# CODEX_HOME and answers `debug prompt-input` with the listing that
+# FAKE_LISTINGS (a JSON file: plugin -> list lines) gives for it.
+FAKE_CODEX = r'''
+import json, os, pathlib, sys
+args = sys.argv[1:]
+home = pathlib.Path(os.environ["CODEX_HOME"])
+if args == ["--version"]:
+    print("codex-cli fake")
+elif args[:3] == ["plugin", "marketplace", "add"]:
+    print(json.dumps({"marketplaceName": "rust-skills"}))
+elif args[:2] == ["plugin", "add"]:
+    (home / "target").write_text(args[2].split("@")[0])
+    print("{}")
+elif args[:2] == ["debug", "prompt-input"]:
+    lines = json.loads(pathlib.Path(os.environ["FAKE_LISTINGS"]).read_text())[(home / "target").read_text()]
+    print(json.dumps([{"text": "### Available skills\n" + "\n".join(lines) + "\n"}]))
+else:
+    sys.exit(2)
+'''
+
+
+class TestCheckCodexDecisions(unittest.TestCase):
+    """What fails a plugin in the Codex gate, driven through a fake CLI."""
+
+    def run_gate(self, listings: dict[str, list[str]]) -> int | None:
+        import contextlib
+        import io
+        import os
+        import sys
+        import tempfile
+        from unittest import mock
+
+        description = next(
+            line[len("description: ") :]
+            for line in (plugin_install.ROOT / "skills" / "rust-tdd" / "SKILL.md").read_text(encoding="utf-8").splitlines()
+            if line.startswith("description: ")
+        )
+        listings = {p: [line.replace("FULL", description) for line in lines] for p, lines in listings.items()}
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = pathlib.Path(tmp) / "codex.py"
+            fake.write_text(FAKE_CODEX, encoding="utf-8")
+            data = pathlib.Path(tmp) / "listings.json"
+            data.write_text(json.dumps(listings), encoding="utf-8")
+            expected = {plugin: ["rust-tdd"] for plugin in listings}
+            with mock.patch.dict(os.environ, {"FAKE_LISTINGS": str(data)}), contextlib.redirect_stdout(io.StringIO()):
+                return plugin_install.check_codex([sys.executable, str(fake)], {"name": "rust-skills"}, expected)
+
+    def test_a_bundle_that_shows_every_phrase_passes(self):
+        self.assertEqual(self.run_gate({"rust-skills-testing": ["- rust-skills-testing:rust-tdd: FULL"]}), 0)
+
+    def test_a_bundle_with_a_hidden_phrase_fails(self):
+        self.assertEqual(self.run_gate({"rust-skills-testing": ["- rust-skills-testing:rust-tdd: Use when"]}), 1)
+
+    def test_the_full_catalog_may_hide_phrases(self):
+        self.assertEqual(self.run_gate({"rust-skills": ["- rust-skills:rust-tdd: Use when"]}), 0)
+
+    def test_a_foreign_skill_fails_the_plugin(self):
+        listing = ["- rust-skills-testing:rust-tdd: FULL", "- my-home-skill: shares the budget"]
+        self.assertEqual(self.run_gate({"rust-skills-testing": listing}), 1)
+
+    def test_a_built_in_skill_does_not_fail_the_plugin(self):
+        listing = ["- imagegen: Generate images.", "- rust-skills-testing:rust-tdd: FULL"]
+        self.assertEqual(self.run_gate({"rust-skills-testing": listing}), 0)
 
 
 class TestExpectedSkills(unittest.TestCase):
