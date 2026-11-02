@@ -29,7 +29,13 @@ owner of each area, and the check to run when that skill is not installed.
 
 ## Run the tools first
 
-When a Rust toolchain is present, run these from the workspace root before you read:
+`cargo clippy` and `cargo test` run code from the reviewed tree: build scripts, procedural
+macros, and the tests themselves. Before you run them on code from someone you do not trust, such
+as a pull request from outside the team, read `build.rs`, the proc-macro crates, and the changed
+tests, and get the user's approval. Run them in a sandbox with no secrets and no network. Without
+that approval, review by reading, and say so in the report.
+
+When the code is trusted, or after approval, run these from the workspace root:
 
 ```bash
 cargo fmt --all -- --check
@@ -40,8 +46,8 @@ cargo test --locked --workspace
 - Do not run `cargo fmt` without `--check`: it rewrites the code under review.
 - Report each command and its result. Group clippy output by lint, with the lines; do not paste
   it raw. A lint that the project allows on purpose, with a reason, is not a finding.
-- If a tool cannot run (no toolchain, no network for a dependency), say so in the report and
-  review by reading.
+- If a tool cannot run (no toolchain, no network for a dependency, no approval), say so in the
+  report and review by reading.
 
 ## Where to look
 

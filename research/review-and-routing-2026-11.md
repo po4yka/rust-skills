@@ -39,6 +39,8 @@ One grader was fixed after the run and judged again with `grade --regrade`: the 
 `api-and-error-findings` counted a finding only below the top section, and Codex with the skill
 put `Rc<RefCell<_>>` in a public signature under Must fix, which is defensible. The ranking of the
 undefined behavior and the panics has its own grader. Before the fix, codex-skills scored 15/18.
+`code-unchanged` was a regex on one line; after review it reads the whole final diff and was
+judged again the same way. It stays at 3/3 in every configuration: no run changed a source line.
 
 Findings:
 

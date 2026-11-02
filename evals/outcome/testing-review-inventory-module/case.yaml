@@ -30,10 +30,6 @@ graders:
     type: tool_used
     tool: Skill
     input_match: '"skill"\s*:\s*"(?:[\w-]+:)?rust-review"'
-  - name: code-unchanged
-    type: regex
-    target: {source: file, path: src/lib.rs}
-    pattern: 'let text = unsafe \{ std::str::from_utf8_unchecked\(&bytes\) \};'
   - name: no-fmt-rewrite
     type: tool_used
     tool: Bash

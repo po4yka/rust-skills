@@ -363,7 +363,6 @@ class CaseGraders(unittest.TestCase):
         ("build-release-bump", "lockfile-follows"): False,
         ("build-release-bump", "no-external-write"): True,
         ("ffi-swift-c-abi", "no-temporary-cstring-pointer"): False,
-        ("testing-review-inventory-module", "code-unchanged"): True,
         ("testing-review-inventory-module", "no-fmt-rewrite"): True,
     }
 

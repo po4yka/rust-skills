@@ -72,13 +72,13 @@ What each check proves, and what it does not:
   `warnings` group). Clippy does not link, so only `cargo build` or `cargo test` prints linker
   output. The default policy keeps `linker_messages` at `warn`, because linker output changes
   with the host linker. To fail CI on linker output, run the build or test step with
-  `CARGO_BUILD_WARNINGS=deny` (1.97+). `linker_messages = "deny"` in `[workspace.lints.rust]`
-  also works (verified on 1.98.1), but it fails every local build too.
+  `CARGO_BUILD_WARNINGS=deny` (1.97+).
 - A green gate on one toolchain can go red on the next: a clippy release adds lints to
   `pedantic` and `nursery`. Pin the toolchain, and re-run the gate after each bump.
 - `cargo fmt --all` rewrites every file. When `cargo fmt --all -- --check` is red before your
-  change, format only the files you changed (`rustfmt <file>`). Run the tests again after
-  formatting.
+  change, run `rustfmt --edition 2024 --config skip_children=true <file>` on the changed files
+  only: plain `rustfmt <file>` also formats each module the file declares (1.99.1). Run the
+  tests again after formatting.
 
 `CARGO_BUILD_WARNINGS=deny` (or `build.warnings = "deny"` in `.cargo/config.toml`) fails a
 local crate that has lint warnings. It does not change `RUSTFLAGS`, so the build cache

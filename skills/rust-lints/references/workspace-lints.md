@@ -103,8 +103,6 @@ bare_urls                    = "warn"
   `&&String` (clippy 0.1.99).
 - `clippy::unwrap_in_result` checks `unwrap` and `expect` on a `Result` only; an `Option` unwrap
   in a function that returns `Result` passes it (clippy 0.1.99). `unwrap_used` still catches it.
-- `checks/lint_gate.py` in the catalog repository builds this template with the `clippy.toml` of
-  the skill and proves that every lint it names fires on the pinned toolchain.
 - Add the async lints only when the workspace runs an async runtime, and the pointer and FFI
   lints only when it contains `unsafe` pointer work. Both blocks are in
   [lint-catalog.md](lint-catalog.md).

@@ -118,6 +118,14 @@ class CliProviders(unittest.TestCase):
         self.assertNotIn("--model", cmd)
         self.assertIn("--model", run.codex_cli_command("gpt-x", p, p, p))
 
+    def test_a_cli_timeout_is_a_failed_batch_not_a_crash(self):
+        import subprocess
+        from unittest import mock
+        timeout = subprocess.TimeoutExpired(cmd="claude", timeout=1)
+        with mock.patch.object(run.subprocess, "run", side_effect=timeout):
+            self.assertEqual(run.ask_claude_cli("m", None, "s", "u", {}), {"failed": True, "answers": []})
+            self.assertEqual(run.ask_codex_cli("m", None, "s", "u", {}), {"failed": True, "answers": []})
+
     def test_cli_env_carries_no_key(self):
         env = run.cli_env(CODEX_HOME="/h")
         for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL"):

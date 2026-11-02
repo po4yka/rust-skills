@@ -50,6 +50,7 @@ FIELDS = {"id", "skill", "kind", "prompt", "expected", "accepted_alternates", "s
 ENV_KEYS = {"anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"), "openai": ("OPENAI_API_KEY",)}
 CLI_PROVIDERS = ("claude-cli", "codex-cli")
 PASSED_ENV = ("PATH", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL")
+CLI_TIMEOUT = 900  # seconds per batch; a timeout counts the batch as failed, not the run
 CLAUDE_HOME = Path.home() / ".claude-eval"
 CODEX_HOME = Path.home() / ".codex-eval"
 
@@ -249,11 +250,14 @@ def codex_cli_command(model: str | None, schema_path: Path, last_path: Path, cwd
 
 def ask_claude_cli(model: str, effort: str | None, system: str, user: str, schema: dict) -> dict:
     with tempfile.TemporaryDirectory(prefix="routing-claude-") as tmp:
-        done = subprocess.run(
-            claude_cli_command(model, effort, system, schema), input=user, cwd=tmp, capture_output=True,
-            text=True, timeout=900, check=False, env=cli_env(CLAUDE_CONFIG_DIR=str(CLAUDE_HOME),
-                                                             CLAUDE_CODE_DISABLE_AUTO_MEMORY="1"),
-        )
+        try:
+            done = subprocess.run(
+                claude_cli_command(model, effort, system, schema), input=user, cwd=tmp, capture_output=True,
+                text=True, timeout=CLI_TIMEOUT, check=False,
+                env=cli_env(CLAUDE_CONFIG_DIR=str(CLAUDE_HOME), CLAUDE_CODE_DISABLE_AUTO_MEMORY="1"),
+            )
+        except subprocess.TimeoutExpired:
+            return {"failed": True, "answers": []}
     try:
         result = json.loads(done.stdout)
     except json.JSONDecodeError:
@@ -278,10 +282,13 @@ def ask_codex_cli(model: str, effort: str | None, system: str, user: str, schema
         cmd = codex_cli_command(model if model != "default" else None, root / "schema.json", root / "last.json", root / "work")
         if effort:
             cmd[2:2] = ["-c", f'model_reasoning_effort="{effort}"']
-        done = subprocess.run(
-            cmd, input=f"{system}\n\n{user}", capture_output=True, text=True, timeout=900, check=False,
-            env=cli_env(HOME=str(root / "home"), CODEX_HOME=str(CODEX_HOME)),
-        )
+        try:
+            done = subprocess.run(
+                cmd, input=f"{system}\n\n{user}", capture_output=True, text=True, timeout=CLI_TIMEOUT,
+                check=False, env=cli_env(HOME=str(root / "home"), CODEX_HOME=str(CODEX_HOME)),
+            )
+        except subprocess.TimeoutExpired:
+            return {"failed": True, "answers": []}
         last = root / "last.json"
         text = last.read_text() if last.is_file() else ""
     if done.returncode != 0 or not text.strip():
