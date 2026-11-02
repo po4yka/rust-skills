@@ -170,7 +170,7 @@ def catalog_commit() -> str:
 
 
 def catalog_dirty() -> str:
-    done = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--", "skills", ".claude-plugin"],
+    done = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--", "skills"],
                           capture_output=True, text=True)
     return done.stdout.strip()
 
@@ -186,7 +186,9 @@ def snapshot(out: Path) -> Path:
         staging = out / "catalog.tmp"
         shutil.rmtree(staging, ignore_errors=True)
         (staging / ".claude-plugin").mkdir(parents=True)
-        shutil.copy(ROOT / ".claude-plugin" / "plugin.json", staging / ".claude-plugin" / "plugin.json")
+        # A manifest of its own: the repository's plugin layout can change, the snapshot's cannot.
+        manifest = {"name": "rust-skills", "description": "rust-skills catalog snapshot", "skills": ["./skills"]}
+        (staging / ".claude-plugin" / "plugin.json").write_text(json.dumps(manifest, indent=1))
         shutil.copytree(SKILLS, staging / "skills")
         (staging / "COMMIT").write_text(catalog_commit() + "\n")
         staging.rename(catalog)
@@ -666,7 +668,7 @@ def preflight(args: argparse.Namespace) -> int:
     check(not memory, f"no memory or skill files in any parent of {out} {memory or ''}", problems)
     check(ROOT not in [out, *out.parents], "the output directory is outside this repository", problems)
     check(not catalog_dirty() or (out / "catalog").is_dir(),
-          "skills/ and .claude-plugin/ are committed (or the snapshot exists)", problems)
+          "skills/ is committed (or the snapshot exists)", problems)
     rustup = subprocess.run(["rustup", "run", toolchain(), "cargo", "--version"], capture_output=True,
                             text=True, check=False)
     check(rustup.returncode == 0, f"toolchain {toolchain()} is installed", problems)
