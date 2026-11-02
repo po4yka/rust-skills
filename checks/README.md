@@ -32,6 +32,9 @@ one checkout.
 python3 scripts/validate-skills.py            # frontmatter, references, routing, README; no toolchain
 python3 scripts/test_validate_skills.py       # the frontmatter rules themselves
 python3 checks/test_with_lock.py               # parallel-run serialization
+python3 checks/test_plugin_install.py         # plugin inventory parser and expectations
+python3 checks/plugin_install.py --claude "npx -y -p @anthropic-ai/claude-code@<version> claude"
+                                              # every plugin loads exactly its bundle
 python3 checks/test_gen.py                     # executable-fence rules
 python3 checks/test_analyze.py                # the failure classifier itself
 python3 checks/gen.py                         # blocks -> checks/examples/
