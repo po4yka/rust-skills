@@ -170,6 +170,15 @@ uv run --with pyyaml python3 evals/outcome/cross_agent.py report --out "$OUT"
 - Restart. `run` and `grade` skip finished work. A run that ends in an error, or stalls on a
   usage limit, is retried on the next `run`; a timeout is a result. Ctrl-C stops every running
   agent. `run` refuses an output directory whose catalog, CLI versions, or models changed.
+- Re-grade. After a grader changes, `grade --regrade <name>,<name>` judges only those graders
+  again on the recorded runs, with no new agent run. Each verdict records a hash of its grader
+  definition (`revision`). A grader is judged again only when that hash differs from the
+  current definition, so a rerun of the same command resumes and a second change starts a new
+  re-grade. A verdict from a grade file without `revision` is always judged again. Each judge
+  verdict names the `judge_model` that gave it, so a re-grade with another `--judge-model`
+  does not change the record of the verdicts it keeps. The grade
+  file keeps every replaced verdict, oldest first, in a list under `superseded`, so each result
+  stays comparable with the ones before it.
 
 Differences between the arms that the runner does not remove: Codex runs in its
 `workspace-write` sandbox and Claude runs with an allowlist of tools; neither agent honors the

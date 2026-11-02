@@ -180,6 +180,88 @@ class Graders(unittest.TestCase):
         self.assertEqual([g["name"] for g in ca.scored_graders(case)], ["x"])
 
 
+class Regrade(unittest.TestCase):
+    def test_merge_replaces_regraded_and_keeps_the_old_verdict(self):
+        case = {"graders": [{"name": "a", "type": "llm"}, {"name": "b", "type": "llm"},
+                            {"name": "new", "type": "llm"}]}
+        stored = {"label": "run-1", "config": "codex-none", "run": 1, "verdicts": {
+            "a": {"pass": False}, "b": {"pass": True}, "gone": {"pass": True}}}
+        fresh = {"verdicts": {"a": {"pass": True}, "new": {"pass": False}}}
+        merged = ca.merge_regrade(stored, fresh, case)
+        self.assertEqual(merged["verdicts"], {"a": {"pass": True}, "b": {"pass": True}, "new": {"pass": False}})
+        self.assertEqual(merged["superseded"], {"a": [{"pass": False}], "gone": [{"pass": True}]})
+        self.assertEqual(merged["regraded"], ["a", "new"])
+        self.assertEqual((merged["config"], merged["run"]), ("codex-none", 1))
+
+    def test_overlapping_regrades_keep_every_replaced_verdict(self):
+        case = {"graders": [{"name": "a", "type": "llm"}, {"name": "b", "type": "llm"}]}
+        stored = {"verdicts": {"a": {"pass": False, "n": 0}, "b": {"pass": True, "n": 0}}}
+        once = ca.merge_regrade(stored, {"verdicts": {"a": {"pass": True, "n": 1}}}, case)
+        twice = ca.merge_regrade(once, {"verdicts": {"a": {"pass": False, "n": 2},
+                                                     "b": {"pass": False, "n": 2}}}, case)
+        self.assertEqual(twice["superseded"]["a"], [{"pass": False, "n": 0}, {"pass": True, "n": 1}])
+        self.assertEqual(twice["superseded"]["b"], [{"pass": True, "n": 0}])
+        self.assertEqual(twice["verdicts"]["a"], {"pass": False, "n": 2})
+
+    def test_a_single_superseded_verdict_from_an_older_file_becomes_a_history(self):
+        case = {"graders": [{"name": "a", "type": "llm"}]}
+        stored = {"verdicts": {"a": {"pass": True, "n": 1}}, "superseded": {"a": {"pass": False, "n": 0}}}
+        merged = ca.merge_regrade(stored, {"verdicts": {"a": {"pass": True, "n": 2}}}, case)
+        self.assertEqual(merged["superseded"]["a"], [{"pass": False, "n": 0}, {"pass": True, "n": 1}])
+
+    def test_the_revision_follows_the_grader_definition(self):
+        grader = {"name": "a", "type": "llm", "criteria": "PASS if the test is red first."}
+        self.assertEqual(ca.grader_revision(grader), ca.grader_revision(dict(grader)))
+        changed = {**grader, "criteria": "PASS if the test is red first and kept."}
+        self.assertNotEqual(ca.grader_revision(grader), ca.grader_revision(changed))
+        self.assertNotEqual(ca.grader_revision(grader), ca.grader_revision({**grader, "focus": "trace"}))
+
+    def test_only_a_changed_or_unrecorded_revision_is_judged_again(self):
+        revisions = {"a": "r2", "b": "r1", "c": "r1"}
+        stored = {"verdicts": {"a": {"pass": True, "revision": "r1"}, "b": {"pass": True, "revision": "r1"},
+                               "c": {"pass": True}}}
+        self.assertEqual(ca.stale_graders(stored, {"a", "b", "c"}, revisions), {"a", "c"})
+        self.assertEqual(ca.stale_graders(stored, {"b"}, revisions), set())
+        self.assertEqual(ca.stale_graders(stored, set(), revisions), set())
+        self.assertEqual(ca.stale_graders({"verdicts": {}}, {"b"}, revisions), {"b"})
+
+    def test_a_criterion_changed_after_a_regrade_is_judged_again(self):
+        grader = {"name": "a", "type": "llm", "criteria": "first"}
+        case = {"graders": [grader]}
+        stored = {"verdicts": {"a": {"pass": False}}}
+        fresh = {"verdicts": {"a": {"pass": True, "revision": ca.grader_revision(grader)}}}
+        merged = ca.merge_regrade(stored, fresh, case)
+        self.assertEqual(ca.stale_graders(merged, {"a"}, {"a": ca.grader_revision(grader)}), set())
+        revised = {**grader, "criteria": "second"}
+        self.assertEqual(ca.stale_graders(merged, {"a"}, {"a": ca.grader_revision(revised)}), {"a"})
+
+    def test_a_regrade_with_another_judge_keeps_each_verdicts_model(self):
+        case = {"graders": [{"name": "a", "type": "llm"}, {"name": "b", "type": "llm"},
+                            {"name": "r", "type": "regex"}]}
+        stored = {"judge_model": "old-judge", "verdicts": {
+            "a": {"pass": False, "by": "judge"}, "b": {"pass": True, "by": "judge"},
+            "r": {"pass": True, "by": "regex"}}}
+        fresh = {"verdicts": {"a": {"pass": True, "by": "judge", "judge_model": "new-judge"}}}
+        merged = ca.merge_regrade(stored, fresh, case)
+        self.assertNotIn("judge_model", merged)
+        self.assertEqual(merged["verdicts"]["a"]["judge_model"], "new-judge")
+        self.assertEqual(merged["verdicts"]["b"]["judge_model"], "old-judge")
+        self.assertNotIn("judge_model", merged["verdicts"]["r"])
+        self.assertEqual(merged["superseded"]["a"], [{"pass": False, "by": "judge", "judge_model": "old-judge"}])
+
+    def test_an_older_superseded_judge_verdict_gets_the_file_model(self):
+        case = {"graders": [{"name": "a", "type": "llm"}]}
+        stored = {"judge_model": "old-judge", "verdicts": {"a": {"pass": True, "by": "judge"}},
+                  "superseded": {"a": {"pass": False, "by": "judge"}}}
+        fresh = {"verdicts": {"a": {"pass": False, "by": "judge", "judge_model": "new-judge"}}}
+        merged = ca.merge_regrade(stored, fresh, case)
+        self.assertEqual([v["judge_model"] for v in merged["superseded"]["a"]], ["old-judge", "old-judge"])
+        again = ca.merge_regrade(merged, {"verdicts": {"a": {"pass": True, "by": "judge",
+                                                             "judge_model": "third-judge"}}}, case)
+        self.assertEqual([v["judge_model"] for v in again["superseded"]["a"]],
+                         ["old-judge", "old-judge", "new-judge"])
+
+
 class Tasks(unittest.TestCase):
     def args(self, configs="", agents="claude,codex"):
         import argparse
@@ -302,7 +384,7 @@ class CaseGraders(unittest.TestCase):
         counts = {name: len(ca.load_case(name)["graders"]) for name in ca.case_names("*")}
         self.assertEqual(counts, {
             "build-release-bump": 7, "concurrency-relaxed-publication": 5, "ffi-swift-c-abi": 7,
-            "language-guard-in-match": 5, "production-cow-allocations": 4, "testing-bug-fix-test-first": 5,
+            "language-guard-in-match": 5, "production-cow-allocations": 4, "testing-bug-fix-test-first": 6,
         })
 
     def test_a_grader_file_without_frontmatter_raises(self):

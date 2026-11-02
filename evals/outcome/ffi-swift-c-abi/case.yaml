@@ -41,13 +41,14 @@ graders:
     type: llm
     focus: {source: file, path: src/lib.rs}
     criteria: >-
-      PASS if the name no longer points into a value that is dropped when `tally_name` returns:
-      it is handed out as Rust-owned memory (for example `CString::into_raw`, or a buffer struct
-      that carries pointer, length, and capacity) together with a separate exported function
-      that takes it back and frees it on the Rust side, or it is copied into a buffer that the
-      caller passes in.
-      FAIL if the returned pointer can still dangle, or if the name is leaked with no way to free
-      it.
+      PASS if the name no longer points into a value that is dropped when `tally_name` returns,
+      in any of these designs: Rust-owned memory handed out (for example `CString::into_raw`, or
+      a buffer struct with pointer, length, and capacity) with a separate exported function that
+      takes it back and frees it on the Rust side; a copy into a buffer that the caller passes
+      in; or a pointer into a `CString` (or bytes) stored in the `Tally` itself, valid until that
+      tally is freed.
+      FAIL if the returned pointer can still point into a temporary, or if the name is leaked
+      with no way to free it.
   - name: header-states-ownership
     type: llm
     focus: {source: file, path: include/tally.h}
@@ -56,7 +57,9 @@ graders:
       with no owner, and its comments say how each fallible function reports a failure and who
       owns each returned pointer or buffer. If the header declares a release function for the
       name, its comment says that the caller must call it exactly once. If the name is copied
-      into a caller buffer instead, the comment says how the caller learns the needed size.
+      into a caller buffer instead, the comment says how the caller learns the needed size. If
+      the name is borrowed from the tally, the comment says that it stays valid only until the
+      tally is freed (or the name changes) and that the caller must not free it.
       FAIL if the header still declares the old `tally_name` contract unchanged, says nothing
       about ownership of what Rust returns, or tells Swift to call `free` on memory that Rust
       allocated.

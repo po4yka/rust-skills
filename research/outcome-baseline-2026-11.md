@@ -69,17 +69,55 @@ Routing, the owning skill loaded in the skills arm:
 
 Median run time: claude-skills 79 s, claude-none 54 s, codex-skills 54 s, codex-none 44 s.
 
+### Re-grade with the fixed graders
+
+The three suite defects below were fixed, and the changed criteria were judged again on the same
+72 recorded runs (`grade --regrade`, same judge model, no new agent run). `regression-tests-kept`
+was split: it now checks the tests, and the new `reports-red-and-count` checks the report that
+`rust-tdd` requires. The old verdicts stay in each grade file under `superseded`.
+
+| Case | claude-skills | claude-none | codex-skills | codex-none |
+| --- | ---: | ---: | ---: | ---: |
+| build-release-bump | 17/18 | 15/18 | 15/18 | 15/18 |
+| concurrency-relaxed-publication | 12/12 | 12/12 | 12/12 | 12/12 |
+| ffi-swift-c-abi | 16/18 | 16/18 | 18/18 | 15/18 |
+| language-guard-in-match | 12/12 | 12/12 | 11/12 | 12/12 |
+| production-cow-allocations | 9/9 | 9/9 | 9/9 | 9/9 |
+| testing-bug-fix-test-first | 14/15 | 15/15 | 11/15 | 12/15 |
+| **Total** | **80/84** | **79/84** | **76/84** | **75/84** |
+
+Changed graders, before and after:
+
+| Grader | claude-skills | claude-none | codex-skills | codex-none |
+| --- | ---: | ---: | ---: | ---: |
+| ffi / owned-name-with-release | 0/3 -> 3/3 | 1/3 -> 3/3 | 0/3 -> 3/3 | 0/3 -> 3/3 |
+| ffi / header-states-ownership | 3/3 -> 3/3 | 3/3 -> 3/3 | 3/3 -> 3/3 | 3/3 -> 3/3 |
+| concurrency / names-the-verifier | 3/3 -> 3/3 | 2/3 -> 3/3 | 0/3 -> 3/3 | 1/3 -> 3/3 |
+| testing / regression-tests-kept | 3/3 -> 3/3 | 3/3 -> 3/3 | 0/3 -> 1/3 | 0/3 -> 3/3 |
+| testing / reports-red-and-count (new) | 3/3 | 3/3 | 1/3 | 0/3 |
+
+Every changed verdict was read against its evidence. Two notes:
+
+- All three `codex-skills` runs of the concurrency case ran a loom model; two of them showed that
+  the model fails with the original `Relaxed` orderings, and one reported loom as inconclusive.
+  The old grader failed all three for a missing sentence.
+- Two `codex-skills` runs fail `regression-tests-kept` for a real reason: after the last green
+  test run they ran `cargo fmt --all`, which rewrote the files, and then checked only
+  `cargo fmt --check`.
+
 ## Findings
 
-1. The catalog adds about one grader in 80 for each agent on this suite. Both agents already
+1. The catalog adds about one grader in 80 for each agent on this suite, before and after the
+   re-grade. Both agents already
    solve most planted defects without a skill: four of six cases score full or almost full in
    every arm. The suite has a ceiling problem, not only the catalog.
 2. The clearest effect of a skill is a verifier that the model does not know to name. With
    `rust-crate-release`, Claude named `cargo semver-checks` against the v1.4.2 baseline in 3 of 3
    runs; no other arm did in any run.
-3. Codex used the skills it loaded. In one `memory-model` run it turned off the offline setting,
-   fetched `loom`, wrote a loom model, and showed that the model catches the stale read with the
-   old orderings. The grader did not credit it (defect 2).
+3. Codex used the skills it loaded. In all three `memory-model` runs it built and ran a loom
+   model; in one it turned off the offline setting to fetch `loom`. The first grader did not
+   credit that (defect 2, now fixed). Codex rarely reports the red failure and the test count
+   that `rust-tdd` asks for: 1 of 6 runs over both arms.
 4. Claude does not load the owning skill reliably: 10 of 18 runs, against 17 of 18 for Codex.
    It never loaded `rust-borrow-semantics` for a `match` scrutinee deadlock, and it chose
    `rust-hot-path` over `rust-copy-on-write` for "the heap profile names an allocation site".
@@ -91,18 +129,19 @@ Median run time: claude-skills 79 s, claude-none 54 s, codex-skills 54 s, codex-
 
 ## Defects found in the suite
 
-1. `ffi-swift-c-abi / owned-name-with-release` is a false negative. In 11 of 12 runs, across all
+1. Fixed. `ffi-swift-c-abi / owned-name-with-release` was a false negative. In 11 of 12 runs, across all
    arms, the agent stored the name as a `CString` in the handle and returned a pointer that is
    valid until `tally_free`. That design is sound for a handle-scoped name, but the criteria
    accept only an `into_raw` handoff with a release function or a caller buffer. The judge
-   passed the same design once. Fix the criteria before the next run; the totals above also show
-   the result without it.
-2. `concurrency-relaxed-publication / names-the-verifier` and
+   passed the same design once. The criteria now accept a pointer into a `CString` that the
+   handle owns, and `header-states-ownership` asks the header to state its lifetime.
+2. Fixed. `concurrency-relaxed-publication / names-the-verifier` and
    `testing-bug-fix-test-first / regression-tests-kept` reward a sentence in the final answer
    over the action. Codex ran loom (finding 3) and failed for not writing "x86 proves nothing";
-   Codex fixed the bug test first and failed for not quoting the red line. Accept an executed
-   check, with its result, as the evidence.
-3. `production-cow-allocations` scores 9/9 in every arm and does not discriminate. Make the
+   Codex fixed the bug test first and failed for not quoting the red line. An executed loom or
+   Miri check with its result now passes; the reporting rule of `rust-tdd` is its own grader.
+3. Open. `production-cow-allocations` scores 9/9 in every arm and does not discriminate, and
+   after the re-grade `concurrency-relaxed-publication` scores 12/12 in every arm too. Make the
    defect harder to find, or drop the case's weight in the comparison.
 
 ## Runner defects found during the run
