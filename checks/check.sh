@@ -2,6 +2,12 @@
 # One command that reproduces CI. Run it from anywhere:
 #
 #     bash checks/check.sh
+#     bash checks/check.sh --fast   # no cargo: catalog, unit tests, and client gates
+#
+# --fast is for the edit loop of a description or a marketplace change. It
+# skips every gate that runs cargo: the compile check of the examples, the
+# behavior probes, and the outcome fixtures. A green --fast run is not a green
+# CI run; run the full script before a pull request.
 #
 # It runs the same gates CI runs, on the toolchain and target that
 # checks/rust-toolchain.toml pins, so a green run here means a green run there.
@@ -22,7 +28,20 @@ SKILLS_CLI_VERSION="1.7.4"
 CLAUDE_CODE_VERSION="2.1.316"
 # The Codex CLI for the same gate. Codex reads .claude-plugin/marketplace.json
 # as a legacy-compatible marketplace, so a Codex release can change the result.
+# After a bump, check CODEX_BUILTIN_SKILLS in checks/plugin_install.py: a new
+# built-in skill shows up as a foreign skill in the gate.
 CODEX_VERSION="0.166.0"
+
+FAST=0
+for arg in "$@"; do
+    case "$arg" in
+        --fast) FAST=1 ;;
+        *)
+            echo "usage: bash checks/check.sh [--fast]" >&2
+            exit 2
+            ;;
+    esac
+done
 
 # gen.py, cargo, and analyze.py share examples/, manifest.json, check.json, and
 # check.err. Hold one checkout-scoped process lock across the complete sequence
@@ -43,7 +62,7 @@ cd "$ROOT/checks"
 # The classifier decides which compile failures the catalog may ignore. A wrong
 # entry in its excuse list turns a broken example into a passing one, so the
 # excuse list has its own tests and they run before anything depends on them.
-echo "==> unit tests: catalog rules, drift report, eval lints, check locking, plugin install, and the classifier"
+echo "==> unit tests: catalog rules, drift report, eval lints, check locking, plugin install, agent hook, and the classifier"
 python3 "$ROOT/scripts/test_validate_skills.py" 2>&1 | tail -3
 python3 "$ROOT/scripts/test_drift_report.py" 2>&1 | tail -3
 python3 "$ROOT/evals/routing/test_run.py" 2>&1 | tail -3
@@ -53,7 +72,16 @@ python3 test_with_lock.py 2>&1 | tail -3
 python3 test_plugin_install.py 2>&1 | tail -3
 python3 test_gen.py 2>&1 | tail -3
 python3 test_analyze.py 2>&1 | tail -3
+python3 "$ROOT/scripts/test_agent_hook.py" 2>&1 | tail -3
 
+RUN_DIR="$(mktemp -d)"
+trap 'rm -rf "$RUN_DIR"' EXIT
+
+# The cargo gates. --fast skips this block; its body stays at the outer
+# indentation so each gate reads as it does in CI.
+if [ "$FAST" -eq 1 ]; then
+    echo "==> SKIPPED (--fast): rust example compile check, behavior probes, outcome fixtures"
+else
 echo "==> extracting rust examples from skills/"
 python3 gen.py
 
@@ -90,8 +118,6 @@ echo "==> gating: coverage, compile_fail, fragments, and the suspect baseline"
 python3 analyze.py check.json --check-fragments fragments.txt --check-baseline baseline.txt
 
 echo "==> running behavior probes on the native host"
-RUN_DIR="$(mktemp -d)"
-trap 'rm -rf "$RUN_DIR"' EXIT
 run_count=0
 while IFS= read -r example; do
     [ -n "$example" ] || continue
@@ -110,6 +136,7 @@ echo "  ${run_count} behavior probe(s) passed"
 # fixture cannot lose its defect without a red build.
 echo "==> outcome evaluation suite: case structure and planted defects (no key, no network)"
 python3 "$ROOT/evals/outcome/check.py"
+fi  # end of the cargo gates
 
 echo "==> skills CLI discovers every skill"
 if command -v npx > /dev/null 2>&1; then
@@ -142,12 +169,18 @@ else
 fi
 
 # The same comparison for Codex, which reads the same marketplace file. Each
-# plugin installs into its own throwaway CODEX_HOME, so ~/.codex is untouched.
-echo "==> Codex installs every plugin with exactly its skills"
+# plugin installs into its own throwaway CODEX_HOME and HOME, so ~/.codex and
+# ~/.agents are untouched and do not share the skill list. Each bundle must
+# also keep every routing phrase visible after Codex shortens its descriptions.
+echo "==> Codex installs every plugin with exactly its skills, routing phrases visible"
 if command -v npx > /dev/null 2>&1; then
     python3 "$ROOT/checks/plugin_install.py" --codex "npx -y @openai/codex@${CODEX_VERSION}"
 else
     echo "  SKIPPED: no npx on this host. CI runs this gate on every push."
 fi
 
-echo "All checks passed."
+if [ "$FAST" -eq 1 ]; then
+    echo "Fast checks passed. The cargo gates did not run; run bash checks/check.sh before a pull request."
+else
+    echo "All checks passed."
+fi

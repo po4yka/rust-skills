@@ -494,6 +494,14 @@ invocations, and failure triage that a codebase learns the hard way.
   keeps only a prefix of each. All 44 descriptions cost about 9,300 tokens, so on a 200K window
   install one bundle, and paste [AGENTS.snippet.md](AGENTS.snippet.md) into the consuming
   repository so the agent can still name the skill it needs.
+- Codex shortens every description to share one skill-list budget among all listed skills. In a
+  fresh install each bundle shows every routing phrase of its skills, and CI fails when one is cut
+  off. Other installed skills share the same budget. One measurement (Codex 0.166.0, 2026-11-02):
+  the full catalog alone showed 252 of 316 routing phrases, and `language` beside about 50 other
+  skills from `~/.agents/skills` showed 55 of 82. The Codex
+  [skills documentation](https://learn.chatgpt.com/docs/build-skills) sets the default budget at
+  2% of the model's context window and lets `skills.max_context_tokens` in `config.toml` raise it
+  to 10,000 tokens.
 - After context compaction, Claude Code re-injects an invoked skill body with at most 5,000
   tokens per skill. Most bodies are larger, so the tail of a long skill can drop out of a long
   session. Each body keeps its triage tables and verifier commands first for this reason, and

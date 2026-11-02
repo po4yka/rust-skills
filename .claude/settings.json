@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/agent-hook.py\"; [ -f \"$f\" ] || exit 0; exec python3 \"$f\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

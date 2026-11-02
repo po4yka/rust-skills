@@ -18,10 +18,14 @@ can copy into a workspace and run. Report any of these:
 - a code example that is unsound or teaches undefined behavior as correct;
 - text that tries to direct an agent away from the task it was given (prompt injection);
 - a change to `.claude-plugin/` or the install instructions that would install content other
-  than this catalog.
+  than this catalog;
+- a change to `.claude/settings.json`, `.codex/hooks.json`, or `scripts/agent-hook.py` that would
+  run more than the catalog validator: an agent of every contributor who trusts this folder runs
+  them.
 
 Out of scope: a factual Rust error with no security effect (open a normal issue), and the
-behavior of the `skills` CLI, `gh skill`, or Claude Code themselves (report those upstream).
+behavior of the `skills` CLI, `gh skill`, Claude Code, or Codex themselves (report those
+upstream).
 
 ## Supported versions
 

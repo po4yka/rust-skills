@@ -20,6 +20,9 @@ bundles.toml                    install bundles: bundle -> ordered skill names
 AGENTS.snippet.md               the always-on router a consumer pastes; every skill once
 .claude-plugin/                 the plugin marketplace for Claude Code and Codex, one plugin per bundle
 scripts/validate-skills.py      catalog checks (tests: scripts/test_validate_skills.py)
+scripts/agent-hook.py           post-edit hook that runs the validator for agents (tests: scripts/test_agent_hook.py)
+.claude/settings.json           Claude Code project settings: the post-edit hook
+.codex/hooks.json               Codex project hooks: the same post-edit hook
 scripts/catalog-ceilings.toml   ratchet: accepted values over a limit, which may only shrink
 scripts/drift-report.py         toolchain and crate drift report behind the weekly workflows
 tests/routing-cases.md          phrase -> skill, checked against every description
@@ -52,8 +55,9 @@ Rules:
 - `name` must equal the directory name. Use lowercase letters, digits, and hyphens.
 - `description` is one line, 1024 characters maximum. It is the only text an agent reads before
   it decides to open the skill, and some runtimes keep only its start when many skills are
-  installed. Start with `Use when` and the task, then put the strongest trigger terms in the
-  first sentence. Say what the skill covers in one clause. Prefer categories of user intent over
+  installed: Codex 0.166.0 cuts each description to share one skill-list budget, so the start
+  is the part every runtime shows. Start with `Use when` and the task, then put the strongest
+  trigger terms in the first sentence. Say what the skill covers in one clause. Prefer categories of user intent over
   keyword lists; keep exact tokens a user pastes (error codes, lint, tool, crate, and API names).
   Aim for 300 to 600 characters. Do not write "you", a capability inventory, or a catch-all such
   as "any Rust change". Add a "not for X" boundary only where a sibling skill is a likely misroute.
@@ -128,9 +132,11 @@ The body starts at an `# Title` heading directly after the frontmatter.
    `.claude-plugin/marketplace.json`. Every skill appears exactly once in each.
 
 4. Add at least one row to `tests/routing-cases.md`: a phrase a user is likely to type, and the
-   new skill. The phrase must appear in the new `description`. A skill with no routing case
-   fails validation. The check is a regression lint, not proof that routing works: do not add a
-   keyword to a description only to satisfy it.
+   new skill. The phrase must appear in the new `description`, early enough that Codex still
+   shows it once the new skill shares the bundle's budget. CI checks both; `check.sh` checks the
+   Codex part only when `npx` is available. A skill with
+   no routing case fails validation. The check is a regression lint, not proof that routing
+   works: do not add a keyword to a description only to satisfy it.
 
 ## How to verify a change locally
 
@@ -144,6 +150,26 @@ A green run locally means a green run in CI. The gates that can be missing are t
 discovery step and the Claude Code and Codex plugin install steps, which all need `npx`;
 `check.sh` says so when it skips them. `check.sh` writes only under `checks/` and a temporary directory, so run
 and rerun it without asking.
+
+While you edit descriptions, `bundles.toml`, or `.claude-plugin/`, run the fast form. It skips
+the cargo gates (the example compile check, the behavior probes, and the outcome fixtures) and
+keeps the catalog, unit-test, and client gates. With warm npx caches it takes under a minute,
+against about two and a half for the full run (measured 2026-11-02). A green `--fast` run is not
+a green CI run: run the full command before a pull request.
+
+```bash
+bash checks/check.sh --fast
+```
+
+`.claude/settings.json` (Claude Code) and `.codex/hooks.json` (Codex) run
+`scripts/agent-hook.py` after each file edit. When the edit touches a file that
+`scripts/validate-skills.py` reads, the hook runs the validator and, on a failure, gives its
+problems to the agent next to the tool result, so the agent fixes them in the same turn. Claude
+Code runs the hook in a trusted folder; Codex runs it once you trust it in `/hooks`. A client
+loads the hook of the folder where its session starts, so an edit in another worktree gets no
+report. The hook covers the validator only; it does not compile examples or install plugins, and
+it stays silent when it cannot run (no script, no git root, or a Python without `tomllib`).
+Tests: `scripts/test_agent_hook.py`.
 
 ### 1. Catalog structure
 
@@ -212,6 +238,17 @@ first exports the files git tracks or would track. For each plugin it uses a new
 skills in `codex debug prompt-input`, the list a session puts in front of the model, with
 `skills/` and `bundles.toml`. It does not prove a Git-hosted marketplace or a model's choice of
 skill.
+
+The same Codex run checks what each description still says after Codex shortens it. Codex
+shares one budget for the skill list among every listed skill and cuts each description to fit.
+In a fresh install, with only Codex's four own skills beside the plugin, every bundle must show
+every `tests/routing-cases.md` phrase of its skills; one cut-off phrase fails the gate. Fix a
+failure by moving the phrase toward the start of its description, or by shortening the
+descriptions of that bundle. The full-catalog plugin only prints its count, because it
+overflows the budget. Codex also lists the skills under `~/.agents/skills`, so the gate moves
+`HOME` to a throwaway directory as well, and it fails when any other skill shares the list. A
+green result covers the default budget of a fresh install; a consumer with other skills
+installed sees shorter descriptions.
 
 ### What `main` enforces
 

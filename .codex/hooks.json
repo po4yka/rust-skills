@@ -1,0 +1,18 @@
+{
+  "description": "Run scripts/validate-skills.py after an edit to a catalog file, and show its problems to the model.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "r=\"$(git rev-parse --show-toplevel 2>/dev/null)\" && [ -f \"$r/scripts/agent-hook.py\" ] || exit 0; exec python3 \"$r/scripts/agent-hook.py\"",
+            "timeout": 60,
+            "statusMessage": "Validating the skill catalog"
+          }
+        ]
+      }
+    ]
+  }
+}

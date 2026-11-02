@@ -9,6 +9,11 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ### Added
 
+- Fast feedback for agents that edit this repository: `bash checks/check.sh --fast` skips the
+  cargo gates, and a post-edit hook for Claude Code (`.claude/settings.json`) and Codex
+  (`.codex/hooks.json`) runs `scripts/validate-skills.py` after an edit to a catalog file and
+  gives its problems to the agent.
+
 - Install bundles in `bundles.toml`: six subject groups that each install as one unit. Five fit
   the always-on skill listing of a 200K-context client; `language` is over that budget and is
   held by the ratchet.
@@ -37,6 +42,10 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
   marketplace (`codex plugin marketplace add po4yka/rust-skills`). `checks/plugin_install.py
   --codex` checks that each plugin puts exactly its skills in front of the model, in
   `checks/check.sh` and in CI.
+- A Codex visibility gate: in a fresh Codex install, every bundle plugin must show every routing
+  phrase of `tests/routing-cases.md` after Codex shortens the descriptions to fit its skill-list
+  budget. The gate isolates `HOME` as well as `CODEX_HOME`, because Codex also lists the skills
+  under `~/.agents/skills`, and it fails when any other skill shares the list.
 
 ### Changed
 

@@ -363,6 +363,25 @@ def check_skill(skill_dir: Path) -> None:
             fail(rel, f"names a repository path: {span}; name the skill, or use a path relative to this file")
 
 
+def routing_rows(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+    """(phrase, skill) for every row of tests/routing-cases.md, and (phrase, owner, rival) for the guarded ones.
+
+    checks/plugin_install.py reads the corpus through this function, so both
+    gates see the same rows.
+    """
+    # `[^|]` in the phrase group keeps a three-column row out of this match.
+    rows = re.findall(r"^\|\s*([^|]+?)\s*\|\s*([a-z0-9-]+)\s*\|\s*$", text, re.M)
+    # A three-column row also names a skill that must not answer the phrase.
+    guarded = re.findall(
+        r"^\|\s*([^|]+?)\s*\|\s*([a-z0-9-]+)\s*\|\s*([a-z0-9-]+)\s*\|\s*$", text, re.M
+    )
+    separator = lambda cell: set(cell) <= {"-", " "}
+    rows = [(phrase, skill) for phrase, skill in rows if not separator(phrase)]
+    guarded = [row for row in guarded if not separator(row[0])]
+    rows += [(phrase, skill) for phrase, skill, _ in guarded]
+    return rows, guarded
+
+
 def check_routing_cases(descriptions: dict[str, str]) -> None:
     """Every phrase in the routing corpus must survive in its skill's description.
 
@@ -375,17 +394,7 @@ def check_routing_cases(descriptions: dict[str, str]) -> None:
         fail("tests/routing-cases.md", "routing corpus is missing")
         return
 
-    text = ROUTING.read_text(encoding="utf-8")
-    # `[^|]` in the phrase group keeps a three-column row out of this match.
-    rows = re.findall(r"^\|\s*([^|]+?)\s*\|\s*([a-z0-9-]+)\s*\|\s*$", text, re.M)
-    # A three-column row also names a skill that must not answer the phrase.
-    guarded = re.findall(
-        r"^\|\s*([^|]+?)\s*\|\s*([a-z0-9-]+)\s*\|\s*([a-z0-9-]+)\s*\|\s*$", text, re.M
-    )
-    separator = lambda cell: set(cell) <= {"-", " "}
-    rows = [(phrase, skill) for phrase, skill in rows if not separator(phrase)]
-    guarded = [row for row in guarded if not separator(row[0])]
-    rows += [(phrase, skill) for phrase, skill, _ in guarded]
+    rows, guarded = routing_rows(ROUTING.read_text(encoding="utf-8"))
     if not rows:
         fail("tests/routing-cases.md", "routing corpus has no rows")
         return
