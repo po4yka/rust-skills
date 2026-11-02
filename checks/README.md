@@ -41,6 +41,8 @@ python3 checks/plugin_install.py --codex "npx -y @openai/codex@<version>"
                                               # Codex shows every routing phrase of each bundle
 python3 checks/test_gen.py                     # executable-fence rules
 python3 checks/test_analyze.py                # the failure classifier itself
+python3 checks/test_lint_gate.py              # the lint gate's parsers
+python3 checks/lint_gate.py                   # every lint the rust-lints templates name fires
 python3 evals/outcome/test_check.py           # the outcome-suite lint
 python3 evals/outcome/test_cross_agent.py     # cross-agent runner: traces, blinding, graders
 python3 evals/outcome/check.py                # outcome fixtures: build, test, probes; offline

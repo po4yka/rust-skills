@@ -17,7 +17,7 @@ the catalog commit, the client version, and the exact model IDs (`docs/releasing
 
 ## `routing/`: selection from a list
 
-- `prompts.jsonl`: 180 prompts, 4 per skill. Three are positives that the skill owns. One is a
+- `prompts.jsonl`: 184 prompts, 4 per skill. Three are positives that the skill owns. One is a
   near-miss: it shares surface terms with the skill but belongs to a sibling, or to no skill
   (`"expected": "none"`, 2 prompts). Each row has `id`, `skill`, `kind`, `prompt`, `expected`,
   `accepted_alternates`, and `source`. The prompts were written from the skill bodies at catalog
@@ -32,7 +32,14 @@ python3 evals/routing/run.py --lint        # schema, coverage, and blindness; no
 python3 evals/routing/run.py --dry-run     # print the first request; no key
 python3 evals/routing/run.py --provider anthropic --model <id> --runs 2
 python3 evals/routing/run.py --provider openai --model <id> --runs 2 --truncate 150
+python3 evals/routing/run.py --provider claude-cli --model <id> --runs 2   # subscription, no key
+python3 evals/routing/run.py --provider codex-cli --runs 2                 # subscription, no key
 ```
+
+`claude-cli` and `codex-cli` call `claude -p` and `codex exec` on a subscription login, from the
+isolated login homes of the cross-agent outcome runner (below). The CLIs run with no tool, with
+all skills, commands, plugins, apps, and hooks off, so the listing in the prompt is the only one
+they see. A batch that fails counts its prompts as wrong, and the result says how many failed.
 
 A run sends batches of 22 prompts with the full listing, asks for a first and a second choice
 from a closed list of skill names plus `none`, and writes `routing-<provider>-<model>-<date>.json`
@@ -86,18 +93,19 @@ IDs, and fails when the result names no plugin.
 
 What a green result proves: on that client, model, and catalog commit, a natural request loads
 the skill and the answer carries its verifier. What it does not prove: behavior on Codex, Cursor,
-or another client; behavior with all 45 skills installed when the client truncates its listing
+or another client; behavior with all 46 skills installed when the client truncates its listing
 (the suite loads the whole plugin, so it measures the full listing); or that six cases represent
-45 skills.
+46 skills.
 
 ## `outcome/`: the work itself
 
-Seven cases: one per bundle, and a second testing case for `rust-port`. Each case is a small
-std-only crate with one planted defect that one skill owns: a guard in a `match` scrutinee,
-`Relaxed` publication, a bug in a shared helper with a copy elsewhere, a `feat` commit that is a
-major bump, an allocation on every header, and a C ABI that returns a pointer into a dropped
-`CString`. The port case asks for a Python module in Rust; its own tests miss its floor division,
-half-to-even rounding, insertion order, and code-point padding. `cases.toml` maps each case to its skill.
+Eight cases: one per bundle, and two more testing cases, for `rust-port` and `rust-review`. Each
+case is a small std-only crate with one planted defect that one skill owns: a guard in a `match`
+scrutinee, `Relaxed` publication, a bug in a shared helper with a copy elsewhere, a `feat` commit
+that is a major bump, an allocation on every header, and a C ABI that returns a pointer into a
+dropped `CString`. The port case asks for a Python module in Rust; its own tests miss its floor
+division, half-to-even rounding, insertion order, and code-point padding. The review case asks for
+a review of a library module whose defects range from undefined behavior to a getter name. `cases.toml` maps each case to its skill.
 
 - `case.yaml` holds the natural request, which never names a skill, and most graders: a `regex`
   on a file the agent changed, a `tool_used` limit, the `skill-fired` indicator, and judged

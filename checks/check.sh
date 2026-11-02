@@ -69,6 +69,7 @@ python3 "$ROOT/evals/routing/test_run.py" 2>&1 | tail -3
 python3 "$ROOT/evals/outcome/test_check.py" 2>&1 | tail -3
 python3 "$ROOT/evals/outcome/test_cross_agent.py" 2>&1 | tail -3
 python3 test_with_lock.py 2>&1 | tail -3
+python3 test_lint_gate.py 2>&1 | tail -3
 python3 test_plugin_install.py 2>&1 | tail -3
 python3 test_gen.py 2>&1 | tail -3
 python3 test_analyze.py 2>&1 | tail -3
@@ -129,6 +130,13 @@ done < <(
     python3 -c 'import json; print("\n".join(k for k, v in json.load(open("manifest.json", encoding="utf-8")).items() if v["mode"] == "run"))'
 )
 echo "  ${run_count} behavior probe(s) passed"
+
+# The rust-lints skill names about fifty lints in its strict template. The gate copies that
+# template and the skill's clippy.toml into a throwaway workspace and requires each named lint
+# to fire on a marked line of checks/lints/violations.rs, so a lint that a toolchain bump
+# removes, renames, or silences fails here instead of in a reader's workspace.
+echo "==> rust-lints templates: every named lint exists and fires (clippy)"
+python3 "$ROOT/checks/lint_gate.py"
 
 # Each outcome case plants a defect in a small std-only crate. The gate builds every fixture
 # offline on the pinned toolchain, checks that `cargo test` does what cases.toml says, and

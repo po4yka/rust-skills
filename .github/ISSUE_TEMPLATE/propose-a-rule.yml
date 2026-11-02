@@ -1,0 +1,46 @@
+name: Propose a rule
+description: A rule that a skill should add, change, or drop.
+title: "rule: "
+labels: [rule]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A rule enters the catalog only with a primary source and a check that proves it. Read
+        "Authoring conventions" in AGENTS.md first. Remove private code and identifiers.
+  - type: input
+    id: skill
+    attributes:
+      label: Skill
+      description: The skill that should own the rule. Each rule has one home in the catalog.
+      placeholder: rust-discipline
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What an agent does today
+      description: The code or the advice that an agent produces now, with the prompt you gave it.
+      render: rust
+    validations:
+      required: true
+  - type: textarea
+    id: rule
+    attributes:
+      label: The rule, and the code it should produce instead
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Primary source
+      description: The Rust reference, std or crate docs, an RFC, a clippy lint page, or a release note. A blog post is not enough on its own.
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: How to verify it
+      description: The command, test, or compile result that proves the rule, and the toolchain or crate version you ran it on.
+    validations:
+      required: true

@@ -1,6 +1,6 @@
 ---
 name: uniffi-boundary
-description: Use when writing or reviewing the exported Rust surface of a UniFFI crate that generates Kotlin and Swift bindings, or when fixing a UniFFI macro or bindgen error. Includes the Record versus Object choice, foreign callback traits, custom types, and borrowed or async arguments. Not for packaging or version skew (uniffi-packaging-versioning) or for error, progress, and cancel semantics (ffi-error-progress-cancel). Triggers on uniffi::export, uniffi::Object, uniffi::Record, setup_scaffolding, UniFfiTag, export(foreign), callback_interface, custom_newtype, UnexpectedUniFFICallbackError, or UDL.
+description: Use when writing or reviewing the exported Rust surface of a UniFFI crate that generates Kotlin and Swift bindings, or when fixing a UniFFI macro or bindgen error. Includes Record versus Object, callback traits, custom types, and async arguments. Not for packaging or version skew (uniffi-packaging-versioning) or for error, progress, and cancel semantics (ffi-error-progress-cancel). Triggers on uniffi::export, uniffi::Object, uniffi::Record, setup_scaffolding, UniFfiTag, export(foreign), callback_interface, custom_newtype, UnexpectedUniFFICallbackError, or UDL.
 license: BSD-3-Clause
 ---
 

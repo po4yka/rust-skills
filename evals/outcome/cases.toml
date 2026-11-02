@@ -40,3 +40,7 @@ fixture = "pass" # the dangling pointer and the abort paths are not under test
 [cases.testing-port-python-report]
 skill = "rust-port"
 fixture = "pass" # an empty crate; the defects appear only in a careless port
+
+[cases.testing-review-inventory-module]
+skill = "rust-review"
+fixture = "pass" # the defects are for the reviewer to find; the tests pass

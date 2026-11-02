@@ -67,18 +67,18 @@ What each check proves, and what it does not:
   such as `private_intra_doc_links`.
 - A host run does not lint code behind `#[cfg(target_os = "android")]` or another target cfg.
   Run `cargo clippy --locked --workspace --target <triple> --all-targets -- -D warnings` for
-  each shipped target after `rustup target add <triple>`. A build script that compiles C also
-  needs that target's C toolchain.
+  each shipped target after `rustup target add <triple>`.
 - `-- -D warnings` does not deny `linker_messages` (warn by default since 1.97, outside the
   `warnings` group). Clippy does not link, so only `cargo build` or `cargo test` prints linker
   output. The default policy keeps `linker_messages` at `warn`, because linker output changes
   with the host linker. To fail CI on linker output, run the build or test step with
-  `CARGO_BUILD_WARNINGS=deny` (1.97+). `linker_messages = "deny"` in `[workspace.lints.rust]`
-  also works (verified on 1.98.1), but it fails every local build too. Leave `linker_info` at
-  its default `allow`, and pass `-W linker-info` only while you diagnose a link (the
-  `rust-native-linking` skill).
+  `CARGO_BUILD_WARNINGS=deny` (1.97+).
 - A green gate on one toolchain can go red on the next: a clippy release adds lints to
   `pedantic` and `nursery`. Pin the toolchain, and re-run the gate after each bump.
+- `cargo fmt --all` rewrites every file. When `cargo fmt --all -- --check` is red before your
+  change, run `rustfmt --edition 2024 --config skip_children=true <file>` on the changed files
+  only: plain `rustfmt <file>` also formats each module the file declares (1.99.1). Run the
+  tests again after formatting.
 
 `CARGO_BUILD_WARNINGS=deny` (or `build.warnings = "deny"` in `.cargo/config.toml`) fails a
 local crate that has lint warnings. It does not change `RUSTFLAGS`, so the build cache

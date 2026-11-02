@@ -233,6 +233,9 @@ wrong skill, and put the phrase in the right description in the same change.
 | mobile support matrix | uniffi-packaging-versioning |
 | mobile release proof | uniffi-packaging-versioning |
 | UniFFI header and modulemap | uniffi-packaging-versioning |
+| prioritized review report | rust-review |
+| smallest fix as code | rust-review |
+| the rule it breaks | rust-review |
 | floor division | rust-port |
 | strict parsing | rust-port |
 | PORTING.md | rust-port |

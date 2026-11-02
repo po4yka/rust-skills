@@ -363,6 +363,7 @@ class CaseGraders(unittest.TestCase):
         ("build-release-bump", "lockfile-follows"): False,
         ("build-release-bump", "no-external-write"): True,
         ("ffi-swift-c-abi", "no-temporary-cstring-pointer"): False,
+        ("testing-review-inventory-module", "no-fmt-rewrite"): True,
     }
 
     def test_python_reads_the_case_patterns_as_the_cases_intend(self):
@@ -386,6 +387,7 @@ class CaseGraders(unittest.TestCase):
             "build-release-bump": 7, "concurrency-relaxed-publication": 5, "ffi-swift-c-abi": 7,
             "language-guard-in-match": 5, "production-cow-allocations": 4, "testing-bug-fix-test-first": 6,
             "testing-port-python-report": 7,
+            "testing-review-inventory-module": 7,
         })
 
     def test_a_grader_file_without_frontmatter_raises(self):

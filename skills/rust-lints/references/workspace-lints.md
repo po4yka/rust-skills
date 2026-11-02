@@ -58,7 +58,6 @@ large_enum_variant           = "warn"   # fires on the size DIFFERENCE between t
 result_large_err             = "warn"   # warn by default; fires when the Err variant reaches 128 bytes
 exhaustive_enums             = "warn"   # require #[non_exhaustive] on a pub enum
 exhaustive_structs           = "warn"
-inefficient_to_string        = "warn"
 disallowed_methods           = "deny"
 disallowed_types             = "deny"
 str_to_string                = "warn"
@@ -98,6 +97,12 @@ bare_urls                    = "warn"
   `cargo build`, so it suits lints that are never acceptable, even for a moment.
 - `clippy::string_to_string` was deprecated in clippy 1.91; `implicit_clone` covers it. Clippy
   0.1.98 reports `lint clippy::string_to_string has been removed`. Do not re-add it.
+- `clippy::inefficient_to_string` is not in either table. It fires only when the MSRV is below
+  1.82, where `to_string()` on `&&str` skips the specialized impl, so it can never fire in an
+  edition 2024 crate (rust-version 1.85 or later). `implicit_clone` catches `to_string()` on a
+  `&&String` (clippy 0.1.99).
+- `clippy::unwrap_in_result` checks `unwrap` and `expect` on a `Result` only; an `Option` unwrap
+  in a function that returns `Result` passes it (clippy 0.1.99). `unwrap_used` still catches it.
 - Add the async lints only when the workspace runs an async runtime, and the pointer and FFI
   lints only when it contains `unsafe` pointer work. Both blocks are in
   [lint-catalog.md](lint-catalog.md).
@@ -132,7 +137,6 @@ cloned_instead_of_copied            = "warn"
 explicit_iter_loop                  = "warn"
 explicit_into_iter_loop             = "warn"
 implicit_clone                      = "warn"
-inefficient_to_string               = "warn"
 map_unwrap_or                       = "warn"
 redundant_closure_for_method_calls  = "warn"
 semicolon_if_nothing_returned       = "warn"

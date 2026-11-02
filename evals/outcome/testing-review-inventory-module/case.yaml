@@ -1,0 +1,37 @@
+schema_version: "1.1"
+name: testing-review-inventory-module
+description: >-
+  The testing bundle, outcome case for a review. src/lib.rs is a library module with defects at
+  three severities: undefined behavior through from_utf8_unchecked on file bytes and unwrap on
+  file input, then a String error type, &String and bool parameters, Rc<RefCell<_>> in a public
+  signature, and HashMap order in a report, then a get_ getter. Default clippy is clean, so the
+  review must come from reading. The rust-review skill owns the method and the report.
+tags: [outcome, testing, rust-review]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 40
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
+  env:
+    CARGO_NET_OFFLINE: "true"
+  prompt: >-
+    Other crates in our workspace are about to depend on this inventory crate. Review src/lib.rs
+    before they do. Write the review to REVIEW.md, and do not change the code.
+expected_outcome: >-
+  REVIEW.md puts the undefined behavior and the panics on file input first, then the API and
+  error-handling problems, then style. Each finding has a location, a rule, and a code fix;
+  repeated unwraps are one finding; a section names what the code does well. The tools ran
+  first (without cargo fmt rewriting anything), and no source file changed.
+graders:
+  # An indicator, not part of the score: the no-plugin arm cannot load the skill.
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?rust-review"'
+  - name: no-fmt-rewrite
+    type: tool_used
+    tool: Bash
+    input_match: 'cargo\s+fmt(?![^"]*--check)'
+    max: 0

@@ -1,6 +1,6 @@
 ---
 name: rust-callback-bounds
-description: Use when choosing or repairing the bound on a callback parameter or a stored callable — Fn(&T) -> K, a for<'a> HRTB, a sort_by_key key projection, or a struct field that holds a closure (generic F, Box<dyn Fn>, fn pointer field). Triggers on "lifetime may not live long enough" from a closure, "one type is more general than the other", "borrowed data escapes outside of closure", "callback returns a reference", "store a closure in a struct", "function item types cannot be named directly", E0747, E0562, or "reached the recursion limit while instantiating" on a writer or visitor trait.
+description: Use when choosing or repairing the bound on a callback parameter or a stored callable — Fn(&T) -> K, a for<'a> HRTB, a sort_by_key key projection, or a struct field that holds a closure (generic F, Box<dyn Fn>, fn pointer field). Triggers on "lifetime may not live long enough" from a closure, "one type is more general than the other", "borrowed data escapes outside of closure", "callback returns a reference", "store a closure in a struct", "function item types cannot be named directly", E0747, E0562, or "reached the recursion limit while instantiating".
 license: BSD-3-Clause
 ---
 

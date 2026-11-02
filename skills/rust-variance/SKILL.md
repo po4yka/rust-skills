@@ -1,6 +1,6 @@
 ---
 name: rust-variance
-description: Use when a lifetime coercion is refused ("is invariant over the parameter", "borrowed for 'static", "lifetime may not live long enough" on a return or argument), when deciding whether a type is covariant, contravariant, or invariant, or when adding a lifetime parameter, a PhantomData variance marker, or interior mutability to a public type. Also for subtyping questions such as a fn item that fails a trait bound (resize_with), dyn Fn lifetime parameters, and an unbounded lifetime from a raw pointer. Triggers on "variance", "phantomdata variance", "&mut is invariant", "sender is invariant".
+description: Use when a lifetime coercion is refused ("is invariant over the parameter", "borrowed for 'static", "lifetime may not live long enough" on a return or argument), when deciding whether a type is covariant, contravariant, or invariant, or when adding a lifetime parameter, a PhantomData variance marker, or interior mutability to a public type. Also for subtyping of a fn item that fails a trait bound (resize_with), dyn Fn lifetime parameters, and an unbounded lifetime from a raw pointer. Triggers on "variance", "phantomdata variance", "&mut is invariant", "sender is invariant".
 license: BSD-3-Clause
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: rust-async-internals
-description: Use when writing, reviewing, or debugging tokio task and future mechanics, including cancel safety in tokio::select!, timeout, JoinSet, or FuturesUnordered; task ownership and shutdown with JoinHandle, TaskTracker, or CancellationToken; blocking work via spawn_blocking, block_in_place, or block_on from a foreign thread; Waker::noop polling from a synchronous loop; and Send bounds on an async closure, AsyncFn, or async fn in traits. Triggers on "disabled select branch", "shutdown hang", "async hang", a !Send future, broadcast Lagged, and a MutexGuard held across .await.
+description: Use when writing or debugging tokio task and future mechanics, including cancel safety in tokio::select!, timeout, JoinSet, or FuturesUnordered; task ownership and shutdown with JoinHandle, TaskTracker, or CancellationToken; blocking work via spawn_blocking, block_in_place, or block_on from a foreign thread; Waker::noop polling from a synchronous loop; and Send bounds on an async closure, AsyncFn, or async fn in traits. Triggers on "disabled select branch", "shutdown hang", "async hang", a !Send future, broadcast Lagged, and a MutexGuard held across .await.
 license: BSD-3-Clause
 ---
 

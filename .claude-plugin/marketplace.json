@@ -9,7 +9,7 @@
     {
       "name": "rust-skills",
       "source": "./",
-      "description": "All 45 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
+      "description": "All 46 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -71,7 +71,7 @@
     {
       "name": "rust-skills-testing",
       "source": "./",
-      "description": "Correctness and testing: 5 Rust agent skills.",
+      "description": "Correctness and testing: 6 Rust agent skills.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -84,7 +84,8 @@
         "./skills/rust-test-tools",
         "./skills/rust-sanitizers-miri",
         "./skills/rust-panic-safety",
-        "./skills/rust-port"
+        "./skills/rust-port",
+        "./skills/rust-review"
       ]
     },
     {

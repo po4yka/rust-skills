@@ -83,7 +83,7 @@ defect reached production.
 | `exit` | `process::exit` inside library code. It skips every destructor and every buffer flush. |
 | `redundant_closure_for_method_calls` | A closure that only forwards to a method, where the method path itself works. |
 | `uninlined_format_args` | `format!("{}", x)` instead of `format!("{x}")`. Cheap to fix and it removes review noise. |
-| `implicit_clone`, `str_to_string`, `inefficient_to_string`, `cloned_instead_of_copied` | Allocation nobody asked for, on a hot path nobody measured. |
+| `implicit_clone`, `str_to_string`, `cloned_instead_of_copied` | Allocation nobody asked for, on a hot path nobody measured. |
 | `needless_pass_by_value`, `trivially_copy_pass_by_ref` | An ownership signature that fights the caller in both directions. |
 | `disallowed_types` | A type that the project replaced, for example std `HashMap` where the project uses one chosen hasher. |
 | `unused_must_use` (rustc) | A dropped `Result` or a dropped guard-like value. |
