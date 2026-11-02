@@ -31,6 +31,8 @@ BUNDLES = ROOT / "bundles.toml"
 SNIPPET = ROOT / "AGENTS.snippet.md"
 NEGATIVE = ROOT / "evals" / "routing" / "negative-cases.md"
 CEILINGS = ROOT / "scripts" / "catalog-ceilings.toml"
+PLUGIN_MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
+MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 
 # The Agent Skills spec allows six keys. This repository uses three; the other
 # three stay allowed so a skill can declare them when it genuinely needs them.
@@ -517,6 +519,91 @@ def check_bundles(bundles: dict[str, list[str]], skill_names: set[str]) -> None:
         fail("README.md", f"bundle {bundle!r} has no row in the Install table")
 
 
+def load_json(path: Path, where: str) -> dict | None:
+    if not path.is_file():
+        fail(where, "file is missing")
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        fail(where, f"is not valid JSON: {error}")
+        return None
+    if not isinstance(data, dict):
+        fail(where, "must hold a JSON object")
+        return None
+    return data
+
+
+# "13 Rust agent skills" in a plugin description. The /plugin panel shows it
+# before an install, so a stale count misleads a consumer about what they get.
+SKILL_COUNT = re.compile(r"\b(\d+) Rust agent skills\b")
+
+
+def check_marketplace(bundles: dict[str, list[str]], skill_names: set[str]) -> None:
+    """The marketplace offers the full catalog and each bundle, exactly as bundles.toml has them.
+
+    A plugin version is the commit SHA only while no `version` is set; one
+    `version` string that is not bumped freezes every consumer, so none is
+    allowed (docs/releasing.md). An entry loads only the skill directories it
+    lists only when its source is the repository root, so every entry uses "./".
+    """
+    where_manifest = ".claude-plugin/plugin.json"
+    where = ".claude-plugin/marketplace.json"
+    manifest = load_json(PLUGIN_MANIFEST, where_manifest)
+    market = load_json(MARKETPLACE, where)
+    if manifest is None or market is None:
+        return
+
+    full = manifest.get("name")
+    if "version" in manifest:
+        fail(where_manifest, "sets `version`; the plugin version must be the commit SHA, so remove it")
+    if manifest.get("skills") != ["./skills"]:
+        fail(where_manifest, 'skills must be ["./skills"], the whole catalog')
+    if "version" in market:
+        fail(where, "sets a top-level `version`; remove it")
+    if market.get("name") != full:
+        fail(where, f"name is {market.get('name')!r}; it must equal the plugin.json name {full!r}")
+
+    entries = market.get("plugins")
+    if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+        fail(where, "plugins must be a list of objects")
+        return
+    # None marks the full catalog, which loads plugin.json's ./skills.
+    expected: dict[str, list[str] | None] = {str(full): None}
+    expected |= {f"{full}-{bundle}": skills for bundle, skills in bundles.items()}
+    seen: list[str] = []
+    for index, entry in enumerate(entries):
+        name = entry.get("name")
+        label = f"plugins[{index}] {name!r}"
+        if not isinstance(name, str):
+            fail(where, f"plugins[{index}] name must be a string")
+            continue
+        seen.append(name)
+        if name not in expected:
+            fail(where, f"{label} matches no bundle in bundles.toml; name it {full}-<bundle>")
+            continue
+        if entry.get("source") != "./":
+            fail(where, f'{label} source must be "./", the repository root, or the entry loads every skill')
+        if "version" in entry:
+            fail(where, f"{label} sets `version`; remove it so the version stays the commit SHA")
+        skills = expected[name]
+        count = len(skill_names) if skills is None else len(skills)
+        if skills is None:
+            if "skills" in entry:
+                fail(where, f"{label} is the full catalog; it must not list skills, plugin.json does")
+        else:
+            want = [f"./skills/{skill}" for skill in skills]
+            if entry.get("skills") != want:
+                fail(where, f"{label} skills differ from bundles.toml; list {want} in that order")
+        description = entry.get("description")
+        stated = SKILL_COUNT.findall(description) if isinstance(description, str) else []
+        if stated != [str(count)]:
+            fail(where, f"{label} description must say '{count} Rust agent skills' once")
+    for name in expected:
+        if seen.count(name) != 1:
+            fail(where, f"plugin {name!r} appears {seen.count(name)} times; list it exactly once")
+
+
 def load_ceilings() -> dict:
     """The ratchet: values above a hard limit that the catalog may keep, never grow."""
     if not CEILINGS.is_file():
@@ -850,6 +937,7 @@ def main(argv: list[str] | None = None) -> int:
     if "cross-refs" in args.report:
         report_cross_refs(bundles)
     check_bundles(bundles, skill_names)
+    check_marketplace(bundles, skill_names)
     check_description_budget(bundles, ceilings)
     check_body_tokens(ceilings)
     check_snippet(skill_names)

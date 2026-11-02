@@ -58,6 +58,15 @@ jobs:
           fi
           exit "$failed"
 
+      # The validator proves marketplace.json matches bundles.toml. This step
+      # proves Claude Code installs each plugin with exactly those skills, on
+      # the CLI version checks/check.sh pins. It needs no key and no login.
+      - name: Check Claude Code installs every plugin with exactly its skills
+        run: |
+          set -euo pipefail
+          version="$(grep '^CLAUDE_CODE_VERSION=' checks/check.sh | cut -d'"' -f2)"
+          python3 checks/plugin_install.py --claude "npx -y -p @anthropic-ai/claude-code@${version} claude"
+
   examples:
     name: Compile-check examples
     runs-on: ubuntu-latest

@@ -28,6 +28,10 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
   lose its defect silently. The `Plugin eval` workflow runs either suite.
 - Weekly toolchain-drift and crate-drift workflows that open an issue.
 - `SECURITY.md`, `CODEOWNERS`, a pull request template, and a misroute issue form.
+- Plugin gates: the validator checks `.claude-plugin/marketplace.json` against `bundles.toml`
+  (entries, skill lists, skill counts, root source, no `version`), and
+  `checks/plugin_install.py` installs every plugin with the pinned Claude Code CLI and compares
+  what it loads with its bundle. Both run in `checks/check.sh` and in CI.
 
 ### Changed
 

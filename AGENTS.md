@@ -140,9 +140,10 @@ One command runs every gate CI runs, on the toolchain `checks/rust-toolchain.tom
 bash checks/check.sh
 ```
 
-A green run locally means a green run in CI. The one gate that can be missing is the skills-CLI
-discovery step, which needs `npx`; `check.sh` says so when it skips it. `check.sh` writes only
-under `checks/` and a temporary directory, so run and rerun it without asking.
+A green run locally means a green run in CI. The gates that can be missing are the skills-CLI
+discovery step and the Claude Code plugin install step, which both need `npx`; `check.sh` says
+so when it skips them. `check.sh` writes only under `checks/` and a temporary directory, so run
+and rerun it without asking.
 
 ### 1. Catalog structure
 
@@ -160,6 +161,9 @@ under `checks/` and a temporary directory, so run and rerun it without asking.
 - the README catalog and its Mermaid routing graph name every skill on disk exactly once;
 - every skill is in exactly one bundle of `bundles.toml`, and each bundle has a README install
   row; `AGENTS.snippet.md` names every skill exactly once in at most 60 lines;
+- `.claude-plugin/marketplace.json` has the full-catalog plugin and one `<name>-<bundle>` plugin
+  per bundle, each with source `"./"`, the bundle's skills in `bundles.toml` order, a correct
+  "N Rust agent skills" count, and no `version` (`docs/releasing.md` says why);
 - descriptions stay under 5,000 characters per bundle (about 2,000 tokens, the skill listing of
   a 200K-context client) and 20,000 in total, and each body stays under 4,800 estimated tokens
   (characters / 2.5; the calibration is in `research/token-calibration-2026-10.md`);
@@ -189,6 +193,15 @@ Run it after any frontmatter edit. The CLI and the agent runtimes parse frontmat
 YAML parser: a `: ` in a description once hid a whole skill, and a ` #` cut one in half.
 `plain_scalar_problem` in `scripts/validate-skills.py` rejects both, but the CLI is the only
 end-to-end proof.
+
+Last, `check.sh` runs `checks/plugin_install.py` with the Claude Code CLI that
+`CLAUDE_CODE_VERSION` in `check.sh` pins. In a throwaway config directory it runs
+`claude plugin validate .`, adds this checkout as a marketplace, installs the full-catalog plugin
+and one plugin per bundle, and compares the skills of `claude plugin details` with `skills/` and
+`bundles.toml`. A marketplace entry that is neither fails. It needs no API key and does not
+touch `~/.claude`. Run it after any edit to `.claude-plugin/` or `bundles.toml`. A green result
+proves what a local-path install loads, which Claude Code reads in place; it does not prove a
+GitHub install, which copies the plugin to the cache.
 
 ### What `main` enforces
 
