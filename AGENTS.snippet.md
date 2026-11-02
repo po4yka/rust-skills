@@ -7,7 +7,7 @@ installed. If none fits, continue without one.
 | Symptom | Skill |
 | --- | --- |
 | A pasted rustc error: `E0382`, `E0499`, `E0282`, `does not live long enough` | rust-compiler-errors |
-| Temporary lifetime, drop scope, two-phase borrow, or autoref depends on syntax | rust-borrow-semantics |
+| A hang on a second `lock()` in a `match`; drop scope or temporary lifetime depends on syntax | rust-borrow-semantics |
 | Match guard, partial move, binding mode, or match ergonomics surprise | rust-pattern-semantics |
 | Guard or `RefCell` borrow across `.await`, `select!` side effects, shutdown hang | rust-async-internals |
 | `Ordering::Relaxed` vs `SeqCst`, fences, `static mut`, `OnceLock`, `thread_local!` | memory-model |
@@ -19,11 +19,11 @@ installed. If none fits, continue without one.
 | Miri, ThreadSanitizer, HWASan, or MTE report | rust-sanitizers-miri |
 | No profile yet: flamegraph, simpleperf, `cargo-bloat` | rust-performance |
 | Profile names the hot spot: allocations, type size, hasher | rust-hot-path |
-| `Cow<str>`, `to_mut`, clone cost at an API boundary | rust-copy-on-write |
+| `Cow<str>`, clone cost at an API boundary, an allocation on input that comes back unchanged | rust-copy-on-write |
 | Tombstone, stripped backtrace, `addr2line` | rust-debugging |
 | `SetLoggerError`, a silent `tracing` subscriber, metrics | rust-observability |
 | `UnsatisfiedLinkError`, `AttachCurrentThread`, `FindClass` | rust-jni |
-| Swift over a C ABI, opaque handle, `@MainActor` callback | rust-swift-ffi |
+| Swift over a C ABI: garbage string, abort at an export, opaque handle, `@MainActor` callback | rust-swift-ffi |
 | `uniffi::export` error, `UnexpectedUniFFICallbackError`, Record vs Object | uniffi-boundary |
 | UniFFI checksum mismatch, `RustBuffer` error, binding version skew | uniffi-packaging-versioning |
 | `Activity` lifecycle, `ViewModel.onCleared`, callback release race | ffi-error-progress-cancel |

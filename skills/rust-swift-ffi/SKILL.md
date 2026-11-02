@@ -1,6 +1,6 @@
 ---
 name: rust-swift-ffi
-description: Use when designing or reviewing the ownership, threading, or lifecycle contract of a hand-written Swift FFI, where Swift calls Rust through a C ABI without UniFFI. Triggers on an opaque Rust handle in Swift, a Rust-owned buffer returned to Swift, callbacks from Rust threads, @MainActor Rust callback, Unmanaged.passRetained, AsyncStream over a C callback, or SWIFT_DEFAULT_ACTOR_ISOLATION MainActor in the wrapper. Not for UniFFI-generated Swift (use uniffi-boundary) or XCFramework packaging (use rust-ios-build).
+description: Use when designing, reviewing, or fixing the ownership, threading, or lifecycle contract of a hand-written Swift FFI, where Swift calls Rust through a C ABI and a C header without UniFFI. Triggers on a string that reaches Swift as garbage, an abort at a Rust export, an opaque Rust handle in Swift, a Rust-owned buffer returned to Swift, @MainActor Rust callback, AsyncStream over a C callback, or SWIFT_DEFAULT_ACTOR_ISOLATION. Not for UniFFI-generated Swift (use uniffi-boundary) or XCFramework packaging (use rust-ios-build).
 license: BSD-3-Clause
 ---
 
