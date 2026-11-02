@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Tests for the parts of plugin_install.py that run without the Claude Code CLI.
+"""Tests for the parts of plugin_install.py that run without a client CLI.
 
-The install check is only as good as its reading of `claude plugin details`. A
+The install check is only as good as its reading of `claude plugin details` and
+`codex debug prompt-input`. A
 parser that returns an empty list for output it does not understand would let
 every plugin pass, so an unreadable inventory must come back as None.
 
@@ -52,6 +53,75 @@ class TestParseSkills(unittest.TestCase):
     def test_an_empty_inventory_is_read_as_empty(self):
         # The next line must not be read as a skill name.
         self.assertEqual(plugin_install.parse_skills("  Skills (0)\n  Agents (0)\n"), [])
+
+
+# The shape Codex 0.166.0 prints: a JSON list whose text holds the skill list.
+CODEX_PROMPT = json.dumps(
+    [
+        {
+            "type": "message",
+            "content": [
+                {
+                    "text": "## Skills\n### Available skills\n"
+                    "- imagegen: Generate or edit raster images. (file: r0/imagegen/SKILL.md)\n"
+                    "- rust-skills-testing:rust-tdd: Use when writing Rust code test-first. (file: r1/rust-tdd/SKILL.md)\n"
+                    "- rust-skills-testing:rust-test-tools: Use when choosing a runner; see rust-unsafe. "
+                    "(file: r1/rust-test-tools/SKILL.md)\n"
+                }
+            ],
+        }
+    ]
+)
+
+
+class TestParseCodexSkills(unittest.TestCase):
+    def test_the_plugin_skills_are_read(self):
+        self.assertEqual(
+            plugin_install.parse_codex_skills(CODEX_PROMPT, "rust-skills-testing"), ["rust-tdd", "rust-test-tools"]
+        )
+
+    def test_a_skill_named_in_a_description_is_not_counted(self):
+        # `rust-unsafe` appears in a description, not as a listed skill.
+        self.assertNotIn("rust-unsafe", plugin_install.parse_codex_skills(CODEX_PROMPT, "rust-skills-testing") or [])
+
+    def test_another_plugin_prefix_does_not_match(self):
+        # `rust-skills` is a prefix of `rust-skills-testing`; it must match neither line.
+        self.assertEqual(plugin_install.parse_codex_skills(CODEX_PROMPT, "rust-skills"), [])
+
+    def test_a_skill_listed_twice_is_counted_twice(self):
+        doubled = CODEX_PROMPT.replace(
+            "(file: r1/rust-tdd/SKILL.md)\\n", "(file: r1/rust-tdd/SKILL.md)\\n- rust-skills-testing:rust-tdd: again\\n"
+        )
+        self.assertEqual(
+            plugin_install.parse_codex_skills(doubled, "rust-skills-testing"), ["rust-tdd", "rust-tdd", "rust-test-tools"]
+        )
+
+    def test_the_codex_environment_drops_caller_keys(self):
+        import os
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "x", "CODEX_SANDBOX": "seatbelt", "HOME": "/h"}):
+            env = plugin_install.codex_env(pathlib.Path("/tmp/codex-home"))
+        self.assertEqual(env["CODEX_HOME"], "/tmp/codex-home")
+        self.assertNotIn("OPENAI_API_KEY", env)
+        self.assertNotIn("CODEX_SANDBOX", env)
+        self.assertEqual(env["HOME"], "/h")
+
+    def test_the_export_holds_tracked_files_and_no_build_output(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = plugin_install.export_tree(pathlib.Path(tmp))
+            self.assertTrue((dest / ".claude-plugin" / "marketplace.json").is_file())
+            self.assertTrue((dest / "skills" / "rust-tdd" / "SKILL.md").is_file())
+            self.assertFalse((dest / "checks" / "target").exists())
+            self.assertFalse((dest / ".git").exists())
+
+    def test_output_without_a_skill_list_is_unreadable(self):
+        self.assertIsNone(plugin_install.parse_codex_skills(json.dumps([{"text": "no skills here"}]), "rust-skills"))
+
+    def test_output_that_is_not_json_is_unreadable(self):
+        self.assertIsNone(plugin_install.parse_codex_skills("Error: failed to resolve CODEX_HOME", "rust-skills"))
 
 
 class TestExpectedSkills(unittest.TestCase):

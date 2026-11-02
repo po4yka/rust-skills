@@ -5,9 +5,9 @@
 #
 # It runs the same gates CI runs, on the toolchain and target that
 # checks/rust-toolchain.toml pins, so a green run here means a green run there.
-# The exceptions are the two gates that run a consumer's CLI through npx: the
-# skills-CLI discovery and the Claude Code plugin install. This script says so
-# out loud when it has to skip them, and CI always runs them.
+# The exceptions are the three gates that run a consumer's CLI through npx: the
+# skills-CLI discovery and the Claude Code and Codex plugin installs. This
+# script says so out loud when it has to skip them, and CI always runs them.
 # `cargo check` type-checks without linking, so the Linux target works on any
 # host with no cross-linker installed. The one C build script in the harness
 # (alloca, from criterion) needs clang on a non-Linux host; see below.
@@ -20,6 +20,9 @@ SKILLS_CLI_VERSION="1.7.4"
 # CLAUDE_CODE_VERSION in .github/workflows/plugin-eval.yml, so the install and
 # the evaluations judge the plugin with the same client.
 CLAUDE_CODE_VERSION="2.1.316"
+# The Codex CLI for the same gate. Codex reads .claude-plugin/marketplace.json
+# as a legacy-compatible marketplace, so a Codex release can change the result.
+CODEX_VERSION="0.166.0"
 
 # gen.py, cargo, and analyze.py share examples/, manifest.json, check.json, and
 # check.err. Hold one checkout-scoped process lock across the complete sequence
@@ -133,6 +136,15 @@ echo "==> Claude Code installs every plugin with exactly its skills"
 if command -v npx > /dev/null 2>&1; then
     python3 "$ROOT/checks/plugin_install.py" \
         --claude "npx -y -p @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} claude"
+else
+    echo "  SKIPPED: no npx on this host. CI runs this gate on every push."
+fi
+
+# The same comparison for Codex, which reads the same marketplace file. Each
+# plugin installs into its own throwaway CODEX_HOME, so ~/.codex is untouched.
+echo "==> Codex installs every plugin with exactly its skills"
+if command -v npx > /dev/null 2>&1; then
+    python3 "$ROOT/checks/plugin_install.py" --codex "npx -y @openai/codex@${CODEX_VERSION}"
 else
     echo "  SKIPPED: no npx on this host. CI runs this gate on every push."
 fi

@@ -93,6 +93,23 @@ tag as its version, and it changes only when you add the marketplace at a newer 
 
 The plugin names are in the table above; `rust-skills@rust-skills` is the full catalog.
 
+**2a. Codex plugin marketplace, pinned by `--ref`.** Codex reads the same marketplace file. Add
+it at a release tag, install a bundle plugin, and start a new session. Without `--ref` the
+marketplace tracks `main`.
+
+```bash
+codex plugin marketplace add po4yka/rust-skills --ref v0.3.0
+codex plugin add rust-skills-language@rust-skills
+```
+
+Codex copies the whole repository (about 7 MB) into its cache for each plugin, with the version
+`local`, and keeps that copy. In a test with a local marketplace, neither
+`codex plugin marketplace upgrade` nor a new session changed it, and a second `codex plugin add`
+did (Codex 0.166.0). On `main`, update with `codex plugin marketplace upgrade rust-skills`, then
+the same `codex plugin add` command, then a new session. A marketplace added with `--ref` checks
+out that ref, so move to a newer tag with `codex plugin marketplace remove rust-skills` and a new
+`add` with the new `--ref`.
+
 **3. `npx skills add`, unpinned (convenience).** The `skills` CLI installs the default branch as
 it is at that moment. Its lockfile stores content hashes, not a commit or a tag, so a git tag of
 this repository pins nothing for it. `npx skills update` moves every installed skill to `main`
@@ -425,7 +442,7 @@ skills/<skill-name>/
 AGENTS.md                     # the SKILL.md contract and the authoring rules
 AGENTS.snippet.md             # the always-on router to paste into a consuming repository
 bundles.toml                  # install bundles: bundle -> ordered skill names
-.claude-plugin/               # plugin manifest and marketplace, one plugin per bundle
+.claude-plugin/               # plugin marketplace for Claude Code and Codex, one plugin per bundle
 CHANGELOG.md                  # one section per tagged catalog actualization
 SECURITY.md                   # what a security report covers and where to send it
 docs/releasing.md             # tagging, plugin versioning, evaluations, repository settings
