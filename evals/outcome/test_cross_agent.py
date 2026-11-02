@@ -235,6 +235,32 @@ class Regrade(unittest.TestCase):
         revised = {**grader, "criteria": "second"}
         self.assertEqual(ca.stale_graders(merged, {"a"}, {"a": ca.grader_revision(revised)}), {"a"})
 
+    def test_a_regrade_with_another_judge_keeps_each_verdicts_model(self):
+        case = {"graders": [{"name": "a", "type": "llm"}, {"name": "b", "type": "llm"},
+                            {"name": "r", "type": "regex"}]}
+        stored = {"judge_model": "old-judge", "verdicts": {
+            "a": {"pass": False, "by": "judge"}, "b": {"pass": True, "by": "judge"},
+            "r": {"pass": True, "by": "regex"}}}
+        fresh = {"verdicts": {"a": {"pass": True, "by": "judge", "judge_model": "new-judge"}}}
+        merged = ca.merge_regrade(stored, fresh, case)
+        self.assertNotIn("judge_model", merged)
+        self.assertEqual(merged["verdicts"]["a"]["judge_model"], "new-judge")
+        self.assertEqual(merged["verdicts"]["b"]["judge_model"], "old-judge")
+        self.assertNotIn("judge_model", merged["verdicts"]["r"])
+        self.assertEqual(merged["superseded"]["a"], [{"pass": False, "by": "judge", "judge_model": "old-judge"}])
+
+    def test_an_older_superseded_judge_verdict_gets_the_file_model(self):
+        case = {"graders": [{"name": "a", "type": "llm"}]}
+        stored = {"judge_model": "old-judge", "verdicts": {"a": {"pass": True, "by": "judge"}},
+                  "superseded": {"a": {"pass": False, "by": "judge"}}}
+        fresh = {"verdicts": {"a": {"pass": False, "by": "judge", "judge_model": "new-judge"}}}
+        merged = ca.merge_regrade(stored, fresh, case)
+        self.assertEqual([v["judge_model"] for v in merged["superseded"]["a"]], ["old-judge", "old-judge"])
+        again = ca.merge_regrade(merged, {"verdicts": {"a": {"pass": True, "by": "judge",
+                                                             "judge_model": "third-judge"}}}, case)
+        self.assertEqual([v["judge_model"] for v in again["superseded"]["a"]],
+                         ["old-judge", "old-judge", "new-judge"])
+
 
 class Tasks(unittest.TestCase):
     def args(self, configs="", agents="claude,codex"):

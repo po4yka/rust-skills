@@ -1031,12 +1031,13 @@ def grade_one(case: dict, run_dir: Path, args: argparse.Namespace, names: list[s
             if verdict.get("name") in wanted:
                 verdicts[verdict["name"]] = {"pass": bool(verdict["pass"]), "by": "judge",
                                              "evidence": verdict.get("evidence", ""),
-                                             "revision": wanted[verdict["name"]]}
+                                             "revision": wanted[verdict["name"]],
+                                             "judge_model": args.judge_model}
         missing = wanted - verdicts.keys()
         if missing:
             raise RuntimeError(f"the judge gave no verdict for {sorted(missing)}")
     return {"case": meta["case"], "config": meta["config"], "run": meta["run"],
-            "status": meta["status"], "judge_model": args.judge_model, "verdicts": verdicts}
+            "status": meta["status"], "verdicts": verdicts}
 
 
 def grader_revision(grader: dict) -> str:
@@ -1052,15 +1053,26 @@ def stale_graders(stored: dict, subset: set[str], revisions: dict[str, str]) -> 
             if stored["verdicts"].get(name, {}).get("revision") != revisions[name]}
 
 
+def with_judge_model(verdict: dict, model: str | None) -> dict:
+    """A judge verdict from an older grade file names its model only at the top of the file."""
+    if model and verdict.get("by") == "judge" and "judge_model" not in verdict:
+        return {**verdict, "judge_model": model}
+    return verdict
+
+
 def merge_regrade(stored: dict, fresh: dict, case: dict) -> dict:
     """Replaces the re-graded verdicts, appends each replaced verdict to its history under
-    `superseded` (oldest first), and drops verdicts of graders the case no longer has."""
+    `superseded` (oldest first), and drops verdicts of graders the case no longer has. Each judge
+    verdict names its own judge model, so a regrade with another model keeps the provenance."""
     current = {g["name"] for g in scored_graders(case)}
+    stored = dict(stored)
+    model = stored.pop("judge_model", None)
     # An older grade file holds one superseded verdict per name, not a list.
-    superseded = {name: list(old) if isinstance(old, list) else [old]
+    superseded = {name: [with_judge_model(v, model) for v in (old if isinstance(old, list) else [old])]
                   for name, old in stored.get("superseded", {}).items()}
     verdicts = {}
     for name, verdict in stored["verdicts"].items():
+        verdict = with_judge_model(verdict, model)
         if name in fresh["verdicts"] or name not in current:
             superseded.setdefault(name, []).append(verdict)
         else:

@@ -174,7 +174,9 @@ uv run --with pyyaml python3 evals/outcome/cross_agent.py report --out "$OUT"
   again on the recorded runs, with no new agent run. Each verdict records a hash of its grader
   definition (`revision`). A grader is judged again only when that hash differs from the
   current definition, so a rerun of the same command resumes and a second change starts a new
-  re-grade. A verdict from a grade file without `revision` is always judged again. The grade
+  re-grade. A verdict from a grade file without `revision` is always judged again. Each judge
+  verdict names the `judge_model` that gave it, so a re-grade with another `--judge-model`
+  does not change the record of the verdicts it keeps. The grade
   file keeps every replaced verdict, oldest first, in a list under `superseded`, so each result
   stays comparable with the ones before it.
 
