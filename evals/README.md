@@ -127,6 +127,55 @@ reported against the no-plugin arm on these six tasks. What it does not prove:
 - that a client loads the skill on its own in a crowded listing. The `skill-fired` indicator
   reports that for each run, outside the score.
 
+### Claude Code and Codex on subscriptions
+
+`claude plugin eval` runs Claude only, on the key or login of the caller. `cross_agent.py` runs
+the same cases on Claude Code and on Codex, each with the catalog and without it, through their
+subscription logins, and grades all four configurations with one blind judge. Use one output
+directory for every step; the default is outside `$HOME`, because Claude reads memory files in
+every parent of its working directory.
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude-eval claude auth login     # once: a login home with nothing else in it
+CODEX_HOME=~/.codex-eval codex login                     # once
+OUT=/Users/Shared/rust-skills-evals/outcome-<date>
+uv run --with pyyaml python3 evals/outcome/cross_agent.py preflight --out "$OUT"
+uv run --with pyyaml python3 evals/outcome/cross_agent.py probe --out "$OUT"
+uv run --with pyyaml python3 evals/outcome/cross_agent.py run --out "$OUT"
+uv run --with pyyaml python3 evals/outcome/cross_agent.py grade --out "$OUT"
+uv run --with pyyaml python3 evals/outcome/cross_agent.py report --out "$OUT"
+```
+
+- Isolation. Each agent runs from its own login home, so the user's skills, plugins, hooks,
+  memory files, and MCP servers reach no run. Both agents get one snapshot of the catalog, taken
+  in `$OUT/catalog` before the first run: Claude through `--plugin-dir`, Codex in
+  `$HOME/.agents/skills` of a per-run home. The snapshot keeps the repository, with its graders
+  and reference fixes, out of every agent's reach.
+- The probe. `probe` turns off every plugin that the Claude account syncs into the login home,
+  then asks each configuration twice which skills it can load. It fails unless the catalog is
+  present only in the skills arm, the two Claude arms match exactly outside the catalog, Codex
+  names nothing outside the catalog and its built-in `.system` set, and no unexpected plugin, MCP
+  server, or memory file loads. `run` refuses to start without a passing probe in `$OUT`. What
+  stays in both arms alike: Claude's built-in skills and the skills that the account syncs, and
+  Codex's built-in skills.
+- Routes. The children get a built environment with no API key, base-URL override, or
+  cloud-provider route, and a neutral git identity with signing off. `preflight` refuses a shell
+  that has a route. Cost fields are the CLIs' estimates; they do not measure subscription quota.
+- Grading. The runner scores the `regex` and `tool_used` graders itself; `tool_used` sees shell
+  commands only. One Claude judge scores the judged criteria of each run in one call, under a
+  label derived from the seed and the run, from a record with the skill loads removed, and with
+  paths, agent and model names, and catalog skill names redacted. The judge sees the final diff
+  of the workspace rather than each edit, because Codex reports an edit by path only.
+- Restart. `run` and `grade` skip finished work. A run that ends in an error, or stalls on a
+  usage limit, is retried on the next `run`; a timeout is a result. Ctrl-C stops every running
+  agent. `run` refuses an output directory whose catalog, CLI versions, or models changed.
+
+Differences between the arms that the runner does not remove: Codex runs in its
+`workspace-write` sandbox and Claude runs with an allowlist of tools; neither agent honors the
+`max_turns` of a case, only its `timeout_seconds`; the judge is a Claude model; a redacted skill
+name ("a guideline") appears mostly in the skills arm; and the style of a final answer can still
+hint at its agent. Read the report with those in mind.
+
 Add a case when a skill gains a rule that a task can exercise: a fixture that compiles, a defect
 that the fixture's own tests miss or show only as a symptom, a probe when one is portable, and
 graders that a reader can check against the skill text. Keep the fixture on the standard library, so the case runs offline.

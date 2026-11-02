@@ -45,6 +45,7 @@ python3 "$ROOT/scripts/test_validate_skills.py" 2>&1 | tail -3
 python3 "$ROOT/scripts/test_drift_report.py" 2>&1 | tail -3
 python3 "$ROOT/evals/routing/test_run.py" 2>&1 | tail -3
 python3 "$ROOT/evals/outcome/test_check.py" 2>&1 | tail -3
+python3 "$ROOT/evals/outcome/test_cross_agent.py" 2>&1 | tail -3
 python3 test_with_lock.py 2>&1 | tail -3
 python3 test_plugin_install.py 2>&1 | tail -3
 python3 test_gen.py 2>&1 | tail -3
