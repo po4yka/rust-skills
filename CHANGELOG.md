@@ -9,6 +9,11 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ### Added
 
+- Fast feedback for agents that edit this repository: `bash checks/check.sh --fast` skips the
+  cargo gates, and a post-edit hook for Claude Code (`.claude/settings.json`) and Codex
+  (`.codex/hooks.json`) runs `scripts/validate-skills.py` after an edit to a catalog file and
+  gives its problems to the agent.
+
 - Install bundles in `bundles.toml`: six subject groups that each install as one unit. Five fit
   the always-on skill listing of a 200K-context client; `language` is over that budget and is
   held by the ratchet.

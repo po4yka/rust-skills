@@ -1,5 +1,8 @@
-# Agent and tooling state
+# Agent and tooling state. .claude/settings.json and .codex/hooks.json are
+# shared on purpose; personal settings and worktrees are not.
 .omc/
+.claude/settings.local.json
+.claude/worktrees/
 
 # macOS
 .DS_Store
