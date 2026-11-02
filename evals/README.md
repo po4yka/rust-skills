@@ -62,14 +62,27 @@ names a skill. Two graders per case:
 - `graders/cites-verifier.md` (an LLM rubric) passes when the answer gives the verifier command
   that the skill owns. It is scored in both arms, so the reported delta is what the plugin adds.
 
+Run the suite from a clean checkout that has a plugin manifest at its root. The CLI loads a
+plugin only from a manifest at the target, and this repository has none, because Codex installs
+no bundle while a root manifest names another plugin. Without the manifest the CLI runs one arm
+with no plugin, loads no skill, and still reports a score (measured with Claude Code 2.1.316 on
+2026-11-02). Write the manifest only in the clean checkout and never commit it:
+`scripts/validate-skills.py` fails while it exists. The clean checkout also keeps out the local
+`checks/target/` build cache, which holds hard links that the CLI refuses.
+
 ```bash
+git worktree add --detach ../rust-skills-eval HEAD
+cd ../rust-skills-eval
+mkdir -p .claude-plugin
+printf '%s\n' '{"name": "rust-skills", "description": "rust-skills catalog for the plugin evaluation", "skills": ["./skills"]}' \
+  > .claude-plugin/plugin.json
 claude plugin eval . --eval-dir evals/plugin --trust-plugin --threshold 0.8 \
   --max-cost-usd 20 --no-publish --json eval-results.json
 ```
 
-Run it from a clean checkout: the CLI refuses a plugin directory that holds hard links, and the
-local `checks/target/` build cache has them. The `Plugin eval` workflow runs the same command on
-`workflow_dispatch` with pinned model IDs.
+The CLI prints `Ablation: defaulting to with-without` when it loads the plugin. The `Plugin eval`
+workflow writes the same manifest, runs the same command on `workflow_dispatch` with pinned model
+IDs, and fails when the result names no plugin.
 
 What a green result proves: on that client, model, and catalog commit, a natural request loads
 the skill and the answer carries its verifier. What it does not prove: behavior on Codex, Cursor,
@@ -109,8 +122,9 @@ claude plugin eval . --eval-dir evals/outcome --trust-plugin --scaffold \
 
 `--scaffold` runs `scaffold.sh` from this repository, and `--allow-tools` lets the agent run cargo
 and edit the workspace. The command sets no `--threshold`: the result is a measurement, and the
-number to record is the delta between the arms, not a pass mark. Run it from a clean checkout, as
-for `plugin/`: a local `files/target/` holds hard links, which the CLI refuses. Each case runs
+number to record is the delta between the arms, not a pass mark. Run it from a clean checkout with
+the plugin manifest, as for `plugin/`; a local `files/target/` also holds hard links, which the CLI
+refuses. Each case runs
 three times in each arm. `--max-cost-usd` stops the next run from starting; it does not stop a run
 already in flight.
 

@@ -88,6 +88,12 @@ produces with the catalog and without it, in both clients; the first baseline is
 - Three outcome graders now score what their case asks, and the baseline is re-graded on the
   recorded runs (#16).
 
+### Fixed
+
+- The `Plugin eval` workflow loads the plugin again. After `.claude-plugin/plugin.json` was
+  removed for Codex, `claude plugin eval .` found no plugin and scored the model alone. The
+  workflow now writes the manifest in its own checkout and fails when a result names no plugin.
+
 ## [0.2.0] - 2026-09-25
 
 The 2026-09 catalog actualization, recorded in `research/catalog-actualization-2026-09.md`. Every
