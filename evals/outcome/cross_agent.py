@@ -649,6 +649,12 @@ def preflight(args: argparse.Namespace) -> int:
     risky = {k for k in keys if re.search(r"apiKeyHelper|hooks|enabledPlugins|extraKnownMarketplaces|"
                                            r"ANTHROPIC_|BEDROCK|VERTEX|FOUNDRY|unreadable", k)}
     check(not risky, f"no route, hook, or plugin key in its settings.json {sorted(risky) or ''}", problems)
+    # The account syncs its plugins and skills into the login home on its own schedule, so one
+    # arm can get them and the other not. Turn both syncs off in the login home's settings.json:
+    #   {"syncClaudeAiPlugins": false, "syncClaudeAiSkills": false}
+    sync = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
+    check(sync.get("syncClaudeAiPlugins") is False and sync.get("syncClaudeAiSkills") is False,
+          "account plugin and skill sync are off in its settings.json", problems)
     # skills/synced holds the account's own skills; they reach both Claude arms alike (the probe
     # checks that), the way Codex's built-in .system set does.
     check(empty_dir(args.claude_home / "skills", ignore=("synced",)),
