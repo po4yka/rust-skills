@@ -103,12 +103,65 @@ codex plugin add rust-skills-language@rust-skills
 ```
 
 Codex copies the whole repository (about 7 MB) into its cache for each plugin, with the version
-`local`, and keeps that copy. In a test with a local marketplace, neither
-`codex plugin marketplace upgrade` nor a new session changed it, and a second `codex plugin add`
-did (Codex 0.166.0). On `main`, update with `codex plugin marketplace upgrade rust-skills`, then
-the same `codex plugin add` command, then a new session. A marketplace added with `--ref` checks
-out that ref, so move to a newer tag with `codex plugin marketplace remove rust-skills` and a new
-`add` with the new `--ref`.
+`local`. A marketplace added with `--ref` stays on that ref. To move to a newer tag, run
+`codex plugin marketplace remove rust-skills`, then the `add` commands again with the new
+`--ref`.
+
+**Keep the plugins up to date.** A marketplace added at a tag never changes. To receive each
+change that lands on `main`, add the marketplace with no ref, and let the client refresh it. Every
+commit on `main` passed the required CI gates; the evaluations run only before a tag
+([docs/releasing.md](docs/releasing.md)).
+
+- **Claude Code.** Add the marketplace with no `#` suffix and install a bundle. Then run
+  `/plugin`, open **Marketplaces**, select `rust-skills`, and select **Enable auto-update**:
+  auto-update is off by default for a marketplace that Anthropic does not publish. After the first
+  message of a session, Claude Code refreshes the marketplace within about ten minutes, updates
+  the plugin on disk, and prints `Plugin updated: <name> · Run /reload-plugins to apply`; the next
+  session loads the new version. `/plugin marketplace update rust-skills` updates at once.
+  `DISABLE_AUTOUPDATER=1`, `DISABLE_UPDATES=1`, or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
+  turns the background update off unless `FORCE_AUTOUPDATE_PLUGINS=1` is also set.
+
+  ```text
+  /plugin marketplace add po4yka/rust-skills
+  /plugin install rust-skills-language@rust-skills
+  ```
+
+  To move from a tag to `main`, run `claude plugin marketplace remove rust-skills`, then the two
+  commands above. The removal also uninstalls the plugins of that marketplace.
+
+- **Codex.** Codex 0.166.0 documents no background update for a plugin marketplace. Run
+  `codex plugin marketplace upgrade rust-skills`, then start a new session. For a Git
+  marketplace, that command fetches `main` and updates the installed plugins in the cache. Run it
+  from a scheduled job to stay current.
+
+- **A whole team.** Commit the client settings to the consuming repository. Each client applies
+  them only in a folder that the user trusts. For Claude Code, this `.claude/settings.json`
+  registers the marketplace, turns on auto-update, and enables the bundle:
+
+  ```json
+  {
+    "extraKnownMarketplaces": {
+      "rust-skills": {
+        "source": { "source": "github", "repo": "po4yka/rust-skills" },
+        "autoUpdate": true
+      }
+    },
+    "enabledPlugins": { "rust-skills-language@rust-skills": true }
+  }
+  ```
+
+  For Codex, this `.codex/config.toml` registers the marketplace and enables the bundle. The
+  first `codex plugin marketplace upgrade` in that repository installs it. Add `ref = "v0.3.0"`
+  under `[marketplaces.rust-skills]` to pin a tag.
+
+  ```toml
+  [marketplaces.rust-skills]
+  source_type = "git"
+  source = "https://github.com/po4yka/rust-skills.git"
+
+  [plugins."rust-skills-language@rust-skills"]
+  enabled = true
+  ```
 
 **3. `npx skills add`, unpinned (convenience).** The `skills` CLI installs the default branch as
 it is at that moment. Its lockfile stores content hashes, not a commit or a tag, so a git tag of
