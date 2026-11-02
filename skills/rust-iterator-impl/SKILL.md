@@ -1,6 +1,6 @@
 ---
 name: rust-iterator-impl
-description: Use when writing a custom iterator or making a custom type iterable, to implement Iterator, IntoIterator, FromIterator, Extend, size_hint, ExactSizeIterator, or DoubleEndedIterator. Triggers on a for loop or collect that rejects a container, a lending iterator and E0207, an ExactSizeIterator len panic, an unconditional_recursion warning in into_iter, E0658 on impl Trait in an associated IntoIter type, enumerate().rev() needing ExactSizeIterator, and iter::from_fn in place of a nightly gen block. Not for calling-side combinator style (rust-code-style) or iteration speed (rust-hot-path).
+description: Use when writing a custom iterator or making a type iterable, to implement Iterator, IntoIterator, FromIterator, Extend, size_hint, ExactSizeIterator, or DoubleEndedIterator. Triggers on a for loop or collect that rejects a container, a lending iterator and E0207, an ExactSizeIterator len panic, an unconditional_recursion warning in into_iter, E0658 on impl Trait in an associated IntoIter type, enumerate().rev() needing ExactSizeIterator, and iter::from_fn in place of a nightly gen block. Not for calling-side combinator style (rust-code-style) or iteration speed (rust-hot-path).
 license: BSD-3-Clause
 ---
 

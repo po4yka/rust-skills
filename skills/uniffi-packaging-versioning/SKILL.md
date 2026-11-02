@@ -1,6 +1,6 @@
 ---
 name: uniffi-packaging-versioning
-description: Use when packaging a Rust UniFFI crate for Android and iOS (Android .so files, generated Kotlin and Swift, the UniFFI header and modulemap) or versioning its FFI surface, including pinning uniffi and uniffi-bindgen, regenerating checked-in bindings, classifying an exported change as additive or breaking, and debugging a load-time checksum mismatch, a RustBuffer error, or a missing native library. Also for a mobile support matrix and a mobile release proof from the shipped artifacts. Not for the exported API shape (use `uniffi-boundary`), Gradle build wiring (use `rust-android-build`), or XCFramework assembly (use `rust-ios-build`).
+description: Use when packaging a Rust UniFFI crate for Android and iOS (Android .so files, generated Kotlin and Swift, the UniFFI header and modulemap) or versioning its FFI surface, including pinned uniffi and uniffi-bindgen versions, regenerated checked-in bindings, an additive or breaking change, and a load-time checksum mismatch, a RustBuffer error, or a missing native library. Also for a mobile support matrix and a mobile release proof from the shipped artifacts. Not for the exported API shape (use `uniffi-boundary`), Gradle build wiring (use `rust-android-build`), or XCFramework assembly (use `rust-ios-build`).
 license: BSD-3-Clause
 ---
 

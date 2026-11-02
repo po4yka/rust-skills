@@ -1,6 +1,6 @@
 ---
 name: rust-pin-projection
-description: Use when adding Pin to a signature, writing a self-referential struct or other address-sensitive type, or projecting a pinned reference into a field (pin projection, structural pinning) by hand or via pin-project-lite. Also for choosing between std::pin::pin!, Box::pin, and Pin::new_unchecked; PhantomPinned and Unpin semantics; PinnedDrop; and pin errors such as "PhantomPinned cannot be unpinned", E0596 on a Pin, or an E0308 at a pin! call that says expected S, found &mut S (1.98 adds unreachable_pin_macro_type_constraint). Not for polling, wakers, or cancel safety; use rust-async-internals.
+description: Use when adding Pin to a signature, writing a self-referential struct or other address-sensitive type, or projecting a pinned reference into a field (pin projection, structural pinning) by hand or via pin-project-lite. Also for choosing between std::pin::pin!, Box::pin, and Pin::new_unchecked; PhantomPinned and Unpin semantics; PinnedDrop; and errors such as "PhantomPinned cannot be unpinned", E0596 on a Pin, or an E0308 at a pin! call that says expected S, found &mut S (1.98 adds unreachable_pin_macro_type_constraint). Not for polling, wakers, or cancel safety; use rust-async-internals.
 license: BSD-3-Clause
 ---
 

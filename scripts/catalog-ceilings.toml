@@ -9,10 +9,10 @@
 #   python3 scripts/validate-skills.py --emit-ceilings > scripts/catalog-ceilings.toml
 
 [description]
-total = 22285
+total = 22278
 
 [bundle_descriptions]
-language = 6451
+language = 6385
 
 [body_tokens]
 cargo-workflows = 6780
@@ -29,14 +29,14 @@ rust-crate-architecture = 7450
 rust-crate-release = 7804
 rust-database = 6098
 rust-debugging = 7294
-rust-discipline = 7322
+rust-discipline = 7292
 rust-embedded-no-std = 7724
 rust-event-loop-state = 5626
 rust-hot-path = 5541
 rust-ios-build = 6954
 rust-iterator-impl = 7765
 rust-jni = 6358
-rust-lints = 7551
+rust-lints = 7546
 rust-macros = 7912
 rust-native-linking = 7354
 rust-networking = 6032

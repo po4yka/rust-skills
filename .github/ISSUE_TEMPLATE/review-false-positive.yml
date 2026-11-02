@@ -1,0 +1,39 @@
+name: Review false positive
+description: The rust-review skill reported something that is correct.
+title: "review-fp: "
+labels: [rust-review, false-positive]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A confirmed false positive becomes a fix in the skill that owns the rule, and often a
+        grader in `evals/outcome/`. Remove private code and identifiers before you paste.
+  - type: textarea
+    id: code
+    attributes:
+      label: The code that was reviewed
+      description: The smallest snippet that still draws the finding.
+      render: rust
+    validations:
+      required: true
+  - type: textarea
+    id: finding
+    attributes:
+      label: The finding
+      description: Paste it as the review wrote it, with its severity and the rule it cited.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why the code is correct
+      description: The invariant, the framework convention, or the source that makes it correct.
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and model
+      placeholder: Claude Code 2.1.316 with claude-opus-5-5, or Codex CLI 0.166.0
+    validations:
+      required: true

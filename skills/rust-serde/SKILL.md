@@ -1,6 +1,6 @@
 ---
 name: rust-serde
-description: Use when deriving or changing Serialize or Deserialize on a type whose encoded form is a contract (config, stored record, cache, or a message another process reads), or when serde_json drops a field, reorders keys, or loses number precision without an error. Triggers on deny_unknown_fields, rename_all, serde(alias), serde(tag), untagged, serde(flatten), skip_serializing_if, serde(default), serde(try_from), DeserializeOwned, JSON map key, large integer, preserve_order, float_roundtrip, arbitrary_precision, postcard, "unknown field", "did not match any variant".
+description: Use when deriving or changing Serialize or Deserialize on a type whose encoded form is a contract (config, stored record, or wire message), or when serde_json drops a field, reorders keys, or loses number precision without an error. Triggers on deny_unknown_fields, rename_all, serde(alias), serde(tag), untagged, serde(flatten), skip_serializing_if, serde(default), serde(try_from), DeserializeOwned, JSON map key, large integer, preserve_order, float_roundtrip, arbitrary_precision, postcard, "unknown field", "did not match any variant".
 license: BSD-3-Clause
 ---
 

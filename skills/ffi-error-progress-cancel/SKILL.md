@@ -1,6 +1,6 @@
 ---
 name: ffi-error-progress-cancel
-description: Use when designing or reviewing typed errors, progress streaming, or cooperative cancellation for a long-running Rust FFI or UniFFI call in Kotlin or Swift, or tying such a call to a mobile UI owner through Activity lifecycle, ViewModel.onCleared, Dispatchers.Main, background deadlines, process death, or a callback release race. Triggers on flat_error, callbackFlow, awaitClose, trySend, AsyncThrowingStream, onTermination, CancellationException, CancellationError, cancel_job, job_id, progress events, or engine error text or stack traces that reach the UI.
+description: Use when designing typed errors, progress streaming, or cooperative cancellation for a long-running Rust FFI or UniFFI call in Kotlin or Swift, or tying such a call to a mobile UI owner through Activity lifecycle, ViewModel.onCleared, Dispatchers.Main, background deadlines, process death, or a callback release race. Triggers on flat_error, callbackFlow, awaitClose, trySend, AsyncThrowingStream, onTermination, CancellationException, CancellationError, cancel_job, job_id, or progress events.
 license: BSD-3-Clause
 ---
 

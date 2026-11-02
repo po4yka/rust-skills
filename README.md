@@ -2,11 +2,11 @@
 
 # rust-skills
 
-**Forty-four agent skills for production Rust:**
+**Forty-six agent skills for production Rust:**
 ownership semantics · unsafe review · async · mobile delivery · FFI · native linking · releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
-[![Rust 1.98 · edition 2024](https://img.shields.io/badge/rust-1.98%20%C2%B7%20edition%202024-000000?style=flat-square&logo=rust)](checks/rust-toolchain.toml)
+[![Rust 1.99 · edition 2024](https://img.shields.io/badge/rust-1.99%20%C2%B7%20edition%202024-000000?style=flat-square&logo=rust)](checks/rust-toolchain.toml)
 [![License BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-0969da?style=flat-square)](LICENSE)
 
 </div>
@@ -19,6 +19,25 @@ toolchain that `checks/rust-toolchain.toml` pins. An untagged block is extracted
 type-checked; a `rust,run` block must also execute successfully; a `rust,compile_fail` block has
 to fail and can name the required error code; `rust,ignore` is the only way a block leaves the
 gate. Nothing is skipped in silence.
+
+## What the skills change
+
+Measured with [evals/outcome/](evals/README.md) on Claude Code (`claude-opus-5-5`) and Codex CLI
+0.166.0, through their subscription logins, three runs per arm, graded by a blind judge
+(November 2026):
+
+| Task | Without the catalog | With it |
+| --- | ---: | ---: |
+| Release a crate whose `feat` commit adds a variant to an exhaustive enum: name `cargo semver-checks` | Claude 0 of 3 runs, Codex 0 of 3 | Claude 3 of 3, Codex 0 of 3 |
+| Port a Python module to Rust with its tests (Codex) | 10 of 18 graders | 18 of 18 graders |
+| Six planted-defect cases, all graders | Claude 79/84, Codex 75/84 | Claude 80/84, Codex 76/84 |
+
+Both models already fix most planted defects on their own, so the overall gain is about one
+grader in 84. The skills matter most where a model does not know the verifier or the process:
+the API diff of a release, a port that keeps its tests and records the original's output. The
+method, the per-grader tables, and the caveats are in
+[research/outcome-baseline-2026-11.md](research/outcome-baseline-2026-11.md) and
+[research/rust-port-2026-11.md](research/rust-port-2026-11.md).
 
 ## Install
 
@@ -62,7 +81,7 @@ for s in cargo-workflows rust-crate-release rust-native-linking rust-serde rust-
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # testing
-for s in rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port; do
+for s in rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port rust-review; do
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # concurrency
@@ -178,7 +197,7 @@ npx skills add po4yka/rust-skills --skill rust-compiler-errors rust-borrow-seman
 # build
 npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std
 # testing
-npx skills add po4yka/rust-skills --skill rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port
+npx skills add po4yka/rust-skills --skill rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port rust-review
 # concurrency
 npx skills add po4yka/rust-skills --skill memory-model rust-async-internals rust-unsafe rust-pin-projection rust-send-sync rust-event-loop-state
 # production
@@ -270,6 +289,7 @@ Enter by the symptom, not by the skill name.
 | A bug to reproduce as a failing test, or a refactor that must keep its behavior | [rust-tdd](skills/rust-tdd/SKILL.md) |
 | Hand-rolled atomics for loom, a parser for proptest or cargo-fuzz, or a survived mutant | [rust-test-tools](skills/rust-test-tools/SKILL.md) |
 | A C, Python, Go, or JavaScript module to move to Rust without a change in its output | [rust-port](skills/rust-port/SKILL.md) |
+| A pull request, a file, or a crate to review, with a report of what to fix first | [rust-review](skills/rust-review/SKILL.md) |
 | A lifetime coercion is refused: `is invariant over the parameter`, `borrowed for 'static` | [rust-variance](skills/rust-variance/SKILL.md) |
 | A callback bound rejects `\|o\| &o.field`, or a struct field holds a closure | [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) |
 | `self: Pin<&mut Self>`, `PhantomPinned`, or a `#[pin]` projection | [rust-pin-projection](skills/rust-pin-projection/SKILL.md) |
@@ -321,6 +341,7 @@ flowchart LR
     B --> B2[rust-unsafe]
     B --> B3[rust-sanitizers-miri]
     B --> B4[rust-tdd]
+    B --> B10[rust-review]
     B --> B5[rust-test-tools]
     B --> B6[rust-panic-safety]
     B --> B7[rust-pin-projection]
@@ -404,7 +425,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Correctness and testing</b> — five skills</summary>
+<summary><b>Correctness and testing</b> — six skills</summary>
 
 <br>
 
@@ -415,6 +436,7 @@ owns it.
 | [rust-sanitizers-miri](skills/rust-sanitizers-miri/SKILL.md) | ASan, TSan, and MSan, Miri validity and provenance checks, bounded many-seed schedules, FFI stubbing, HWASan and MTE, and report triage. |
 | [rust-panic-safety](skills/rust-panic-safety/SKILL.md) | Unwind versus abort, FFI panic guards, safe disposal of a panicking payload, unwrap and expect audits, privacy-safe hooks, and typed-error mapping. |
 | [rust-port](skills/rust-port/SKILL.md) | Ports from C, C++, Python, Go, and JavaScript that keep the original's output: a behavior inventory, tests ported first, the language traps (floor division, rounding, string length, ordered maps, strict parsing), a recorded comparison against the original, and PORTING.md. |
+| [rust-review](skills/rust-review/SKILL.md) | A review of a diff, a pull request, a file, or a crate: scope, tools first, the areas in order of risk with the skill that owns each rule, severity sections, and a report with a location, a rule, and a code fix for each finding. |
 
 </details>
 
@@ -576,7 +598,10 @@ invocations, and failure triage that a codebase learns the hard way.
 ## Contributing
 
 Read [AGENTS.md](AGENTS.md). It states the `SKILL.md` contract, the authoring conventions, how to
-add a skill, and how to verify a change locally before you open a pull request.
+add a skill, and how to verify a change locally before you open a pull request. Propose a rule
+with the "Propose a rule" issue form: it asks for a primary source and a check. Report a wrong
+`rust-review` finding with the "Review false positive" form, and a wrong skill with the misroute
+form.
 
 ## License
 

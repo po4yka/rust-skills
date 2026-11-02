@@ -34,6 +34,7 @@ installed. If none fits, continue without one.
 | Reproduce a bug as a failing test, or refactor under a safety net | rust-tdd |
 | loom, proptest, cargo-fuzz, cargo-mutants | rust-test-tools |
 | Port a C, Python, Go, or JavaScript module to Rust; output must not change | rust-port |
+| Review a pull request, a file, or a crate; write findings worst first | rust-review |
 | `is invariant over the parameter`, `borrowed for 'static` | rust-variance |
 | Callback bound rejects `\|o\| &o.field`, a closure stored in a struct | rust-callback-bounds |
 | `Pin<&mut Self>`, `PhantomPinned`, `#[pin]` projection | rust-pin-projection |
