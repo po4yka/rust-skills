@@ -1,0 +1,33 @@
+schema_version: "1.1"
+name: language-guard-in-match
+description: >-
+  The language bundle, outcome case. A test hangs because a match scrutinee keeps a mutex guard
+  alive through every arm. The rust-borrow-semantics skill owns the drop-scope rule and the fix.
+tags: [outcome, language, rust-borrow-semantics]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
+  env:
+    CARGO_NET_OFFLINE: "true"
+  prompt: >-
+    Since we added TemplateCache::get_or_render, `cargo test` hangs forever in this crate. Find
+    the cause and fix it. Keep the public API as it is, and tell me why it hung.
+expected_outcome: >-
+  The guard that the lookup takes is released at an explicit statement or block boundary before
+  the miss path locks again, the explanation names the match scrutinee temporary as the cause,
+  the Mutex and the public API stay, and cargo test passes.
+graders:
+  # An indicator, not part of the score: the no-plugin arm cannot load the skill.
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?rust-borrow-semantics"'
+  - name: lock-left-the-scrutinee
+    type: regex
+    target: {source: file, path: src/lib.rs}
+    pattern: 'match\s+self\s*\.\s*rendered\s*\.\s*lock\s*\('
+    match: not_contains

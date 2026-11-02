@@ -1,0 +1,38 @@
+# Outcome cases. Each case plants one defect that one skill owns, in a small std-only crate.
+#
+#   skill    the skill that owns the defect and its verifier
+#   fixture  what `cargo test` does on the unmodified fixture: "pass", "fail", or "hang"
+#            (the gate stops a hung run after a timeout and kills every process it started)
+#
+# A case that also has probe/*.rs proves its defect: evals/outcome/check.py copies each probe
+# into the fixture's tests/ and requires it to compile and then fail. A case with a probe or a
+# fixture that is not "pass" also has solution/, a reference fix that the gate lays over the
+# workspace: then `cargo test` with every probe must pass, so a probe fails only on the defect.
+# A case with no probe has a defect that no portable test can show.
+#
+# The case name starts with the bundle of its skill, and every bundle of bundles.toml has at
+# least one case. check.py enforces both.
+
+[cases.language-guard-in-match]
+skill = "rust-borrow-semantics"
+fixture = "hang" # the second lock() in the match deadlocks the test
+
+[cases.build-release-bump]
+skill = "rust-crate-release"
+fixture = "pass" # the defect is the version decision, not the code
+
+[cases.testing-bug-fix-test-first]
+skill = "rust-tdd"
+fixture = "pass" # the tests use two fraction digits only; the probe uses one
+
+[cases.concurrency-relaxed-publication]
+skill = "memory-model"
+fixture = "pass" # Relaxed publication passes every single-threaded test
+
+[cases.production-cow-allocations]
+skill = "rust-copy-on-write"
+fixture = "pass" # results are right; the probe counts the allocations
+
+[cases.ffi-swift-c-abi]
+skill = "rust-swift-ffi"
+fixture = "pass" # the dangling pointer and the abort paths are not under test

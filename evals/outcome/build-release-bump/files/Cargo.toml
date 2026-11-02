@@ -1,0 +1,10 @@
+[package]
+name = "confmt"
+version = "1.4.2"
+edition = "2021"
+rust-version = "1.70"
+description = "Detects configuration file formats from file names."
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/confmt"
+
+[dependencies]

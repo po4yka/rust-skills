@@ -1,0 +1,62 @@
+schema_version: "1.1"
+name: concurrency-relaxed-publication
+description: >-
+  The concurrency bundle, outcome case. A single-slot mailbox publishes a value through Relaxed
+  atomics, so a weakly ordered CPU can read a stale value or lose one. The memory-model skill owns
+  the ordering rules and the Miri and loom verifiers.
+tags: [outcome, concurrency, memory-model]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
+  env:
+    CARGO_NET_OFFLINE: "true"
+  prompt: >-
+    A user runs this mailbox crate on an ARM64 server. They report that Mailbox::take sometimes
+    returns an older value than the one that was just published, and that a value is
+    occasionally lost. Our tests pass on my x86 laptop. Fix the crate, and tell me how to check
+    that the fix is right.
+expected_outcome: >-
+  The `full` flag carries both synchronization edges: Release when the producer sets it and
+  Acquire when the consumer reads it, and Release when the consumer clears it and Acquire when the
+  producer reads it. No blanket SeqCst. The answer says that a pass on x86 proves nothing about
+  ordering and names Miri with many seeds or loom as the check, or says which one it could not run.
+graders:
+  # An indicator, not part of the score: the no-plugin arm cannot load the skill.
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?memory-model"'
+  - name: publication-edge
+    type: llm
+    focus: {source: file, path: src/lib.rs}
+    criteria: >-
+      PASS if the producer sets `full` with Release (a `store` with `Ordering::Release`, or a
+      read-modify-write such as `swap` or `compare_exchange` with Release or AcqRel) and the
+      consumer reads `full` with Acquire (a `load` with `Ordering::Acquire`, or a
+      read-modify-write with Acquire or AcqRel), or a Release fence and an Acquire fence pair the
+      two Relaxed accesses, so that a consumer that sees `full == true` also sees the value
+      written before it. A design that keeps the slot behind a Mutex also passes.
+      FAIL if either access is still Relaxed with no fence that pairs it, or if the fix depends
+      on SeqCst with no stated ordering requirement across several atomics.
+  - name: reuse-edge
+    type: llm
+    focus: {source: file, path: src/lib.rs}
+    criteria: >-
+      PASS if the consumer clears `full` in `take` with Release (a `store` with
+      `Ordering::Release`, or a read-modify-write with Release or AcqRel) and the producer reads
+      `full` in `publish` with Acquire (a `load` with `Ordering::Acquire`, or a read-modify-write
+      with Acquire or AcqRel), or a fence pair does the same job, so the producer cannot
+      overwrite `value` before the consumer's read of it has completed. A design that keeps the
+      slot behind a Mutex also passes.
+      FAIL if either access is still Relaxed with no fence that pairs it, or if the fix depends
+      on SeqCst with no stated ordering requirement across several atomics.
+  # An atomic operation or fence with SeqCst in its argument list. A comment does not match.
+  - name: no-blanket-seqcst
+    type: regex
+    target: {source: file, path: src/lib.rs}
+    pattern: '\b(?:store|load|swap|compare_exchange\w*|fetch_\w+|fence)\s*\([^)]*\bSeqCst\b'
+    match: not_contains

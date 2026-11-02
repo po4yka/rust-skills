@@ -1,7 +1,8 @@
 # AGENTS.md
 
 Context for coding agents that work in **this** repository. This repo holds agent skills about
-Rust; it contains no Rust crate and no build system. Do not add one.
+Rust; it contains no Rust crate and no build system. Do not add one. The compile harness in
+`checks/` and the fixture crates in `evals/outcome/` are test inputs, not products.
 
 ## Project overview
 
@@ -22,7 +23,7 @@ scripts/validate-skills.py      catalog checks (tests: scripts/test_validate_ski
 scripts/catalog-ceilings.toml   ratchet: accepted values over a limit, which may only shrink
 scripts/drift-report.py         toolchain and crate drift report behind the weekly workflows
 tests/routing-cases.md          phrase -> skill, checked against every description
-evals/                          routing and plugin evaluations; evals/README.md says what they prove
+evals/                          routing, plugin, and outcome evaluations; evals/README.md says what they prove
 checks/                         compile-check harness for the rust examples; check.sh runs CI
 docs/releasing.md               tags, versioning, evaluations before a tag, repository settings
 CHANGELOG.md, SECURITY.md       release history; security scope and how to report

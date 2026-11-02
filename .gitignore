@@ -16,4 +16,8 @@ __pycache__/
 # Evaluation results: they need a key, so they are recorded in research/, not here
 evals/routing/routing-*.json
 evals/plugin/results/
+evals/outcome/results/
 eval-results.json
+
+# Build output of the outcome-eval fixture crates
+evals/outcome/*/files/target/

@@ -1,0 +1,8 @@
+[package]
+name = "headers"
+version = "0.7.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[dependencies]

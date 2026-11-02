@@ -1,0 +1,65 @@
+schema_version: "1.1"
+name: build-release-bump
+description: >-
+  The build bundle, outcome case. The commit since the v1.4.2 tag is labelled "feat" but adds a
+  variant to an exhaustive public enum. The rust-crate-release skill owns the version
+  classification, the cargo-semver-checks verifier, and the rule against external writes.
+tags: [outcome, build, rust-crate-release]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
+  env:
+    CARGO_NET_OFFLINE: "true"
+  prompt: >-
+    I want to release what is on main since the v1.4.2 tag of this crate. Bump the version in
+    Cargo.toml and write the CHANGELOG entry for the release. I will publish it myself.
+expected_outcome: >-
+  The version becomes 2.0.0 because Format gained a variant and is not #[non_exhaustive]. The
+  changelog entry lists that as a breaking change with a migration note, and the new ALL constant
+  and the case-insensitive detection as an addition and a fix. The answer names cargo
+  semver-checks against v1.4.2 as the API diff and reports its result or that it did not run.
+  Nothing is published, pushed, or yanked.
+graders:
+  # An indicator, not part of the score: the no-plugin arm cannot load the skill.
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?rust-crate-release"'
+  - name: major-version
+    type: regex
+    target: {source: file, path: Cargo.toml}
+    pattern: '^version\s*=\s*"2\.0\.0"'
+    flags: m
+  - name: lockfile-follows
+    type: regex
+    target: {source: file, path: Cargo.lock}
+    pattern: 'name = "confmt"\r?\nversion = "2\.0\.0"'
+  - name: no-external-write
+    type: tool_used
+    tool: Bash
+    # Only global options may stand between git and push, so `git stash push` does not match.
+    input_match: 'cargo\s+publish(?![^"]*--dry-run)|\bgit\b(?:\s+-[cC]\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+push\b|cargo\s+yank|cargo\s+owner'
+    max: 0
+  - name: changelog-marks-the-break
+    type: llm
+    focus: {source: file, path: CHANGELOG.md}
+    criteria: >-
+      PASS if CHANGELOG.md has an entry for 2.0.0 that lists the new `Format::Yaml` variant as a
+      breaking change and tells users what to do (for example add a `Yaml` arm or a wildcard arm
+      to an exhaustive `match` on `Format`), and also records the new `Format::ALL` constant and
+      the case-insensitive extension matching.
+      FAIL if the entry is for 1.5.0 or another non-major version, if the new variant appears only
+      as an addition, or if the entry has no migration note.
+  - name: non-exhaustive-is-not-an-escape
+    type: llm
+    focus: last_message
+    criteria: >-
+      PASS if the answer does not use `#[non_exhaustive]` to justify a smaller bump. If it
+      suggests `#[non_exhaustive]` at all, it states that adding the attribute to a public enum is
+      itself a breaking change, so it belongs in this 2.0.0 release or a later major release.
+      Also PASS if the answer does not mention `#[non_exhaustive]`.
+      FAIL if the answer says that adding `#[non_exhaustive]` now would allow a minor release.

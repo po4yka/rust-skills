@@ -21,6 +21,11 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
   Values over a limit are held in `scripts/catalog-ceilings.toml` and may only shrink.
 - A reproducible routing evaluation in `evals/routing/` and a `claude plugin eval` suite in
   `evals/plugin/`.
+- An outcome evaluation in `evals/outcome/`: six `claude plugin eval` cases, one per bundle, each
+  a std-only crate with one planted defect that one skill owns. The suite scores the work and the
+  evidence in both arms. `evals/outcome/check.py` builds every fixture offline in `check.sh` and
+  requires each probe to fail on the fixture and pass on a reference fix, so a fixture cannot
+  lose its defect silently. The `Plugin eval` workflow runs either suite.
 - Weekly toolchain-drift and crate-drift workflows that open an issue.
 - `SECURITY.md`, `CODEOWNERS`, a pull request template, and a misroute issue form.
 

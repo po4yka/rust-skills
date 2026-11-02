@@ -1,0 +1,44 @@
+schema_version: "1.1"
+name: production-cow-allocations
+description: >-
+  The production bundle, outcome case. A heap profile names a header normalizer that allocates on
+  every call, although almost every input is already normalized. The rust-copy-on-write skill
+  owns the borrowed-or-owned decision and its verifier, a counting allocator.
+tags: [outcome, production, rust-copy-on-write]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
+  env:
+    CARGO_NET_OFFLINE: "true"
+  prompt: >-
+    The heap profile of our proxy shows headers::normalize_name as the top allocation site: one
+    allocation per header on every request. Almost every header name we receive is already
+    lowercase with no surrounding whitespace. Remove the allocations on that common path without
+    changing any result, and show me evidence that it worked.
+expected_outcome: >-
+  The common path borrows: normalize_name returns a Cow that is Borrowed when no ASCII uppercase
+  letter remains after the trim, or the callers compare with eq_ignore_ascii_case and never
+  allocate. No caller turns the result back into an owned String. A counting global allocator
+  shows the allocation count on normalized input before and after. Existing tests pass, and a
+  test covers the path that must still lowercase.
+graders:
+  # An indicator, not part of the score: the no-plugin arm cannot load the skill.
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?rust-copy-on-write"'
+  - name: borrows-on-the-common-path
+    type: llm
+    focus: {source: file, path: src/lib.rs}
+    criteria: >-
+      PASS if a call of `has_header` or `content_length` on header names that are already
+      lowercase and trimmed performs no heap allocation: either `normalize_name` returns a
+      `Cow<'_, str>` (or another borrowed form) that borrows the trimmed input when it has no
+      ASCII uppercase letter, or the callers compare names with `eq_ignore_ascii_case` on the
+      trimmed input without calling an allocating normalizer.
+      FAIL if every call still builds a new `String`, or if the result is converted back into an
+      owned value (`into_owned`, `to_string`, `to_owned`, `String::from`) on the comparison path.
