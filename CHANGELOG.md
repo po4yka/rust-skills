@@ -14,7 +14,8 @@ with one plugin per install bundle and one for the full catalog, and CI installs
 both clients. The toolchain pin moves to Rust 1.99.1 after an audit pass, and the new
 `rust-port` skill brings the catalog to 45 skills. `evals/outcome/` now measures what an agent
 produces with the catalog and without it, in both clients; the first baseline is in
-`research/outcome-baseline-2026-11.md`.
+`research/outcome-baseline-2026-11.md`. The plugin evaluation of this release loaded the owning
+skill in 12 of 12 runs (`research/plugin-eval-2026-11.md`).
 
 ### Added
 
