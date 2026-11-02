@@ -65,6 +65,12 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 - The trailing sections of the twelve largest skill bodies move to `references/`.
 - Twelve skills state the rule behind a cross-bundle reference in one sentence.
 
+### Fixed
+
+- The `Plugin eval` workflow loads the plugin again. After `.claude-plugin/plugin.json` was
+  removed for Codex, `claude plugin eval .` found no plugin and scored the model alone. The
+  workflow now writes the manifest in its own checkout and fails when a result names no plugin.
+
 ## [0.2.0] - 2026-09-25
 
 The 2026-09 catalog actualization, recorded in `research/catalog-actualization-2026-09.md`. Every

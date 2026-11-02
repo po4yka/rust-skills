@@ -76,7 +76,10 @@ claude plugin eval . --eval-dir evals/plugin --trust-plugin --threshold 0.8 \
   --max-cost-usd 20 --json eval-results.json
 ```
 
-The `Plugin eval` workflow (`.github/workflows/plugin-eval.yml`) runs the same command on
+Run it, and the outcome command below, from a clean checkout that has a plugin manifest at its
+root, never from your working checkout. Without the manifest the CLI loads no plugin and still
+reports a score. `evals/README.md` has the steps. The `Plugin eval` workflow
+(`.github/workflows/plugin-eval.yml`) writes the manifest and runs the same command on
 `workflow_dispatch` with pinned model IDs. Run `evals/routing/run.py` for each provider you can.
 
 Run the outcome evaluation before a tag that changes a skill with an outcome case, and after a

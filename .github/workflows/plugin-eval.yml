@@ -74,6 +74,17 @@ jobs:
       - name: Install the pinned CLI
         run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
+      # `claude plugin eval .` loads a plugin only from a manifest at the target. The repository has
+      # none, because Codex installs no bundle while a root manifest names another plugin
+      # (docs/releasing.md). Without it the CLI runs one arm with no plugin and still reports a
+      # score. This checkout is discarded after the job, so the manifest never reaches a branch.
+      - name: Write the plugin manifest for the evaluation
+        run: |
+          set -euo pipefail
+          mkdir -p .claude-plugin
+          printf '%s\n' '{"name": "rust-skills", "description": "rust-skills catalog for the plugin evaluation", "skills": ["./skills"]}' \
+            > .claude-plugin/plugin.json
+
       # The outcome cases build std-only crates offline. The runner's rustup installs the
       # toolchain that checks/rust-toolchain.toml pins, the same one the offline gate uses.
       - name: Install the pinned toolchain for the outcome suite
@@ -136,6 +147,7 @@ jobs:
           JUDGE_MODEL: ${{ inputs.judge-model }}
         run: |
           set -euo pipefail
+          cat eval-results.json 2>/dev/null || true
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json, os, subprocess
           commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -145,7 +157,9 @@ jobs:
           except (OSError, ValueError):
               print("No result file: the run failed before it wrote one.")
               raise SystemExit(0)
-          print(f"Cost: ${data.get('costUsd', 0):.2f}. Partial: {data.get('partial')}.\n")
+          plugins = [p.get("name", "?") for p in data.get("suite", {}).get("plugins", [])]
+          print(f"Cost: ${data.get('costUsd', 0):.2f}. Partial: {data.get('partial')}. "
+                f"Plugin: {', '.join(plugins) or 'none'}. Ablation: {data.get('suite', {}).get('ablation')}.\n")
           print("| Case | With plugin | Without plugin |")
           print("| --- | ---: | ---: |")
           for case in data.get("cases", []):
@@ -153,5 +167,8 @@ jobs:
                   runs = case.get("arms", {}).get(arm, [])
                   return f"{sum(r.get('score', 0) for r in runs) / len(runs):.2f}" if runs else "-"
               print(f"| {case['name']} | {mean('with')} | {mean('without')} |")
+          # A run with no plugin measures the model alone. Fail the job so nobody records it.
+          if not plugins:
+              print("\n**No plugin loaded. This result measures the model alone; do not record it.**")
+              raise SystemExit(1)
           PY
-          cat eval-results.json 2>/dev/null || true
