@@ -16,7 +16,7 @@ execution:
   env:
     CARGO_NET_OFFLINE: "true"
   prompt: >-
-    Port report.py to Rust in this crate, with its tests, so that our Rust service can use it
+    Port report.py to Rust in src/lib.rs of this crate, with its tests, so that our Rust service can use it
     instead of shelling out to Python. Keep the three function names. The Rust version has to
     give the same results as the Python one.
 expected_outcome: >-
@@ -39,7 +39,7 @@ graders:
       `split_amount(-100, 3)` returns `[-33, -33, -34]`: for example through `div_euclid` and
       `rem_euclid` (correct here because `parts` is positive), or a floor helper.
       FAIL if it uses plain `/` and `%` on a possibly negative total, which gives
-      `[-32, -33, -33]` for `split_amount(-100, 3)`, or if it rejects negative totals.
+      `[-33, -33, -33]` for `split_amount(-100, 3)` and loses a cent, or if it rejects negative totals.
   - name: rounds-half-to-even
     type: llm
     focus: {source: file, path: src/lib.rs}

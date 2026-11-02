@@ -153,8 +153,8 @@ behavior is already pinned.
 4. If a test needs an edit to keep compiling, the change is not a pure refactor. Split the
    work: the behavior change with its own RED, then the refactor.
 
-For a port or a rewrite that has a reference implementation, add a differential property or
-fuzz target that feeds the same input to both, including non-ASCII and invalid UTF-8 input.
+For a port whose reference a test can call in-process, add a differential property or fuzz
+target that feeds the same input to both, including non-ASCII and invalid UTF-8 input.
 The `rust-test-tools` skill, when it is installed, has the setup.
 
 ### Keep test design independent of the implementation plan

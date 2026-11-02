@@ -17,13 +17,13 @@ structural mapping.
 | `NULL` meaning "absent" | `Option<T>` |
 | Error codes, `-1`, `errno`, `ERR_*` macros | `Result<T, E>` with an error enum: one variant for each code, with `Display` and `std::error::Error` |
 | Out-parameters (`int *err_line`, `long *out`) | Return values: data in `Ok`, details in the error variant |
-| Flag bitmasks (`FLAG_A \| FLAG_B`) | An options struct with named fields and `Default`, or the `bitflags` crate; never a bare `u32` |
+| Flag bitmasks (`FLAG_A \| FLAG_B`) | An options struct with named fields and `Default`, or the `bitflags` crate; by default not a bare `u32` |
 | `char *` plus a length, `strcmp`, `strcasecmp` | `&str` or `&[u8]`, `==`, `eq_ignore_ascii_case` |
 | A pointer and a count | A slice; an iterator for a walk by index |
 | Fixed-size buffers and their truncation | Growable types. Keep the limit only when it is behavior, and test it |
 | `#define` constants and function-like macros | `const`, enums, and functions |
 | Global or static mutable state | A struct that the caller owns |
-| `strtol`, `atoi`, `sscanf` | `str::parse` with the matching integer type. `atoi` returns 0 on bad input and `strtol` stops at the first bad character; port that rule on purpose or reject the input, and record which |
+| `strtol`, `atoi`, `sscanf` | `str::parse` with the matching integer type. Both skip leading space and stop at the first bad character (`atoi("12abc")` is 12); `atoi` returns 0 when no digit is present and has undefined behavior on overflow, where `strtol` clamps and sets `ERANGE`. Port that rule on purpose or reject the input, record which, and make overflow an error |
 | Signed overflow (undefined behavior in C) | `checked_*` and an error: the original had no defined result to keep |
 | `char` arithmetic on bytes | `u8` methods (`is_ascii_digit`, `to_ascii_lowercase`); `char` only for Unicode scalar values |
 | C++ inheritance used for code reuse | Composition and plain functions |
@@ -49,7 +49,7 @@ structural mapping.
 | Generators and `yield` | An `Iterator` implementation, or a `Vec` when the sequence is short |
 | `with` blocks | A scope and `Drop`; `std::fs::File` closes on drop |
 | `@dataclass(frozen=True)` | A struct with private fields and getters, or public fields with `Clone` |
-| `f"{x:.2f}"`, `str(x)`, `repr(x)` | `format!("{x:.2}")`; `{}` for `str`; `{:?}` is not `repr` and differs in quotes and escapes |
+| `f"{x:.2f}"`, `str(x)`, `repr(x)` | `format!("{x:.2}")`. `{}` matches `str` for integers and strings only: `str(1.0)` is `1.0` and `str(True)` is `True`, where `{}` prints `1` and `true`. `{:?}` is not `repr`; test float, bool, and quoted text against the original |
 
 ## Go
 
@@ -65,6 +65,8 @@ structural mapping.
 | Map iteration (random order) | Any order is faithful; sort before output when the original sorts |
 | `range` over a string (runes) | `char_indices()`; the index is a byte offset in both languages |
 | Integer overflow (wraps silently) | `wrapping_*` where the original depends on it |
+| A shift by the bit width or more (gives 0) | `checked_shl` with a fallback to 0: Rust panics in debug builds and masks the count in release builds |
+| A `string` that holds invalid UTF-8 | `&[u8]` or `Vec<u8>`, and `utf8_chunks` where text is needed; a `&str` cannot hold it |
 
 ## JavaScript and TypeScript
 
@@ -79,4 +81,5 @@ structural mapping.
 | A TypeScript discriminated union | An enum with data |
 | Promises and `async` functions | Synchronous code when the work is not I/O; `async` only when the original waits on I/O |
 | `string.length`, `charAt`, `substring` | UTF-16 units: `encode_utf16()` for lengths; never slice a `&str` at a JavaScript index |
-| `JSON.stringify` | `serde_json`: key order and spacing differ unless you set them |
+| `JSON.stringify` | `serde_json`, with two differences: it writes the `f64` 1.0 as `1.0` where JavaScript writes `1`, and its map key order is sorted unless `preserve_order` is on, where JavaScript puts integer-like keys first and then insertion order |
+| Bitwise operators (`x \| 0`, `>>`) | They convert to a 32-bit integer first: port them on `i32`, and mask a shift count to 5 bits as JavaScript does |
