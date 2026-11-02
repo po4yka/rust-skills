@@ -977,13 +977,17 @@ def final_diff(run_dir: Path) -> str:
     return diff
 
 
-def grade_one(case: dict, run_dir: Path, args: argparse.Namespace, names: list[str]) -> dict:
+def grade_one(case: dict, run_dir: Path, args: argparse.Namespace, names: list[str],
+              only: set[str] | None = None) -> dict:
+    """Grades one run: every scored grader, or only the graders named in `only`."""
     meta = json.loads((run_dir / "meta.json").read_text())
     norm = json.loads((run_dir / "normalized.json").read_text())
     workspace = run_dir / "workspace"
     verdicts: dict[str, dict] = {}
     judged = []
     for grader in scored_graders(case):
+        if only is not None and grader["name"] not in only:
+            continue
         if grader["type"] == "regex":
             verdicts[grader["name"]] = {"pass": grade_regex(grader, norm, workspace), "by": "regex"}
         elif grader["type"] == "tool_used":
@@ -1016,23 +1020,46 @@ def grade_one(case: dict, run_dir: Path, args: argparse.Namespace, names: list[s
             "status": meta["status"], "judge_model": args.judge_model, "verdicts": verdicts}
 
 
+def merge_regrade(stored: dict, fresh: dict, case: dict) -> dict:
+    """Replaces the re-graded verdicts, keeps the old ones under `superseded`, and drops verdicts
+    of graders the case no longer has."""
+    current = {g["name"] for g in scored_graders(case)}
+    superseded = dict(stored.get("superseded", {}))
+    verdicts = {}
+    for name, verdict in stored["verdicts"].items():
+        if name in fresh["verdicts"] or name not in current:
+            superseded[name] = verdict
+        else:
+            verdicts[name] = verdict
+    verdicts.update(fresh["verdicts"])
+    return {**stored, "verdicts": verdicts, "superseded": superseded,
+            "regraded": sorted(set(stored.get("regraded", [])) | set(fresh["verdicts"]))}
+
+
 def grade(args: argparse.Namespace) -> int:
     names = catalog_names()
     problems = 0
+    regrade = set(filter(None, args.regrade.split(",")))
     for case_name in case_names(args.case):
         case = load_case(case_name)
+        subset = regrade & {g["name"] for g in scored_graders(case)}
         for meta_path in sorted((args.out / "runs" / case_name).glob("*/*/meta.json")):
             meta = json.loads(meta_path.read_text())
             if meta["status"] not in ("done", "timeout"):
                 continue
             label = label_for(args.seed, case_name, meta["config"], meta["run"])
             out = args.out / "grades" / case_name / f"{label}.json"
+            stored = None
             if out.is_file():
                 stored = json.loads(out.read_text())
-                if (stored.get("config"), stored.get("run")) == (meta["config"], meta["run"]):
+                if (stored.get("config"), stored.get("run")) != (meta["config"], meta["run"]):
+                    stored = None
+                elif not subset or subset <= set(stored.get("regraded", [])):
                     continue
             try:
-                result = grade_one(case, meta_path.parent, args, names)
+                result = grade_one(case, meta_path.parent, args, names, only=subset if stored else None)
+                if stored:
+                    result = merge_regrade(stored, result, case)
             except Exception as error:  # one bad run must not stop the others
                 say(f"  not graded: {case_name} {label}: {error}")
                 problems += 1
@@ -1155,6 +1182,7 @@ def main() -> int:
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
     parser.add_argument("--seed", default="outcome-v1", help="seed of the blind labels")
     parser.add_argument("--dry-run", action="store_true", help="with run: build workspaces, start nothing")
+    parser.add_argument("--regrade", default="", help="with grade: comma-separated graders to judge again")
     args = parser.parse_args()
     args.out = (args.out or default_out()).expanduser().resolve()
     args.claude_home = args.claude_home.expanduser().resolve()

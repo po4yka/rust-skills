@@ -180,6 +180,20 @@ class Graders(unittest.TestCase):
         self.assertEqual([g["name"] for g in ca.scored_graders(case)], ["x"])
 
 
+class Regrade(unittest.TestCase):
+    def test_merge_replaces_regraded_and_keeps_the_old_verdict(self):
+        case = {"graders": [{"name": "a", "type": "llm"}, {"name": "b", "type": "llm"},
+                            {"name": "new", "type": "llm"}]}
+        stored = {"label": "run-1", "config": "codex-none", "run": 1, "verdicts": {
+            "a": {"pass": False}, "b": {"pass": True}, "gone": {"pass": True}}}
+        fresh = {"verdicts": {"a": {"pass": True}, "new": {"pass": False}}}
+        merged = ca.merge_regrade(stored, fresh, case)
+        self.assertEqual(merged["verdicts"], {"a": {"pass": True}, "b": {"pass": True}, "new": {"pass": False}})
+        self.assertEqual(merged["superseded"], {"a": {"pass": False}, "gone": {"pass": True}})
+        self.assertEqual(merged["regraded"], ["a", "new"])
+        self.assertEqual((merged["config"], merged["run"]), ("codex-none", 1))
+
+
 class Status(unittest.TestCase):
     def norm(self, final="done", failed=False, actions=()):
         return {"actions": list(actions), "final": final, "failed": failed}
@@ -287,7 +301,7 @@ class CaseGraders(unittest.TestCase):
         counts = {name: len(ca.load_case(name)["graders"]) for name in ca.case_names("*")}
         self.assertEqual(counts, {
             "build-release-bump": 7, "concurrency-relaxed-publication": 5, "ffi-swift-c-abi": 7,
-            "language-guard-in-match": 5, "production-cow-allocations": 4, "testing-bug-fix-test-first": 5,
+            "language-guard-in-match": 5, "production-cow-allocations": 4, "testing-bug-fix-test-first": 6,
         })
 
     def test_a_grader_file_without_frontmatter_raises(self):

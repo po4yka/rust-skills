@@ -169,6 +169,9 @@ uv run --with pyyaml python3 evals/outcome/cross_agent.py report --out "$OUT"
 - Restart. `run` and `grade` skip finished work. A run that ends in an error, or stalls on a
   usage limit, is retried on the next `run`; a timeout is a result. Ctrl-C stops every running
   agent. `run` refuses an output directory whose catalog, CLI versions, or models changed.
+- Re-grade. After a grader changes, `grade --regrade <name>,<name>` judges only those graders
+  again on the recorded runs, with no new agent run. It keeps each replaced verdict under
+  `superseded` in the grade file, so the old and the new result stay comparable.
 
 Differences between the arms that the runner does not remove: Codex runs in its
 `workspace-write` sandbox and Claude runs with an allowlist of tools; neither agent honors the
