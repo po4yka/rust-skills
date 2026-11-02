@@ -22,6 +22,8 @@ SKILLS_CLI_VERSION="1.7.4"
 CLAUDE_CODE_VERSION="2.1.316"
 # The Codex CLI for the same gate. Codex reads .claude-plugin/marketplace.json
 # as a legacy-compatible marketplace, so a Codex release can change the result.
+# After a bump, check CODEX_BUILTIN_SKILLS in checks/plugin_install.py: a new
+# built-in skill shows up as a foreign skill in the gate.
 CODEX_VERSION="0.166.0"
 
 # gen.py, cargo, and analyze.py share examples/, manifest.json, check.json, and
@@ -142,8 +144,10 @@ else
 fi
 
 # The same comparison for Codex, which reads the same marketplace file. Each
-# plugin installs into its own throwaway CODEX_HOME, so ~/.codex is untouched.
-echo "==> Codex installs every plugin with exactly its skills"
+# plugin installs into its own throwaway CODEX_HOME and HOME, so ~/.codex and
+# ~/.agents are untouched and do not share the skill list. Each bundle must
+# also keep every routing phrase visible after Codex shortens its descriptions.
+echo "==> Codex installs every plugin with exactly its skills, routing phrases visible"
 if command -v npx > /dev/null 2>&1; then
     python3 "$ROOT/checks/plugin_install.py" --codex "npx -y @openai/codex@${CODEX_VERSION}"
 else

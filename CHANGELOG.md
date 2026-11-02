@@ -37,6 +37,10 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
   marketplace (`codex plugin marketplace add po4yka/rust-skills`). `checks/plugin_install.py
   --codex` checks that each plugin puts exactly its skills in front of the model, in
   `checks/check.sh` and in CI.
+- A Codex visibility gate: in a fresh Codex install, every bundle plugin must show every routing
+  phrase of `tests/routing-cases.md` after Codex shortens the descriptions to fit its skill-list
+  budget. The gate isolates `HOME` as well as `CODEX_HOME`, because Codex also lists the skills
+  under `~/.agents/skills`, and it fails when any other skill shares the list.
 
 ### Changed
 
