@@ -87,15 +87,18 @@ Each row is a difference that a test written from the Rust side does not catch.
 The Rust-side claims that a probe can show, executed (Rust 1.99.1):
 
 ```rust,run
-/// Floor division as Python's `//` defines it.
+/// Floor division as Python's `//` defines it. `i64::MIN / -1` overflows in Rust, where Python
+/// returns 2^63: check that pair when the input can reach it.
 fn floor_div(a: i64, b: i64) -> i64 {
     let q = a / b;
     if a % b != 0 && ((a < 0) != (b < 0)) { q - 1 } else { q }
 }
 
-/// The remainder that pairs with `floor_div`: it takes the sign of the divisor.
+/// The remainder that pairs with `floor_div`: it takes the sign of the divisor. It corrects
+/// `a % b` instead of computing `a - b * q`, which overflows near the limits.
 fn floor_mod(a: i64, b: i64) -> i64 {
-    a - b * floor_div(a, b)
+    let r = a % b;
+    if r != 0 && ((r < 0) != (b < 0)) { r + b } else { r }
 }
 
 fn main() {
@@ -103,6 +106,8 @@ fn main() {
     assert_eq!((floor_div(-7, 2), floor_mod(-7, 2)), (-4, 1));
     assert_eq!(((-7i64).div_euclid(2), 7i64.div_euclid(-2)), (-4, -3));
     assert_eq!((floor_div(7, -2), floor_mod(7, -2)), (-4, -1));
+    assert_eq!((floor_div(i64::MIN, 3), floor_mod(i64::MIN, 3)), (-3074457345618258603, 1));
+    assert!(i64::MIN.checked_div(-1).is_none());
 
     assert_eq!((2.5f64.round(), (-2.5f64).round()), (3.0, -3.0));
     assert_eq!((2.5f64.round_ties_even(), 3.5f64.round_ties_even()), (2.0, 4.0));
