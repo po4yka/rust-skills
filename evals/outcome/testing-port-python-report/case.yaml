@@ -1,0 +1,62 @@
+schema_version: "1.1"
+name: testing-port-python-report
+description: >-
+  The testing bundle, outcome case for a port. report.py has four behaviors that its own tests do
+  not cover and that a direct translation changes: floor division of a negative total, rounding of
+  halves to even, insertion order of the summary, and padding by code points. The rust-port skill
+  owns the inventory, the traps, the recorded comparison, and PORTING.md.
+tags: [outcome, testing, rust-port]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 60
+  timeout_seconds: 1200
+  allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
+  env:
+    CARGO_NET_OFFLINE: "true"
+  prompt: >-
+    Port report.py to Rust in this crate, with its tests, so that our Rust service can use it
+    instead of shelling out to Python. Keep the three function names. The Rust version has to
+    give the same results as the Python one.
+expected_outcome: >-
+  The Rust tests mirror test_report.py one for one and pass. split_amount floors like Python for a
+  negative total, average_cents rounds halves to even, summarize keeps first-seen order and pads by
+  code points, and amounts with surrounding spaces still parse. The agent compares the port with
+  report.py on inputs beyond the original tests, and PORTING.md maps the API and the tests and
+  records the deliberate differences and how the port was checked.
+graders:
+  # An indicator, not part of the score: the no-plugin arm cannot load the skill.
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?rust-port"'
+  - name: floor-division
+    type: llm
+    focus: {source: file, path: src/lib.rs}
+    criteria: >-
+      PASS if `split_amount` floors like Python's `//` and `%` for a negative total, so that
+      `split_amount(-100, 3)` returns `[-33, -33, -34]`: for example through `div_euclid` and
+      `rem_euclid` (correct here because `parts` is positive), or a floor helper.
+      FAIL if it uses plain `/` and `%` on a possibly negative total, which gives
+      `[-32, -33, -33]` for `split_amount(-100, 3)`, or if it rejects negative totals.
+  - name: rounds-half-to-even
+    type: llm
+    focus: {source: file, path: src/lib.rs}
+    criteria: >-
+      PASS if `average_cents` rounds an exact half to the even neighbor like Python's `round()`,
+      so that the mean 2.5 gives 2 and 3.5 gives 4: for example `round_ties_even`, or integer
+      arithmetic that does the same.
+      FAIL if it uses `f64::round`, `as` truncation, or another rule that gives 3 for a mean of
+      2.5.
+  - name: order-width-and-parsing
+    type: llm
+    focus: {source: file, path: src/lib.rs}
+    criteria: >-
+      PASS if `summarize` keeps names in the order of their first appearance (a Vec of pairs, an
+      insertion-ordered map, or a Vec of keys beside a map), pads names by their count of
+      characters (code points) rather than bytes, and still accepts an amount with surrounding
+      spaces, as Python's `int()` does.
+      FAIL if output order comes from `HashMap` iteration or from sorting (`BTreeMap`), if padding
+      counts bytes (`len()` on a `&str`, or `{:<width$}` with a width taken from `len()`), or if
+      `" 10"` now fails to parse.

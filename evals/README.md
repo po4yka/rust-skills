@@ -79,10 +79,12 @@ or another client; behavior with all 45 skills installed when the client truncat
 
 ## `outcome/`: the work itself
 
-Six cases, one per bundle. Each case is a small std-only crate with one planted defect that one
-skill owns: a guard in a `match` scrutinee, `Relaxed` publication, a bug in a shared helper with a
-copy elsewhere, a `feat` commit that is a major bump, an allocation on every header, and a C ABI
-that returns a pointer into a dropped `CString`. `cases.toml` maps each case to its skill.
+Seven cases: one per bundle, and a second testing case for `rust-port`. Each case is a small
+std-only crate with one planted defect that one skill owns: a guard in a `match` scrutinee,
+`Relaxed` publication, a bug in a shared helper with a copy elsewhere, a `feat` commit that is a
+major bump, an allocation on every header, and a C ABI that returns a pointer into a dropped
+`CString`. The port case asks for a Python module in Rust; its own tests miss its floor division,
+half-to-even rounding, insertion order, and code-point padding. `cases.toml` maps each case to its skill.
 
 - `case.yaml` holds the natural request, which never names a skill, and most graders: a `regex`
   on a file the agent changed, a `tool_used` limit, the `skill-fired` indicator, and judged

@@ -288,6 +288,7 @@ class CaseGraders(unittest.TestCase):
         self.assertEqual(counts, {
             "build-release-bump": 7, "concurrency-relaxed-publication": 5, "ffi-swift-c-abi": 7,
             "language-guard-in-match": 5, "production-cow-allocations": 4, "testing-bug-fix-test-first": 5,
+            "testing-port-python-report": 7,
         })
 
     def test_a_grader_file_without_frontmatter_raises(self):
