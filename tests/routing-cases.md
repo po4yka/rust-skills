@@ -126,6 +126,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | temporary lifetime | rust-borrow-semantics |
 | drop scope | rust-borrow-semantics |
 | two-phase borrow | rust-borrow-semantics |
+| second lock() | rust-borrow-semantics |
 | match guard | rust-pattern-semantics |
 | partial move | rust-pattern-semantics |
 | match ergonomics | rust-pattern-semantics |
@@ -157,6 +158,8 @@ wrong skill, and put the phrase in the right description in the same change.
 | @MainActor Rust callback | rust-swift-ffi |
 | AsyncStream over a C callback | rust-swift-ffi |
 | SWIFT_DEFAULT_ACTOR_ISOLATION | rust-swift-ffi |
+| reaches Swift as garbage | rust-swift-ffi |
+| abort at a Rust export | rust-swift-ffi |
 | clippy.toml | rust-lints |
 | deny.toml | rust-security |
 | rustfmt.toml | rust-lints |
@@ -266,6 +269,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | persistent collection | rust-copy-on-write |
 | structural sharing | rust-copy-on-write |
 | rpds | rust-copy-on-write |
+| come back unchanged | rust-copy-on-write |
 | implement Iterator | rust-iterator-impl |
 | custom iterator | rust-iterator-impl |
 | IntoIterator | rust-iterator-impl |

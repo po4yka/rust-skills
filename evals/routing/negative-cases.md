@@ -28,3 +28,4 @@ substring, so keep it specific: `E0499` alone would also match `E0499 in a dispa
 | async closure | rust-callback-bounds | rust-async-internals | `Send` bounds on an async callback belong to the future mechanics |
 | HRTB | rust-async-internals | rust-callback-bounds | a higher-ranked bound on a plain callback |
 | sort_by_key | rust-async-internals | rust-callback-bounds | a key projection is a plain callback bound |
+| come back unchanged | rust-hot-path | rust-copy-on-write | an allocation that a profile names on input that most calls return unchanged is a borrowed-or-owned choice; the 2026-11 outcome baseline routed it to rust-hot-path in 3 of 3 Claude runs |

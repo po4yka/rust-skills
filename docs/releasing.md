@@ -55,11 +55,16 @@ Claude Code supports two versioning styles for a plugin, and they exclude each o
 This repository uses the second style. No marketplace entry has a `version` field. Do not add
 one: a `version` that is set once and not bumped freezes every consumer on that release.
 
-Codex does not use the commit SHA. It installs every entry with the version `local` and keeps
-that copy until the consumer runs `codex plugin add` again (measured on a local marketplace,
-Codex 0.166.0). A consumer who added the marketplace with `--ref <tag>` stays on that tag; the
-README tells them how to move. A consumer on `main` gets a release after
-`codex plugin marketplace upgrade` and a new `codex plugin add`.
+Codex does not use the commit SHA. It installs every entry with the version `local`. For a Git
+marketplace, `codex plugin marketplace upgrade` fetches the ref again and updates the installed
+plugins in the cache; a marketplace on `--ref <tag>` stays on that tag (measured with Codex
+0.166.0 on 2026-11-02). Codex documents no background update, so a consumer on `main` gets a
+commit only when they run `upgrade`. A local-path marketplace is different: `upgrade` skips it,
+and only a new `codex plugin add` copies the changed files.
+
+A consumer who tracks `main` gets every merged commit, not only tags: in Claude Code with
+auto-update on, in the background; in Codex at the next `upgrade`. The tag is the line for
+consumers who pin.
 
 ## Evaluations before a tag
 

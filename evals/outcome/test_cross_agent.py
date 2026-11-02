@@ -236,6 +236,21 @@ class Regrade(unittest.TestCase):
         self.assertEqual(ca.stale_graders(merged, {"a"}, {"a": ca.grader_revision(revised)}), {"a"})
 
 
+class Tasks(unittest.TestCase):
+    def args(self, configs="", agents="claude,codex"):
+        import argparse
+        return argparse.Namespace(configs=configs, agents=agents, case="language-*", runs=2)
+
+    def test_configs_filter_the_plan(self):
+        plan = ca.tasks(self.args(configs="claude-skills,codex-skills"))
+        self.assertEqual({c for _, c, _ in plan}, {"claude-skills", "codex-skills"})
+        self.assertEqual(len(plan), 4)
+
+    def test_an_unknown_configuration_stops(self):
+        with self.assertRaises(SystemExit):
+            ca.tasks(self.args(configs="claude-maybe"))
+
+
 class Status(unittest.TestCase):
     def norm(self, final="done", failed=False, actions=()):
         return {"actions": list(actions), "final": final, "failed": failed}
