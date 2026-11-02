@@ -96,5 +96,34 @@ class Schema(unittest.TestCase):
         self.assertFalse(item["additionalProperties"])
 
 
+class CliProviders(unittest.TestCase):
+    def test_claude_cli_runs_with_no_tool_and_no_skill(self):
+        cmd = run.claude_cli_command("claude-opus-5-5", None, "SYSTEM", {"type": "object"})
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "")
+        self.assertIn("--disable-slash-commands", cmd)
+        self.assertIn("--strict-mcp-config", cmd)
+        self.assertEqual(cmd[cmd.index("--system-prompt") + 1], "SYSTEM")
+        self.assertNotIn("--effort", cmd)
+        self.assertEqual(run.claude_cli_command("m", "high", "s", {})[-2:], ["--effort", "high"])
+
+    def test_codex_cli_turns_off_user_config_and_plugins_and_reads_stdin(self):
+        p = pathlib.Path("/tmp/x")
+        cmd = run.codex_cli_command(None, p / "s.json", p / "l.json", p)
+        for flag in ("--ignore-user-config", "--ignore-rules", "--ephemeral"):
+            self.assertIn(flag, cmd)
+        disabled = {cmd[i + 1] for i, part in enumerate(cmd) if part == "--disable"}
+        self.assertTrue({"plugins", "apps", "hooks", "skill_search"} <= disabled)
+        self.assertEqual(cmd[cmd.index("--sandbox") + 1], "read-only")
+        self.assertEqual(cmd[-1], "-")
+        self.assertNotIn("--model", cmd)
+        self.assertIn("--model", run.codex_cli_command("gpt-x", p, p, p))
+
+    def test_cli_env_carries_no_key(self):
+        env = run.cli_env(CODEX_HOME="/h")
+        for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL"):
+            self.assertNotIn(name, env)
+        self.assertEqual(env["CODEX_HOME"], "/h")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

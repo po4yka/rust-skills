@@ -1,0 +1,9 @@
+[package]
+name = "inventory"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Stock counts for the warehouse service."
+license = "MIT"
+
+[dependencies]

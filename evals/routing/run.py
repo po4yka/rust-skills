@@ -15,6 +15,15 @@ set, prints a Markdown table, and writes the raw answers to a JSON file.
 SDK (`pip install anthropic` or `pip install openai`) and its key in the environment:
 ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) for anthropic, OPENAI_API_KEY for openai.
 
+The providers claude-cli and codex-cli need no key: they run `claude -p` and `codex exec` on a
+subscription login, from the isolated login homes that evals/outcome/cross_agent.py uses
+(~/.claude-eval and ~/.codex-eval; see evals/README.md). The CLIs get a built environment with
+no API key, all skills and commands off on the Claude side, and plugins, apps, and hooks off on
+the Codex side, so only the listing in the prompt names skills.
+
+    python3 evals/routing/run.py --provider claude-cli --model claude-opus-5-5 --runs 2
+    python3 evals/routing/run.py --provider codex-cli --runs 2       # the login's default model
+
 Refusal fallbacks stay off on purpose. A fallback answers with another model, which would mix
 two models into one score; a refused batch is reported as refused instead.
 """
@@ -29,6 +38,7 @@ import random
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -38,6 +48,10 @@ PROMPTS = HERE / "prompts.jsonl"
 KEYS = {"positive", "near-miss"}
 FIELDS = {"id", "skill", "kind", "prompt", "expected", "accepted_alternates", "source"}
 ENV_KEYS = {"anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"), "openai": ("OPENAI_API_KEY",)}
+CLI_PROVIDERS = ("claude-cli", "codex-cli")
+PASSED_ENV = ("PATH", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL")
+CLAUDE_HOME = Path.home() / ".claude-eval"
+CODEX_HOME = Path.home() / ".codex-eval"
 
 SYSTEM = """You select agent skills for a coding agent that works on Rust code.
 
@@ -210,6 +224,74 @@ def ask_openai(model: str, effort: str | None, system: str, user: str, schema: d
     return json.loads(message.content)
 
 
+def cli_env(**extra: str) -> dict[str, str]:
+    """A built environment for a subscription CLI: no API key and no base-URL override."""
+    env = {k: os.environ[k] for k in PASSED_ENV if k in os.environ}
+    env.update({"HOME": str(Path.home()), "TERM": "dumb", "NO_COLOR": "1"}, **extra)
+    return env
+
+
+def claude_cli_command(model: str, effort: str | None, system: str, schema: dict) -> list[str]:
+    cmd = ["claude", "-p", "--output-format", "json", "--no-session-persistence", "--model", model,
+           "--system-prompt", system, "--tools", "", "--disable-slash-commands", "--strict-mcp-config",
+           "--json-schema", json.dumps(schema)]
+    return cmd + (["--effort", effort] if effort else [])
+
+
+def codex_cli_command(model: str | None, schema_path: Path, last_path: Path, cwd: Path) -> list[str]:
+    cmd = ["codex", "exec", "--json", "--output-schema", str(schema_path), "--output-last-message", str(last_path),
+           "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--sandbox", "read-only",
+           "--cd", str(cwd), "-c", 'approval_policy="never"']
+    for feature in ("apps", "hooks", "plugins", "remote_plugin", "plugin_discovery_prefetch", "skill_search"):
+        cmd += ["--disable", feature]
+    return cmd + (["--model", model] if model else []) + ["-"]
+
+
+def ask_claude_cli(model: str, effort: str | None, system: str, user: str, schema: dict) -> dict:
+    with tempfile.TemporaryDirectory(prefix="routing-claude-") as tmp:
+        done = subprocess.run(
+            claude_cli_command(model, effort, system, schema), input=user, cwd=tmp, capture_output=True,
+            text=True, timeout=900, check=False, env=cli_env(CLAUDE_CONFIG_DIR=str(CLAUDE_HOME),
+                                                             CLAUDE_CODE_DISABLE_AUTO_MEMORY="1"),
+        )
+    try:
+        result = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        return {"failed": True, "answers": []}
+    if result.get("is_error"):
+        return {"failed": True, "answers": []}
+    data = result.get("structured_output")
+    if data is None:
+        try:
+            data = json.loads(result.get("result", ""))
+        except json.JSONDecodeError:
+            return {"failed": True, "answers": []}
+    return data
+
+
+def ask_codex_cli(model: str, effort: str | None, system: str, user: str, schema: dict) -> dict:
+    with tempfile.TemporaryDirectory(prefix="routing-codex-") as tmp:
+        root = Path(tmp)
+        (root / "home").mkdir()
+        (root / "work").mkdir()
+        (root / "schema.json").write_text(json.dumps(schema))
+        cmd = codex_cli_command(model if model != "default" else None, root / "schema.json", root / "last.json", root / "work")
+        if effort:
+            cmd[2:2] = ["-c", f'model_reasoning_effort="{effort}"']
+        done = subprocess.run(
+            cmd, input=f"{system}\n\n{user}", capture_output=True, text=True, timeout=900, check=False,
+            env=cli_env(HOME=str(root / "home"), CODEX_HOME=str(CODEX_HOME)),
+        )
+        last = root / "last.json"
+        text = last.read_text() if last.is_file() else ""
+    if done.returncode != 0 or not text.strip():
+        return {"failed": True, "answers": []}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"failed": True, "answers": []}
+
+
 def score(rows: list[dict], answers: list[dict[str, dict]]) -> dict:
     """Top-1 and top-2 per set, averaged over runs; a missing answer counts as wrong."""
     result = {}
@@ -247,8 +329,8 @@ def catalog_commit() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--provider", choices=sorted(ENV_KEYS))
-    parser.add_argument("--model", help="exact model ID; there is no default")
+    parser.add_argument("--provider", choices=sorted(ENV_KEYS) + list(CLI_PROVIDERS))
+    parser.add_argument("--model", help="exact model ID; codex-cli may omit it to use the login's default")
     parser.add_argument("--effort", help="optional reasoning effort, passed through to the provider")
     parser.add_argument("--truncate", type=int, default=0, help="keep only the first N characters of each description (0: full)")
     parser.add_argument("--runs", type=int, default=2)
@@ -279,13 +361,17 @@ def main() -> int:
         system, user = build_messages(descriptions, rows[: args.batch_size])
         print(system, "\n\n----- user -----\n", user, "\n\n----- schema -----\n", json.dumps(schema)[:400], "...", sep="")
         return 0
+    if args.provider == "codex-cli" and not args.model:
+        args.model = "default"
     if not args.provider or not args.model:
         parser.error("a run needs --provider and --model")
-    require_key(args.provider)
-    ask = ask_anthropic if args.provider == "anthropic" else ask_openai
+    if args.provider not in CLI_PROVIDERS:
+        require_key(args.provider)
+    ask = {"anthropic": ask_anthropic, "openai": ask_openai,
+           "claude-cli": ask_claude_cli, "codex-cli": ask_codex_cli}[args.provider]
 
     runs: list[dict[str, dict]] = []
-    flags = {"refused_batches": 0, "truncated_batches": 0}
+    flags = {"refused_batches": 0, "truncated_batches": 0, "failed_batches": 0}
     for run in range(args.runs):
         order = rows[:]
         random.Random(args.seed + run).shuffle(order)
@@ -296,6 +382,7 @@ def main() -> int:
             reply = ask(args.model, args.effort, system, user, schema)
             flags["refused_batches"] += bool(reply.get("refused"))
             flags["truncated_batches"] += bool(reply.get("truncated"))
+            flags["failed_batches"] += bool(reply.get("failed"))
             wanted = {row["id"] for row in batch}
             by_id.update({a["id"]: a for a in reply.get("answers", []) if a.get("id") in wanted})
             print(f"run {run + 1}/{args.runs}: {min(start + args.batch_size, len(order))}/{len(order)}", file=sys.stderr)
@@ -309,8 +396,9 @@ def main() -> int:
     for kind in ("positive", "near-miss"):
         s = scores[kind]
         print(f"| {kind} | {s['n']} | {s['top1']:.3f} | {s['top2']:.3f} |")
-    if flags["refused_batches"] or flags["truncated_batches"]:
-        print(f"\nRefused batches: {flags['refused_batches']}. Truncated batches: {flags['truncated_batches']}.")
+    if flags["refused_batches"] or flags["truncated_batches"] or flags["failed_batches"]:
+        print(f"\nRefused batches: {flags['refused_batches']}. Truncated batches: {flags['truncated_batches']}. "
+              f"Failed batches: {flags['failed_batches']} (their prompts count as wrong).")
 
     date = dt.date.today().isoformat()
     out = args.out or HERE / f"routing-{args.provider}-{re.sub(r'[^a-z0-9.-]', '-', args.model.lower())}-{date}.json"
