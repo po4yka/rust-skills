@@ -988,10 +988,13 @@ def grade_one(case: dict, run_dir: Path, args: argparse.Namespace, names: list[s
     for grader in scored_graders(case):
         if only is not None and grader["name"] not in only:
             continue
+        revision = grader_revision(grader)
         if grader["type"] == "regex":
-            verdicts[grader["name"]] = {"pass": grade_regex(grader, norm, workspace), "by": "regex"}
+            verdicts[grader["name"]] = {"pass": grade_regex(grader, norm, workspace), "by": "regex",
+                                        "revision": revision}
         elif grader["type"] == "tool_used":
-            verdicts[grader["name"]] = {"pass": grade_tool_used(grader, norm), "by": "tool_used"}
+            verdicts[grader["name"]] = {"pass": grade_tool_used(grader, norm), "by": "tool_used",
+                                        "revision": revision}
         else:
             judged.append(grader)
     if judged:
@@ -1008,11 +1011,12 @@ def grade_one(case: dict, run_dir: Path, args: argparse.Namespace, names: list[s
         )
         prompt = JUDGE_PROMPT.format(task=case["execution"]["prompt"].strip(), criteria=criteria, evidence=evidence)
         answer = ask_judge(prompt, args) or []
-        wanted = {g["name"] for g in judged}
+        wanted = {g["name"]: grader_revision(g) for g in judged}
         for verdict in answer:
             if verdict.get("name") in wanted:
                 verdicts[verdict["name"]] = {"pass": bool(verdict["pass"]), "by": "judge",
-                                             "evidence": verdict.get("evidence", "")}
+                                             "evidence": verdict.get("evidence", ""),
+                                             "revision": wanted[verdict["name"]]}
         missing = wanted - verdicts.keys()
         if missing:
             raise RuntimeError(f"the judge gave no verdict for {sorted(missing)}")
@@ -1020,15 +1024,30 @@ def grade_one(case: dict, run_dir: Path, args: argparse.Namespace, names: list[s
             "status": meta["status"], "judge_model": args.judge_model, "verdicts": verdicts}
 
 
+def grader_revision(grader: dict) -> str:
+    """A short hash of the grader definition. It changes when the criteria, pattern, or focus change."""
+    text = json.dumps(grader, sort_keys=True, default=str)
+    return hashlib.sha256(text.encode()).hexdigest()[:12]
+
+
+def stale_graders(stored: dict, subset: set[str], revisions: dict[str, str]) -> set[str]:
+    """The graders of `subset` whose stored verdict is missing or came from another revision. A
+    verdict recorded before revisions existed has none, so it is stale."""
+    return {name for name in subset
+            if stored["verdicts"].get(name, {}).get("revision") != revisions[name]}
+
+
 def merge_regrade(stored: dict, fresh: dict, case: dict) -> dict:
-    """Replaces the re-graded verdicts, keeps the old ones under `superseded`, and drops verdicts
-    of graders the case no longer has."""
+    """Replaces the re-graded verdicts, appends each replaced verdict to its history under
+    `superseded` (oldest first), and drops verdicts of graders the case no longer has."""
     current = {g["name"] for g in scored_graders(case)}
-    superseded = dict(stored.get("superseded", {}))
+    # An older grade file holds one superseded verdict per name, not a list.
+    superseded = {name: list(old) if isinstance(old, list) else [old]
+                  for name, old in stored.get("superseded", {}).items()}
     verdicts = {}
     for name, verdict in stored["verdicts"].items():
         if name in fresh["verdicts"] or name not in current:
-            superseded[name] = verdict
+            superseded.setdefault(name, []).append(verdict)
         else:
             verdicts[name] = verdict
     verdicts.update(fresh["verdicts"])
@@ -1042,22 +1061,25 @@ def grade(args: argparse.Namespace) -> int:
     regrade = set(filter(None, args.regrade.split(",")))
     for case_name in case_names(args.case):
         case = load_case(case_name)
-        subset = regrade & {g["name"] for g in scored_graders(case)}
+        revisions = {g["name"]: grader_revision(g) for g in scored_graders(case)}
+        subset = regrade & revisions.keys()
         for meta_path in sorted((args.out / "runs" / case_name).glob("*/*/meta.json")):
             meta = json.loads(meta_path.read_text())
             if meta["status"] not in ("done", "timeout"):
                 continue
             label = label_for(args.seed, case_name, meta["config"], meta["run"])
             out = args.out / "grades" / case_name / f"{label}.json"
-            stored = None
+            stored, only = None, None
             if out.is_file():
                 stored = json.loads(out.read_text())
                 if (stored.get("config"), stored.get("run")) != (meta["config"], meta["run"]):
                     stored = None
-                elif not subset or subset <= set(stored.get("regraded", [])):
-                    continue
+                else:
+                    only = stale_graders(stored, subset, revisions)
+                    if not only:
+                        continue
             try:
-                result = grade_one(case, meta_path.parent, args, names, only=subset if stored else None)
+                result = grade_one(case, meta_path.parent, args, names, only=only)
                 if stored:
                     result = merge_regrade(stored, result, case)
             except Exception as error:  # one bad run must not stop the others
@@ -1182,7 +1204,8 @@ def main() -> int:
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
     parser.add_argument("--seed", default="outcome-v1", help="seed of the blind labels")
     parser.add_argument("--dry-run", action="store_true", help="with run: build workspaces, start nothing")
-    parser.add_argument("--regrade", default="", help="with grade: comma-separated graders to judge again")
+    parser.add_argument("--regrade", default="",
+                        help="with grade: comma-separated graders to judge again where their definition changed")
     args = parser.parse_args()
     args.out = (args.out or default_out()).expanduser().resolve()
     args.claude_home = args.claude_home.expanduser().resolve()

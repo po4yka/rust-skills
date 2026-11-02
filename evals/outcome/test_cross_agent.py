@@ -189,9 +189,51 @@ class Regrade(unittest.TestCase):
         fresh = {"verdicts": {"a": {"pass": True}, "new": {"pass": False}}}
         merged = ca.merge_regrade(stored, fresh, case)
         self.assertEqual(merged["verdicts"], {"a": {"pass": True}, "b": {"pass": True}, "new": {"pass": False}})
-        self.assertEqual(merged["superseded"], {"a": {"pass": False}, "gone": {"pass": True}})
+        self.assertEqual(merged["superseded"], {"a": [{"pass": False}], "gone": [{"pass": True}]})
         self.assertEqual(merged["regraded"], ["a", "new"])
         self.assertEqual((merged["config"], merged["run"]), ("codex-none", 1))
+
+    def test_overlapping_regrades_keep_every_replaced_verdict(self):
+        case = {"graders": [{"name": "a", "type": "llm"}, {"name": "b", "type": "llm"}]}
+        stored = {"verdicts": {"a": {"pass": False, "n": 0}, "b": {"pass": True, "n": 0}}}
+        once = ca.merge_regrade(stored, {"verdicts": {"a": {"pass": True, "n": 1}}}, case)
+        twice = ca.merge_regrade(once, {"verdicts": {"a": {"pass": False, "n": 2},
+                                                     "b": {"pass": False, "n": 2}}}, case)
+        self.assertEqual(twice["superseded"]["a"], [{"pass": False, "n": 0}, {"pass": True, "n": 1}])
+        self.assertEqual(twice["superseded"]["b"], [{"pass": True, "n": 0}])
+        self.assertEqual(twice["verdicts"]["a"], {"pass": False, "n": 2})
+
+    def test_a_single_superseded_verdict_from_an_older_file_becomes_a_history(self):
+        case = {"graders": [{"name": "a", "type": "llm"}]}
+        stored = {"verdicts": {"a": {"pass": True, "n": 1}}, "superseded": {"a": {"pass": False, "n": 0}}}
+        merged = ca.merge_regrade(stored, {"verdicts": {"a": {"pass": True, "n": 2}}}, case)
+        self.assertEqual(merged["superseded"]["a"], [{"pass": False, "n": 0}, {"pass": True, "n": 1}])
+
+    def test_the_revision_follows_the_grader_definition(self):
+        grader = {"name": "a", "type": "llm", "criteria": "PASS if the test is red first."}
+        self.assertEqual(ca.grader_revision(grader), ca.grader_revision(dict(grader)))
+        changed = {**grader, "criteria": "PASS if the test is red first and kept."}
+        self.assertNotEqual(ca.grader_revision(grader), ca.grader_revision(changed))
+        self.assertNotEqual(ca.grader_revision(grader), ca.grader_revision({**grader, "focus": "trace"}))
+
+    def test_only_a_changed_or_unrecorded_revision_is_judged_again(self):
+        revisions = {"a": "r2", "b": "r1", "c": "r1"}
+        stored = {"verdicts": {"a": {"pass": True, "revision": "r1"}, "b": {"pass": True, "revision": "r1"},
+                               "c": {"pass": True}}}
+        self.assertEqual(ca.stale_graders(stored, {"a", "b", "c"}, revisions), {"a", "c"})
+        self.assertEqual(ca.stale_graders(stored, {"b"}, revisions), set())
+        self.assertEqual(ca.stale_graders(stored, set(), revisions), set())
+        self.assertEqual(ca.stale_graders({"verdicts": {}}, {"b"}, revisions), {"b"})
+
+    def test_a_criterion_changed_after_a_regrade_is_judged_again(self):
+        grader = {"name": "a", "type": "llm", "criteria": "first"}
+        case = {"graders": [grader]}
+        stored = {"verdicts": {"a": {"pass": False}}}
+        fresh = {"verdicts": {"a": {"pass": True, "revision": ca.grader_revision(grader)}}}
+        merged = ca.merge_regrade(stored, fresh, case)
+        self.assertEqual(ca.stale_graders(merged, {"a"}, {"a": ca.grader_revision(grader)}), set())
+        revised = {**grader, "criteria": "second"}
+        self.assertEqual(ca.stale_graders(merged, {"a"}, {"a": ca.grader_revision(revised)}), {"a"})
 
 
 class Status(unittest.TestCase):
