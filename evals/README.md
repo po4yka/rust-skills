@@ -17,7 +17,7 @@ the catalog commit, the client version, and the exact model IDs (`docs/releasing
 
 ## `routing/`: selection from a list
 
-- `prompts.jsonl`: 176 prompts, 4 per skill. Three are positives that the skill owns. One is a
+- `prompts.jsonl`: 180 prompts, 4 per skill. Three are positives that the skill owns. One is a
   near-miss: it shares surface terms with the skill but belongs to a sibling, or to no skill
   (`"expected": "none"`, 2 prompts). Each row has `id`, `skill`, `kind`, `prompt`, `expected`,
   `accepted_alternates`, and `source`. The prompts were written from the skill bodies at catalog
@@ -73,9 +73,9 @@ local `checks/target/` build cache has them. The `Plugin eval` workflow runs the
 
 What a green result proves: on that client, model, and catalog commit, a natural request loads
 the skill and the answer carries its verifier. What it does not prove: behavior on Codex, Cursor,
-or another client; behavior with all 44 skills installed when the client truncates its listing
+or another client; behavior with all 45 skills installed when the client truncates its listing
 (the suite loads the whole plugin, so it measures the full listing); or that six cases represent
-44 skills.
+45 skills.
 
 ## `outcome/`: the work itself
 

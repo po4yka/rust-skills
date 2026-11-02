@@ -1,6 +1,6 @@
 ---
 name: rust-ios-build
-description: Use when building, packaging, or verifying a Rust static library for iOS (Rust for iOS) - device and simulator slices, IPHONEOS_DEPLOYMENT_TARGET, C header and modulemap, XCFramework assembly, SwiftPM binaryTarget, dSYM UUID checks, simulator and device smoke tests, code signing, or PrivacyInfo.xcprivacy. Owns XCFramework and SwiftPM packaging for UniFFI builds too; UniFFI binding generation belongs to uniffi-packaging-versioning. Triggers on aarch64-apple-ios-sim, target_env = "sim", xcodebuild -create-xcframework, swift package compute-checksum, lipo, otool, or the ld message built for newer iOS version than being linked.
+description: Use when building, packaging, or verifying a Rust static library for iOS (Rust for iOS) - device and simulator slices, IPHONEOS_DEPLOYMENT_TARGET, C header and modulemap, XCFramework assembly, SwiftPM binaryTarget, dSYM UUID checks, simulator and device smoke tests, code signing, or PrivacyInfo.xcprivacy. Includes XCFramework packaging of UniFFI builds, not their binding generation (uniffi-packaging-versioning). Triggers on aarch64-apple-ios-sim, target_env = "sim", xcodebuild -create-xcframework, swift package compute-checksum, or the ld message built for newer iOS version than being linked.
 license: BSD-3-Clause
 ---
 
