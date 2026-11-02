@@ -20,6 +20,9 @@ bundles.toml                    install bundles: bundle -> ordered skill names
 AGENTS.snippet.md               the always-on router a consumer pastes; every skill once
 .claude-plugin/                 the plugin marketplace for Claude Code and Codex, one plugin per bundle
 scripts/validate-skills.py      catalog checks (tests: scripts/test_validate_skills.py)
+scripts/agent-hook.py           post-edit hook that runs the validator for agents (tests: scripts/test_agent_hook.py)
+.claude/settings.json           Claude Code project settings: the post-edit hook
+.codex/hooks.json               Codex project hooks: the same post-edit hook
 scripts/catalog-ceilings.toml   ratchet: accepted values over a limit, which may only shrink
 scripts/drift-report.py         toolchain and crate drift report behind the weekly workflows
 tests/routing-cases.md          phrase -> skill, checked against every description
@@ -147,6 +150,26 @@ A green run locally means a green run in CI. The gates that can be missing are t
 discovery step and the Claude Code and Codex plugin install steps, which all need `npx`;
 `check.sh` says so when it skips them. `check.sh` writes only under `checks/` and a temporary directory, so run
 and rerun it without asking.
+
+While you edit descriptions, `bundles.toml`, or `.claude-plugin/`, run the fast form. It skips
+the cargo gates (the example compile check, the behavior probes, and the outcome fixtures) and
+keeps the catalog, unit-test, and client gates. With warm npx caches it takes under a minute,
+against about two and a half for the full run (measured 2026-11-02). A green `--fast` run is not
+a green CI run: run the full command before a pull request.
+
+```bash
+bash checks/check.sh --fast
+```
+
+`.claude/settings.json` (Claude Code) and `.codex/hooks.json` (Codex) run
+`scripts/agent-hook.py` after each file edit. When the edit touches a file that
+`scripts/validate-skills.py` reads, the hook runs the validator and, on a failure, gives its
+problems to the agent next to the tool result, so the agent fixes them in the same turn. Claude
+Code runs the hook in a trusted folder; Codex runs it once you trust it in `/hooks`. A client
+loads the hook of the folder where its session starts, so an edit in another worktree gets no
+report. The hook covers the validator only; it does not compile examples or install plugins, and
+it stays silent when it cannot run (no script, no git root, or a Python without `tomllib`).
+Tests: `scripts/test_agent_hook.py`.
 
 ### 1. Catalog structure
 

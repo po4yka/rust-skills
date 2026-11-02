@@ -16,9 +16,10 @@ never sees it.
 
 ```bash
 bash checks/check.sh
+bash checks/check.sh --fast   # skips cargo: no compile check, behavior probes, or outcome fixtures
 ```
 
-That is the whole contract, and it is exactly what CI runs. The steps, if you
+The first form is the whole contract, and it is exactly what CI runs. The steps, if you
 need one of them alone:
 
 `check.sh` holds a checkout-scoped process lock for the complete run. Parallel
@@ -32,6 +33,7 @@ one checkout.
 python3 scripts/validate-skills.py            # frontmatter, references, routing, README; no toolchain
 python3 scripts/test_validate_skills.py       # the frontmatter rules themselves
 python3 checks/test_with_lock.py               # parallel-run serialization
+python3 scripts/test_agent_hook.py            # the post-edit hook for Claude Code and Codex
 python3 checks/test_plugin_install.py         # plugin inventory parser and expectations
 python3 checks/plugin_install.py --claude "npx -y -p @anthropic-ai/claude-code@<version> claude"
 python3 checks/plugin_install.py --codex "npx -y @openai/codex@<version>"

@@ -5,5 +5,7 @@
 /scripts/         @po4yka
 /.github/         @po4yka
 /.claude-plugin/  @po4yka
+/.claude/         @po4yka
+/.codex/          @po4yka
 /bundles.toml     @po4yka
 /AGENTS.snippet.md @po4yka
