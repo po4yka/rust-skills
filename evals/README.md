@@ -139,6 +139,7 @@ every parent of its working directory.
 
 ```bash
 CLAUDE_CONFIG_DIR=~/.claude-eval claude auth login     # once: a login home with nothing else in it
+echo '{"syncClaudeAiPlugins": false, "syncClaudeAiSkills": false}' > ~/.claude-eval/settings.json
 CODEX_HOME=~/.codex-eval codex login                     # once
 OUT=/Users/Shared/rust-skills-evals/outcome-<date>
 uv run --with pyyaml python3 evals/outcome/cross_agent.py preflight --out "$OUT"

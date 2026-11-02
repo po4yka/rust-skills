@@ -1,6 +1,6 @@
 ---
 name: rust-borrow-semantics
-description: Use when a Rust borrow or drop point depends on expression form rather than types, such as temporary lifetime extension, the drop scope of a temporary or lock guard, two-phase borrows and method autoref, place versus value expressions, or a manual desugaring that stops compiling. Includes edition 2024 temporary scope changes flagged by if_let_rescope or tail_expr_drop_order, and E0716 in an expression-form question. Not for general borrow-checker triage (use rust-compiler-errors).
+description: Use when a Rust lock guard or temporary lives longer or shorter than the code suggests, such as a hang on a second lock() while a match scrutinee still holds the guard, or a borrow that depends on expression form (temporary lifetime extension, the drop scope of a temporary, two-phase borrows and autoref, place versus value). Includes edition 2024 if_let_rescope and tail_expr_drop_order changes, and E0716 there. Not for general borrow-checker triage (use rust-compiler-errors).
 license: BSD-3-Clause
 ---
 

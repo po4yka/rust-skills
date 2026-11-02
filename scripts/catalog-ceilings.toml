@@ -9,10 +9,10 @@
 #   python3 scripts/validate-skills.py --emit-ceilings > scripts/catalog-ceilings.toml
 
 [description]
-total = 22294
+total = 22285
 
 [bundle_descriptions]
-language = 6456
+language = 6451
 
 [body_tokens]
 cargo-workflows = 6780

@@ -170,7 +170,7 @@ def catalog_commit() -> str:
 
 
 def catalog_dirty() -> str:
-    done = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--", "skills", ".claude-plugin"],
+    done = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--", "skills"],
                           capture_output=True, text=True)
     return done.stdout.strip()
 
@@ -186,7 +186,9 @@ def snapshot(out: Path) -> Path:
         staging = out / "catalog.tmp"
         shutil.rmtree(staging, ignore_errors=True)
         (staging / ".claude-plugin").mkdir(parents=True)
-        shutil.copy(ROOT / ".claude-plugin" / "plugin.json", staging / ".claude-plugin" / "plugin.json")
+        # A manifest of its own: the repository's plugin layout can change, the snapshot's cannot.
+        manifest = {"name": "rust-skills", "description": "rust-skills catalog snapshot", "skills": ["./skills"]}
+        (staging / ".claude-plugin" / "plugin.json").write_text(json.dumps(manifest, indent=1))
         shutil.copytree(SKILLS, staging / "skills")
         (staging / "COMMIT").write_text(catalog_commit() + "\n")
         staging.rename(catalog)
@@ -240,7 +242,10 @@ def agent_command(config: str, case: dict, run_dir: Path, args: argparse.Namespa
         "codex", "exec", "--json", "--output-last-message", str(run_dir / "final.txt"),
         "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
         "--sandbox", "workspace-write", "--add-dir", str(run_dir / "cargo-home"),
-        "--disable", "apps", "--disable", "hooks",
+        # The ChatGPT account prefetches curated plugins into CODEX_HOME and loads their skills;
+        # the probe caught about 50 of them on 2026-11-02. None of them belongs in a run.
+        "--disable", "apps", "--disable", "hooks", "--disable", "plugins", "--disable", "remote_plugin",
+        "--disable", "plugin_discovery_prefetch", "--disable", "skill_search",
         "-c", 'approval_policy="never"', "--cd", str(workspace),
     ]
     if args.codex_model:
@@ -644,6 +649,12 @@ def preflight(args: argparse.Namespace) -> int:
     risky = {k for k in keys if re.search(r"apiKeyHelper|hooks|enabledPlugins|extraKnownMarketplaces|"
                                            r"ANTHROPIC_|BEDROCK|VERTEX|FOUNDRY|unreadable", k)}
     check(not risky, f"no route, hook, or plugin key in its settings.json {sorted(risky) or ''}", problems)
+    # The account syncs its plugins and skills into the login home on its own schedule, so one
+    # arm can get them and the other not. Turn both syncs off in the login home's settings.json:
+    #   {"syncClaudeAiPlugins": false, "syncClaudeAiSkills": false}
+    sync = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
+    check(sync.get("syncClaudeAiPlugins") is False and sync.get("syncClaudeAiSkills") is False,
+          "account plugin and skill sync are off in its settings.json", problems)
     # skills/synced holds the account's own skills; they reach both Claude arms alike (the probe
     # checks that), the way Codex's built-in .system set does.
     check(empty_dir(args.claude_home / "skills", ignore=("synced",)),
@@ -666,7 +677,7 @@ def preflight(args: argparse.Namespace) -> int:
     check(not memory, f"no memory or skill files in any parent of {out} {memory or ''}", problems)
     check(ROOT not in [out, *out.parents], "the output directory is outside this repository", problems)
     check(not catalog_dirty() or (out / "catalog").is_dir(),
-          "skills/ and .claude-plugin/ are committed (or the snapshot exists)", problems)
+          "skills/ is committed (or the snapshot exists)", problems)
     rustup = subprocess.run(["rustup", "run", toolchain(), "cargo", "--version"], capture_output=True,
                             text=True, check=False)
     check(rustup.returncode == 0, f"toolchain {toolchain()} is installed", problems)
@@ -797,7 +808,11 @@ def probe(args: argparse.Namespace) -> int:
 # --- run -----------------------------------------------------------------------------------------
 
 def tasks(args: argparse.Namespace) -> list[tuple[str, str, int]]:
-    configs = [c for c in CONFIGS if CONFIGS[c][0] in args.agents.split(",")]
+    wanted = set(filter(None, args.configs.split(","))) or set(CONFIGS)
+    unknown = wanted - set(CONFIGS)
+    if unknown:
+        raise SystemExit(f"unknown configuration(s): {sorted(unknown)}")
+    configs = [c for c in CONFIGS if CONFIGS[c][0] in args.agents.split(",") and c in wanted]
     return [(case, config, k) for case in case_names(args.case) for k in range(1, args.runs + 1)
             for config in configs]
 
@@ -1147,6 +1162,7 @@ def main() -> int:
     parser.add_argument("--case", default="*", help="glob over case names")
     parser.add_argument("--agents", default="claude,codex")
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--configs", default="", help="comma-separated configurations; default: all four")
     parser.add_argument("--jobs-per-agent", type=int, default=2)
     parser.add_argument("--claude-home", type=Path, default=DEFAULT_CLAUDE_HOME)
     parser.add_argument("--codex-home", type=Path, default=DEFAULT_CODEX_HOME)
