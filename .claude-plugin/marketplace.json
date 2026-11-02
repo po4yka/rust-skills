@@ -9,9 +9,12 @@
     {
       "name": "rust-skills",
       "source": "./",
-      "description": "All 44 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
+      "description": "All 45 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
       "license": "BSD-3-Clause",
-      "author": { "name": "po4yka", "url": "https://github.com/po4yka" },
+      "author": {
+        "name": "po4yka",
+        "url": "https://github.com/po4yka"
+      },
       "homepage": "https://github.com/po4yka/rust-skills",
       "repository": "https://github.com/po4yka/rust-skills"
     },
@@ -20,7 +23,10 @@
       "source": "./",
       "description": "Language, interfaces, and code discipline: 13 Rust agent skills.",
       "license": "BSD-3-Clause",
-      "author": { "name": "po4yka", "url": "https://github.com/po4yka" },
+      "author": {
+        "name": "po4yka",
+        "url": "https://github.com/po4yka"
+      },
       "homepage": "https://github.com/po4yka/rust-skills",
       "repository": "https://github.com/po4yka/rust-skills",
       "skills": [
@@ -44,7 +50,10 @@
       "source": "./",
       "description": "Build, dependencies, and supply chain: 9 Rust agent skills.",
       "license": "BSD-3-Clause",
-      "author": { "name": "po4yka", "url": "https://github.com/po4yka" },
+      "author": {
+        "name": "po4yka",
+        "url": "https://github.com/po4yka"
+      },
       "homepage": "https://github.com/po4yka/rust-skills",
       "repository": "https://github.com/po4yka/rust-skills",
       "skills": [
@@ -62,16 +71,20 @@
     {
       "name": "rust-skills-testing",
       "source": "./",
-      "description": "Correctness and testing: 4 Rust agent skills.",
+      "description": "Correctness and testing: 5 Rust agent skills.",
       "license": "BSD-3-Clause",
-      "author": { "name": "po4yka", "url": "https://github.com/po4yka" },
+      "author": {
+        "name": "po4yka",
+        "url": "https://github.com/po4yka"
+      },
       "homepage": "https://github.com/po4yka/rust-skills",
       "repository": "https://github.com/po4yka/rust-skills",
       "skills": [
         "./skills/rust-tdd",
         "./skills/rust-test-tools",
         "./skills/rust-sanitizers-miri",
-        "./skills/rust-panic-safety"
+        "./skills/rust-panic-safety",
+        "./skills/rust-port"
       ]
     },
     {
@@ -79,7 +92,10 @@
       "source": "./",
       "description": "Concurrency and unsafe code: 6 Rust agent skills.",
       "license": "BSD-3-Clause",
-      "author": { "name": "po4yka", "url": "https://github.com/po4yka" },
+      "author": {
+        "name": "po4yka",
+        "url": "https://github.com/po4yka"
+      },
       "homepage": "https://github.com/po4yka/rust-skills",
       "repository": "https://github.com/po4yka/rust-skills",
       "skills": [
@@ -96,7 +112,10 @@
       "source": "./",
       "description": "Networking, database, performance, debugging, and observability: 7 Rust agent skills.",
       "license": "BSD-3-Clause",
-      "author": { "name": "po4yka", "url": "https://github.com/po4yka" },
+      "author": {
+        "name": "po4yka",
+        "url": "https://github.com/po4yka"
+      },
       "homepage": "https://github.com/po4yka/rust-skills",
       "repository": "https://github.com/po4yka/rust-skills",
       "skills": [
@@ -114,7 +133,10 @@
       "source": "./",
       "description": "FFI and platform boundaries: 5 Rust agent skills.",
       "license": "BSD-3-Clause",
-      "author": { "name": "po4yka", "url": "https://github.com/po4yka" },
+      "author": {
+        "name": "po4yka",
+        "url": "https://github.com/po4yka"
+      },
       "homepage": "https://github.com/po4yka/rust-skills",
       "repository": "https://github.com/po4yka/rust-skills",
       "skills": [

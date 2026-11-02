@@ -49,6 +49,7 @@ skills = [
     "rust-test-tools",
     "rust-sanitizers-miri",
     "rust-panic-safety",
+    "rust-port",
 ]
 
 [bundles.concurrency]

@@ -62,7 +62,7 @@ for s in cargo-workflows rust-crate-release rust-native-linking rust-serde rust-
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # testing
-for s in rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety; do
+for s in rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port; do
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # concurrency
@@ -178,7 +178,7 @@ npx skills add po4yka/rust-skills --skill rust-compiler-errors rust-borrow-seman
 # build
 npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std
 # testing
-npx skills add po4yka/rust-skills --skill rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety
+npx skills add po4yka/rust-skills --skill rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port
 # concurrency
 npx skills add po4yka/rust-skills --skill memory-model rust-async-internals rust-unsafe rust-pin-projection rust-send-sync rust-event-loop-state
 # production
@@ -269,6 +269,7 @@ Enter by the symptom, not by the skill name.
 | A caught panic aborts while its payload is dropped | [rust-panic-safety](skills/rust-panic-safety/SKILL.md) |
 | A bug to reproduce as a failing test, or a refactor that must keep its behavior | [rust-tdd](skills/rust-tdd/SKILL.md) |
 | Hand-rolled atomics for loom, a parser for proptest or cargo-fuzz, or a survived mutant | [rust-test-tools](skills/rust-test-tools/SKILL.md) |
+| A C, Python, Go, or JavaScript module to move to Rust without a change in its output | [rust-port](skills/rust-port/SKILL.md) |
 | A lifetime coercion is refused: `is invariant over the parameter`, `borrowed for 'static` | [rust-variance](skills/rust-variance/SKILL.md) |
 | A callback bound rejects `\|o\| &o.field`, or a struct field holds a closure | [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) |
 | `self: Pin<&mut Self>`, `PhantomPinned`, or a `#[pin]` projection | [rust-pin-projection](skills/rust-pin-projection/SKILL.md) |
@@ -340,6 +341,7 @@ flowchart LR
     E --> E2[rust-swift-ffi]
     E --> E3[uniffi-boundary]
     E --> E4[ffi-error-progress-cancel]
+    E --> E5[rust-port]
 
     F --> F1[cargo-workflows]
     F --> F2[rust-android-build]
@@ -402,7 +404,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Correctness and testing</b> — four skills</summary>
+<summary><b>Correctness and testing</b> — five skills</summary>
 
 <br>
 
@@ -412,6 +414,7 @@ owns it.
 | [rust-test-tools](skills/rust-test-tools/SKILL.md) | loom, proptest, cargo-fuzz and differential fuzz targets, cargo-careful, cargo-mutants survived-mutant triage, and golden or snapshot tests. |
 | [rust-sanitizers-miri](skills/rust-sanitizers-miri/SKILL.md) | ASan, TSan, and MSan, Miri validity and provenance checks, bounded many-seed schedules, FFI stubbing, HWASan and MTE, and report triage. |
 | [rust-panic-safety](skills/rust-panic-safety/SKILL.md) | Unwind versus abort, FFI panic guards, safe disposal of a panicking payload, unwrap and expect audits, privacy-safe hooks, and typed-error mapping. |
+| [rust-port](skills/rust-port/SKILL.md) | Ports from C, C++, Python, Go, and JavaScript that keep the original's output: a behavior inventory, tests ported first, the language traps (floor division, rounding, string length, ordered maps, strict parsing), a recorded comparison against the original, and PORTING.md. |
 
 </details>
 
@@ -544,7 +547,7 @@ invocations, and failure triage that a codebase learns the hard way.
   issue when Rust stable or a crate in `checks/Cargo.toml` moves past the pin.
 - The always-on skill listing is small. Claude Code keeps it within 1% of the context window
   (about 2,000 tokens on a 200K window) and drops whole descriptions when it overflows; Codex
-  keeps only a prefix of each. All 44 descriptions cost about 9,300 tokens, so on a 200K window
+  keeps only a prefix of each. In October 2026, all 44 descriptions cost about 9,300 tokens, so on a 200K window
   install one bundle, and paste [AGENTS.snippet.md](AGENTS.snippet.md) into the consuming
   repository so the agent can still name the skill it needs.
 - Codex shortens every description to share one skill-list budget among all listed skills. In a

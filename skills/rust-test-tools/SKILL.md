@@ -18,7 +18,7 @@ on the crate that the change touches while you iterate. Run the full lane once b
 | `unsafe` next to foreign code: FFI, JNI, libc, syscalls | ASan on the host, or HWASan or MTE on a device; TSan when the code shares state across threads. cargo-careful is a cheap extra lane, not a substitute. Also Miri on the pure-Rust helpers, with the foreign calls stubbed under `#[cfg(miri)]`; the stub dereferences every pointer that the foreign side stores | UB freedom: a sanitizer does not know the Rust aliasing rules, and careful checks only a few UB classes |
 | Hand-rolled atomics, a spinlock, a lock-free structure, a publish flag | loom | freedom from bugs that need load buffering or more preemptions than the bound |
 | A parser, a decoder, or any function that reads untrusted bytes | proptest, then cargo-fuzz | freedom from bugs that the strategy or the corpus never reaches |
-| A port or a rewrite of code that has a reference implementation | a differential fuzz target | equivalence outside the inputs that the fuzzer reached |
+| A port whose reference a test can call in-process | a differential fuzz target | equivalence outside the inputs that the fuzzer reached |
 | A refactor of tested logic, or new tests for a critical change | cargo-mutants on the diff, or on the source files under test when the diff only adds tests | that the asserted values are the correct ones |
 | Output that must be deterministic: serialized records, generated code, reports, images | golden files | that the first blessed baseline is correct |
 | None of the above | the normal test run | behavior that no test asserts |
@@ -72,7 +72,7 @@ Before you approve a change, confirm each item that applies:
 - [ ] Every new parser or decoder has a never-panics property, a roundtrip property where a
       roundtrip exists, and committed proptest regression files.
 - [ ] Every fuzz crash is a committed, minimized regression test.
-- [ ] A port with a reference implementation has a differential fuzz target.
+- [ ] A port with an in-process reference has a differential fuzz target.
 - [ ] A refactor of tested logic has a cargo-mutants run on the diff. Each missed mutant has a
       test or a recorded exclusion.
 - [ ] Deterministic output has committed golden files. Each fixture change is a reviewed,
@@ -216,10 +216,10 @@ cargo +nightly fuzz tmin parse_header fuzz/artifacts/parse_header/crash-<id>
 
 ## Differential testing
 
-When a change ports or rewrites code that has a reference implementation (a C library, the
-previous Rust version, a model of the spec), run a differential fuzz target. Feed the same bytes
-to both and compare the results. A port that is memory-safe and passes its own tests can still
-disagree with the reference.
+When a port's reference runs in-process (a C library, the previous Rust version, a spec
+model), run a differential fuzz target; a Python or JavaScript original gets the `rust-port`
+recorded comparison. Feed both the same bytes and compare. A port that is memory-safe and
+passes its own tests can still disagree with the reference.
 
 ```rust
 // fuzz/fuzz_targets/decode_matches_reference.rs

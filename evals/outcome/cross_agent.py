@@ -657,7 +657,8 @@ def preflight(args: argparse.Namespace) -> int:
           "account plugin and skill sync are off in its settings.json", problems)
     # skills/synced holds the account's own skills; they reach both Claude arms alike (the probe
     # checks that), the way Codex's built-in .system set does.
-    check(empty_dir(args.claude_home / "skills", ignore=("synced",)),
+    # .trash holds what the sync left behind once syncClaudeAiSkills went off; nothing loads it.
+    check(empty_dir(args.claude_home / "skills", ignore=("synced", ".trash")),
           "no skills in the login home besides the account-synced set", problems)
     for extra in ("CLAUDE.md", "agents", "commands", "rules"):
         check(empty_dir(args.claude_home / extra), f"no {extra} in the login home", problems)

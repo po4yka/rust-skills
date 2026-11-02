@@ -233,6 +233,10 @@ wrong skill, and put the phrase in the right description in the same change.
 | mobile support matrix | uniffi-packaging-versioning |
 | mobile release proof | uniffi-packaging-versioning |
 | UniFFI header and modulemap | uniffi-packaging-versioning |
+| floor division | rust-port |
+| strict parsing | rust-port |
+| PORTING.md | rust-port |
+| tests ported first | rust-port |
 | reduce allocations | rust-hot-path |
 | too many allocations | rust-hot-path |
 | this type is too big | rust-hot-path |
