@@ -54,7 +54,7 @@ bundles are defined in [bundles.toml](bundles.toml).
 | --- | --- | ---: | --- |
 | `language` | Language, interfaces, and code discipline | 13 | `rust-skills-language` |
 | `build` | Build, dependencies, and supply chain | 9 | `rust-skills-build` |
-| `testing` | Correctness and testing | 4 | `rust-skills-testing` |
+| `testing` | Correctness and testing | 6 | `rust-skills-testing` |
 | `concurrency` | Concurrency and unsafe code | 6 | `rust-skills-concurrency` |
 | `production` | Networking, database, performance, debugging, and observability | 7 | `rust-skills-production` |
 | `ffi` | FFI and platform boundaries | 5 | `rust-skills-ffi` |
