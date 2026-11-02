@@ -17,6 +17,7 @@ Run:
     python3 scripts/test_validate_skills.py
 """
 import importlib.util
+import json
 import pathlib
 import tempfile
 import unittest
@@ -368,7 +369,10 @@ class HarnessRules(unittest.TestCase):
     def setUp(self):
         self.saved = {
             k: getattr(validate_skills, k)
-            for k in ("ROOT", "SKILLS_DIR", "README", "BUNDLES", "SNIPPET", "NEGATIVE", "CEILINGS")
+            for k in (
+                "ROOT", "SKILLS_DIR", "README", "BUNDLES", "SNIPPET", "NEGATIVE", "CEILINGS",
+                "PLUGIN_MANIFEST", "MARKETPLACE",
+            )
         }
         validate_skills.failures.clear()
         validate_skills.warnings.clear()
@@ -393,6 +397,8 @@ class HarnessRules(unittest.TestCase):
         validate_skills.SNIPPET = root / "AGENTS.snippet.md"
         validate_skills.NEGATIVE = root / "negative-cases.md"
         validate_skills.CEILINGS = root / "ceilings.toml"
+        validate_skills.PLUGIN_MANIFEST = root / ".claude-plugin" / "plugin.json"
+        validate_skills.MARKETPLACE = root / ".claude-plugin" / "marketplace.json"
         return root
 
     BUNDLES = """[bundles.core]
@@ -434,6 +440,126 @@ skills = ["rust-c"]
             validate_skills.check_bundles(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
         self.assertEqual(len(validate_skills.failures), 1)
         self.assertIn("'edge' has no row in the Install table", validate_skills.failures[0])
+
+    # The plugin marketplace: one entry per bundle, in step with bundles.toml.
+
+    MANIFEST = {"name": "kit", "skills": ["./skills"]}
+
+    def entries(self) -> list[dict]:
+        return [
+            {"name": "kit", "source": "./", "description": "All 3 Rust agent skills."},
+            {
+                "name": "kit-core",
+                "source": "./",
+                "description": "Core: 2 Rust agent skills.",
+                "skills": ["./skills/rust-a", "./skills/rust-b"],
+            },
+            {"name": "kit-edge", "source": "./", "description": "Edge: 1 Rust agent skills.", "skills": ["./skills/rust-c"]},
+        ]
+
+    def marketplace(self, entries: list[dict], manifest: dict | None = None) -> list[str]:
+        files = {
+            "bundles.toml": self.BUNDLES,
+            ".claude-plugin/plugin.json": json.dumps(manifest or self.MANIFEST),
+            ".claude-plugin/marketplace.json": json.dumps({"name": "kit", "plugins": entries}),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, files)
+            validate_skills.check_marketplace(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
+        return list(validate_skills.failures)
+
+    def test_a_marketplace_in_step_with_the_bundles_passes(self):
+        self.assertEqual(self.marketplace(self.entries()), [])
+
+    def test_bundle_skills_in_another_order_fail(self):
+        entries = self.entries()
+        entries[1]["skills"].reverse()
+        found = self.marketplace(entries)
+        self.assertEqual(len(found), 1)
+        self.assertIn("skills differ from bundles.toml", found[0])
+
+    def test_a_stale_skill_count_fails(self):
+        entries = self.entries()
+        entries[1]["description"] = "Core: 3 Rust agent skills."
+        found = self.marketplace(entries)
+        self.assertEqual(len(found), 1)
+        self.assertIn("'2 Rust agent skills'", found[0])
+
+    def test_a_version_field_fails(self):
+        # One `version` that is not bumped freezes every consumer on it.
+        entries = self.entries()
+        entries[2]["version"] = "1.0.0"
+        found = self.marketplace(entries, {**self.MANIFEST, "version": "1.0.0"})
+        self.assertEqual(len(found), 2)
+        self.assertTrue(all("`version`" in f for f in found))
+
+    def test_a_source_other_than_the_root_fails(self):
+        # A github source with a ref loads every skill, not the bundle.
+        entries = self.entries()
+        entries[1]["source"] = {"source": "github", "repo": "owner/kit", "ref": "v1"}
+        found = self.marketplace(entries)
+        self.assertEqual(len(found), 1)
+        self.assertIn('source must be "./"', found[0])
+
+    def test_a_bundle_without_an_entry_fails(self):
+        found = self.marketplace(self.entries()[:2])
+        self.assertEqual(len(found), 1)
+        self.assertIn("'kit-edge' appears 0 times", found[0])
+
+    def test_an_entry_without_a_bundle_fails(self):
+        entries = self.entries() + [{"name": "kit-extra", "source": "./", "skills": ["./skills/rust-a"]}]
+        found = self.marketplace(entries)
+        self.assertEqual(len(found), 1)
+        self.assertIn("'kit-extra' matches no bundle", found[0])
+
+    def test_a_duplicate_entry_fails(self):
+        entries = self.entries()
+        found = self.marketplace(entries + [entries[2]])
+        self.assertEqual(len(found), 1)
+        self.assertIn("'kit-edge' appears 2 times", found[0])
+
+    def test_a_marketplace_named_unlike_the_plugin_fails(self):
+        found = self.marketplace(self.entries(), {"name": "other", "skills": ["./skills"]})
+        self.assertTrue(any("must equal the plugin.json name" in f for f in found))
+
+    def test_a_manifest_that_does_not_load_the_whole_catalog_fails(self):
+        found = self.marketplace(self.entries(), {"name": "kit", "skills": ["./skills/rust-a"]})
+        self.assertEqual(len(found), 1)
+        self.assertIn('skills must be ["./skills"]', found[0])
+
+    def test_a_top_level_marketplace_version_fails(self):
+        files = {
+            "bundles.toml": self.BUNDLES,
+            ".claude-plugin/plugin.json": json.dumps(self.MANIFEST),
+            ".claude-plugin/marketplace.json": json.dumps({"name": "kit", "version": "1", "plugins": self.entries()}),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, files)
+            validate_skills.check_marketplace(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
+        self.assertEqual(len(validate_skills.failures), 1)
+        self.assertIn("top-level `version`", validate_skills.failures[0])
+
+    def test_a_name_that_is_not_a_string_fails_without_a_crash(self):
+        entries = self.entries()
+        entries[2]["name"] = ["kit-edge"]
+        found = self.marketplace(entries)
+        self.assertTrue(any("plugins[2] name must be a string" in f for f in found))
+        self.assertTrue(any("'kit-edge' appears 0 times" in f for f in found))
+
+    def test_a_description_that_is_not_a_string_fails(self):
+        # str() of a list would still contain the count and pass.
+        entries = self.entries()
+        entries[1]["description"] = ["Core: 2 Rust agent skills."]
+        found = self.marketplace(entries)
+        self.assertEqual(len(found), 1)
+        self.assertIn("'2 Rust agent skills'", found[0])
+
+    def test_a_full_catalog_entry_that_lists_skills_fails(self):
+        entries = self.entries()
+        entries[0]["skills"] = ["./skills/rust-a"]
+        found = self.marketplace(entries)
+        self.assertEqual(len(found), 1)
+        self.assertIn("must not list skills", found[0])
 
     # Description budget: total and per bundle, with the ratchet.
 
@@ -623,6 +749,7 @@ class TestRealCatalogHarness(unittest.TestCase):
         bundles = validate_skills.load_bundles()
         ceilings = validate_skills.load_ceilings()
         validate_skills.check_bundles(bundles, names)
+        validate_skills.check_marketplace(bundles, names)
         validate_skills.check_snippet(names)
         validate_skills.check_negative_cases(validate_skills.descriptions)
         validate_skills.check_body_tokens(ceilings)

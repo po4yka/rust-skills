@@ -5,8 +5,9 @@
 #
 # It runs the same gates CI runs, on the toolchain and target that
 # checks/rust-toolchain.toml pins, so a green run here means a green run there.
-# The one exception is the skills-CLI discovery gate, which needs npx: this
-# script says so out loud when it has to skip it, and CI always runs it.
+# The exceptions are the two gates that run a consumer's CLI through npx: the
+# skills-CLI discovery and the Claude Code plugin install. This script says so
+# out loud when it has to skip them, and CI always runs them.
 # `cargo check` type-checks without linking, so the Linux target works on any
 # host with no cross-linker installed. The one C build script in the harness
 # (alloca, from criterion) needs clang on a non-Linux host; see below.
@@ -15,6 +16,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="x86_64-unknown-linux-gnu"
 SKILLS_CLI_VERSION="1.7.4"
+# The Claude Code CLI for the plugin install gate. Keep it equal to
+# CLAUDE_CODE_VERSION in .github/workflows/plugin-eval.yml, so the install and
+# the evaluations judge the plugin with the same client.
+CLAUDE_CODE_VERSION="2.1.316"
 
 # gen.py, cargo, and analyze.py share examples/, manifest.json, check.json, and
 # check.err. Hold one checkout-scoped process lock across the complete sequence
@@ -35,11 +40,12 @@ cd "$ROOT/checks"
 # The classifier decides which compile failures the catalog may ignore. A wrong
 # entry in its excuse list turns a broken example into a passing one, so the
 # excuse list has its own tests and they run before anything depends on them.
-echo "==> unit tests: catalog rules, drift report, routing runner, check locking, and the classifier"
+echo "==> unit tests: catalog rules, drift report, routing runner, check locking, plugin install, and the classifier"
 python3 "$ROOT/scripts/test_validate_skills.py" 2>&1 | tail -3
 python3 "$ROOT/scripts/test_drift_report.py" 2>&1 | tail -3
 python3 "$ROOT/evals/routing/test_run.py" 2>&1 | tail -3
 python3 test_with_lock.py 2>&1 | tail -3
+python3 test_plugin_install.py 2>&1 | tail -3
 python3 test_gen.py 2>&1 | tail -3
 python3 test_analyze.py 2>&1 | tail -3
 
@@ -108,6 +114,17 @@ if command -v npx > /dev/null 2>&1; then
     done
     [ "$failed" -eq 0 ] || exit 1
     echo "  the skills CLI discovered all $(ls -1d skills/*/ | wc -l | tr -d ' ') skills"
+else
+    echo "  SKIPPED: no npx on this host. CI runs this gate on every push."
+fi
+
+# validate-skills.py proves the marketplace file matches bundles.toml. This
+# gate proves Claude Code loads each plugin with exactly those skills. It uses a
+# throwaway config directory, so it needs no login and leaves ~/.claude alone.
+echo "==> Claude Code installs every plugin with exactly its skills"
+if command -v npx > /dev/null 2>&1; then
+    python3 "$ROOT/checks/plugin_install.py" \
+        --claude "npx -y -p @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} claude"
 else
     echo "  SKIPPED: no npx on this host. CI runs this gate on every push."
 fi
