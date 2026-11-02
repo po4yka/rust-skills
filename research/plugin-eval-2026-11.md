@@ -8,8 +8,8 @@ API key.
 
 | Item | Value |
 | --- | --- |
-| Catalog commit | `a7ae986` (release branch of `v0.3.0`, 45 skills) |
-| Workflow run | [41476487727](https://github.com/po4yka/rust-skills/actions/runs/41476487727) |
+| Catalog commit | `5a24304`: `main` at `ab10b0b` plus a changelog edit; 46 skills, #20 included |
+| Workflow run | [41480030417](https://github.com/po4yka/rust-skills/actions/runs/41480030417) |
 | Client | Claude Code 2.1.316 |
 | Agent model | `claude-opus-5-5` |
 | Judge model | `claude-haiku-5-5` |
@@ -17,7 +17,7 @@ API key.
 | Ablation | `with-without`: each case also runs with no plugin |
 | Runs | 6 cases, 2 runs per arm, 24 runs |
 | Threshold | 0.8 per case |
-| Cost and time | $2.81, 639 s |
+| Cost and time | $2.87, 653 s |
 
 ## Results
 
@@ -32,8 +32,8 @@ command that the owning skill names.
 | ffi-unsatisfied-link | rust-jni | 2/2 | 1.00 | 1.00 | 0.00 |
 | language-lint-gate | rust-lints | 2/2 | 1.00 | 1.00 | 0.00 |
 | production-flamegraph-symbols | rust-performance | 2/2 | 1.00 | 1.00 | 0.00 |
-| testing-miri-gate | rust-sanitizers-miri | 2/2 | 1.00 | 0.50 | 0.50 |
-| All | | 12/12 | 1.00 | 0.92 | 0.08 |
+| testing-miri-gate | rust-sanitizers-miri | 2/2 | 1.00 | 1.00 | 0.00 |
+| All | | 12/12 | 1.00 | 1.00 | 0.00 |
 
 All six cases pass the threshold. The job passed.
 
@@ -41,32 +41,37 @@ All six cases pass the threshold. The job passed.
 
 - Routing works on this client and model. A natural request that names no skill loaded the
   owning skill in all 12 runs with the plugin.
-- The verifier rubric is near its ceiling without the plugin. The model alone cites the verifier
-  in 11 of 12 runs, so the suite shows a delta in one case only: `testing-miri-gate`, where one
-  run without the plugin gave no Miri command. Two runs per arm cannot show a smaller effect.
-- The arm with the plugin takes more turns: 3 to 5 against 1 to 2. The extra turns are the skill
+- The verifier rubric is at its ceiling without the plugin. The model alone cited the verifier in
+  12 of 12 runs, so this suite cannot show what the plugin adds to the answer. It works as a
+  routing check and as a check that the skill does not make the answer worse.
+- The arm with the plugin takes more turns: 3 to 6 against 1 to 2. The extra turns are the skill
   loads.
 
-## An invalid run before this one
+## Earlier runs
 
-[Run 41471337092](https://github.com/po4yka/rust-skills/actions/runs/41471337092), on the
-release commit `4115a45`, loaded no plugin and is not a result:
+| Run | Catalog | Plugin loaded | Skill fired | With | Without | Use |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| [41471337092](https://github.com/po4yka/rust-skills/actions/runs/41471337092) | `4115a45`, 45 skills | no | 0/12 | 0.46 | - | Invalid |
+| [41476487727](https://github.com/po4yka/rust-skills/actions/runs/41476487727) | `a7ae986`, 45 skills | yes | 12/12 | 1.00 | 0.92 | Superseded |
 
-- the result names no plugin, and the ablation is `none`;
-- no skill fired in its 12 runs;
-- it scored 0.46 and failed the threshold.
-
-The repository had no root manifest after #11 removed `.claude-plugin/plugin.json` for Codex, and
-`claude plugin eval .` loads a plugin only from a manifest at the target. #21 fixed the workflow:
-it now writes a manifest in its own checkout and fails when a result names no plugin. No other
-`Plugin eval` result after #11 is recorded.
+- **41471337092 is not a result.** It loaded no plugin, and its ablation was `none`. The
+  repository had no root manifest after #11 removed `.claude-plugin/plugin.json` for Codex, and
+  `claude plugin eval .` loads a plugin only from a manifest at the target. #21 fixed the
+  workflow: it now writes a manifest in its own checkout and fails when a result names no plugin.
+  No other `Plugin eval` result after #11 is recorded.
+- **41476487727 ran before #20 merged,** so it did not see `rust-review` or the ten shorter
+  descriptions. Its one difference between the arms was a single run without the plugin in
+  `testing-miri-gate` that gave no Miri command. The run above did not repeat that difference, so
+  read it as noise at two runs per arm.
 
 ## What this does not prove
 
 - Behavior on Codex, Cursor, or another client, or on another model.
 - Behavior with a bundle plugin. The suite loads the full catalog, so it measures the full skill
   listing.
-- That the skill improves the answer beyond the verifier citation. The `evals/outcome/` suite
-  measures the work itself; `research/outcome-baseline-2026-11.md` has its baseline. It did not
-  run for this tag.
+- That a skill improves the answer. The `evals/outcome/` suite measures the work itself;
+  `research/outcome-baseline-2026-11.md` and `research/review-and-routing-2026-11.md` have its
+  results. It did not run for this tag.
+- Routing for `rust-port` or `rust-review`. No case of this suite targets them;
+  `research/review-and-routing-2026-11.md` has their routing results.
 - A stable estimate. Each arm has two runs per case.

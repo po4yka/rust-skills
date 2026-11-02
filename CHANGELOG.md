@@ -12,7 +12,7 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 The first catalog that installs as a plugin. One plugin marketplace serves Claude Code and Codex,
 with one plugin per install bundle and one for the full catalog, and CI installs every plugin in
 both clients. The toolchain pin moves to Rust 1.99.1 after an audit pass, and the new
-`rust-port` skill brings the catalog to 45 skills. `evals/outcome/` now measures what an agent
+`rust-port` and `rust-review` skills bring the catalog to 46 skills. `evals/outcome/` now measures what an agent
 produces with the catalog and without it, in both clients; the first baseline is in
 `research/outcome-baseline-2026-11.md`. The plugin evaluation of this release loaded the owning
 skill in 12 of 12 runs (`research/plugin-eval-2026-11.md`).
@@ -69,6 +69,19 @@ skill in 12 of 12 runs (`research/plugin-eval-2026-11.md`).
 - A cross-agent outcome runner, `evals/outcome/cross_agent.py`: the outcome cases on Claude Code
   and Codex, each with and without the catalog, from isolated login homes, scored by one blind
   judge (#14). `grade --regrade` judges changed graders again on the recorded runs (#16).
+- `rust-review`, in the testing bundle: the method and the report of a code review. It orders
+  the areas by risk and names the skill that owns each rule, sorts findings into Must fix,
+  Should fix, and Consider, and gives each finding a location, a rule, and a fix. It has an
+  outcome case (#20, `research/review-and-routing-2026-11.md`).
+- `rust-discipline/references/api-conventions.md`: the naming and trait conventions of the Rust
+  API Guidelines (`C-CONV`, `C-GETTER`, `C-CTOR`, and others), each with the clippy lint or the
+  search that finds a violation (#20).
+- A lint gate, `checks/lint_gate.py`: each of the 54 lints that the strict template of
+  `rust-lints` names must fire on its marked line of `checks/lints/violations.rs`, and no name
+  may be unknown or removed. `check.sh` runs it (#20).
+- Routing without an API key: `evals/routing/run.py --provider claude-cli` and
+  `--provider codex-cli` run on a subscription login (#20).
+- Issue forms "Propose a rule" and "Review false positive" (#20).
 
 ### Changed
 
@@ -88,6 +101,13 @@ skill in 12 of 12 runs (`research/plugin-eval-2026-11.md`).
   return unchanged now routes to `rust-copy-on-write` (#17, `research/routing-fix-2026-11.md`).
 - Three outcome graders now score what their case asks, and the baseline is re-graded on the
   recorded runs (#16).
+- `rust-lints`: the strict template drops `inefficient_to_string`, which cannot fire in an
+  edition 2024 crate, and notes that `unwrap_in_result` checks a `Result` only. When
+  `cargo fmt --check` fails before a change, format only the changed files and run the tests
+  again (#20).
+- Ten descriptions are shorter, so that `rust-review` fits the description budget. Every routing
+  phrase and every rustc code stays (#20).
+- README: a "What the skills change" section with the measured results (#20).
 
 ### Fixed
 
