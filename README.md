@@ -31,13 +31,15 @@ Measured with [evals/outcome/](evals/README.md) on Claude Code (`claude-opus-5-5
 | Release a crate whose `feat` commit adds a variant to an exhaustive enum: name `cargo semver-checks` | Claude 0 of 3 runs, Codex 0 of 3 | Claude 3 of 3, Codex 0 of 3 |
 | Port a Python module to Rust with its tests (Codex) | 10 of 18 graders | 18 of 18 graders |
 | Six planted-defect cases, all graders | Claude 79/84, Codex 75/84 | Claude 80/84, Codex 76/84 |
+| Review a library module and write a report (Codex) | 8 of 18 graders | 18 of 18 graders |
 
 Both models already fix most planted defects on their own, so the overall gain is about one
 grader in 84. The skills matter most where a model does not know the verifier or the process:
 the API diff of a release, a port that keeps its tests and records the original's output. The
 method, the per-grader tables, and the caveats are in
 [research/outcome-baseline-2026-11.md](research/outcome-baseline-2026-11.md) and
-[research/rust-port-2026-11.md](research/rust-port-2026-11.md).
+[research/rust-port-2026-11.md](research/rust-port-2026-11.md), and
+[research/review-and-routing-2026-11.md](research/review-and-routing-2026-11.md).
 
 ## Install
 
