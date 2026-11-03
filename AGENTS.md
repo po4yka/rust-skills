@@ -30,7 +30,7 @@ evals/                          routing, plugin, and outcome evaluations; evals/
 checks/                         compile-check harness for the rust examples; check.sh runs CI
 docs/releasing.md               tags, versioning, evaluations before a tag, repository settings
 CHANGELOG.md, SECURITY.md       release history; security scope and how to report
-.github/                        CI, drift, and plugin-eval workflows; CODEOWNERS; templates
+.github/                        CI, drift, client-compat, and plugin-eval workflows; CODEOWNERS; templates
 research/                       primary-source findings and catalog decisions
 ```
 
@@ -160,6 +160,10 @@ a green CI run: run the full command before a pull request.
 ```bash
 bash checks/check.sh --fast
 ```
+
+CI splits the same command in two jobs. `Validate catalog` runs `--fast`, and `Compile-check
+examples` runs `--no-clients`, which skips the three `npx` gates. Together they run every gate
+once.
 
 `.claude/settings.json` (Claude Code) and `.codex/hooks.json` (Codex) run
 `scripts/agent-hook.py` after each file edit. When the edit touches a file that

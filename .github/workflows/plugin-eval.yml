@@ -33,11 +33,6 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
-env:
-  # The suite format needs Claude Code 2.1.269 or later. Pin the CLI so a release cannot change
-  # a result between two runs on the same commit.
-  CLAUDE_CODE_VERSION: '2.1.316'
-
 jobs:
   eval:
     name: claude plugin eval
@@ -71,8 +66,15 @@ jobs:
             exit 1
           fi
 
+      # The suite format needs Claude Code 2.1.269 or later. The pin is CLAUDE_CODE_VERSION in
+      # checks/check.sh, the same client the plugin install gate uses, so a release cannot change
+      # a result between two runs on the same commit.
       - name: Install the pinned CLI
-        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+        run: |
+          set -euo pipefail
+          version="$(grep '^CLAUDE_CODE_VERSION=' checks/check.sh | cut -d'"' -f2)"
+          echo "CLAUDE_CODE_VERSION=${version}" >> "$GITHUB_ENV"
+          npm install --global "@anthropic-ai/claude-code@${version}"
 
       # `claude plugin eval .` loads a plugin only from a manifest at the target. The repository has
       # none, because Codex installs no bundle while a root manifest names another plugin
@@ -151,7 +153,7 @@ jobs:
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json, os, subprocess
           commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-          print(f"Suite `{os.environ['SUITE']}`, catalog `{commit}`, CLI `{os.environ['CLAUDE_CODE_VERSION']}`, agent `{os.environ['MODEL']}`, judge `{os.environ['JUDGE_MODEL']}`\n")
+          print(f"Suite `{os.environ['SUITE']}`, catalog `{commit}`, CLI `{os.environ.get('CLAUDE_CODE_VERSION', 'not installed')}`, agent `{os.environ['MODEL']}`, judge `{os.environ['JUDGE_MODEL']}`\n")
           try:
               data = json.load(open("eval-results.json"))
           except (OSError, ValueError):

@@ -533,7 +533,7 @@ scripts/test_*.py             # tests for the catalog rules and the drift report
 tests/routing-cases.md        # phrase -> skill, checked against every description
 evals/routing/                # prompts, negative cases, and the runner for routing accuracy
 evals/plugin/                 # one plugin-eval case per bundle
-.github/workflows/            # CI, skills-CLI compatibility, drift reports, plugin eval
+.github/workflows/            # CI, skills-CLI and client compatibility, drift reports, plugin eval
 checks/check.sh               # one command that runs every CI gate
 checks/rust-toolchain.toml    # the pinned toolchain and compile target
 checks/Cargo.toml             # the crates that examples may use

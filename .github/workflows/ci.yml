@@ -21,59 +21,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Frontmatter against the Agent Skills spec, reference links that resolve,
-      # and the README catalog in step with the tree. Same script a contributor
-      # runs locally.
-      - name: Validate skills
-        run: python3 scripts/validate-skills.py
-
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '26'
 
-      # The checks above prove the files are well formed. This one proves the
-      # CLI that consumers actually run can still find every skill, which is
-      # what breaks if the directory layout drifts.
-      #
-      # The version is pinned, and checks/check.sh is the one place that holds
-      # it. A CLI release must not change the result of a check on a commit
-      # that was green yesterday; skills-cli-compat.yml watches `latest`
-      # separately and files the news without blocking a pull request.
-      - name: Check the skills CLI discovers every skill
-        run: |
-          set -euo pipefail
-          version="$(grep '^SKILLS_CLI_VERSION=' checks/check.sh | cut -d'"' -f2)"
-          echo "skills CLI ${version}"
-          npx -y "skills@${version}" add ./ --list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > /tmp/discovered.txt
-          failed=0
-          for dir in skills/*/; do
-            name="$(basename "$dir")"
-            if ! grep -qx "[^a-z0-9-]*${name}[^a-z0-9-]*" /tmp/discovered.txt; then
-              echo "::error file=${dir}SKILL.md::the skills CLI did not discover '${name}'"
-              failed=1
-            fi
-          done
-          if [ "$failed" -eq 0 ]; then
-            echo "the skills CLI discovered all $(ls -1d skills/*/ | wc -l) skills"
-          fi
-          exit "$failed"
+      # npx keeps each pinned CLI in ~/.npm/_npx. checks/check.sh holds every
+      # pin, so a pin change also changes the key.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('checks/check.sh') }}
+          restore-keys: npm-${{ runner.os }}-
 
-      # The validator proves marketplace.json matches bundles.toml. This step
-      # proves Claude Code installs each plugin with exactly those skills, on
-      # the CLI version checks/check.sh pins. It needs no key and no login.
-      - name: Check Claude Code installs every plugin with exactly its skills
-        run: |
-          set -euo pipefail
-          version="$(grep '^CLAUDE_CODE_VERSION=' checks/check.sh | cut -d'"' -f2)"
-          python3 checks/plugin_install.py --claude "npx -y -p @anthropic-ai/claude-code@${version} claude"
-
-      # Codex reads the same marketplace file. This step proves each plugin
-      # loads exactly its skills there too, on the Codex version check.sh pins.
-      - name: Check Codex installs every plugin with exactly its skills
-        run: |
-          set -euo pipefail
-          version="$(grep '^CODEX_VERSION=' checks/check.sh | cut -d'"' -f2)"
-          python3 checks/plugin_install.py --codex "npx -y @openai/codex@${version}"
+      # The catalog rules, the unit tests, and the three gates that run a
+      # consumer's CLI: skills-CLI discovery and the Claude Code and Codex
+      # plugin installs. They need no key and no login. Each CLI version is
+      # pinned in checks/check.sh, so a CLI release cannot change the result
+      # of a commit that was green yesterday; client-compat.yml and
+      # skills-cli-compat.yml run the newest CLIs on a schedule instead.
+      # --fast skips cargo; the examples job runs the cargo gates.
+      - name: Check the catalog and the client installs
+        run: bash checks/check.sh --fast
 
   examples:
     name: Compile-check examples
@@ -97,6 +65,7 @@ jobs:
 
       # Extracts every ```rust block from skills/, type-checks it, and fails on
       # a compile failure the analyzer cannot attribute to an undefined symbol
-      # or to the extraction wrapper. The same command a contributor runs.
+      # or to the extraction wrapper. The same command a contributor runs,
+      # without the client gates: the validate job runs those.
       - name: Run checks
-        run: bash checks/check.sh
+        run: bash checks/check.sh --no-clients

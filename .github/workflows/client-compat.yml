@@ -1,0 +1,96 @@
+name: Client compatibility
+
+# The required CI gate pins Claude Code and Codex in checks/check.sh, so a
+# client release cannot turn a green commit red. This job carries the other
+# half of the deal, as skills-cli-compat.yml does for the skills CLI: it runs
+# the plugin install gate on the newest release of each client on a schedule,
+# and opens an issue when a plugin stops loading exactly its skills. That is
+# news about the client, not a verdict on a pull request.
+
+on:
+  schedule:
+    - cron: '37 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  latest:
+    name: Plugin installs against ${{ matrix.client }}@latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - client: claude
+            label: Claude Code
+            package: '@anthropic-ai/claude-code'
+            pin: CLAUDE_CODE_VERSION
+            # plugin_install.py takes the command that starts the client.
+            command: npx -y -p @anthropic-ai/claude-code@latest claude
+          - client: codex
+            label: Codex
+            package: '@openai/codex'
+            pin: CODEX_VERSION
+            command: npx -y @openai/codex@latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Compare the pinned client with the published one
+        id: probe
+        env:
+          CLIENT: ${{ matrix.client }}
+          PACKAGE: ${{ matrix.package }}
+          PIN: ${{ matrix.pin }}
+          COMMAND: ${{ matrix.command }}
+        run: |
+          set -euo pipefail
+          pinned="$(grep "^${PIN}=" checks/check.sh | cut -d'"' -f2)"
+          latest="$(npm view "${PACKAGE}" version)"
+          echo "pinned=${pinned}" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "pinned ${pinned}, latest ${latest}"
+          python3 checks/plugin_install.py "--${CLIENT}" "${COMMAND}"
+
+      - name: Open an issue when the newest client stops loading a plugin
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLIENT: ${{ matrix.client }}
+          LABEL: ${{ matrix.label }}
+          PIN: ${{ matrix.pin }}
+          COMMAND: ${{ matrix.command }}
+          PINNED: ${{ steps.probe.outputs.pinned }}
+          LATEST: ${{ steps.probe.outputs.latest }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="${LABEL} ${LATEST:-latest} does not load every plugin with exactly its skills"
+          gh label create client-compat --force --color D93F0B \
+            --description "Claude Code and Codex compatibility" > /dev/null
+          if gh issue list --label client-compat --state open --json title \
+              --jq '.[].title' | grep -Fxq "$title"; then
+            echo "an open issue already reports this"
+            exit 0
+          fi
+          cat > /tmp/body.md <<EOF
+          Pinned in \`checks/check.sh\` (\`${PIN}\`): **${PINNED:-unknown}**. Published: **${LATEST:-unknown}**.
+
+          The run log names each plugin that failed and its missing or extra skills: ${RUN_URL}
+
+          Reproduce with \`python3 checks/plugin_install.py --${CLIENT} "${COMMAND}"\`.
+          Raise \`${PIN}\` in \`checks/check.sh\` once the catalog works with the new client, in
+          the same commit that proves \`bash checks/check.sh\` still passes.
+          EOF
+          gh issue create --title "$title" --label client-compat --body-file /tmp/body.md
