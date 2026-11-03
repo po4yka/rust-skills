@@ -2,12 +2,18 @@
 # One command that reproduces CI. Run it from anywhere:
 #
 #     bash checks/check.sh
-#     bash checks/check.sh --fast   # no cargo: catalog, unit tests, and client gates
+#     bash checks/check.sh --fast        # no cargo: catalog, unit tests, and client gates
+#     bash checks/check.sh --no-clients  # no npx: catalog, unit tests, and cargo gates
 #
 # --fast is for the edit loop of a description or a marketplace change. It
 # skips every gate that runs cargo: the compile check of the examples, the
 # behavior probes, and the outcome fixtures. A green --fast run is not a green
 # CI run; run the full script before a pull request.
+#
+# --no-clients skips the three gates that run a consumer's CLI through npx. CI
+# uses it in the job that compiles the examples, because the job that validates
+# the catalog runs those gates with --fast; each CI run then installs each
+# client once. The two flags together run only the catalog and unit tests.
 #
 # It runs the same gates CI runs, on the toolchain and target that
 # checks/rust-toolchain.toml pins, so a green run here means a green run there.
@@ -22,9 +28,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="x86_64-unknown-linux-gnu"
 SKILLS_CLI_VERSION="1.7.4"
-# The Claude Code CLI for the plugin install gate. Keep it equal to
-# CLAUDE_CODE_VERSION in .github/workflows/plugin-eval.yml, so the install and
-# the evaluations judge the plugin with the same client.
+# The Claude Code CLI for the plugin install gate. This line is the one pin:
+# .github/workflows/plugin-eval.yml and client-compat.yml read it, so the
+# install gate and the evaluations judge the plugin with the same client.
 CLAUDE_CODE_VERSION="2.1.316"
 # The Codex CLI for the same gate. Codex reads .claude-plugin/marketplace.json
 # as a legacy-compatible marketplace, so a Codex release can change the result.
@@ -33,11 +39,13 @@ CLAUDE_CODE_VERSION="2.1.316"
 CODEX_VERSION="0.166.0"
 
 FAST=0
+CLIENTS=1
 for arg in "$@"; do
     case "$arg" in
         --fast) FAST=1 ;;
+        --no-clients) CLIENTS=0 ;;
         *)
-            echo "usage: bash checks/check.sh [--fast]" >&2
+            echo "usage: bash checks/check.sh [--fast] [--no-clients]" >&2
             exit 2
             ;;
     esac
@@ -146,6 +154,18 @@ echo "==> outcome evaluation suite: case structure and planted defects (no key, 
 python3 "$ROOT/evals/outcome/check.py"
 fi  # end of the cargo gates
 
+# The client gates. --no-clients skips this block; its body stays at the outer
+# indentation, as the cargo gates do.
+if [ "$CLIENTS" -eq 0 ]; then
+    echo "==> SKIPPED (--no-clients): skills CLI discovery, Claude Code and Codex plugin installs"
+else
+# A local host without npx skips these gates and says so. In CI the skip would
+# hide the only proof that the clients load the catalog, so it fails instead.
+if [ -n "${CI:-}" ] && ! command -v npx > /dev/null 2>&1; then
+    echo "FAIL: CI has no npx, so the client gates cannot run"
+    exit 1
+fi
+
 echo "==> skills CLI discovers every skill"
 if command -v npx > /dev/null 2>&1; then
     cd "$ROOT"
@@ -186,9 +206,13 @@ if command -v npx > /dev/null 2>&1; then
 else
     echo "  SKIPPED: no npx on this host. CI runs this gate on every push."
 fi
+fi  # end of the client gates
 
-if [ "$FAST" -eq 1 ]; then
-    echo "Fast checks passed. The cargo gates did not run; run bash checks/check.sh before a pull request."
+if [ "$FAST" -eq 1 ] || [ "$CLIENTS" -eq 0 ]; then
+    skipped=""
+    [ "$FAST" -eq 0 ] || skipped=" cargo"
+    [ "$CLIENTS" -eq 1 ] || skipped="${skipped} clients"
+    echo "Checks passed. Skipped gates:${skipped}. Run bash checks/check.sh before a pull request."
 else
     echo "All checks passed."
 fi

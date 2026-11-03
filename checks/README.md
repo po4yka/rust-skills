@@ -16,11 +16,12 @@ never sees it.
 
 ```bash
 bash checks/check.sh
-bash checks/check.sh --fast   # skips cargo: no compile check, behavior probes, or outcome fixtures
+bash checks/check.sh --fast         # skips cargo: no compile check, behavior probes, or outcome fixtures
+bash checks/check.sh --no-clients   # skips npx: no skills CLI discovery or plugin installs
 ```
 
-The first form is the whole contract, and it is exactly what CI runs. The steps, if you
-need one of them alone:
+The first form is the whole contract. CI runs the same gates in two jobs: `--fast` in one
+and `--no-clients` in the other. The steps, if you need one of them alone:
 
 `check.sh` holds a checkout-scoped process lock for the complete run. Parallel
 calls wait instead of replacing `examples/`, `manifest.json`, `check.json`, or

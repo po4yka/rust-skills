@@ -7,6 +7,25 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+### Added
+
+- `.github/workflows/client-compat.yml`: every week, the plugin install gate runs on the newest
+  Claude Code and Codex and opens a `client-compat` issue when a plugin stops loading exactly its
+  skills. The required gate stays on the versions that `checks/check.sh` pins.
+- `bash checks/check.sh --no-clients` skips the three gates that run a client through `npx`.
+
+### Changed
+
+- CI runs each client gate once. `Validate catalog` runs `check.sh --fast` in place of its own
+  copy of the client steps, and `Compile-check examples` runs `check.sh --no-clients`. The
+  validate job caches `~/.npm`. In CI, `check.sh` fails when `npx` is missing, where a local run
+  skips the client gates.
+- `plugin-eval.yml` reads `CLAUDE_CODE_VERSION` from `checks/check.sh`, so one line pins
+  Claude Code for the install gate and the evaluations.
+- README: the `testing` bundle shows 6 skills, and the `0.3.0` entry below names Tokio 1.54.1.
+  The validator now fails when a bundle count in the README Install table differs from
+  `bundles.toml` (#23).
+
 ## [0.3.0] - 2026-11-02
 
 The first catalog that installs as a plugin. One plugin marketplace serves Claude Code and Codex,
