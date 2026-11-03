@@ -73,8 +73,8 @@ jobs:
         run: |
           set -euo pipefail
           version="$(grep '^CLAUDE_CODE_VERSION=' checks/check.sh | cut -d'"' -f2)"
-          echo "CLAUDE_CODE_VERSION=${version}" >> "$GITHUB_ENV"
           npm install --global "@anthropic-ai/claude-code@${version}"
+          echo "CLAUDE_CODE_VERSION=${version}" >> "$GITHUB_ENV"
 
       # `claude plugin eval .` loads a plugin only from a manifest at the target. The repository has
       # none, because Codex installs no bundle while a root manifest names another plugin

@@ -29,8 +29,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="x86_64-unknown-linux-gnu"
 SKILLS_CLI_VERSION="1.7.4"
 # The Claude Code CLI for the plugin install gate. This line is the one pin:
-# .github/workflows/ci.yml and plugin-eval.yml read it, so the install gate and
-# the evaluations judge the plugin with the same client.
+# .github/workflows/plugin-eval.yml and client-compat.yml read it, so the
+# install gate and the evaluations judge the plugin with the same client.
 CLAUDE_CODE_VERSION="2.1.316"
 # The Codex CLI for the same gate. Codex reads .claude-plugin/marketplace.json
 # as a legacy-compatible marketplace, so a Codex release can change the result.

@@ -162,8 +162,8 @@ bash checks/check.sh --fast
 ```
 
 CI splits the same command in two jobs. `Validate catalog` runs `--fast`, and `Compile-check
-examples` runs `--no-clients`, which skips the three `npx` gates. Together they run every gate
-once.
+examples` runs `--no-clients`, which skips the three `npx` gates. Both jobs run the catalog and
+unit-test gates; each cargo gate and each client gate runs in one job only.
 
 `.claude/settings.json` (Claude Code) and `.codex/hooks.json` (Codex) run
 `scripts/agent-hook.py` after each file edit. When the edit touches a file that
