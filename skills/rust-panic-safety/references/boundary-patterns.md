@@ -136,7 +136,11 @@ pub unsafe extern "C" fn lib_session_new(config: *const std::os::raw::c_char) ->
         Session::new(config)
     });
     match result {
-        Ok(Ok(session)) => Box::into_raw(Box::new(session)),
+        Ok(Ok(session)) => {
+            // Reset the slot, so a stale code from an earlier call is not read as this one.
+            set_last_error(LastError::None);
+            Box::into_raw(Box::new(session))
+        }
         Ok(Err(_)) => {
             set_last_error(LastError::Domain);
             std::ptr::null_mut()
@@ -198,12 +202,12 @@ pub unsafe extern "C" fn lib_measure(input: *const u8, len: usize, out_len: *mut
         Ok(Ok(value)) => {
             // SAFETY: the caller guarantees `out_len` is writable.
             unsafe { out_len.write(value) };
-            0
+            Status::Ok as i32
         }
-        Ok(Err(_)) => -1,
+        Ok(Err(_)) => Status::InvalidInput as i32,
         Err(payload) => {
             discard_panic_payload(payload);
-            -99
+            Status::Panic as i32
         }
     }
 }
@@ -236,8 +240,8 @@ unsafe extern "C" fn on_event(ctx: *mut std::ffi::c_void, code: i32) -> i32 {
         state.handle(code)
     });
     match result {
-        Ok(Ok(())) => 0,
-        Ok(Err(_)) => -1,
+        Ok(Ok(())) => Status::Ok as i32,
+        Ok(Err(_)) => Status::InvalidInput as i32,
         Err(payload) => {
             discard_panic_payload(payload);
             // Latch the stable category so the next owning call can report it.
@@ -340,16 +344,16 @@ pub unsafe extern "C" fn lib_run_blocking(handle: *mut Session) -> i32 {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     };
     match result {
-        Ok(Ok(())) => 0,
+        Ok(Ok(())) => Status::Ok as i32,
         Ok(Err(SessionError::TaskPanicked)) => {
             poison();
-            -99
+            Status::Panic as i32
         }
-        Ok(Err(_)) => -1,
+        Ok(Err(_)) => Status::InvalidInput as i32,
         Err(payload) => {
             poison();
             discard_panic_payload(payload);
-            -99
+            Status::Panic as i32
         }
     }
 }

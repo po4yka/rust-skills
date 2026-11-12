@@ -162,7 +162,7 @@ same thread. The panic hook runs first, before unwinding starts. It does not cat
 
 Do not remove a guard for speed without a benchmark that shows its cost.
 
-Read `references/unwind-state.md` when the `catch_unwind` closure captures `&mut` or interior-mutable state and needs `AssertUnwindSafe`.
+Read `references/unwind-state.md` when guarded code mutates shared state, holds a lock, or needs `AssertUnwindSafe`.
 
 ## The guard pattern: hand-rolled C ABI
 
@@ -216,13 +216,12 @@ It leaks the second payload with `ManuallyDrop`, a bounded leak on the double-pa
 so no unwind leaves the boundary. Do not inspect or format either payload.
 
 Read `references/boundary-patterns.md` when the entry point returns a pointer or an opaque
-handle, writes out-parameters, is a callback that a foreign runtime invokes, drives async work
-with `block_on`, or when the crate exports enough functions to need a macro-generated `extern`
+handle, writes out-parameters, is a callback that a foreign runtime invokes, or when the crate exports enough functions to need a macro-generated `extern`
 layer. It also holds the runnable proof of `discard_panic_payload`.
 
 ## JNI, UniFFI, and the panic hook
 
-Read `references/jni-boundary.md` for a JNI export or `JNI_OnLoad`, `references/panic-hook.md` for the panic hook, and `references/hosts-hooks-and-tasks.md` for a UniFFI export.
+Read `references/jni-boundary.md` for a JNI export or `JNI_OnLoad`, `references/panic-hook.md` for the panic hook, and the UniFFI section of `references/boundary-patterns.md` for a UniFFI export.
 
 ## `.unwrap()` and `.expect()` on FFI-reachable paths
 
@@ -263,4 +262,4 @@ crate on an FFI path.
 
 ## Shared state, tasks, and threads
 
-Read `references/hosts-hooks-and-tasks.md` when guarded code mutates shared state or holds a lock, or when a panic can start in a spawned task, a thread, or a future that `block_on` drives.
+Read the async section of `references/boundary-patterns.md` when a panic can start in a spawned task, a thread, or a future that `block_on` drives.

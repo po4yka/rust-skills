@@ -17,8 +17,39 @@ Every `Err(payload)` branch calls the `discard_panic_payload` helper from `SKILL
 
 ## Loader: `JNI_OnLoad`
 
-The `rust-jni` skill owns the one `JNI_OnLoad` template: the VM parameter type, native method
-registration, and class loading. Check these panic rules in it:
+The `rust-jni` skill, when it is installed, owns the full `JNI_OnLoad` template: the VM
+parameter type, native method registration, and class loading. Without it, start from this
+panic skeleton on `jni` 0.22 and put the registration in `register_natives`:
+
+```rust
+use std::ffi::c_void;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
+use jni::JavaVM;
+use jni::sys::{JNI_ERR, JNI_VERSION_1_6, jint};
+
+#[unsafe(no_mangle)]
+extern "system" fn JNI_OnLoad(raw_vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
+    let init = catch_unwind(AssertUnwindSafe(|| -> jni::errors::Result<()> {
+        // Only when this library is the application-owned bootstrap.
+        install_bootstrap_panic_hook();
+        // SAFETY: the JVM passes a valid JavaVM pointer that stays valid for the process.
+        let vm = unsafe { JavaVM::from_raw(raw_vm) };
+        register_natives(&vm)
+    }));
+    match init {
+        Ok(Ok(())) => JNI_VERSION_1_6,
+        Ok(Err(_)) => JNI_ERR,
+        Err(payload) => {
+            // Runs once, so a bounded leak is safe; see the rules below.
+            let _leaked = std::mem::ManuallyDrop::new(payload);
+            JNI_ERR
+        }
+    }
+}
+```
+
+The panic rules of any `JNI_OnLoad`:
 
 - Guard the whole body with a raw `catch_unwind`. `JNI_OnLoad` gets the VM, not an env, so
   `EnvUnowned::with_env` is not available.
