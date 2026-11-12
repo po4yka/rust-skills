@@ -33,5 +33,5 @@ graders:
   - name: no-new-dependency
     type: regex
     target: {source: file, path: Cargo.toml}
-    pattern: '(?m)^\[dependencies\]\s*\z'
-    match: contains
+    pattern: '\[dependencies\]\s*\n\s*[A-Za-z_-]'
+    match: not_contains
