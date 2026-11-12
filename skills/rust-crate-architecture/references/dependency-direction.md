@@ -99,7 +99,10 @@ Move the type down. This is the common case and the cheapest fix.
    needs a conversion in both directions and always drifts.
 3. Delete the upward dependency from the lower crate.
 4. Add the new dependency to both former sides.
-5. Run `cargo tree -e normal` on both crates and confirm the tree shrank.
+5. Run `cargo tree --locked -p <lower-crate> -e normal,build --target all` and
+   confirm that the higher crate is gone from it. Only the lower crate's tree
+   shrinks: the higher crate keeps its edge to the lower crate and gains the
+   edge to the crate that now holds the type.
 
 Do not move a type that carries I/O, a handle, or a runtime type in a field. It
 is not a Layer 0 type; you need Fix B.
@@ -222,6 +225,10 @@ cargo metadata --locked --no-deps --format-version 1 \
   | jq -r '.packages[] | .name as $n | .dependencies[] | select(.path != null)
            | "\($n) -> \(.name) [\(.kind // "normal")]"' | grep -- '-> <crate> '
 ```
+
+Without `jq`, pipe the same `cargo metadata` output through the `python3` filter
+in [Read the graph from cargo](../SKILL.md#read-the-graph-from-cargo), then
+through `grep -- '-> <crate> '`.
 
 Then remove, in one commit: the directory, the `members` entry, the
 `[workspace.dependencies]` entry, any dependency line in other members, any

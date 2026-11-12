@@ -28,6 +28,14 @@ cargo metadata --locked --no-deps --format-version 1 \
   | jq -r '.packages[] | .name as $n | .dependencies[] | select(.path != null)
            | "\($n) -> \(.name) [\(.kind // "normal")]"' | sort
 
+# The same edge list without jq.
+cargo metadata --locked --no-deps --format-version 1 | python3 -c '
+import json, sys
+for p in json.load(sys.stdin)["packages"]:
+    for d in p["dependencies"]:
+        if d.get("path"):
+            print("%s -> %s [%s]" % (p["name"], d["name"], d["kind"] or "normal"))' | sort
+
 # Forward dependencies of one crate: what it is allowed to know.
 cargo tree --locked -p <crate> -e normal,build --target all
 
@@ -83,7 +91,7 @@ Once before commit, run the workspace gate:
 cargo metadata --locked --no-deps --format-version 1     # inventory changed as intended
 cargo tree --locked --workspace -i <foundation-crate> --target all   # who now depends on the shared crate
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo deny --config deny.toml --locked check
+cargo deny --config deny.toml --locked check     # cargo-deny 0.20.0 or later
 ```
 
 Then compare the edge list from [Read the graph from cargo](#read-the-graph-from-cargo)
@@ -341,19 +349,8 @@ rule above becomes true.
 
 ### Naming conventions
 
-- When a workspace hosts several independent stacks, give each stack one prefix:
-  `<stack>-<role>`. The prefix makes a cross-stack dependency visible in a diff.
-- Name test-support and utility crates by role, with no stack prefix:
-  `golden-test-support`, `network-fixture`.
-- Do not encode a layer number in the name. Layers move during a refactor;
-  renaming a crate is expensive.
-- Cargo maps hyphens in a package name to underscores in the library target, the
-  `use` path, and the artifact file name. Renaming a package renames
-  `lib<name>.so` or `lib<name>.a` and breaks every loader and binding that names
-  it. To rename the package and keep the artifact and the `use` path, set
-  `[lib] name = "<old_name>"`. The `[workspace.dependencies]` key, each
-  dependent's dependency key, and every `-p <name>` in scripts and CI still
-  change.
+Read [references/naming.md](references/naming.md) when you name or rename a crate: stack
+prefixes, role names, and what a package rename breaks.
 
 ## Restructuring an existing workspace
 
