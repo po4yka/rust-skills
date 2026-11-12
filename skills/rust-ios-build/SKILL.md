@@ -11,16 +11,15 @@ slices as an XCFramework, and prove that a Swift consumer links and runs it.
 
 Route neighbouring work to these skills, when they are installed:
 
-- `uniffi-packaging-versioning` generates the header, modulemap, and Swift
-  sources for a UniFFI core. This skill still owns the slices, the
-  XCFramework, SwiftPM, and the checks.
-- `rust-swift-ffi` owns the hand-written Swift wrapper, callbacks, and Swift
-  concurrency isolation.
-- `rust-unsafe` owns ABI layout and pointer ownership.
+- `uniffi-packaging-versioning` generates the UniFFI header, modulemap, and
+  Swift sources with the in-crate `uniffi-bindgen`, never a global one.
+- `rust-swift-ffi` owns the hand-written Swift wrapper; a Rust callback hops to
+  the main actor with `Task { @MainActor in ... }`.
+- `rust-unsafe` owns ABI layout; give each opaque handle its own `#[repr(C)]` type.
 - `rust-panic-safety` owns panic containment at the exported C ABI and the
   `panic` profile setting.
 - `rust-native-linking` owns `build.rs`, C dependencies, and linker inputs.
-- `rust-debugging` investigates a crash after symbol preservation works.
+- `rust-debugging` symbolicates a crash with `atos` and the matching dSYM.
 
 Link one Rust `staticlib` into an app. Each staticlib carries its own copy of
 `std`, and the Rust Reference says that multiple Rust staticlibs "are likely to
@@ -30,8 +29,6 @@ Do not add an Objective-C wrapper when Swift can import the C header directly.
 Do not build a dynamic library for an app when a static library is sufficient.
 
 ## Verification
-
-Each check proves one claim. The "When" column sets how often it runs.
 
 | Claim | Check | When | Does not prove |
 | --- | --- | --- | --- |
