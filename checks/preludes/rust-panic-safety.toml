@@ -1,7 +1,5 @@
 # Preludes for the rust-panic-safety skill. Format: checks/README.md.
 
-# SKILL.md
-
 [[block]]
 file = "rust-panic-safety/references/unwind-state.md"
 section = "`UnwindSafe` and `AssertUnwindSafe`"
@@ -17,7 +15,7 @@ let mut state: State = todo!();
 '''
 
 [[block]]
-file = "rust-panic-safety/SKILL.md"
+file = "rust-panic-safety/references/boundary-patterns.md"
 section = "The guard pattern: hand-rolled C ABI"
 block = 1
 items = '''

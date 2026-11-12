@@ -29,3 +29,13 @@ Rules:
   `#[should_panic]` test therefore runs under unwind even when release aborts. Do not read a
   green test run as proof that the shipped library unwinds.
 - State the reason for the strategy in a comment next to the `panic` key.
+
+## Check the shipped strategy
+
+Run the `--print cfg` check with the same `--target`, `--profile`, and environment as the
+shipping build. It then reflects every source of the strategy: the root manifest profile,
+`[profile.<name>]` in `.cargo/config.toml`, `CARGO_PROFILE_<NAME>_PANIC`, `RUSTFLAGS`,
+`CARGO_ENCODED_RUSTFLAGS`, `build.rustflags`, and `target.<triple>.rustflags`. Without
+`--target`, Cargo builds for the host and skips the rustflags of the shipping triple, so the
+check can print `unwind` for a library that ships with `abort`. Replace `--release` with
+`--profile <name>` when the shipping profile is not `release`.

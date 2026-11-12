@@ -6,6 +6,7 @@ across all entry points of the crate.
 
 Contents:
 
+- The guard pattern: hand-rolled C ABI
 - Pattern selection
 - Status codes
 - Returning a pointer or an opaque handle
@@ -17,8 +18,51 @@ Contents:
 - Async work behind a synchronous boundary
 - Testing the guard
 
-Every `Err(payload)` branch below calls the `discard_panic_payload` helper from `SKILL.md`.
-This probe proves that it survives a payload whose destructor panics:
+## The guard pattern: hand-rolled C ABI
+
+`SKILL.md` gives the rules; this is the reference shape. It returns a status code and reserves
+one code for a caught panic:
+
+```rust
+pub const OK: i32 = 0;
+pub const ERR_INVALID_INPUT: i32 = -1;
+pub const ERR_IO: i32 = -2;
+pub const ERR_PANIC: i32 = -99;
+
+fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload)));
+    if let Err(payload) = second {
+        // The destructor of the first payload panicked. Do not drop the second payload here.
+        let _leaked = std::mem::ManuallyDrop::new(payload);
+    }
+}
+
+/// # Safety
+/// `ptr` must be non-null, aligned, writable for `len` bytes, and unaliased for
+/// this call. `len` must not exceed `isize::MAX`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lib_render(ptr: *mut u8, len: usize) -> i32 {
+    if ptr.is_null() || len > isize::MAX as usize {
+        return ERR_INVALID_INPUT;
+    }
+    let result = std::panic::catch_unwind(|| {
+        // SAFETY: the caller guarantees the contract above.
+        let buf = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
+        render_into(buf)
+    });
+    match result {
+        Ok(Ok(())) => OK,
+        Ok(Err(Error::InvalidInput)) => ERR_INVALID_INPUT,
+        Ok(Err(Error::Io(_))) => ERR_IO,
+        Err(payload) => {
+            discard_panic_payload(payload);
+            ERR_PANIC
+        }
+    }
+}
+```
+
+Every `Err(payload)` branch below calls this `discard_panic_payload` helper. This probe proves that it survives a payload whose destructor panics:
 
 ```rust,run
 fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
