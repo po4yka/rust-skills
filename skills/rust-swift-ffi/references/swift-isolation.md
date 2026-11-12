@@ -33,8 +33,8 @@ Measured under MainActor default isolation:
 - A box and trampolines that are all inferred `@MainActor` compile without a
   diagnostic in Swift 6 and Swift 5 mode. Rust then runs the "main-actor"
   code on its worker thread, and no runtime check fires.
-- A mix fails in Swift 6 mode with one of the isolation errors in the triage
-  table of `SKILL.md`. Swift 5 mode reports some of them as warnings and
+- A mix fails in Swift 6 mode with one of the isolation errors in the Triage
+  table below. Swift 5 mode reports some of them as warnings and
   misses others, for example a `nonisolated` trampoline that calls a method on
   an unannotated struct.
 - `MainActor.assumeIsolated` inside the callback traps in
@@ -85,3 +85,13 @@ Objective-C temporary objects, wrap the synchronous callback body in
 `autoreleasepool { ... }`. Copy all values that must outlive
 the pool. A task scheduled onto an Apple executor uses that executor's pool
 and usually does not need a second one.
+
+## Triage
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `main actor-isolated ... can not be referenced from a nonisolated context`, `main actor-isolated default value in a nonisolated context`, `call to main actor-isolated ... in a synchronous nonisolated context`, or a `deinit` Sendable error | The module uses default MainActor isolation | Mark `nonisolated` every declaration that Rust reaches (see above) |
+| UI hangs while an async wrapper waits on Rust | A `nonisolated` async method runs on the main actor under `nonisolated(nonsending)` | Mark a short call `@concurrent`; run a long one on a dedicated `Thread` |
+| Thread Sanitizer reports a race in a context box that compiles clean in Swift 6 | `Unmanaged` hides a non-`Sendable` box | Make the box a `final class` marked `Sendable`, with `let` properties and a `let` lock |
+| Trap in `dispatch_assert_queue` on the first callback | `MainActor.assumeIsolated` ran on a Rust thread | Make the box `nonisolated` and hop with `Task { @MainActor in ... }` |
+| UI isolation warning or crash | Rust called a main-actor value directly | Copy the event and hop with `Task { @MainActor in ... }` |
