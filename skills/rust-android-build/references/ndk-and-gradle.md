@@ -115,7 +115,7 @@ rustup target add aarch64-linux-android armv7-linux-androideabi \
 
 Keep `crate-type = ["lib"]` under `[lib]` in `Cargo.toml`, and select the `cdylib` per invocation.
 A plain `cargo build` of that package writes only an rlib and never runs the NDK linker. Set
-`NDK_BIN` as in the [ELF check](../SKILL.md#elf-check).
+`NDK_BIN` as in `references/elf-verification.md`.
 
 ```bash
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android<api>-clang"
