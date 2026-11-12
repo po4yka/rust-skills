@@ -364,9 +364,5 @@ on the golden files.
 
 Use these skills when they are installed:
 
-- `rust-discipline`: parse, do not validate, and the newtype that carries the invariant
 - `rust-security`: hardening a parser that reads untrusted input, and the advisory gate
-- `rust-test-tools`: property and golden tests for a round trip
-- `rust-crate-architecture`: which crate owns a type that crosses a boundary
-- `uniffi-boundary`: versioned payloads that cross an FFI boundary as JSON
-- `ffi-error-progress-cancel`: the error taxonomy those payloads carry
+- `rust-test-tools`: a `proptest` round trip and golden files
