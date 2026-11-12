@@ -43,9 +43,7 @@ of the future. Use `async` only for routines that own everything they touch. Whe
 must touch one struct, hand each a `&mut` to a **different field** before the futures are
 created. The `rust-async-internals` skill owns that case.
 
-No escape works. A `*mut State` smuggled through `Waker::data()` does not survive
-`FuturesUnordered`, and two `&mut State` made from it are undefined behavior.
-`Context::ext()` (nightly) is `()` under tokio, so every downcast returns `None` with no
-diagnostic. Nightly coroutines fail with `implementation of Coroutine is not general enough`.
-Read `references/coroutines-and-generators.md` when someone proposes one of these escapes, a
-stable generator crate, `std::ops::Generator`, or a `gen` block as the fix.
+No escape works: not a `*mut State` in `Waker::data()`, not `Context::ext()`, and not a nightly
+coroutine. Read `references/coroutines-and-generators.md` when someone proposes one of these
+escapes, a stable generator crate, `std::ops::Generator`, or a `gen` block as the fix. It holds
+the verdict and the evidence for each.
