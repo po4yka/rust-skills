@@ -1,8 +1,8 @@
 # Target setup details
 
 Use this file when the engine baseline is older than the Rust defaults, when
-the MSRV is below Rust 1.87, or when `getrandom` fails to build for
-`wasm32-unknown-unknown`.
+the MSRV is below Rust 1.87, when you validate an artifact against the engine
+baseline, or when `getrandom` fails to build for `wasm32-unknown-unknown`.
 
 ## Default WebAssembly features by Rust version
 
@@ -37,6 +37,19 @@ RUSTFLAGS=-Ctarget-cpu=mvp cargo +nightly build -Zbuild-std=panic_abort,std --ta
 ```
 
 Validate the result with `wasm-tools validate --features=wasm1`.
+
+## Validate against the engine baseline
+
+`wasm2` includes SIMD; append `,-simd` when the baseline has no SIMD. A `wasm1`
+or `wasm2` group replaces the whole feature set and turns off the component
+model, so for a component add `,component-model`.
+
+```bash
+wasm-tools validate --features=wasm2 pkg/<name>_bg.wasm   # WebAssembly 2.0 engine
+wasm-tools validate --features=wasm1 pkg/<name>_bg.wasm   # WebAssembly 1.0 engine
+wasm-tools validate --features=wasm2,component-model target/wasm32-wasip2/release/<binary>.wasm
+wasm-tools print pkg/<name>_bg.wasm | grep '(import '     # compare with the host contract
+```
 
 ## Configure `getrandom` for `wasm32-unknown-unknown`
 

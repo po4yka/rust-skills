@@ -9,21 +9,13 @@ license: BSD-3-Clause
 Build and verify Rust for the exact WebAssembly host that runs it. A `.wasm`
 suffix does not define an ABI, an import set, or a runtime.
 
-Related skill, when installed: `cargo-workflows` for features and profiles. This skill owns the host event loop,
-WebAssembly limits, artifact size, and boundary costs.
-
 ## Write the host contract first
 
-When you add a WebAssembly target, a host, or a published package, record these
-facts. They decide the target, the dependencies, and the test matrix:
-
-1. Name the Rust target triple.
-2. Name the host and its minimum version.
-3. Name the artifact format: core module or component.
-4. List allowed imports and capabilities.
-5. Name the JavaScript output mode when JavaScript glue exists.
-6. Name the engine feature baseline: the WebAssembly features that the oldest
-   supported engine accepts.
+When you add a WebAssembly target, a host, or a published package, record the Rust target
+triple, the host and its minimum version, the artifact format (core module or component), the
+allowed imports and capabilities, the JavaScript output mode, and the engine feature baseline
+(the features the oldest supported engine accepts). They decide the target, the dependencies,
+and the test matrix.
 
 Do not infer the host from `target_arch = "wasm32"`. Browser, Node.js, WASIp1,
 and WASIp2 builds can share that architecture and still have incompatible APIs.
@@ -39,8 +31,7 @@ and WASIp2 builds can share that architecture and still have incompatible APIs.
 | Minimal WebAssembly 1.0 engine with `no_std` | `wasm32v1-none` | Core module | Use only when `core` and `alloc` are sufficient |
 | WASI 0.3 async component host | `wasm32-wasip3` | Component | Tier 3 as of Rust 1.98.1: rustup ships no `std` for it. Do not select it for a stable-toolchain product ([target page](https://doc.rust-lang.org/rustc/platform-support/wasm32-wasip3.html)) |
 
-Do not use `wasm32-unknown-unknown` as a generic WASI target. It deliberately
-has no WASI imports. Do not send a WASIp2 component to an API that accepts only
+Do not use `wasm32-unknown-unknown` as a generic WASI target. Do not send a WASIp2 component to an API that accepts only
 a core module.
 
 The `std` targets do not emit WebAssembly 1.0 code. They enable `multivalue`,
@@ -51,46 +42,39 @@ or rebuild `std` for the MVP on nightly. Read `references/target-setup.md` when
 the engine baseline is older than these defaults or the MSRV is below 1.87.
 
 Do not enable a WebAssembly target feature only because the compiler accepts
-it. The final module can contain those instructions even when a runtime path
-does not execute them. Gate optional SIMD code with
+it: the module then carries those instructions. Gate optional SIMD code with
 `#[cfg(target_feature = "simd128")]` and keep a portable implementation.
 
-Rust 1.84 removed the `wasm32-wasi` target, so `rustup target add` fails for it.
-Rename it to `wasm32-wasip1` in CI, `.cargo/config.toml`, and `rust-toolchain.toml`.
+Rust 1.84 removed `wasm32-wasi`: rename it to `wasm32-wasip1` in CI,
+`.cargo/config.toml`, and `rust-toolchain.toml`.
 
 ## Triage
 
 | Symptom | Likely cause | First check | Fix |
 |---|---|---|---|
 | `unknown import` at instantiation | Wrong target or missing host capability | Inspect imports with `wasm-tools print` | Select the correct target or implement and grant the import |
-| `rust-lld: error: ...: undefined symbol: <name>` on Rust 1.96+ | WebAssembly targets no longer pass `--allow-undefined`, so an undeclared import no longer becomes an `env` import | Find the `extern` block or the C object that should provide `<name>` | Put `#[link(wasm_import_module = "<module>")]` on the `extern` block of a host import; fix the C build otherwise. Use `-Clink-arg=--allow-undefined` only as a temporary migration shim |
+| `rust-lld: error: ...: undefined symbol: <name>` on Rust 1.96+ | The linker no longer passes `--allow-undefined`, so an undeclared import fails | Find the `extern` block or C object that should provide `<name>` | Put `#[link(wasm_import_module = "<module>")]` on a host import's `extern` block; fix the C build otherwise. `-Clink-arg=--allow-undefined` is only a migration shim |
 | Wasmtime: `expected a WebAssembly module but was given a WebAssembly component`; V8 or Node.js: `expected version 01 00 00 00, found 0d 00 01 00` | Host accepts a core module, but the artifact is a component | Run `wasm-tools component wit` | Use a component host or build the required core-module target |
-| `compile_error!` from `getrandom` on `wasm32-unknown-unknown` | No random backend for a JavaScript host | `cargo tree --locked --target wasm32-unknown-unknown -e features -i getrandom` | Enable the backend for each major version in the final `cdylib` or binary, never in a library (see "Keep portable logic separate") |
+| `compile_error!` from `getrandom` on `wasm32-unknown-unknown` | No random backend for a JavaScript host | `cargo tree --locked --target wasm32-unknown-unknown -e features -i getrandom` | See "Keep portable logic separate" |
 | "rust Wasm file schema version" from `wasm-bindgen` | CLI version differs from the locked crate | Compare `wasm-bindgen --version` with `Cargo.lock` | Install the exact locked version, or build through `wasm-pack` |
-| `wasm-opt` rejects bulk-memory or non-trapping float-to-int instructions | The optimizer does not enable the Rust 1.87+ default features, or the profile strips `target_features` | Find `found wasm-opt at ...` in the wasm-pack log (absent means the bundled binaryen ran), then run `wasm-opt --version` on that binary | Enable both features in the `wasm-opt` arguments; `references/size-and-optimizer.md` has the setting |
-| `cc` build script fails for a WASI target, for example `'stdio.h' file not found` | `cc` fell back to a system `clang` with no WASI sysroot | `echo "$WASI_SDK_PATH"`, `ls "$WASI_SDK_PATH/bin"`, and the `cc` version in `Cargo.lock` (1.2.39 or later) | Install wasi-sdk, set `WASI_SDK_PATH`, and update `cc`, or set `CC_<target>`; `references/wasi.md` has the details |
-| Export is undefined | Wrong generated-JS mode or initialization did not finish | Inspect the generated module and package test | Match the consumer mode and await initialization |
-| "time not implemented on this platform", or a bare `RuntimeError: unreachable` near timing code | `Instant::now()` or `SystemTime::now()` on `wasm32-unknown-unknown` | Install the panic hook in a debug build and read the message | Read the clock in the JavaScript adapter. For a dependency, enable its wasm or JavaScript feature, or replace it (`web-time` gives drop-in types) |
+| `wasm-opt` rejects bulk-memory or non-trapping float-to-int instructions | The optimizer lacks the Rust 1.87+ default features | `found wasm-opt at ...` in the wasm-pack log, then `wasm-opt --version` | Enable both features in the `wasm-opt` arguments (`references/size-and-optimizer.md`) |
+| `cc` build script fails for a WASI target, for example `'stdio.h' file not found` | `cc` fell back to a system `clang` with no WASI sysroot | `echo "$WASI_SDK_PATH"` and the `cc` version (1.2.39+) | Install wasi-sdk and set `WASI_SDK_PATH` (`references/wasi.md`) |
+| Export is undefined | Wrong generated-JS mode, or initialization did not finish | The generated module | Match the consumer mode and await initialization |
+| "time not implemented on this platform", or a bare `RuntimeError: unreachable` near timing code | `Instant::now()` or `SystemTime::now()` on `wasm32-unknown-unknown` | Install the panic hook in a debug build | Read the clock in the JavaScript adapter; for a dependency, enable its wasm feature or use `web-time` |
 | `unreachable` or `RuntimeError` after a Rust failure | Panic became a trap | Enable bounded panic diagnostics and inspect the first panic | Return a typed error for expected failure; fix the panic; discard the instance when state integrity matters |
 | Callback fails after setup returns | Its Rust `Closure` was dropped | Find the owner and unregister path | Store the closure until listener removal |
 | View returns corrupt or old bytes | Linear memory grew | Compare `memory.buffer` before and after allocation | Recreate the typed-array view |
 | Browser passes but Node.js fails | DOM or ES-module assumption reached Node.js | Run the generated Node.js package test | Move the API behind the correct host adapter |
-| Host build passes but Wasm target fails | Unconditional OS or thread dependency | Run `cargo tree --target <triple> -e features` for the row | Gate the dependency and expose a portable interface |
-| Module validates but fails on the oldest engine | Default post-1.0 features, an enabled proposal, or a WIT version the host lacks | `wasm-tools validate --features=wasm1` (or `wasm2`), then the host interface versions | Build for the baseline (`wasm32v1-none`, or an MVP `std` build on nightly) or raise the documented minimum |
+| Host build passes but Wasm target fails | Unconditional OS or thread dependency | `cargo tree --target <triple> -e features` | Gate the dependency behind a portable interface |
+| Module validates but fails on the oldest engine | Default post-1.0 features, an enabled proposal, or a WIT version the host lacks | `wasm-tools validate --features=wasm1` (or `wasm2`) | Build for the baseline or raise the documented minimum |
 | Size jumps after a small API change | Generic duplication, extra `web-sys` features, or glue growth | Compare `twiggy top` or `wasm-tools objdump` output and package contents | Remove the measured source of growth |
 
 ## Verify the matrix that ships
 
-Use four layers. Stop only when all applicable layers pass.
-
-1. Run portable logic on the host with `cargo nextest run --locked`, or
-   `cargo test --locked` when cargo-nextest is not installed.
-2. Compile every supported target and feature set.
-3. Run boundary tests in each real host mode.
-4. Load the final packaged artifact from the JavaScript package or deployment
-   directory, not from Cargo's target directory.
-
-Browser and Node.js tests:
+Pass all applicable layers: portable logic on the host (`cargo nextest run --locked`, or
+`cargo test --locked`); every supported target and feature set compiled; boundary tests in each
+real host mode; and the final packaged artifact loaded from the package or deployment directory,
+not from Cargo's target directory.
 
 ```bash
 wasm-pack test --headless --chrome
@@ -98,76 +82,54 @@ wasm-pack test --headless --firefox
 wasm-pack test --node
 ```
 
-Do not replace browser tests with Node.js tests. Node.js has no DOM and uses a
-different module loader. Do not replace runtime execution with
-`cargo check --target`; it does not instantiate the module or resolve imports.
+Do not replace browser tests with Node.js tests: Node.js has no DOM and uses a
+different module loader. `cargo check --target` does not instantiate the module
+or resolve imports.
 
 Add one JavaScript integration test that imports the generated package, awaits
-initialization when required, calls a success path, and verifies the public
-error shape and any 64-bit value round trip. This catches stale glue, wrong
-package metadata, and a missing `.wasm` deployment asset.
+initialization, calls a success path, and verifies the public error shape and a
+64-bit value round trip. It catches stale glue and a missing `.wasm` asset.
 
-Build an explicit matrix in CI. Include the target, Cargo features, host, and
-minimum host version in each row. Use
-`cargo tree --locked --target <triple> -e features` to find an additive Cargo
-feature that leaks an unsupported dependency into a row.
+Build an explicit CI matrix of target, Cargo features, host, and minimum host
+version. `cargo tree --locked --target <triple> -e features` finds a feature that
+leaks an unsupported dependency into a row.
 
-Validate each final artifact against the engine baseline. Plain
+Validate each final artifact against the engine baseline with
+`wasm-tools validate --features=wasm2` (or `wasm1`), and compare its
+`wasm-tools print` import list with the host contract. Plain
 `wasm-tools validate` accepts every phase 4 proposal, so it proves nothing about
-an old engine. `wasm2` includes SIMD; append `,-simd` when the baseline has no
-SIMD. A `wasm1` or `wasm2` group replaces the whole feature set and turns off
-the component model, so for a component add `,component-model`.
-
-```bash
-wasm-tools validate --features=wasm2 pkg/<name>_bg.wasm   # WebAssembly 2.0 engine
-wasm-tools validate --features=wasm1 pkg/<name>_bg.wasm   # WebAssembly 1.0 engine
-wasm-tools validate --features=wasm2,component-model target/wasm32-wasip2/release/<binary>.wasm
-wasm-tools print pkg/<name>_bg.wasm | grep '(import '     # compare with the host contract
-```
+an old engine. Read `references/target-setup.md` when you write the validate
+command: it has the SIMD and component-model variants.
 
 Read `references/wasi.md` when a matrix row targets `wasm32-wasip1` or
-`wasm32-wasip2`. It has the build, validate, and `wasmtime run` commands. Grant a
-WASI run only the directories, environment variables, sockets, and other host
-capabilities that it needs. A run with broad inherited access does not prove the
-production capability policy. Pin the WIT package versions and the host runtime
-together. A component can validate and still fail against a different world or
-interface version.
+`wasm32-wasip2`. Grant a WASI run only the capabilities that it needs: a run with
+broad inherited access does not prove the production policy. Pin the WIT package
+versions and the host runtime together.
 
-Run the checks again after a toolchain bump, a dependency bump, or a `wasm-opt`
-change. Load the module in the oldest supported engine when the contract names
-one.
+Run the checks again after a toolchain, dependency, or `wasm-opt` change.
 
 Measure the final packaged `.wasm`, raw and gzip-compressed, against a size
-budget. Pin the wasm-pack version and the `wasm-opt` that it runs: a wasm-pack
-upgrade can silently change the bundled optimizer. Read
+budget. Pin the wasm-pack version: an upgrade can change the bundled `wasm-opt`. Read
 `references/size-and-optimizer.md` when you set a size budget, change the
 release profile, or change how `wasm-opt` runs.
 
 ## Completion evidence
 
-Report:
-
-- the target, host, minimum version, artifact type, and capability policy;
-- the exact Cargo feature set and the engine feature baseline;
-- the build, validation, and runtime commands for every shipped matrix row,
-  including the `wasm-tools validate --features=...` baseline check and the
-  import list of each final artifact;
-- a successful import of the final JavaScript package when JS glue exists;
-- raw and compressed artifact sizes against the budget;
-- any browser, Node.js, WASI, or component row that could not run.
+Report the host contract and capability policy, the Cargo feature set and engine baseline, the
+build, baseline-validation, and runtime commands and import list of every shipped matrix row, a
+successful import of the final JavaScript package, raw and compressed sizes against the budget,
+and every row that could not run.
 
 ## Keep portable logic separate
 
-Put parsing, validation, state transitions, and business rules in a normal Rust
-library. Put browser, Node.js, and WASI adapters at the edge.
+Put business logic in a normal Rust library and the browser, Node.js, and WASI
+adapters at the edge.
 
-Use target predicates only for facts that the compiler knows:
+Use target predicates only for facts the compiler knows:
 `cfg(all(target_family = "wasm", target_os = "unknown"))` for a bare JavaScript
-host, and `cfg(all(target_os = "wasi", target_env = "p1"))` or
-`target_env = "p2"` for a WASI preview. Rust cannot detect browser against
-Node.js with `cfg`. If the same crate ships to both, select adapters with
-explicit Cargo features and reject invalid feature sets. Keep one neutral
-default when possible.
+host, `cfg(all(target_os = "wasi", target_env = "p1"))` or `"p2"` for WASI.
+`cfg` cannot tell a browser from Node.js: select adapters with explicit Cargo
+features and reject invalid sets.
 
 ```rust
 #[cfg(all(feature = "browser", feature = "node"))]
@@ -176,28 +138,11 @@ compile_error!("select only one JavaScript host feature");
 fn main() {}
 ```
 
-Target-specific dependency tables stop browser-only crates from entering WASI
-resolution:
-
-```toml
-[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-wasm-bindgen = "0.2"
-js-sys = "0.3"
-
-[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies.web-sys]
-version = "0.3"
-features = ["Window", "Performance", "console"]
-```
-
-Enable only the `web-sys` interfaces that the code uses. Each one adds binding
-code, compile time, and possible artifact size.
-
-Inject the clock. On `wasm32-unknown-unknown`, read time in the JavaScript
-adapter and pass it to the portable code, because `std::time` panics there. Use
-`js_sys::Date::now()`, or `window.performance()` and then `.now()` on the result.
-`now` is an instance method of `web_sys::Performance`, so write
-`web_sys::window().and_then(|w| w.performance()).map(|p| p.now())`. It needs the
-`Window` and `Performance` features.
+Put browser-only crates in a `[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]`
+table so they stay out of WASI resolution, and enable only the `web-sys` interfaces the code uses.
+Inject the clock: on `wasm32-unknown-unknown`, read time in the JavaScript adapter, because
+`std::time` panics there. Read `references/javascript-host.md` when you write that table or the
+clock adapter.
 
 `getrandom` has no default backend on `wasm32-unknown-unknown`. Enable feature
 `wasm_js` (0.3.4 and later, 0.4) or `js` (0.2) for each major version in the

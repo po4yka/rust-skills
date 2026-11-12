@@ -1,8 +1,13 @@
 # JavaScript host builds and boundary
 
 Use this file when the crate exports to a browser or Node.js through
-`wasm-bindgen`. It holds "Build for a JavaScript host" and "Design the
-JavaScript boundary" from `SKILL.md`.
+`wasm-bindgen`, or when you add browser-only dependencies or a clock adapter.
+
+Contents:
+
+- Build for a JavaScript host
+- Browser-only dependencies and the clock
+- Design the JavaScript boundary
 
 ## Build for a JavaScript host
 
@@ -47,6 +52,30 @@ const result = parse("input");
 
 Serve browser tests over HTTP. Opening the HTML through `file://` does not prove
 that module loading, MIME types, CORS, or `fetch` work in deployment.
+
+## Browser-only dependencies and the clock
+
+Target-specific dependency tables stop browser-only crates from entering WASI
+resolution:
+
+```toml
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies.web-sys]
+version = "0.3"
+features = ["Window", "Performance", "console"]
+```
+
+Each `web-sys` interface adds binding code, compile time, and possible artifact
+size.
+
+Read time in the JavaScript adapter and pass it to the portable code. Use
+`js_sys::Date::now()`, or `window.performance()` and then `.now()` on the result.
+`now` is an instance method of `web_sys::Performance`, so write
+`web_sys::window().and_then(|w| w.performance()).map(|p| p.now())`. It needs the
+`Window` and `Performance` features.
 
 ## Design the JavaScript boundary
 
