@@ -10,16 +10,16 @@ A UniFFI boundary crate is a thin adapter. It declares the exported surface, and
 bindings generator produces Kotlin and Swift from the same Rust signatures. This skill owns
 the shape of that surface. These skills, when installed, own the adjacent topics:
 
-| Topic | Skill |
+| Skill | Topic |
 |-------|-------|
-| Error taxonomy, progress delivery to `Flow` or `AsyncThrowingStream`, cancel, job registry | `ffi-error-progress-cancel` |
-| cdylib and staticlib, bindgen commands, header and modulemap, UniFFI version pins and skew | `uniffi-packaging-versioning` |
-| XCFramework assembly and SwiftPM `binaryTarget` | `rust-ios-build` |
-| Hand-written JNI or C ABI without UniFFI | `rust-jni`, `rust-swift-ffi` |
-| Unwind policy and the `panic` profile | `rust-panic-safety` |
-| Atomics behind a cancel or progress flag | `memory-model` |
-| A manual `unsafe impl Send` or `Sync`, raw pointers | `rust-unsafe` |
-| Crate split and dependency direction | `rust-crate-architecture` |
+| `ffi-error-progress-cancel` | Error taxonomy, progress delivery to `Flow` or `AsyncThrowingStream`, cancel, job registry |
+| `uniffi-packaging-versioning` | cdylib and staticlib, bindgen commands, header and modulemap, UniFFI version pins and skew |
+| `rust-ios-build` | XCFramework assembly with `xcodebuild -create-xcframework`, and SwiftPM `binaryTarget` |
+| `rust-jni`, `rust-swift-ffi` | Hand-written JNI or C ABI without UniFFI |
+| `rust-panic-safety` | Unwind policy: ship `panic = "unwind"`, or no guard catches a panic |
+| `memory-model` | Atomics behind a cancel or progress flag: `Release`/`Acquire` when the flag publishes data |
+| `rust-unsafe` | A manual `unsafe impl Send` or `Sync` with a `SAFETY` comment, raw pointers |
+| `rust-crate-architecture` | Crate split and dependency direction: `cargo tree --locked -p <crate> -e normal,build --target all` |
 
 ## Version floor
 
@@ -145,9 +145,8 @@ UniFFI adapter, also deny `clippy::unreachable` and `clippy::indexing_slicing`, 
 panic in a non-throwing export is a Swift fatal error. Add `clippy::arithmetic_side_effects`
 when the crate does arithmetic.
 
-Add `#![forbid(unsafe_code)]` when the crate has no hand-written `unsafe`. The generated
-scaffolding does not trip it (Rust 1.99.1, UniFFI 0.32.2). The `rust-unsafe` skill owns
-that rule.
+Add `#![forbid(unsafe_code)]` when the crate has no hand-written `unsafe`; the `rust-unsafe`
+skill owns that rule. The generated scaffolding does not trip it (Rust 1.99.1, UniFFI 0.32.2).
 
 The lints do not see a panic inside an inner crate that the adapter calls, or inside a
 panicking std API such as `split_at`, `Vec::remove`, or `copy_from_slice`. Keep the body of a

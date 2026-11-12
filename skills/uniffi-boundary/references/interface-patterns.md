@@ -169,7 +169,8 @@ come from the UniFFI boundary itself:
   `Drop` that removes a registry entry: a second panic during unwinding aborts the process.
 - The cancel flag is an `AtomicBool`, not a `Mutex<bool>`, because the worker reads it on
   the hot loop. `Relaxed` is correct only when the flag alone decides and publishes no other
-  data. The `memory-model` skill has the ordering argument.
+  data. The `memory-model` skill has the ordering argument: use `Release`/`Acquire` when the
+  flag publishes data.
 
 ## Async exports
 
