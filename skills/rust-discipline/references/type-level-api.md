@@ -281,8 +281,8 @@ to remove.
 Const generics are the opposite. A `const N: usize` parameter propagates into every signature
 that touches the type, and each distinct `N` is a separate monomorphization. Use them for a
 fixed-size buffer whose size the caller genuinely knows at compile time. For a size the caller
-learns at run time, use a slice and check the length once. See the `rust-performance` skill for
-the monomorphization cost.
+learns at run time, use a slice and check the length once. The `rust-performance` skill owns
+the monomorphization cost; measure it with `cargo llvm-lines --locked --release`.
 
 ## Assert an invariant at compile time
 
@@ -311,7 +311,8 @@ passes on a 64-bit host fails the build with E0080 when the same file is cross-c
 This costs nothing at run time and needs no dependency. `size_of` and `align_of` are in the
 prelude since Rust 1.80. On an older MSRV, qualify them with `std::mem::`. Put one
 assert next to every type whose size or alignment another language depends on.
-See the `rust-unsafe` skill for the layout rules these assertions protect.
+The `rust-unsafe` skill owns the layout rules these assertions protect; a type another language
+reads needs `#[repr(C)]`.
 
 ## Let the compiler narrow control flow
 

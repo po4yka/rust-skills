@@ -257,7 +257,7 @@ the type-inference failures it can cause. This rule counts two breakages: the fn
 `Fn`-bound breakage of a reference parameter, which the guide does not mention, and the inference
 breakage of any parameter, which the guide accepts. cargo-semver-checks 0.50.0 does not flag the
 change (measured on rustc 1.98.1). The `rust-crate-release` skill owns the final version-bump
-decision.
+decision; `cargo semver-checks` alone misses this break.
 
 ---
 

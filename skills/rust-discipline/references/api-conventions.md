@@ -25,7 +25,7 @@ lints, test names, and crate names.
 | C-ITER | A collection offers `iter`, `iter_mut`, and `into_iter` | `clippy::iter_without_into_iter`, `clippy::into_iter_without_iter` |
 | C-ITER-TY | Those methods return types named `Iter`, `IterMut`, and `IntoIter`; `keys()` returns `Keys` | Read the `pub` return types |
 | C-WORD-ORDER | One word order across the crate: verb-object-error for errors (`ParseIntError`, not `IntParseError`) | Read the `pub` names together |
-| C-FEATURE | A Cargo feature has a plain name (`std`, `serde`), not `use-std` or `with-serde`. A feature only adds API; it never removes an item or changes a signature | `cargo tree -e features` shows which crate turns a feature on; `cargo-workflows` owns unification |
+| C-FEATURE | A Cargo feature has a plain name (`std`, `serde`), not `use-std` or `with-serde`. A feature only adds API; it never removes an item or changes a signature | `cargo tree -e features` shows which crate turns a feature on, and `cargo-workflows` owns unification |
 | (no code) | `len` comes with `is_empty` | `clippy::len_without_is_empty` |
 | (no code) | No `Manager`, `Helper`, `Util`, or `Service` name where the type has a real job to name; no module name repeated in the type (`http::Client`, not `http::HttpClient`) | `clippy::module_name_repetitions` (pedantic) for the second half |
 | (no code) | No abbreviation in a public name (`connection`, not `conn`). A local binding may abbreviate when the context is clear | Read the `pub` names |
