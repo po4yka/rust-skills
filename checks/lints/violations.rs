@@ -83,7 +83,7 @@ pub fn unsafe_blocks(p: &u8) -> u8 {
 }
 
 /// Gate item.
-pub fn forget(v: Vec<u8>) { std::mem::forget(v) } // expect: mem_forget, disallowed_methods
+pub fn forget(v: Vec<u8>) { std::mem::forget(v) } // expect: disallowed_methods
 
 /// Gate item.
 pub fn may_panic(v: Option<u8>) -> u8 { v.unwrap() } // expect: unwrap_used, missing_panics_doc
@@ -162,11 +162,11 @@ pub fn collects(v: &[u8]) -> usize { v.iter().collect::<Vec<_>>().len() } // exp
 
 /// Gate item.
 #[must_use]
-pub fn ref_opt(v: &Option<u8>) -> bool { v.is_some() } // expect: ref_option
+pub(crate) fn ref_opt(v: &Option<u8>) -> bool { v.is_some() } // expect: ref_option
 
 /// Gate item.
 #[must_use]
-pub fn by_ref(x: &u8) -> u8 { *x } // expect: trivially_copy_pass_by_ref
+pub(crate) fn by_ref(x: &u8) -> u8 { *x } // expect: trivially_copy_pass_by_ref
 
 /// Gate item.
 #[must_use]

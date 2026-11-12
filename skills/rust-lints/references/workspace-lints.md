@@ -35,12 +35,19 @@ all                          = { level = "deny",  priority = -1 }
 pedantic                     = { level = "warn",  priority = -1 }
 nursery                      = { level = "warn",  priority = -1 }
 cargo                        = { level = "warn",  priority = -1 }
+# Under -D warnings (clippy 1.99.1), two lints of `cargo` fail builds that have no defect:
+# multiple_crate_versions fires once two versions of one crate enter Cargo.lock, which most
+# `cargo update` runs cause, so it is off here and cargo-deny judges duplicates.
+# cargo_common_metadata fires on each crate without `publish = false` that lacks description,
+# license, repository, readme, keywords, or categories.
+multiple_crate_versions      = "allow"
 # nursery's redundant_pub_crate asks for `pub` where rustc's unreachable_pub asks for
 # `pub(crate)`, so with both on no visibility is green. Keep unreachable_pub.
 redundant_pub_crate          = "allow"
 
 # Highest-value promotions. An explicit entry keeps the lint on if its group is relaxed later.
-mem_forget                   = "deny"   # forget on a Drop type is data loss
+# std::mem::forget is denied by disallowed-methods in clippy.toml. Do not add mem_forget
+# as well: each call site then reports two errors.
 undocumented_unsafe_blocks   = "deny"   # every unsafe block needs a // SAFETY: comment
 multiple_unsafe_ops_per_block = "deny" # one SAFETY: comment per operation, not per block
 missing_safety_doc           = "deny"   # a # Safety section on every pub unsafe fn

@@ -33,7 +33,7 @@ root policy, and it drifts.
 | `deny.toml` | `cargo deny` policy. The `rust-security` skill owns it. |
 
 A crate attribute overrides the inherited level in both directions. A `#![warn(lint)]` in
-`lib.rs` lowers a workspace `deny` to `warn` for that crate (verified on 1.98.1). Only
+`lib.rs` lowers a workspace `deny` to `warn` for that crate (verified on 1.99.1). Only
 `forbid` cannot be lowered. Restate an inherited lint in source only at the same or a stricter
 level. To relax a lint in one crate, follow the order in [Suppressions](#suppressions).
 
@@ -125,16 +125,16 @@ binding-layer rules.
 # No msrv key. Clippy reads `rust-version` from each member's Cargo.toml; members inherit it
 # with `rust-version.workspace = true`. Without it, clippy suggests APIs newer than the MSRV.
 # Delete an existing msrv key: when it differs from `rust-version`, clippy warns and uses the
-# clippy.toml value (verified on 1.98.1).
+# clippy.toml value (verified on 1.99.1).
 
 # Allow a known duplicate major version instead of letting clippy::multiple_crate_versions
 # (the `cargo` group) fail the build. Name both consumers in a comment.
 allowed-duplicate-crates = ["bitflags"]
 
-# The default `true` holds back every lint whose fix changes an exported signature. Set
-# `false` when no external crate consumes the API. Keep `true` for a crate on crates.io or a
-# stable FFI or binding surface.
-avoid-breaking-exported-api = false
+# `true` (the default) holds back every lint whose fix changes an exported signature. Keep it
+# for a crate on crates.io or a stable FFI or binding surface. Set `false` only when no
+# external crate consumes the API, such as an internal workspace crate or a binary.
+avoid-breaking-exported-api = true
 
 # Test code may unwrap. Non-test code uses `?`, or `.expect("<invariant>")` for a real
 # invariant (the `rust-discipline` skill owns that rule).
@@ -181,7 +181,7 @@ own `clippy.toml` replaces the root file, and every root key, `disallowed-method
 stops applying to that member (verified on 1.98.1).
 
 With `allow-unwrap-in-tests = true`, an `#[expect(clippy::unwrap_used)]` on test code is
-unfulfilled, and `-D warnings` fails on it (verified on 1.98.1). Do not add a per-test
+unfulfilled, and `-D warnings` fails on it (verified on 1.99.1). Do not add a per-test
 suppression that the key already covers. The keys cover only `#[test]` functions and
 `#[cfg(test)]` items: not a shared helper module under `tests/`, and not an `examples/` file (see
 [Suppressions](#suppressions)).
@@ -209,7 +209,8 @@ stable rustfmt accepts `style_edition` without the unstable-option warning.
 
 ## `deny.toml`
 
-`cargo deny --config deny.toml --locked check` is the supply-chain part of the gate. The
+`cargo deny --config deny.toml --locked check` is the supply-chain part of the gate. This form
+needs cargo-deny 0.20.0 or later, which moved `--config` before the subcommand. The
 `rust-security` skill owns the `deny.toml` policy (licenses, advisories, bans, sources, ignore
 review) and the failure triage.
 
@@ -238,13 +239,10 @@ small. That number is your audit surface.
 
 ### Binding and FFI crates
 
-rustc and clippy suppress almost every lint on tokens that another crate's proc macro emitted.
-Verified on rustc 1.98.1: a proc macro emits an unused variable, an unused `mut`, and a
-non-snake-case function into a crate with `#![warn(unused_variables, unused_mut,
-non_snake_case)]`, and the build reports nothing. The same source written by hand reports four
-warnings. `#![deny(unsafe_op_in_unsafe_fn)]` is silent on a macro-emitted `pub unsafe fn f(p:
-*const u8) -> u8 { *p }`, which fails with E0133 when you write it yourself. A `macro_rules!`
-defined in the same crate is not exempt.
+rustc and clippy suppress almost every lint on tokens that another crate's proc macro emitted,
+`unsafe_op_in_unsafe_fn` included. A `macro_rules!` defined in the same crate is not exempt. Read
+[references/lint-catalog.md](references/lint-catalog.md#lints-on-proc-macro-output) when you
+need the measurement.
 
 1. Lints that read an item signature still fire. `clippy::ptr_arg` and
    `clippy::exhaustive_structs` report `this warning originates in the macro`. Handle them with
@@ -284,7 +282,7 @@ Order of preference:
 ```
 
 `clippy::allow_attributes` and `clippy::allow_attributes_without_reason` enforce this order.
-Verified on 1.98.1: `allow_attributes` fires on an outer `#[allow]` and on
+Verified on 1.99.1: `allow_attributes` fires on an outer `#[allow]` and on
 `#[cfg_attr(test, allow(..))]`, but not on an inner `#![allow]`.
 `allow_attributes_without_reason` also fires on an `#[expect]` without a reason. Find inner
 allows with the audit commands in [Verification](#verification).
@@ -294,11 +292,10 @@ each site, and track the cleanup.
 
 ## Add a crate
 
-1. Add the crate path to `members` in the root `Cargo.toml`.
-2. Add `[lints] workspace = true` and `rust-version.workspace = true` to the crate manifest.
-   Add no lint levels there.
-3. Add `#![forbid(unsafe_code)]` to `lib.rs` or `main.rs`, unless the crate owns `unsafe`.
-4. Run the crate gate: `cargo clippy --locked -p <crate> --all-targets -- -D warnings`.
+The `rust-crate-architecture` skill owns the steps to create a member. The lint part: the crate
+manifest has `[lints] workspace = true` and no lint levels of its own, the crate root follows
+[Crate-level attributes](#crate-level-attributes), and the crate gate is
+`cargo clippy --locked -p <crate> --all-targets -- -D warnings`.
 
 ## Add or tighten a lint
 

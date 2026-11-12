@@ -9,6 +9,7 @@ workspace needs them, and the lint rules for a binding layer.
 - [Optional block: pointer and FFI lints](#optional-block-pointer-and-ffi-lints)
 - [Async lints: an explicit pin](#async-lints-an-explicit-pin), and `disallowed-types`
 - [Binding-layer lints](#binding-layer-lints)
+- [Lints on proc-macro output](#lints-on-proc-macro-output)
 - [Lints deliberately not in the canonical set](#lints-deliberately-not-in-the-canonical-set)
 
 ## Clippy lint groups
@@ -44,7 +45,7 @@ lints. Cherry-pick from it. The picks in the canonical set are
 `unimplemented`, `exit`, `str_to_string`, `allow_attributes`,
 `allow_attributes_without_reason`, `undocumented_unsafe_blocks`,
 `multiple_unsafe_ops_per_block`, `exhaustive_enums`, `exhaustive_structs`,
-`unwrap_in_result`, `mem_forget`, `print_stdout`, `dbg_macro`.
+`unwrap_in_result`, `print_stdout`, `dbg_macro`.
 
 ## Defect class per lint
 
@@ -53,7 +54,7 @@ defect reached production.
 
 | Lint | Defect class it catches |
 |------|-------------------------|
-| `mem_forget` = deny, plus `std::mem::forget` in `disallowed-methods` | Leaking `Drop` on a resource-bearing type: an open file, a native handle, a GPU surface, a lock guard. The resource is never released and nothing reports it. |
+| `std::mem::forget` in `disallowed-methods` (or `mem_forget` = deny, not both) | Leaking `Drop` on a resource-bearing type: an open file, a native handle, a GPU surface, a lock guard. The resource is never released and nothing reports it. |
 | `let_underscore_drop` = deny | `let _ = make_guard();` drops the new guard at the end of the statement, so the critical section that follows has no lock, and the code compiles cleanly. The lint also fires on `let _ = guard;` for a bound guard. That statement does not move or drop the guard: it lives to the end of its scope, so it does not release a lock early either. Only `drop(guard)` releases it. Verified on rustc 1.98.1. |
 | `dropping_references` (rustc, warn by default) = deny | `drop(&guard)` instead of `drop(guard)`. `drop<T>(_: T)` is generic and `&G` is a valid `T`, so the call type-checks and does nothing; the guard lives to the end of its scope. Message: `calls to std::mem::drop with a reference instead of an owned value does nothing`. Verified on rustc 1.98.1: the compiler's own `help` suggests `let _ = &g;`, which is the same no-op with the warning gone. Neither form releases the guard. Only `drop(g)` does. Deny this lint together with `let_underscore_drop`. `let_underscore_drop` catches a guard that drops too early, and this lint catches a release call that releases nothing. |
 | `undocumented_unsafe_blocks` | An `unsafe` block with no `// SAFETY:` comment. The invariant was never stated, so no reviewer can check it and no later author can preserve it. |
@@ -253,6 +254,14 @@ pub unsafe extern "C" fn first_byte(p: *const u8) -> u8 {
 Keep `improper_ctypes_definitions` at its default level and never allow it crate-wide. The
 `rust-jni` skill owns the entry-point signatures, and the `uniffi-boundary` skill owns generated
 UniFFI scaffolding.
+
+## Lints on proc-macro output
+
+Verified on rustc 1.98.1: a proc macro emits an unused variable, an unused `mut`, and a
+non-snake-case function into a crate with `#![warn(unused_variables, unused_mut,
+non_snake_case)]`, and the build reports nothing. The same source written by hand reports four
+warnings. `#![deny(unsafe_op_in_unsafe_fn)]` is silent on a macro-emitted `pub unsafe fn f(p:
+*const u8) -> u8 { *p }`, which fails with E0133 when you write it yourself.
 
 ## Lints deliberately not in the canonical set
 
