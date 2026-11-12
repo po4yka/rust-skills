@@ -238,7 +238,7 @@ states what the caller must guarantee. That signature satisfies both lints. Meas
 `extern "C" fn` gets no lint at all. The last form only hides the defect: the symbol is still
 exported, and the foreign caller still passes a raw pointer to a function that claims to be safe.
 Choose visibility separately, for the Rust callers of the crate. Never suppress
-`not_unsafe_ptr_arg_deref` (SKILL.md, Binding and FFI crates), and do not relax either lint for
+`not_unsafe_ptr_arg_deref` (SKILL.md, Crate-level attributes), and do not relax either lint for
 the binding crate or the workspace.
 
 ```rust
@@ -260,6 +260,18 @@ the `uniffi-boundary` skill owns generated UniFFI scaffolding (one `uniffi::setu
 in `lib.rs`).
 
 ## Lints on proc-macro output
+
+rustc and clippy suppress almost every lint on tokens that another crate's proc macro emitted,
+`unsafe_op_in_unsafe_fn` included. A `macro_rules!` defined in the same crate is not exempt.
+
+1. Lints that read an item signature still fire. `clippy::ptr_arg` and
+   `clippy::exhaustive_structs` report `this warning originates in the macro`. Handle them with
+   a narrow crate-level `#![expect(..., reason = "...")]`, not a workspace change.
+2. `#![forbid(unsafe_code)]` is a soundness gate, and the silence removes the guarantee. A crate
+   that carries it builds and runs the `unsafe` that a dependency's proc macro injected, and
+   `cargo clippy -- -D unsafe_code -D clippy::undocumented_unsafe_blocks` reports nothing.
+   Audit the proc-macro dependencies of a binding crate: grep the nightly
+   `-Zunpretty=expanded` output for `unsafe` (the `rust-unsafe` skill).
 
 Verified on rustc 1.98.1: a proc macro emits an unused variable, an unused `mut`, and a
 non-snake-case function into a crate with `#![warn(unused_variables, unused_mut,
