@@ -250,4 +250,3 @@ Load these by name when they are installed.
 | --- | --- |
 | `rust-lints` | These rules as lints, and the `clippy.toml` thresholds |
 | `rust-discipline` | Signature shape: `&str` and `&[T]` against `&String` and `&Vec<T>`, SemVer hazards |
-| `rust-security` | Why a hasher swap is a security decision |
