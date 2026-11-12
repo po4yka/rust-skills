@@ -66,7 +66,7 @@ toy benchmark passes and the production `Vec<String>` workload does not.
 ## The cost table
 
 Measured at N = 100 000 `i32` on rustc 1.98.1, edition 2024, aarch64-apple-darwin, release
-profile, with the counting allocator in `SKILL.md`. Build is a `push_back` loop from an empty
+profile, with the allocator in [counting-allocator.md](counting-allocator.md). Build is a `push_back` loop from an empty
 collection. The index pass reads `v[i]` for every `i`; the iterate pass sums `v.iter()`. Each
 time cell is the best of nine passes, as the range over five runs. Allocation counts repeat
 exactly across runs. Times do not.
@@ -238,5 +238,5 @@ Check each change that adds or uses `im`, `imbl`, or `rpds`:
    `&mut self` shape: `push_back_mut`, `set_mut`, `drop_last_mut` on `rpds` (8x fewer
    allocations), or `imbl` when write cost dominates (another factor of about 72).
 3. Does the value cross a thread? `rpds::Vector::new()` is not `Send`. Use `new_sync()`.
-4. Is `im`, or an `imbl` older than 7.0.2, in the lockfile? Replace it, then run the advisory
-   gate above.
+4. Does the lockfile pass the advisory gate in
+   [Check the resolved dependency tree](#check-the-resolved-dependency-tree)?

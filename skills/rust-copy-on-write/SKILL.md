@@ -7,7 +7,8 @@ license: BSD-3-Clause
 # Rust copy-on-write
 
 Every number below was measured on rustc 1.98.1, edition 2024, aarch64-apple-darwin, release
-profile, with the counting allocator in [Measure before you decide](#measure-before-you-decide).
+profile, with the counting allocator in
+[references/counting-allocator.md](references/counting-allocator.md).
 Allocation counts repeat exactly across runs. Times do not; a range is the observed range.
 Re-measure on your target.
 
@@ -38,49 +39,11 @@ Re-measure on your target.
 ## Measure before you decide
 
 Every rule here is a hit-rate rule. A hit rate is a property of your workload, not of the
-type. Put this allocator in a bench binary, run your real input through both shapes, and
-compare the counts.
-
-```rust,run
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-pub static ALLOCS: AtomicUsize = AtomicUsize::new(0);
-pub static BYTES: AtomicUsize = AtomicUsize::new(0);
-
-pub struct Counting;
-
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
-        BYTES.fetch_add(layout.size(), Ordering::Relaxed);
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) }
-    }
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
-        BYTES.fetch_add(new_size, Ordering::Relaxed);
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
-
-#[global_allocator]
-static A: Counting = Counting;
-
-fn main() {
-    let (a0, b0) = (ALLOCS.load(Ordering::Relaxed), BYTES.load(Ordering::Relaxed));
-    let cap = std::hint::black_box(Vec::<u32>::with_capacity(1000)).capacity();
-    let allocs = ALLOCS.load(Ordering::Relaxed) - a0;
-    let bytes = BYTES.load(Ordering::Relaxed) - b0;
-    println!("allocs={allocs} bytes={bytes}");
-    assert_eq!((allocs, bytes, cap), (1, 4000, 1000));
-}
-```
-
-Run it in release. `dhat` gives the same counts with less code; the `rust-performance` skill
-covers it, when it is installed.
+type. Put a counting global allocator in a bench binary, run your real input through both
+shapes in release, and compare the counts. Read
+[references/counting-allocator.md](references/counting-allocator.md) when you write that bench:
+it has a complete allocator that counts calls and bytes. `dhat` gives the same counts with less
+code; the `rust-performance` skill covers it, when it is installed.
 
 ## `Cow` in return position
 
@@ -242,6 +205,7 @@ Grep for the misuse. Every hit needs a check that the method takes `&mut self`:
 
 ```bash
 rg '\.to_mut\(\)\.' --type rust -n
+grep -rnE --include='*.rs' '\.to_mut\(\)\.' .   # without ripgrep
 ```
 
 ## A `Cow` field infects the struct with a lifetime
@@ -276,35 +240,11 @@ fn store(out: &mut Vec<Header<'static>>, raw: &str) {
 
 E0521 is the one that stops the design. Any cache, any `Vec` that outlives the parse buffer,
 any value sent to another task needs `Header<'static>`, and a borrowing struct cannot supply
-it. The only exit is a hand-written conversion, at one allocation per still-borrowed field:
+it. The only exit is a hand-written `into_static(self) -> Header<'static>` that calls
+`into_owned()` on each field, at one allocation per still-borrowed field. Call it where the parse
+buffer dies. Read [references/borrow-and-toowned.md](references/borrow-and-toowned.md#into_static-the-exit-from-a-borrowing-struct)
+when you write one: it has a tested example.
 
-```rust,run
-use std::borrow::Cow;
-
-pub struct Header<'a> {
-    pub name: Cow<'a, str>,
-    pub value: Cow<'a, str>,
-}
-
-impl Header<'_> {
-    /// One allocation per borrowed field. Call it where the parse buffer dies.
-    pub fn into_static(self) -> Header<'static> {
-        Header {
-            name: Cow::Owned(self.name.into_owned()),
-            value: Cow::Owned(self.value.into_owned()),
-        }
-    }
-}
-
-fn main() {
-    let raw = String::from("host: example");
-    let (n, v) = raw.split_once(": ").expect("the literal holds the separator");
-    let owned = Header { name: Cow::Borrowed(n), value: Cow::Borrowed(v) }.into_static();
-    let store: Vec<Header<'static>> = vec![owned];
-    drop(raw);
-    assert_eq!(store[0].name, "host");
-}
-```
 
 Add a `Cow<'a, str>` field only when both hold: a real zero-copy parse path exists, and the
 value dies inside the borrow scope. A field that is mostly a literal and sometimes computed
@@ -339,6 +279,7 @@ consumer), the lint also covers public items. Otherwise it skips them, so grep t
 
 ```bash
 rg 'Cow<[^>]*(String|Vec<|PathBuf|OsString|CString)' --type rust -n
+grep -rnE --include='*.rs' 'Cow<[^>]*(String|Vec<|PathBuf|OsString|CString)' .   # without ripgrep
 ```
 
 A key whose `Hash` or `Eq` disagrees with its `Borrow` target makes `HashMap::get` miss a
@@ -350,8 +291,8 @@ holds, or when E0119 or E0283 appears around `ToOwned`, `borrow()`, `eq`, or `ha
 
 `Cow` shares one value between one borrower and one owner. It never shares interior nodes.
 A `fn with(&self) -> Self` built on `Cow` has the signature of a persistent collection and
-the cost of a deep copy, because `Clone` on a `Cow::Owned<[String]>` clones the `Vec` and
-every `String` in it: `next = self.clone(); next.lines.to_mut().push(..)` on a
+the cost of a deep copy, because `clone()` on an `Owned` value of type `Cow<'_, [String]>`
+clones the `Vec` and every `String` in it: `next = self.clone(); next.lines.to_mut().push(..)` on a
 `Cow<'_, [String]>` field is the defect.
 
 The cost is exactly quadratic: 2000 chained `with` calls cost 2 004 999 allocations, against
@@ -370,9 +311,8 @@ costs 45x to 89x a `Vec` pass, and an iteration pass costs 22x to 45x.
 Take one only when both hold: the clone-to-mutation ratio is high, and the collection is read by
 iteration rather than by index. Otherwise keep `Vec` and clone it.
 
-Depend on `imbl = "7.0.2"` or later, not on `im`. `im` is archived and carries an unpatched
-soundness advisory. `imbl` 7.0.1 still resolved `imbl-sized-chunks` 0.1, which has a
-double-free advisory that 7.0.2 removes from the tree.
+Depend on `imbl = "7.0.2"` or later, not on `im`: `im` and older `imbl` trees resolve crates
+with unpatched soundness and double-free advisories.
 
 Read [references/persistent-collections.md](references/persistent-collections.md) before you
 add `im`, `imbl`, or `rpds`, and when you review a change that uses one. It holds the cost tables,
@@ -397,6 +337,5 @@ owned `Cow` parameters, `Borrow` keys, and the advisory gate. Also check:
    Store owned data, add `into_static`, or share through `Arc`.
 2. Does a `fn with(&self) -> Self` clone a `Cow` of a non-`Copy` element type? That is
    quadratic. Use a persistent collection.
-3. Is `im`, or an `imbl` older than 7.0.2, in the lockfile? Replace it.
-4. Does the change use a persistent collection? Run the checklist in
+3. Does the change use a persistent collection? Run the checklist in
    [references/persistent-collections.md](references/persistent-collections.md#review-checklist).
