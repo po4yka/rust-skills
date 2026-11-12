@@ -88,7 +88,7 @@ Path inputs that change the bytes:
 | Linker-embedded paths | `--remap-path-prefix` does not reach them (MSVC `.pdb`, Apple OSO entries; Apple needs `-oso_prefix`) |
 | Timestamps | Set `SOURCE_DATE_EPOCH` to the commit time for archive and SBOM tools that honor it |
 
-Cargo `trim-paths` is nightly-only as of Rust 1.98.1: do not use it in a stable release build.
+Cargo `trim-paths` is nightly-only as of Rust 1.99.1: do not use it in a stable release build.
 Apply remapping only when the repository requires it or the release process controls all
 affected tools.
 

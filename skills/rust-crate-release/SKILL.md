@@ -66,30 +66,11 @@ only because the client timed out.
 
 ## Release inputs
 
-Collect these values first:
-
-| Input | Required evidence |
-|---|---|
-| Package | Exact Cargo package name and manifest path |
-| Registry | `crates-io` or one configured registry name |
-| Base | Previous published version and its source tag, or `none` for a first release |
-| Candidate | Exact commit to release |
-| Version | Proposed new version |
-| MSRV | Effective `package.rust-version` and the project support policy |
-| Features | Default set and every supported non-default combination |
-| Targets | Supported target and operating-system policy |
-| Mode | Registry package, binary distribution, or both |
-| Channel | Local `cargo publish`, or a CI workflow that a tag or dispatch starts |
-| Authority | Who can approve publish, tags, releases, uploads, signing, yanks, and owner changes |
-
-Run these read-only checks:
-
-```bash
-git status --short
-git rev-parse HEAD
-git tag --list --sort=-version:refname
-cargo metadata --locked --no-deps --format-version 1
-```
+Collect the inputs first: package, registry, base, candidate commit, version, MSRV, features,
+targets, mode, channel, and authority. Read
+[references/release-inputs-and-metadata.md](references/release-inputs-and-metadata.md) when you
+collect them; it has the evidence each input needs and the read-only checks, which end with
+`cargo metadata --locked --no-deps --format-version 1`.
 
 Stop if the candidate worktree is dirty. Use a clean worktree at the candidate commit when other
 work must stay in place.
@@ -163,10 +144,8 @@ cargo +<msrv> test --locked -p <package> --doc
 Run each `--doc` line only when the package has a library target. On a bin-only package it fails
 with `no library targets found in package`.
 
-When the package fetches from a third-party registry or over SSH git and the MSRV is below
-1.96.1, do not let the MSRV Cargo download. Older Cargo has credential-leak and libssh2 CVEs.
-Vendor with a toolchain at 1.96.1 or later, and add `--offline` to each MSRV command. The
-`cargo-workflows` skill, when it is installed, has the steps.
+Below MSRV 1.96.1, vendor a third-party registry or SSH git source with a newer Cargo and add
+`--offline` to each MSRV command (the `rust-security` skill owns the rule).
 
 When the MSRV build fails, find the cause before you raise the MSRV. Never run a full
 `cargo update` as the fix: it moves every dependency just before publish. Re-resolve only the one
@@ -189,34 +168,12 @@ not prove target support.
 
 ## 4. Check manifest and documentation metadata
 
-Verify these `[package]` values for the package that ships:
-
-```toml
-[package]
-name = "<package>"
-version = "<version>"
-rust-version = "<msrv>"
-description = "<one-line description>"
-license = "<SPDX expression>"
-repository = "<source URL>"
-readme = "README.md"
-```
-
-Use `license-file` instead of `license` only for a nonstandard license, and confirm the file
-enters the archive. Check every README link as it renders on the registry page. Do not set
-`homepage` to the `repository` or documentation URL.
-
-docs.rs announced that from 2026-05-01 it builds only the default target (`default-target`, else
-`x86_64-unknown-linux-gnu`) unless `targets` lists more. Set `targets` explicitly when the public
-API differs by target, or users see no documentation for the other targets:
-
-```toml
-[package.metadata.docs.rs]
-features = ["<documented-feature>"]
-targets = ["x86_64-unknown-linux-gnu", "<other-supported-target>"]
-```
-
-Use `all-features = true` only when the features are additive.
+Verify `name`, `version`, `rust-version`, `description`, `license`, `repository`, and `readme`
+in the `[package]` table of the package that ships. Do not set `homepage` to the `repository` or
+documentation URL. Since 2026-05-01, docs.rs builds only the default target unless
+`[package.metadata.docs.rs]` lists `targets`, so list them when the public API differs by target.
+Read [references/release-inputs-and-metadata.md](references/release-inputs-and-metadata.md) when
+you write or review these tables; it has both, with the `license-file` and `all-features` rules.
 
 ## 5. Prepare the version and changelog
 
