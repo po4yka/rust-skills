@@ -36,7 +36,7 @@ Do not add a `#![feature]` gate for an E0658 from this table. Raise `rust-versio
 fallback: a nested `if let`, or `assert!(matches!(..))`. The `rust-compiler-errors` skill, when it
 is installed, lists the other compile-error repair hazards.
 
-A `let` chain inside a match guard compiles on edition 2021 (measured on rustc 1.98.1). A chain in
+A `let` chain inside a match guard compiles on edition 2021 (measured on rustc 1.99.1). A chain in
 an `if` or `while` condition does not.
 
 ## Verify
@@ -277,7 +277,7 @@ To migrate:
    `--all-features` only when the features are additive. Otherwise run it once per supported
    feature set. Repeat it once per shipping `--target <triple>`, as the `cargo-workflows` skill
    describes when it is installed.
-2. `cargo fix --edition` applies this lint, which is part of `rust-2024-compatibility`. It
+2. `cargo fix --edition` applies this lint, which is part of `rust_2024_compatibility`. It
    rewrites each pattern to a fully explicit form with the same meaning in every edition.
 3. Review each rewrite. The explicit form keeps the 2021 meaning, including a silent copy. Decide
    per site whether a borrow was intended.
