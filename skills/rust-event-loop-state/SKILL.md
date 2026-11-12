@@ -17,7 +17,7 @@ installed. The diagnostics below are from rustc 1.99.1, edition 2024.
 ## Pick the structure from the shape of the handler set
 
 Read the left column first. Stop at the first row that describes your handler set. Each row
-down costs something concrete, and you pay it whether or not you needed it.
+down has a concrete cost, needed or not.
 
 | Shape of the handler set | Structure | What it costs |
 | --- | --- | --- |
@@ -73,8 +73,8 @@ The `rust-sanitizers-miri` skill, when it is installed, owns the Miri flags and 
 Borrows and Tree Borrows policy. Without it, gate on the default Stacked Borrows run and treat
 `MIRIFLAGS="-Zmiri-tree-borrows"` as a second opinion.
 
-A re-locked `Mutex` usually fails as a hang (std may also panic), and an always-enqueuing
-`while let` drain fails as a hang. libtest warns after 60 seconds and never ends the test.
+A re-locked `Mutex` (std may also panic) and an always-enqueuing `while let` drain usually
+fail as a hang. libtest warns after 60 seconds and never ends the test.
 Build the state and run one tick inside `std::thread::spawn`. Send `()` on a
 `std::sync::mpsc` channel when the tick returns. Assert
 `rx.recv_timeout(Duration::from_secs(5)).is_ok()`. A panic in the thread drops the sender, so
@@ -208,4 +208,4 @@ Use these skills when they are installed:
 | `rust-discipline` | `Deref` on non-pointer types, blanket impls and semver |
 | `rust-unsafe` | The aliasing rules and the Miri reproduction behind the raw-pointer rows |
 | `rust-iterator-impl` | `iter::from_fn` for a routine that only yields values; the `gen` block status |
-| `rust-crate-architecture` | Which crate the handler trait and the state type live in |
+| `rust-crate-architecture` | Which crate holds the handler trait and the state type (`cargo tree --locked -p <crate>`) |

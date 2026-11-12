@@ -82,7 +82,9 @@ A polled progress counter follows the same rule: `Relaxed` when the reader only
 displays the number, `Release`/`Acquire` when the reader then reads the state
 that the number refers to. A progress callback or a channel needs no ordering
 choice. The `ffi-error-progress-cancel` skill, when it is
-installed, covers cancellation and progress across a foreign function interface.
+installed, covers cancellation and progress across a foreign function interface; its
+rule is one cancel path per bridge, where only `awaitClose` (Kotlin) and
+`onTermination` (Swift) call `cancelJob`.
 
 ## Pattern 4: reference counting
 

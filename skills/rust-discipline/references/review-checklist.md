@@ -28,7 +28,7 @@ If the answer to any question is yes, revise the change before you merge it.
    call site. cargo-semver-checks flags neither.
 8. Any new `pub unsafe fn` where a safe wrapper can hold the invariant? Keep the `unsafe fn`
    `pub(crate)` and export the safe wrapper. A `pub unsafe fn` moves the soundness proof to every
-   caller. [`rust-unsafe`]
+   caller [`rust-unsafe`].
 
 **Panics, errors, and resources**
 
@@ -42,23 +42,23 @@ If the answer to any question is yes, revise the change before you merge it.
 
 **Concurrency, unsafe, FFI, and lints** (owner skills in brackets)
 
-13. Any allocation inside an event-loop tick, a per-item decode loop, or a parser hot path?
-    [`rust-hot-path`]
+13. Any allocation inside an event-loop tick, a per-item decode loop, or a parser hot path? Declare
+    the buffer outside the loop and `clear` it each pass [`rust-hot-path`].
 14. Any blocking-lock guard (`std::sync::Mutex` or `RwLock`, `parking_lot`) held across
     `.await`? `clippy::await_holding_lock` finds them. Any blocking syscall inside async code with
-    no `spawn_blocking` and no dedicated thread? [`rust-async-internals`]
+    no `spawn_blocking` and no dedicated thread [`rust-async-internals`]?
 15. Any `Condvar::wait` outside a `wait_while` call or a predicate loop? Any nested lock
     acquisition that breaks the documented lock order?
 16. Any new atomic ordering with no comment that names the data it publishes? Any `Relaxed` on a
-    publish/subscribe flag? [`memory-model`]
+    publish/subscribe flag [`memory-model`]?
 17. Any `unsafe` block with no `// SAFETY:` comment, or any `unsafe fn` with no `# Safety`
-    section? [`rust-unsafe`]
-18. Any FFI entry point that can panic instead of mapping a typed Rust error to an ABI-safe
-    status, sentinel, out-parameter, or foreign exception? [`rust-panic-safety`,
-    `ffi-error-progress-cancel`]
+    section [`rust-unsafe`]?
+18. Any FFI entry point with no `catch_unwind` that can panic instead of mapping a typed Rust
+    error to an ABI-safe status, sentinel, out-parameter, or foreign exception
+    [`rust-panic-safety`, `ffi-error-progress-cancel`]?
 19. Any new `#[allow]` where `#[expect(lint, reason = "...")]` works? Any suppressed
     `clippy::correctness` or `clippy::suspicious` finding? [`rust-lints`] Any new `deny.toml`
-    exception with no reason? [`rust-security`]
+    exception with no reason [`rust-security`]?
 
 **Trait and type-system traps** (details in
 [`type-and-trait-traps.md`](type-and-trait-traps.md),
@@ -69,8 +69,8 @@ If the answer to any question is yes, revise the change before you merge it.
 20. Any `impl Drop` on a struct where a field must be consumed? Move `Drop` onto a one-field
     guard; make its field an `Option` only when the cleanup consumes it. Use `ManuallyDrop` only
     when `size_of` proves a saving.
-21. Any `fn(T) -> T` that takes a struct past the target's inline-copy boundary on a hot path?
-    [`rust-hot-path`]
+21. Any `fn(T) -> T` that takes a struct past the target's inline-copy boundary on a hot path
+    [`rust-hot-path`]?
 22. Any manual `PartialEq` next to a derived `Hash`, or two manual impls that normalize
     differently, on a `HashMap` or `HashSet` key? Any manual `PartialOrd` that does not return
     `Some(self.cmp(other))` on a type that also implements `Ord`?

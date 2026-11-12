@@ -45,7 +45,7 @@ header, or a clean archive link does not prove that Swift can use it.
 | Callbacks and cancellation are race-free | The consumer test under Thread Sanitizer: `swift test --sanitize=thread`, or `xcodebuild test -enableThreadSanitizer YES` | A callback or cancel path changes |
 | The Swift use of Rust memory has no memory error | The consumer test under Address Sanitizer: `swift test --sanitize=address`, or `xcodebuild test -enableAddressSanitizer YES`. Miri cannot run this path | A buffer, handle, or release path changes |
 | Rust buffer and handle code is sound | `cargo +nightly miri test --locked` (when the `miri` component is installed; otherwise report it as not checked by Miri) with a Rust test callback that dereferences the context pointer | Unsafe boundary code changes |
-| Every shipped slice works | A smoke test on each supported Apple slice (`rust-ios-build` owns the lanes) | Before release |
+| Every shipped slice works | A smoke test on each supported Apple slice, after `nm -gU` shows the symbol on each (`rust-ios-build` owns the lanes) | Before release |
 
 Keep a small Swift consumer test outside the generated artifact directory. It
 uses the application's import path and runs against the real release library or
@@ -94,7 +94,7 @@ compile-check the header, or write the modulemap.
 
 Keep the `#[unsafe(no_mangle)]` exports in one boundary crate, and keep
 `#![forbid(unsafe_code)]`, which rejects that attribute, on every crate with no
-hand-written `unsafe`. The `rust-unsafe` skill owns this policy.
+hand-written `unsafe`; the `rust-unsafe` skill owns this policy.
 
 Use an `int32_t` status with named constants, or an open enum, never a plain or
 closed C enum, as the compatibility guard. Reserve an unknown status value and

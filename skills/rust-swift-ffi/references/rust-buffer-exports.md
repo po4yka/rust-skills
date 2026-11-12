@@ -93,5 +93,5 @@ What each part shows:
   and `v.capacity()`.
 
 Add the operation's own size limit to `borrowed` before you build the slice.
-Wrap each export in the panic guard from the `rust-panic-safety` skill when it
-is installed.
+Wrap each export body in `catch_unwind` and return a reserved panic status; the
+`rust-panic-safety` skill, when it is installed, owns that guard.

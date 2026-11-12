@@ -96,7 +96,8 @@ and rustc warns on it since 1.91 (`integer_to_ptr_transmutes`); use `without_pro
 5. Keep storage as `MaybeUninit<T>` until the complete validity proof holds.
 6. Run the smallest test under Miri. A path that exposes provenance on purpose runs in a
    separate job without `-Zmiri-strict-provenance`. The `rust-sanitizers-miri` skill, when it is
-   installed, owns the Miri flags.
+   installed, owns the Miri flags; run the strict job with
+   `MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test --locked`.
 
 Miri is evidence for the executed path. It is not a proof for unexecuted layouts, schedules, or
 foreign code.

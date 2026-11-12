@@ -152,8 +152,8 @@ should still print a usable message.
 ## Step 4: roll out the lints
 
 Deny in one crate at a time. A workspace-wide `deny` on day one produces hundreds of
-findings and gets reverted. The `rust-lints` skill owns the workspace floor; this step adds the
-panic lints for crates on an FFI path.
+findings and gets reverted. The `rust-lints` skill owns the workspace floor in the root
+`[workspace.lints]` tables; this step adds the panic lints for crates on an FFI path.
 
 Order:
 
@@ -166,7 +166,7 @@ Order:
    panics defeats its own signature.
 6. `clippy::missing_panics_doc` on public APIs that keep a documented panic.
 
-Keep the workspace floor from the `rust-lints` skill unchanged. Every member inherits it:
+Keep the `[workspace.lints]` floor from the `rust-lints` skill unchanged. Every member inherits it:
 
 ```toml
 # Member Cargo.toml: inherit the floor unchanged.
@@ -213,7 +213,9 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 ```
 
 Add `--all-features` only when the features are additive. Otherwise run each supported feature
-set; the `cargo-workflows` skill owns that rule.
+set; the `cargo-workflows` skill owns that rule. With cargo-hack installed,
+`cargo hack check --locked -p <crate> --each-feature --exclude-all-features` runs one feature at
+a time.
 
 ## Step 5: the `#[expect]` contract
 

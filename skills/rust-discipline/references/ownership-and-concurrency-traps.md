@@ -29,7 +29,7 @@ that changes between builds. Measured on x86_64-unknown-linux-gnu with rustc 1.9
 of `s = transform(s)` on the 1032-byte struct below has no `memcpy` inside the loop when
 `transform` is inlined, and two `memcpy` calls per iteration under `#[inline(never)]`. Measure
 the shipped build; do not assume either result. The `rust-hot-path` skill, when it is installed,
-has the boundary per target and the probe that measures it.
+has the probe; at `-O`, x86_64 copies up to 128 bytes inline and aarch64-apple-darwin up to 256.
 
 ```rust
 struct BigState {

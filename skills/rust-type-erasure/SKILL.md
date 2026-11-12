@@ -165,7 +165,7 @@ when you write it: it has a compiled `Extensions` map.
 
 Before you climb to rung three, try to reach this rung instead: replace the borrow with `Arc<T>`
 or with an owned copy at the map boundary. The `rust-copy-on-write` skill, when it is installed,
-has the allocation counts that decide whether that copy is affordable.
+has the allocation counts that decide whether that copy is affordable; an `Arc<str>` clone allocates nothing.
 
 ### Get the concrete type back from `dyn Trait`
 
@@ -309,9 +309,9 @@ Use these skills by name, when they are installed.
 | Skill | Boundary |
 | --- | --- |
 | `rust-discipline` | Whether to erase at all: a `downcast_ref` chain is a `match` with the exhaustiveness check removed |
-| `rust-unsafe` | The mechanics of the pointer cast, SAFETY comment review, and why a raw pointer never buys a lifetime |
-| `rust-sanitizers-miri` | Running Miri, Stacked Borrows against Tree Borrows, and what a clean run does not prove |
+| `rust-unsafe` | The mechanics of the pointer cast, `// SAFETY:` comment review, and why a raw pointer never buys a lifetime |
+| `rust-sanitizers-miri` | Running Miri, `MIRIFLAGS="-Zmiri-tree-borrows"` as a second opinion, and what a clean run does not prove |
 | `rust-variance` | Why `PhantomData<UnsafeCell<&'a mut ()>>` makes a type invariant, and how to probe variance |
 | `rust-compiler-errors` | E0597, E0277, E0271 and E0308 in general, beyond the shapes here |
-| `rust-copy-on-write` | The allocation cost of owning the value instead of borrowing it, which keeps you on rung two |
+| `rust-copy-on-write` | The allocation cost of owning the value, for example an `Arc<str>`, instead of borrowing it, which keeps you on rung two |
 | `rust-crate-architecture` | Coherence and the orphan rule as a crate-boundary constraint |

@@ -126,8 +126,9 @@ builds need the unstripped `.so` from the host.
   message", so a panic message is a log line.
 - Crash or corruption during a session: run the same scenario under HWASan. HWASan runs only on
   64-bit Arm. Android 14 and later start it through `wrap.sh` for a debuggable app; Android 10 to
-  13 need a HWASan system image. The NDK marks ASan unsupported as of 2023. The build and device
-  steps are in the `rust-sanitizers-miri` skill.
+  13 need a HWASan system image. The NDK marks ASan unsupported as of 2023. The
+  `rust-sanitizers-miri` skill owns the device steps; the build is
+  `RUSTFLAGS="-Zsanitizer=hwaddress -Cforce-frame-pointers=yes" cargo +nightly build --locked -Zbuild-std --target aarch64-linux-android`.
 
 ## 7. Common mistakes
 

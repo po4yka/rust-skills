@@ -619,8 +619,8 @@ of types, and it survives a refactor that changes one of them.
 
 To extend the lifetime bound of a `dyn` raw pointer, first try to keep `'a` in the stored type.
 Transmute only when no method of the trait has a `where Self: 'x` bound and the owner outlives
-every use of the pointer, and state both facts in the SAFETY comment. The `rust-variance` skill,
-when it is installed, owns this rule.
+every use of the pointer, and state both facts in the SAFETY comment (the `rust-variance`
+skill, when it is installed, owns this rule).
 
 ## Broken UTF-8 fails nowhere near where you built it
 

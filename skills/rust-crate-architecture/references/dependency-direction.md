@@ -274,7 +274,8 @@ Rules:
   cargo tree --locked -p <crate> -e normal --features <feature>
   ```
 
-The `cargo-workflows` skill covers feature unification and lockfile effects.
+The `cargo-workflows` skill covers feature unification and lockfile effects;
+`cargo tree --locked -e features -i <dep>` shows which crate enables a feature.
 
 ## Granularity
 
@@ -292,9 +293,9 @@ Guidance:
 - Generic-heavy code monomorphizes in the consumer, so moving it to its own
   crate does not remove that work from the consumer's rebuild. Split for API
   clarity there, not for build time.
-- Measure before and after with `cargo build --timings`. Reason about a
-  compile-time claim only with a report in front of you. The `rust-performance`
-  skill covers the measurement discipline.
+- Measure before and after with `cargo build --locked --timings`; the
+  `rust-performance` skill covers the measurement discipline. Reason about a
+  compile-time claim only with a report in front of you.
 
 ## Cross-stack sharing decision table
 

@@ -147,8 +147,10 @@ rustls-platform-verifier to be initialized":
 -keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
 ```
 
-Use the `rust-jni` and `rust-android-build` skills, when they are installed, for the JNI entry point
-and the Gradle packaging.
+The `rust-jni` skill, when it is installed, owns the JNI entry point: guard each export with
+`native_method!` or `with_env`, because a panic that reaches an unguarded export aborts. The
+`rust-android-build` skill owns the packaging: build each ABI through a Gradle task that writes
+`<generated-dir>/jniLibs/<abi>/libnative.so`.
 
 ## axum and hyper servers
 

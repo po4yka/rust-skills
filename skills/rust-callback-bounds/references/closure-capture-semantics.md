@@ -112,7 +112,8 @@ or an auto trait. For a report with no edits, set `rust_2021_incompatible_closur
 table and run `cargo check`. Do not pass the lint through `RUSTFLAGS` or
 `CARGO_ENCODED_RUSTFLAGS`: either variable replaces every config-file rustflags value. Then recheck
 closure size, `Send`, lifetime, and destructor-timing assertions. The `cargo-workflows` skill owns
-the edition-migration workflow, when it is installed.
+the edition-migration workflow, when it is installed: one crate at a time, with
+`cargo fix --edition --locked -p <crate> --all-features`.
 
 ## Checklist
 

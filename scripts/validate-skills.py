@@ -934,7 +934,10 @@ def check_snippet(skill_names: set[str], bundles: dict[str, list[str]] | None = 
 # A sibling named as "the `x` skill" (or "`x` and `y` skills"). An installed
 # bundle has no sibling outside it, so the reference must not be the only place
 # the reader learns what to do.
-SIBLING_REF = re.compile(r"`([a-z0-9-]+)`(?= skills?\b)|`([a-z0-9-]+)` and `([a-z0-9-]+)` skills\b")
+# A sibling skill is named in a code span: "the `x` skill", "`x` and `y` skills",
+# a list such as "`x` (async), `y` (FFI)", or a table cell. Every such span
+# counts; the old pattern saw only the "`x` skill" form and missed about half.
+SIBLING_REF = re.compile(r"`([a-z0-9-]+)`")
 CODE_SPAN = re.compile(r"`([^`\n]+)`")
 
 
@@ -1006,7 +1009,14 @@ def cross_ref_violations(bundles: dict[str, list[str]]) -> list[tuple[str, int, 
         if skill not in owner:
             continue
         rel = str(markdown.relative_to(ROOT))
-        for unit in prose_units(markdown.read_text(encoding="utf-8")):
+        text = markdown.read_text(encoding="utf-8")
+        if markdown.name == "SKILL.md":
+            # The description routes; a "Not for X; use y" boundary there is not a
+            # pointer the reader follows for a rule. Blank the frontmatter so the
+            # line numbers stay right.
+            body = frontmatter_body(text)
+            text = "\n" * (text.count("\n") - body.count("\n")) + body
+        for unit in prose_units(text):
             pieces = sentences(unit)
             for index, (line, sentence) in enumerate(pieces):
                 following = pieces[index + 1][1] if index + 1 < len(pieces) else ""

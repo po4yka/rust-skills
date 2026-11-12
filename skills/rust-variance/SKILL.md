@@ -150,11 +150,10 @@ accessor, which needs no dereference.
 These std functions hand out an unbounded lifetime the same way: `<*const T>::as_ref`,
 `<*mut T>::as_mut`, `NonNull::as_ref` and `as_mut`, `as_ref_unchecked` and `as_mut_unchecked`
 (stable since 1.95), `slice::from_raw_parts`, and `CStr::from_ptr`. When no input carries the
-lifetime, take `&self` on a wrapper that owns the pointer, or return a guard. The `rust-unsafe`
-skill, when it is installed, owns the pointer-validity rules; the `rust-sanitizers-miri` skill
-owns the Miri workflow. Run `cargo +nightly miri test --locked` on every path that turns a raw
-pointer into a reference when a nightly with the miri component is installed. Without Miri,
-report that path as not checked by Miri.
+lifetime, take `&self` on a wrapper that owns the pointer, or return a guard. Run
+`cargo +nightly miri test --locked` on every path that turns a raw pointer into a reference
+when a nightly with the miri component is installed. Without Miri, report that path as not
+checked by Miri.
 
 Since Rust 1.94 a raw-pointer cast cannot extend the lifetime bound of a trait object
 (`note: raw pointer casts of trait objects cannot extend lifetimes`). Keep `'a` in the stored
@@ -341,7 +340,7 @@ Hand off to these skills when they are installed.
 | Skill | Boundary |
 | --- | --- |
 | `rust-unsafe` | Raw-pointer validity, `PhantomData` on FFI handles, and the proof for a manual `unsafe impl Send` or `Sync` |
-| `rust-sanitizers-miri` | Running Miri and reading its report |
+| `rust-sanitizers-miri` | Running `cargo +nightly miri test --locked` and reading its report |
 | `rust-compiler-errors` | E0597, E0521, and E0106 beyond the variance shapes here, and dyn compatibility (E0038) |
 | `rust-callback-bounds` | Choosing `Fn`, `FnMut`, `FnOnce`, or a `fn` pointer for a callback, once variance is settled |
 | `rust-type-erasure` | `TypeId`-keyed stores, `dyn Any` downcasting and upcasting, and the `'static` bound of `Any` |

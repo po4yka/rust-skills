@@ -33,7 +33,7 @@ Every quoted diagnostic comes from rustc 1.98.1, edition 2024, on aarch64-apple-
 | `reached the recursion limit while instantiating` on a writer or visitor trait | Read [storing-callables.md](references/storing-callables.md#by-value-impl-trait-plus-a-delegating-impl-is-a-monomorphization-bomb) |
 | A `move` closure unexpectedly implements `Fn`, captures a whole owner, or changes drop timing | Read [closure-capture-semantics.md](references/closure-capture-semantics.md) |
 | New E0502, E0505, or E0506 on a closure after a toolchain bump, from a `match` or `let` inside it | Read [closure-capture-semantics.md](references/closure-capture-semantics.md#capture-precision-depends-on-the-projection) |
-| The callback is `async` | [Pick the bound](#pick-the-bound-from-the-return-type), then the `rust-async-internals` skill |
+| The callback is `async` | [Pick the bound](#pick-the-bound-from-the-return-type): `AsyncFn`, or a boxed `Send` future |
 
 ## Pick the bound from the return type
 
@@ -54,7 +54,8 @@ Read the row that matches what the callback returns. The argument is always `&T`
 `Box<dyn AsyncFn(&T) -> R>` is E0038. A generic field `F: AsyncFn(&T) -> R` compiles; only a
 type-erased store needs the boxed form. A future that borrows `&T` is not `'static`, so spawning
 the callback's own future fails with E0521; take the argument by value or as `Arc<T>` for that.
-The `rust-async-internals` skill owns the rest of the async rules.
+The `rust-async-internals` skill owns the rest of the async rules; for example, a lock held
+across `.await` needs `tokio::sync::Mutex`.
 
 Add `K: ?Sized` on every `-> &'a K` row. Without it `|o| &o.name` on a `String` field still
 works, but `|o| o.name.as_str()` and `|b| &b.bytes[..]` fail, because `str` and `[u8]` are not

@@ -133,8 +133,8 @@ The sort order inside a group depends on the style edition. Style edition 2024 u
 sorting and puts `u8` before `u16`; style editions 2015 to 2021 put them the other way round
 (rustfmt 1.9.0, Rust 1.98.1). A direct `rustfmt` call, for example from a pre-commit hook, can
 therefore disagree with `cargo fmt`, and `cargo fmt --check` then fails in CI. The `rust-lints`
-skill owns the `edition` and `style_edition` keys in `rustfmt.toml`. The `cargo-workflows` skill
-says when to change them during an edition migration.
+skill owns the `edition` and `style_edition` keys in `rustfmt.toml`. During an edition
+migration, do not raise `style_edition` until every crate has migrated (the `cargo-workflows` skill).
 
 Use one braced import for two or more items of one module: `use std::sync::{Arc, Mutex};`.
 Stable `rustfmt` does not merge imports, because `imports_granularity` is unstable.
@@ -190,7 +190,7 @@ every earlier condition to know when the last line runs.
 | --- | --- | --- |
 | Library error type | `thiserror` | `#[derive(Debug, thiserror::Error)]` on an enum |
 | Binary or CLI | `anyhow` | `anyhow::Result`, `.context()`, `.with_context()` |
-| Test | `.expect("<what should have happened>")` | On the value under test. The `rust-tdd` skill owns test design |
+| Test | `.expect("<what should have happened>")` | On the value under test |
 | Propagation | `?` | `.unwrap()` in tests and examples only |
 
 A library returns a typed error, so the caller can match on the variant:
@@ -227,8 +227,9 @@ fn load(path: &std::path::Path) -> anyhow::Result<String> {
 
 Propagate with `?` and let the caller decide. In non-test code, `.expect("<invariant>")` is
 acceptable only for a documented, unconditional invariant. The `rust-discipline` skill owns that
-rule and the lock-poisoning policy. The `rust-panic-safety` skill owns panic policy at a
-boundary. The `ffi-error-progress-cancel` skill owns error mapping across an FFI boundary.
+rule and the lock-poisoning policy. At an FFI boundary, the `rust-panic-safety` skill owns panic
+policy and the `ffi-error-progress-cancel` skill owns error mapping: catch each panic with
+`std::panic::catch_unwind`, and map each error to a stable `code()` string.
 
 ## Rustdoc contract
 
@@ -240,7 +241,7 @@ place every time.
 | --- | --- | --- |
 | `# Errors` | Every public `fn` that returns `Result` | Which variants occur, and what causes each one |
 | `# Panics` | Every public `fn` that can panic | The exact condition. Write "Never" when a reader would expect a panic |
-| `# Safety` | Every public `unsafe fn` | What the caller must guarantee. See the `rust-unsafe` skill |
+| `# Safety` | Every public `unsafe fn` | What the caller must guarantee |
 
 Read [references/rustdoc.md](references/rustdoc.md) when you write a doc comment or a doc example: it
 has a compiled `# Errors` and `# Panics` example and the rules for hidden lines, `no_run`, and
@@ -311,5 +312,5 @@ Use these skills when they are installed.
 | `rust-discipline` | Signature review, `.expect` policy, and API anti-patterns |
 | `rust-panic-safety` | Panic policy, unwind safety, and `catch_unwind` |
 | `rust-unsafe` | Crates that cannot use `#![forbid(unsafe_code)]`, and `# Safety` contracts |
-| `ffi-error-progress-cancel` | Error translation across an FFI boundary |
-| `rust-tdd` | Test placement and the test-first loop |
+| `ffi-error-progress-cancel` | Error translation across an FFI boundary: one stable `code()` string per error kind |
+| `rust-tdd` | Test placement, the test-first loop, and a pinned `expected` on each `#[should_panic]` |

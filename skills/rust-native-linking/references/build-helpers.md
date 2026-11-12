@@ -94,7 +94,8 @@ shape and every build environment provides compatible `libclang`.
   archives.
 
 Do not use generated declarations as soundness evidence. Review ownership,
-nullability, aliasing, and callbacks with the `rust-unsafe` skill.
+nullability, aliasing, and callbacks with the `rust-unsafe` skill, and give each
+`unsafe` call a `// SAFETY:` comment that names its invariant.
 
 ### Rust to C or C++ with `cbindgen`
 

@@ -68,7 +68,8 @@ pub fn install_bootstrap_panic_hook() {
 ```
 
 - `write_platform_panic` stands for the platform sink. The `rust-observability` skill covers
-  the sink.
+  the sink; the hook emits only bounded structured fields and never formats `PanicHookInfo`,
+  its payload, or a backtrace.
 - `report_other_library_panics` stands for the redacted handlers that embedded components
   expose. The bootstrap composes them here once.
 - The bootstrap can install from its `JNI_OnLoad` or from one explicit init export, after it

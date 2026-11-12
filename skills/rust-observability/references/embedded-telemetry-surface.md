@@ -172,8 +172,9 @@ pending, and it puts the error's `Display` text in the message. Throw a fixed
 message before you return `Error::JavaException`, or Java gets "Rust error:
 Java exception was thrown". For a panic, the policy copies a `&'static str`
 payload into the message and replaces a formatted payload with a fixed string.
-See the `rust-jni` skill for the binding rules and the `uniffi-boundary` skill
-if you generate the surface instead of writing it.
+The `rust-jni` skill owns the binding rules; at minimum, propagate or clear every
+`Err(JavaException)` before the next JNI call. The `uniffi-boundary` skill owns a
+generated surface; there, derive `uniffi::Error` on the exported error type.
 
 What matters, independent of binding:
 

@@ -14,7 +14,9 @@ Write `()` in the last three markers. With `T` in its place, "kept" becomes cond
 `Cell<T>` is `Send` only when `T: Send`, and `MutexGuard<'_, T>` is `Sync` only when `T: Sync`.
 
 A marker that names your own `T` also sets the variance in `T` and the drop-check ownership. The
-`rust-variance` skill, when it is installed, owns the table for both.
+`rust-variance` skill, when it is installed, owns the table for both; `PhantomData<fn() -> T>`
+stays covariant without ownership, and `PhantomData<fn(T) -> T>` is invariant and keeps `Send`
+and `Sync` for every `T`.
 
 ```rust
 use std::cell::Cell;

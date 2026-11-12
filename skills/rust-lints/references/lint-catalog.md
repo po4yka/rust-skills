@@ -63,13 +63,13 @@ defect reached production.
 | `unsafe_op_in_unsafe_fn` (rustc) | The whole body of an `unsafe fn` treated as one implicit unsafe block. This hides which line actually needs the audit. |
 | `large_stack_arrays`, `large_stack_frames` | A big array or a fat state struct placed on the stack. It overflows on a small thread stack - worker threads and mobile main threads are far smaller than the default. |
 | `large_futures` | An oversized future moved between tasks; each `spawn` copies it. |
-| `large_enum_variant` | One huge variant inflating every value of the enum, including the small ones. It measures the size difference between the largest and the second-largest variant, strictly greater than `enum-variant-size-threshold` (default 200 bytes). It never looks at the total size. Measured on rustc 1.98.1 with `enum D { A(u8), B([u8; N]) }`: `N = 201` is silent, `N = 202` warns. So a 300-byte enum whose two largest variants are both near 300 bytes never fires. The fix is to box the outsized variant. It only wins when that variant is rare: boxing a hot variant buys size with an allocation on the common path. See `rust-hot-path`. |
+| `large_enum_variant` | One huge variant inflating every value of the enum, including the small ones. It measures the size difference between the largest and the second-largest variant, strictly greater than `enum-variant-size-threshold` (default 200 bytes). It never looks at the total size. Measured on rustc 1.98.1 with `enum D { A(u8), B([u8; N]) }`: `N = 201` is silent, `N = 202` warns. So a 300-byte enum whose two largest variants are both near 300 bytes never fires. The fix is to box the outsized variant. It only wins when that variant is rare: boxing a hot variant buys size with an allocation on the common path. |
 | `result_large_err` (warn by default) | A fat `Err` type carried by every `Result` in the call chain, on the success path as well. Measured on rustc 1.98.1: an `Err` variant of 128 bytes warns, 127 bytes is silent. Thresholds live in `clippy.toml`: `large-error-threshold` sets the byte count, `large-error-ignored` takes a type allow-list. The fix is to box the payload or to split the error type. |
-| `assigning_clones` (pedantic) | `a = b.clone()` frees the buffer `a` already owns and allocates a new one. `a.clone_from(&b)` reuses it. The lint message is "assigning the result of `Clone::clone()` may be inefficient". Pedantic, so a plain `cargo clippy` never reports it. See `rust-hot-path`. |
+| `assigning_clones` (pedantic) | `a = b.clone()` frees the buffer `a` already owns and allocates a new one. `a.clone_from(&b)` reuses it. The lint message is "assigning the result of `Clone::clone()` may be inefficient". Pedantic, so a plain `cargo clippy` never reports it. |
 | `redundant_clone` (nursery) | A clone whose original is dead after the call, so the clone buys nothing. Nursery, so a plain `cargo clippy` never reports it. |
 | `or_fun_call` (nursery) | `ok_or(build())`, `unwrap_or(build())`, `or_insert(build())`: the argument runs on every call, including the path that discards it. The fix is the `_else` form. Its counterpart `unnecessary_lazy_evaluations` (style, warn by default) catches the over-correction, a closure around a value that is cheaper to pass eagerly. Enable both, or a cleanup pass converts every eager call into a closure and trades one waste for another. |
 | `needless_collect` (nursery) | A `collect()` whose result the same body only iterates, counts, or searches. Remove the collection and use the iterator. The lint does not look at return types: a function that returns `Vec<T>` to a caller that iterates once passes (clippy 0.1.98). Change such a function to return `impl Iterator<Item = T>` by hand. On edition 2024 that return type needs no lifetime bound, because a return-position `impl Trait` captures every in-scope lifetime by default; the same signature fails on edition 2021 with E0700. |
-| `missing_asserts_for_indexing` (restriction) | Index sites where one `assert!` would let the compiler drop the bounds checks. It fires on `s[0] + s[1] + s[2]` with no preceding `assert!(s.len() > 2)`. It is the only automated way to find these sites. Restriction, so no default level and no config in this skill turns it on; run it as a one-off audit: `cargo clippy --locked --workspace -- -W clippy::missing_asserts_for_indexing`. See `rust-hot-path`. |
+| `missing_asserts_for_indexing` (restriction) | Index sites where one `assert!` would let the compiler drop the bounds checks. It fires on `s[0] + s[1] + s[2]` with no preceding `assert!(s.len() > 2)`. It is the only automated way to find these sites. Restriction, so no default level and no config in this skill turns it on; run it as a one-off audit: `cargo clippy --locked --workspace -- -W clippy::missing_asserts_for_indexing`. |
 | `ptr_arg` (style, not perf) | A `&Vec<T>` or `&mut Vec<T>` parameter where `&[T]` or `&mut [T]` works. It forces every caller to own a `Vec`. It is warn by default, so most projects see it, but a config that enables only `clippy::perf` misses it. The win is small and it is per call, not per iteration: measured on rustc 1.97.0 aarch64 at `-C opt-level=3`, for a body of `v.iter().sum()`, the `&Vec<u32>` version starts with two extra loads (the pointer and the length out of the `Vec` header) that the `&[u32]` version does not need, because a slice arrives in two registers. Both bodies came to 60 instructions. The suppression matrix below says when the owned reference is the right answer. |
 | `exhaustive_enums`, `exhaustive_structs` | A public enum or struct without `#[non_exhaustive]`. Adding a field or a variant later is then a breaking change for every downstream match or literal. |
 | `disallowed_methods` on `std::ptr::read` | A misaligned read from a byte buffer that came from I/O or FFI. `ptr::read` requires an aligned pointer, so a misaligned read is undefined behavior on every target. The optimizer can miscompile it on any target. It can fault on a strict-alignment target. aarch64 Linux and x86_64 permit a misaligned plain load (but not a misaligned atomic or exclusive access), so a passing test there does not prove the code correct. Use `read_unaligned`. The entry does not catch the `p.read()` method on `*const T` or `*mut T` (clippy 0.1.98); `cast_ptr_alignment` catches the cast that makes the pointer misaligned. |
@@ -80,7 +80,7 @@ defect reached production.
 | `panic`, `todo`, `unimplemented` | A stub that compiles and ships. `todo!()` in a merged branch is a runtime crash waiting for the right input. |
 | `allow_attributes`, `allow_attributes_without_reason` | A bare `#[allow(...)]` smuggling a violation past review with no justification. Also pushes authors to `expect`, which self-reports when it goes stale. |
 | `missing_docs`, `missing_panics_doc`, `missing_errors_doc` | A public API whose failure and panic conditions are undocumented, so every caller guesses. |
-| `dbg_macro`, `print_stdout` | Debug output left in a shipped build. On a library or a CLI with structured output, `println!` corrupts the protocol. See `rust-observability`. |
+| `dbg_macro`, `print_stdout` | Debug output left in a shipped build. On a library or a CLI with structured output, `println!` corrupts the protocol. |
 | `exit` | `process::exit` inside library code. It skips every destructor and every buffer flush. |
 | `redundant_closure_for_method_calls` | A closure that only forwards to a method, where the method path itself works. |
 | `uninlined_format_args` | `format!("{}", x)` instead of `format!("{x}")`. Cheap to fix and it removes review noise. |
@@ -159,7 +159,8 @@ improper_ctypes_definitions = "warn" # the default; never allow it crate-wide
 
 `cast_ptr_alignment` and the transmute family are the static half of the
 alignment story. Miri is the runtime half. Miri cannot run foreign code, so cover FFI paths
-with ASan on the host or HWASan on a device. See `rust-unsafe` and `rust-sanitizers-miri`.
+with ASan on the host or HWASan on a device. Run Miri with `-Zmiri-symbolic-alignment-check` for a read through a cast byte
+pointer (the `rust-unsafe` and `rust-sanitizers-miri` skills).
 
 ## Async lints: an explicit pin
 
@@ -194,7 +195,8 @@ Do not ban `std::sync::Mutex` or `RwLock` with `disallowed-types`.
 `clippy.toml` cannot scope a ban to async modules, and a std lock whose guard
 does not cross `.await` is the right choice in async code.
 `await_holding_lock` already catches the guard that does cross it. The
-`rust-async-internals` skill owns the lock choice.
+`rust-async-internals` skill owns the lock choice: a guard held across `.await` needs
+`tokio::sync::Mutex`.
 
 >>>
 
@@ -214,7 +216,8 @@ although `FxHashMap<K, V>` is an alias for `std::collections::HashMap<K, V,
 FxBuildHasher>`. The alias passes because its path differs. That is what makes
 the rule usable: it names the hasher you want without banning the map. Choose
 the hasher first; `FxHashMap` is not HashDoS-resistant, so it needs keys that
-no attacker controls. See `rust-hot-path` and `rust-security`.
+no attacker controls. Keep std `RandomState` for keys from
+outside the process (the `rust-hot-path` and `rust-security` skills).
 
 ## Binding-layer lints
 
@@ -252,8 +255,9 @@ pub unsafe extern "C" fn first_byte(p: *const u8) -> u8 {
 ```
 
 Keep `improper_ctypes_definitions` at its default level and never allow it crate-wide. The
-`rust-jni` skill owns the entry-point signatures, and the `uniffi-boundary` skill owns generated
-UniFFI scaffolding.
+`rust-jni` skill owns the entry-point signatures (`JNI_OnLoad` takes `*mut jni::sys::JavaVM`), and
+the `uniffi-boundary` skill owns generated UniFFI scaffolding (one `uniffi::setup_scaffolding!()`
+in `lib.rs`).
 
 ## Lints on proc-macro output
 
@@ -268,7 +272,7 @@ warnings. `#![deny(unsafe_op_in_unsafe_fn)]` is silent on a macro-emitted `pub u
 | Lint | Why not |
 |------|---------|
 | `clippy::string_to_string` | Deprecated in clippy 1.91. `implicit_clone` covers it. |
-| `expect_used` in the workspace table | A `.expect("<invariant>")` is allowed in non-test code (the `rust-discipline` skill). Add the lint per crate where no panic may escape, such as an FFI adapter (the `rust-panic-safety` skill). |
+| `expect_used` in the workspace table | A `.expect("<invariant>")` is allowed in non-test code (the `rust-discipline` skill). Add the lint per crate where no panic may escape, such as an FFI adapter, beside `clippy::unwrap_used` and `clippy::panic` (the `rust-panic-safety` skill). |
 | `clippy::restriction` (the whole group) | Contains mutually exclusive lints. Cherry-pick instead. |
 | An explicit `await_holding_*` pin in a synchronous workspace | The group level already sets them, and they cannot fire without `.await`. |
 | `unsafe_code = "forbid"` in `[workspace.lints.rust]` | Set it per crate; see SKILL.md, Crate-level attributes. |

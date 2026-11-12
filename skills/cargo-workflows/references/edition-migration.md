@@ -89,7 +89,8 @@ stricter `extern` rules hit it hardest.
   `unsafe` still compiles. Do not use `#[allow(static_mut_refs)]` as the migration answer.
   `&raw mut COUNTER` and `&raw const COUNTER` create no reference, but a raw pointer keeps every
   data race that the `static mut` had. `cargo fix --edition` prints the `&raw mut` suggestion but
-  does not apply it. The `memory-model` skill selects the real replacement.
+  does not apply it. Replace the `static mut` with a `Mutex`, `OnceLock`, `LazyLock`, or an
+  atomic; the `memory-model` skill selects among them.
 - **`gen` is a reserved keyword.** `cargo fix --edition` rewrites an identifier `gen` to `r#gen`
   (measured on Rust 1.98.1). Rename it before the migration if you do not want the raw identifier.
 - **`impl Trait` in return position captures all in-scope lifetimes.** A function that must

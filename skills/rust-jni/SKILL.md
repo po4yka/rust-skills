@@ -38,7 +38,7 @@ The snippets use 0.22. Read
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `UnsatisfiedLinkError: No implementation found for ... (tried Java_... and Java_...__...)` | No export or registration matches the class, method, or descriptor | Compare the `tried` names with `llvm-nm -D` output. Check a Kotlin facade (`FooKt`) or `$` in the class name. Switch to `native_method!` with `RegisterNatives`, or `#[jni_mangle]` |
-| `UnsatisfiedLinkError: dlopen failed: ...` | Wrong library name, missing ABI in the package, unresolved `DT_NEEDED`, or a page-alignment defect | Check the `System.loadLibrary` name and the packaged ABIs. See the `rust-android-build` skill |
+| `UnsatisfiedLinkError: dlopen failed: ...` | Wrong library name, missing ABI in the package, unresolved `DT_NEEDED`, or a page-alignment defect | Check the `System.loadLibrary` name, the packaged ABIs, and 16 KiB LOAD alignment with `llvm-readelf -lW` (the `rust-android-build` skill) |
 | `JNI_ERR returned from JNI_OnLoad in "..."` | A class, ID, or registration failed, or `JNI_OnLoad` caught a panic | Log the failing lookup before you return `JNI_ERR`. Check class names and R8 keep rules |
 | `Bad JNI version returned from JNI_OnLoad` | ART accepts only `JNI_VERSION_1_2`, `1_4`, or `1_6` | Return `JNI_VERSION_1_6` on success |
 | `Native thread exited without calling DetachCurrentThread` | A thread attached through raw `AttachCurrentThread` exited attached | Attach through the crate API, or add a `pthread_key_create` destructor |
@@ -47,7 +47,7 @@ The snippets use 0.22. Read
 | Local reference table overflow abort (API < 26) | A loop created local references without a frame | Wrap the loop body in `with_local_frame` |
 | `SIGABRT` right after a Rust panic message | A panic reached an export with no guard | Use `native_method!` or `with_env` at that export |
 | Native abort with no exception, and the guard never runs | The `cdylib` profile sets `panic = "abort"` | Accept the abort, or build that profile with `panic = "unwind"` |
-| Native crash with no Rust message in logcat | No logger or panic hook in the outermost Rust bootstrap | Initialize logging and the redacted hook there; see the `rust-panic-safety` skill |
+| Native crash with no Rust message in logcat | No logger or panic hook in the outermost Rust bootstrap | Initialize logging and the redacted `std::panic::set_hook` there (the `rust-panic-safety` skill) |
 | Crash in a callback long after the call returned | A local reference or an env was stored between calls | Store a global reference and a `JavaVM` clone |
 | `ClassNotFoundException` only on a Rust-created thread, or on `jni` 0.22 `Err(Error::NoClassDefFound { .. })` from `Env::find_class` (the crate clears the exception) | `FindClass` used the system loader | Use the `JNI_OnLoad` class cache, or a `Class` or `ClassLoader` from managed code |
 | Corruption after passing a direct `ByteBuffer` | The Java buffer was collected while Rust held the slice | Hold a global reference to the buffer |
@@ -187,7 +187,7 @@ write a name-based export or debug a `No implementation found` error.
 - A Rust panic that reaches an `extern "system"` function aborts the process
   (Rust 1.81+). `with_env` catches the panic, and `resolve` applies the error
   policy. On 0.21, wrap the whole body in `catch_unwind(AssertUnwindSafe(..))`.
-  Under `panic = "abort"` no guard catches anything. The `rust-panic-safety`
+  Under `panic = "abort"` no guard catches anything; the `rust-panic-safety`
   skill, when it is installed, owns the full policy and the 0.21 form.
 
 ### Java exceptions

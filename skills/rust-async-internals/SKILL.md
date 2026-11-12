@@ -65,7 +65,8 @@ Plain `cargo audit` exits 0 on an `unsound` advisory, and the cargo-deny default
 misses backport lines. For example, the unsound advisory RUSTSEC-2025-0023 (the broadcast channel
 calls `clone` on a `Send + !Sync` value from several threads) is patched in `>=1.38.2,<1.39`,
 `>=1.42.1,<1.43`, `>=1.43.1,<1.44`, and `>=1.44.2`. A floor of 1.42.1 accepts the affected
-1.43.0, 1.44.0, and 1.44.1. The `rust-security` skill, when it is installed, owns that policy.
+1.43.0, 1.44.0, and 1.44.1. Set `unsound = "all"` under `[advisories]` in `deny.toml`; the
+`rust-security` skill, when it is installed, owns that policy.
 
 ## Completion criteria
 
@@ -218,7 +219,8 @@ aborts the process. Read
 write the shared-runtime initializer, pick a runtime flavor, set a thread stack size, or make a
 foreign thread start or wait for async work. The
 `rust-jni` and `ffi-error-progress-cancel` skills own the boundary contract, and
-`uniffi-boundary` owns a generated boundary. Each applies when it is installed.
+`uniffi-boundary` owns a generated boundary, each when it is installed. A UniFFI async
+export that uses Tokio resources needs `#[uniffi::export(async_runtime = "tokio")]`.
 
 ## Manual polling from a synchronous loop
 
@@ -244,9 +246,10 @@ Each applies when it is installed.
 - `rust-send-sync`: auto traits and why a type is or is not `Send`. `rust-unsafe` owns a manual
   `unsafe impl Send`.
 - `rust-networking` and `rust-database`: cancellation at a network or transaction boundary.
+  Require sqlx 0.9.0 or later when a timeout or `select!` can cancel `begin()`.
 - `rust-unsafe`: the `SAFETY:` comment convention, for example on SQE construction.
 - `rust-debugging`: tokio-console, the `RuntimeMetrics` fallback for targets that cannot carry
   it, and async stack frames.
 - `rust-observability`: the `tracing` subscriber setup.
-- `rust-performance`: flamegraphs.
-- `rust-test-tools`: loom for hand-rolled atomics.
+- `rust-performance`: flamegraphs with `samply` or `cargo flamegraph`.
+- `rust-test-tools`: loom for hand-rolled atomics, run with `RUSTFLAGS="--cfg loom"`.

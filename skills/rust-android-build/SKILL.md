@@ -66,7 +66,7 @@ publish. Local builds, signing for a local smoke, and inspection need none.
 | No build-ID note in the `.so` | `--build-id=sha1` absent for that target | `llvm-readelf -n` and the config tables |
 | AGP cannot extract native debug metadata | Cargo stripped the input | `strip = "none"` in the selected profile |
 | `.so` grew after a dependency change | New transitive crate, or lost LTO | The selected profile, then `llvm-nm --size-sort` on the unstripped `.so` or `cargo bloat --crates` on a `cdylib` package |
-| A panic aborts instead of raising a Java exception | `panic = "abort"`, or the nightly `panic = "immediate-abort"`, in the selected profile | Inspect the profile that the build selected; the `rust-panic-safety` skill owns the policy |
+| A panic aborts instead of raising a Java exception | `panic = "abort"`, or the nightly `panic = "immediate-abort"`, in the selected profile | Set `panic = "unwind"` in the selected profile when a guard uses `catch_unwind`; the `rust-panic-safety` skill owns the policy |
 | Parallel ABI builds run one after another | A shared `CARGO_TARGET_DIR` | One target directory per ABI |
 
 ## Link flags in `.cargo/config.toml`
@@ -210,13 +210,13 @@ debug = "line-tables-only"  # no debugger variables; use true for an LLDB sessio
 
 - With `panic = "abort"` or the nightly `panic = "immediate-abort"`, a panic kills the app process
   instead of raising a Java exception. The `rust-panic-safety` skill, when it is installed, owns
-  the choice between unwind and abort and the boundary policy.
+  that choice; keep `panic = "unwind"` in the workspace-root profile while an export relies on
+  `catch_unwind`.
 - Keep `strip = "none"`. The packaging step strips the shipped copy and extracts symbols from the
   unstripped input. A Cargo-stripped input destroys the symbol file.
 - Measure `opt-level` (`"z"`, `"s"`, `3`), `lto`, and `codegen-units` changes on the real `.so`
   with the size gate. `"z"` is not always the smallest. `"s"` and `"z"` both disable loop
-  vectorization, so a compute-bound JNI path can need `3`. The `rust-performance` skill has the
-  measurement workflow.
+  vectorization, so a compute-bound JNI path can need `3`.
 - Do not add `-Wl,--gc-sections`: rustc already passes it for a `cdylib`. Use `-Wl,--icf=all` only
   after a size measurement, and only when no linked C or C++ code compares function addresses.
 
@@ -243,7 +243,7 @@ Use these skills when they are installed:
 
 - `cargo-workflows`: `Cargo.lock` policy, profiles, and the full cross-compilation variable set.
 - `rust-jni`: JNI export naming, `JNIEnv` handling, and `JNI_OnLoad`.
-- `rust-panic-safety`: the panic policy at the JNI boundary.
-- `uniffi-packaging-versioning`: packaging a generated UniFFI layer.
+- `uniffi-packaging-versioning`: packaging a generated UniFFI layer with the in-crate
+  `uniffi-bindgen`, never a global one.
 - `rust-performance`: profiling additions such as frame pointers, `simpleperf`, and size audits.
-- `rust-debugging`: tombstones and symbolication of a native crash.
+- `rust-debugging`: symbolication of a tombstone with `ndk-stack -sym <unstripped-dir> -dump <tombstone>`.

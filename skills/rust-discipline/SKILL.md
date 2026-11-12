@@ -25,7 +25,8 @@ downstream crate, or a later release. Apply the rules to every changed signature
 | A hash key keeps the `Eq`/`Hash` contract | A test that inserts through one form and looks up through the other | Only the forms the test uses. |
 
 cargo-semver-checks reads rustdoc JSON, whose format changes between rustc releases; 0.50.0 needs
-Rust 1.93 or later. Update the tool when a new stable rustc arrives. The `rust-crate-release` skill owns the version-bump decision.
+Rust 1.93 or later. Update the tool when a new stable rustc arrives. The `rust-crate-release`
+skill owns the version-bump decision from `cargo semver-checks` output.
 
 ## References
 
@@ -296,22 +297,22 @@ change before you merge it.
 
 Route these topics by skill name, when the skill is installed.
 
-| Topic | Skill |
+| Skill | Topic |
 |-------|-------|
-| Allocation, type size, hasher choice, and `SmallVec` sizing on a profiled hot path | `rust-hot-path` |
-| Profiling, benchmarks, and allocation measurement | `rust-performance` |
-| Atomic orderings, the ordering comment that names the data it publishes, `update`/`try_update`, and when to write a `loom` test | `memory-model`; `loom` setup in `rust-test-tools` |
-| Blocking work in async code, locks across `.await`, executors | `rust-async-internals` |
-| `unsafe` review, `// SAFETY:` comments, and the unsafe lint gate | `rust-unsafe` |
-| Panics at an FFI boundary, `catch_unwind`, and abort profiles | `rust-panic-safety` |
-| FFI contracts and error mapping | `uniffi-boundary`, `rust-jni`, `ffi-error-progress-cancel` |
-| Which bound accepts which closure, and callable fields | `rust-callback-bounds` |
-| Type-keyed stores and the `'static` bound of `Any` | `rust-type-erasure` |
-| Handler sets that each need `&mut` to one state object | `rust-event-loop-state` |
-| Lifetime coercion and variance as a breaking change | `rust-variance` |
-| Types whose encoded form is a contract | `rust-serde` |
-| Module layout, case and crate naming, visibility, and formatting | `rust-code-style` |
-| Crate splits and dependency direction | `rust-crate-architecture` |
-| Workspace lint tables and `clippy.toml` | `rust-lints` |
-| Advisory triage, `deny.toml`, Miri, and sanitizers | `rust-security`, `rust-sanitizers-miri` |
-| SemVer bump and publish decisions | `rust-crate-release` |
+| `rust-hot-path` | Allocation, type size, hasher choice, and `SmallVec` sizing on a profiled hot path |
+| `rust-performance` | Profiling with `cargo flamegraph`, benchmarks, and allocation measurement |
+| `memory-model`; `loom` setup in `rust-test-tools` | Atomic orderings, the ordering comment that names the data it publishes, `update`/`try_update`, and when to write a `loom` test |
+| `rust-async-internals` | Blocking work in async code (`spawn_blocking`), locks across `.await`, executors |
+| `rust-unsafe` | `unsafe` review, `// SAFETY:` comments, and the unsafe lint gate |
+| `rust-panic-safety` | Panics at an FFI boundary, `catch_unwind`, and abort profiles |
+| `uniffi-boundary`, `rust-jni`, `ffi-error-progress-cancel` | FFI contracts and error mapping; a UniFFI error type derives `uniffi::Error` |
+| `rust-callback-bounds` | Which bound accepts which closure, and callable fields |
+| `rust-type-erasure` | Type-keyed stores and the `'static` bound of `Any` |
+| `rust-event-loop-state` | Handler sets that each need `&mut` to one state object |
+| `rust-variance` | Lifetime coercion and variance as a breaking change |
+| `rust-serde` | Types whose encoded form is a contract; human-written config takes `deny_unknown_fields` |
+| `rust-code-style` | Module layout, case and crate naming, visibility, and formatting |
+| `rust-crate-architecture` | Crate splits and dependency direction |
+| `rust-lints` | Workspace lint tables and `clippy.toml` |
+| `rust-security`, `rust-sanitizers-miri` | Advisory triage, `deny.toml`, Miri, and sanitizers |
+| `rust-crate-release` | SemVer bump (`cargo semver-checks`) and publish decisions |

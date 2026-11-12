@@ -172,7 +172,7 @@ Cargo reads `[profile.*]` only from the workspace-root manifest. A table in a me
 
 Four settings need a deliberate answer:
 
-- `panic`: `"abort"` gives the smallest binary; use `"unwind"` when an FFI entry point must return an error instead of aborting (see Silent failures). The `rust-panic-safety` skill owns the boundary policy and the panic-message privacy rule.
+- `panic`: `"abort"` gives the smallest binary; use `"unwind"` when an FFI entry point must return an error instead of aborting (see Silent failures). The `rust-panic-safety` skill owns the boundary policy: with `"unwind"`, guard each entry point with `catch_unwind`, and keep input data out of panic messages.
 - `strip`: use `"symbols"` only when the artifact never needs crash symbolication. Otherwise keep `"none"` with `debug = "line-tables-only"`, strip the shipped copy in packaging, and archive the unstripped Cargo output. The `rust-debugging` skill has the archive check.
 - `lto`: for a true no-LTO baseline use `lto = "off"`; `lto = false`, the default, still runs thin-local LTO.
 - `opt-level`: `"s"` and `"z"` turn off the loop vectorizer; measure the hot loop at `3` (the `rust-hot-path` skill has the probe).
@@ -194,4 +194,4 @@ Read [references/build-time-optimization.md](references/build-time-optimization.
 
 ## Related skills
 
-Other skills are named at their point of use above; each applies when it is installed. Two more apply here: `cargo-workflows` for workspace layout, feature flags, and profile plumbing, and `rust-observability` for tracing spans and structured timing in production.
+Other skills are named at their point of use above; each applies when it is installed. One more applies here: `rust-observability` for tracing spans and structured timing in production.

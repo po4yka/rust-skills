@@ -96,7 +96,8 @@ of a workflow or a `.config/nextest.toml`. It has both as complete examples.
   variable replaces the per-target `rustflags` in `.cargo/config.toml`. Use
   `CARGO_BUILD_WARNINGS=deny` (Cargo 1.97+) or clippy's `-- -D warnings`. On an older Cargo the
   variable does nothing and the build stays green (Cargo 1.96.0), so keep the clippy
-  `-D warnings` gate. The `rust-lints` skill owns the lint gate.
+  `-D warnings` gate. The `rust-lints` skill owns the lint gate:
+  `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`.
 
 ## Toolchain, MSRV, and resolver
 
@@ -115,7 +116,7 @@ components = ["rustfmt", "clippy"]
   logged step and not an implicit side effect. rustup 1.29.1 warns about implicit installs.
 - Set `rust-version` in `[workspace.package]` and inherit it with `rust-version.workspace = true`.
   Clippy reads it and does not suggest newer APIs. Do not set `msrv` in `clippy.toml`: when the
-  two differ, Clippy warns and uses `clippy.toml`. The `rust-lints` skill owns that file.
+  two differ, Clippy warns and uses `clippy.toml`.
 - `rust-version` is a declaration, not proof. Resolver 3 prefers dependency versions that support
   it, but picks an incompatible version when no compatible version satisfies the requirement.
   Prove the MSRV with the real toolchain: run `rustup toolchain install <msrv>`, then
@@ -182,8 +183,6 @@ Read [references/ci-and-nextest.md](references/ci-and-nextest.md) when you write
   and in CI. `flaky-result = "fail"` (nextest 0.9.131+) keeps the retry for diagnosis and still
   fails the run.
 
-The `rust-test-tools` and `rust-tdd` skills own test design.
-
 ## Native artifacts and the FFI crate
 
 `cargo rustc --crate-type` overrides the crate type for one invocation (stable since 1.64). The
@@ -206,9 +205,7 @@ cargo rustc --locked --profile <profile> --target aarch64-apple-ios \
   warns `profiles for the non root package will be ignored`.
 - The `rust-panic-safety` skill, when it is installed, owns the `panic` setting of a profile
   that builds an FFI artifact, and the guard pattern.
-- Keep one FFI crate, a thin translation layer over the pure-logic crates. The `rust-jni`,
-  `uniffi-boundary`, `uniffi-packaging-versioning`, and `ffi-error-progress-cancel` skills own the
-  entry points and the boundary design.
+- Keep one FFI crate, a thin translation layer over the pure-logic crates.
 
 Read [references/native-artifacts.md](references/native-artifacts.md) when you choose a profile
 or the manifest crate type for a shared or static library, write FFI exports or a UniFFI crate,
@@ -261,12 +258,6 @@ The `rust-security` skill owns the `deny.toml` policy and advisory triage.
 
 Each applies when it is installed.
 
-- `rust-lints` - lint levels, clippy configuration, and the lint gate
 - `rust-security` - cargo-deny policy, cargo-audit, advisory triage, new-crate review
-- `rust-crate-architecture` - crate boundaries and dependency direction
-- `rust-test-tools`, `rust-tdd` - test design, loom, golden files
-- `rust-performance` - profiling and build-time tuning
 - `rust-android-build`, `rust-ios-build` - platform packaging
-- `rust-jni`, `uniffi-boundary`, `uniffi-packaging-versioning`, `ffi-error-progress-cancel` -
-  the FFI boundary itself
-- `rust-panic-safety` - panic guards at the boundary
+

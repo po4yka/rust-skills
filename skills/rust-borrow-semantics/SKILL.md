@@ -225,9 +225,9 @@ Both lints are allow-by-default members of `rust_2024_compatibility`. Interpret 
 - Do not use an edition migration as a lock-lifetime refactor. Run behavior tests for code whose
   temporaries own locks, transactions, file descriptors, or other guards.
 
-The feature-set and target rule, the migration workflow, the staged per-crate order, and the full
-edition 2024 change list live in the `cargo-workflows` skill, when it is installed. Without it,
-run `cargo fix --edition` once per supported feature set and once per shipping `--target`.
+The feature-set and target rule, the migration workflow, the staged per-crate order, and the edition
+2024 change list live in the `cargo-workflows` skill; without it, run `cargo fix --edition` once
+per supported feature set and once per shipping `--target`.
 
 ## Verification
 
@@ -246,8 +246,8 @@ Use the smallest proof that decides the question:
 5. Run the real workspace tests after the probe. The probe proves the language rule, not the
    application invariant.
 
-Do not use Miri to answer whether code type-checks. Use Miri after compilation when unsafe
-aliasing or provenance is also in scope.
+Do not use Miri to answer whether code type-checks; use it after compilation for unsafe
+aliasing or provenance.
 
 ## Related skills
 
@@ -259,5 +259,5 @@ Each applies when it is installed.
 | `rust-pattern-semantics` | Binding modes, match guards, `if let` guards, partial moves, and scrutinee behavior |
 | `rust-callback-bounds` | Closure inference and higher-ranked callable bounds |
 | `rust-variance` | Lifetime subtyping and coercion through type constructors |
-| `cargo-workflows` | Edition migration workflow and MSRV verification |
-| `rust-unsafe` | Aliasing, invalid values, and provenance after safe borrow checking ends |
+| `cargo-workflows` | Edition migration (`cargo fix --edition`) and MSRV verification |
+| `rust-unsafe` | Aliasing, invalid values, and provenance after borrow checking; run `cargo +nightly miri test --locked` |

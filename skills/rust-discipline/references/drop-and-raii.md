@@ -253,10 +253,10 @@ scope that holds a guard still runs the guard's `drop`.
 
 The consequence for review: **never write a safety comment whose argument is "the guard runs".**
 A caller can leak the guard and every invariant the guard restores stays broken. If the invariant
-is a memory-safety invariant, the design is unsound whatever the guard does. See the
-`rust-unsafe` skill for the rule and the API shapes that survive a forgotten guard, and the
-`rust-pin-projection` skill for the one guarantee the language does give: a pinned value is
-dropped before its memory is reused.
+is a memory-safety invariant, the design is unsound whatever the guard does. The
+`rust-unsafe` skill owns the API shapes that survive a forgotten guard: make the leak harmless, as
+`thread::scope` does. The `rust-pin-projection` skill owns the one guarantee the language gives:
+a value behind `Pin` is dropped before its memory is reused.
 
 Use a guard for the things leaking cannot corrupt: closing a descriptor, releasing a lock,
 decrementing a metric, flushing a buffer. `scopeguard::defer!` covers the fallible variant.

@@ -50,7 +50,8 @@ proves it. UniFFI documents its partial Swift 6 support here:
 <https://mozilla.github.io/uniffi-rs/latest/swift/overview.html#swift-6-support>.
 
 An Apple floor tuple has a lower bound. The `rust-ios-build` skill records
-Apple's current App Store upload minimum for Xcode and the SDK. Xcode also
+Apple's current App Store upload minimum for Xcode and the SDK (as of 2026-09, Xcode 26
+and the iOS 26 SDK); record the build Xcode with `xcodebuild -version`. Xcode also
 limits the runtimes it can run: as of 2026-09, Xcode 27 runs and debugs apps on
 iOS 17 or later, and Xcode 26.x on iOS 15 or later
 (<https://developer.apple.com/xcode/system-requirements/>). A runtime floor
@@ -132,8 +133,9 @@ computes that API. A successful call below the application floor does not
 create a support claim. Treat an incompatible floor, a wrong ABI selection, or
 a missing packaged library as `Fail`, not `Blocked`.
 
-Use the `rust-android-build` skill for APK or AAB contents, ELF alignment,
-export allowlists, stripping, build IDs, and native symbol evidence. Reference
+Use the `rust-android-build` skill for APK or AAB contents, ELF alignment
+(`llvm-readelf -lW` on every shipped `.so`), export allowlists, stripping, build IDs,
+and native symbol evidence. Reference
 that evidence from the release closure. Do not repeat those inspections here.
 
 Android documents `bundletool` as the tool that converts an AAB into the APKs
@@ -173,7 +175,8 @@ the target to match an available simulator. A successful build at a newer
 target does not prove the support floor.
 
 Use the `rust-ios-build` skill for target slices, XCFramework assembly,
-deployment-target inspection, signing, dSYM UUIDs, and symbolication evidence.
+deployment-target inspection, signing, dSYM UUIDs (`dwarfdump --uuid` on the app and its
+dSYM), and symbolication evidence.
 Reference that evidence from the release closure. Do not rebuild or re-sign the
 artifact in this proof step.
 

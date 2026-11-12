@@ -226,8 +226,7 @@ object keys, archive entry names, and protocol field names. `FxHasher`, `FnvHash
 random secret, so an attacker can build a collision set offline. Use them only for internal
 keys. Use `ahash::RandomState` when the untrusted-key path is measured hot. It is seeded only
 while its default `runtime-rng` feature is on. Confirm that with
-`cargo tree --locked -e features -i ahash`. The `rust-hot-path` skill has the measurements,
-the seeding check, and the collision failure mode.
+`cargo tree --locked -e features -i ahash`.
 
 ## FFI boundary hardening
 
@@ -240,9 +239,8 @@ trust boundary.
 - **Return typed errors. Do not panic.** A panic that unwinds out of an
   `extern "C"` function aborts the process on Rust 1.81 and later. On earlier
   versions it is undefined behavior. Both outcomes destroy the caller. Make the
-  boundary function unable to panic, or catch the panic at the boundary, and map
-  every internal error into the boundary error type. See the `rust-panic-safety`
-  and `ffi-error-progress-cancel` skills.
+  boundary function unable to panic, or catch the panic with `catch_unwind` at the
+  boundary, and map every internal error into the boundary error type.
 - **Never expose raw pointers through a generated binding.** Handle-based
   object types from a binding generator are safe. A raw `*const u8` or
   `*mut u8` field in a boundary type is not.
@@ -264,6 +262,7 @@ Cover at minimum:
 - A valid file with one flipped byte in the authenticated region.
 - An oversized buffer at the FFI boundary.
 
-Add fuzz targets for every parser that reads a container format. See the
-`rust-test-tools` skill for fuzz and property-test setup, and the
-`rust-sanitizers-miri` skill for running those inputs under sanitizers.
+Add fuzz targets for every parser that reads a container format. Run each with
+`cargo +nightly fuzz run <target> -- -max_total_time=900`, which builds with
+AddressSanitizer by default; the `rust-test-tools` skill owns the fuzz setup, and the
+`rust-sanitizers-miri` skill owns runs under other sanitizers.

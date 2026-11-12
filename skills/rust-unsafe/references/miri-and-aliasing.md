@@ -160,7 +160,9 @@ impl<'a, T> Iterator for Iter<'a, T> {
 Both Miri aliasing models reject the unsound form, but only when the program interleaves the
 fabricated reference with a mutation. A test suite that never holds a yielded reference across a
 `borrow_mut()` passes Miri clean. Treat the pattern as UB on inspection. Miri is a confirmation
-here, never the gate. See the `rust-sanitizers-miri` skill for the two messages.
+here, never the gate. Run it under both models, the second with
+`MIRIFLAGS="-Zmiri-tree-borrows"`; the `rust-sanitizers-miri` skill, when it is installed, has
+the two messages.
 
 A reference derived from `UnsafeCell::get` must obey the same aliasing rules: no two live
 `&mut`, and no mutation under a live `&T`.
@@ -230,7 +232,7 @@ instead.
 ## Aliasing models: Stacked Borrows and Tree Borrows
 
 Miri checks unsafe code against a formal aliasing model. Run the default model (Stacked Borrows)
-first, then Tree Borrows as a second opinion; the `rust-sanitizers-miri` skill, when it is
+first, then Tree Borrows (`MIRIFLAGS="-Zmiri-tree-borrows"`) as a second opinion; the `rust-sanitizers-miri` skill, when it is
 installed, owns the flags.
 
 A write through a raw pointer invalidates a shared borrow taken after the pointer. Both models
@@ -363,5 +365,5 @@ cargo clippy --locked --all-targets -- \
 ```
 
 Use the command line only to try a lint out. Once you keep a lint, move it into
-`[workspace.lints]` so that CI and every developer get the same result. See the `rust-lints`
-skill.
+`[workspace.lints]` so that CI and every developer get the same result, as the `rust-lints`
+skill, when it is installed, describes.

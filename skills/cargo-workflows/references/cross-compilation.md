@@ -43,8 +43,8 @@ without a warning.
 Put target-wide codegen flags in `[target.<triple>]` in `.cargo/config.toml`. Do not put linker
 paths there: the host build system knows where the NDK or SDK lives, and a checked-in absolute
 path breaks on every other machine. The Android block (16 KiB page alignment, build ID) lives in
-the `rust-android-build` skill; profiling additions such as frame pointers live in the
-`rust-performance` skill.
+the `rust-android-build` skill. A profiling flag such as `-Cforce-frame-pointers=yes` goes in the
+same `[target.<triple>]` block.
 
 Cargo takes extra rustc flags from exactly one source, in this order: `CARGO_ENCODED_RUSTFLAGS`,
 then `RUSTFLAGS`, then all matching `target.<triple>.rustflags` and `target.<cfg>.rustflags`

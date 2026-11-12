@@ -865,6 +865,23 @@ skills = ["rust-c"]
         found = self.cross_refs("| Miri | the `rust-c` skill | on a schedule |\n")
         self.assertEqual(len(found), 1)
 
+    def test_a_name_in_a_list_or_table_counts_too(self):
+        # The old pattern saw only "the `x` skill"; a list or a table cell escaped it.
+        for body in ("Use these when installed: `rust-b` (async), `rust-c` (FFI).\n",
+                     "| `rust-c` | the aliasing rules |\n"):
+            with self.subTest(body=body):
+                validate_skills.failures.clear()
+                found = self.cross_refs(body)
+                self.assertEqual(len(found), 1)
+                self.assertIn("`rust-c`", found[0])
+
+    def test_a_table_boundary_cell_with_a_command_passes(self):
+        self.assertEqual(self.cross_refs("| `rust-c` | dependency vetting: `cargo deny check` |\n"), [])
+
+    def test_the_description_is_not_checked(self):
+        body = "---\nname: rust-a\ndescription: Use when x. Not for FFI; use `rust-c`.\nlicense: BSD-3-Clause\n---\n# T\n"
+        self.assertEqual(self.cross_refs(body), [])
+
     def test_the_cross_ref_ceiling_accepts_known_gaps_but_not_new_ones(self):
         body = "The `rust-c` skill owns it.\n"
         self.assertEqual(self.cross_refs(body, {"cross_refs": {"rust-a": 1}}), [])

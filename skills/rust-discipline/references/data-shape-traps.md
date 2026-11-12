@@ -155,8 +155,7 @@ let heap_array: Box<[u8; 1024 * 1024]> = vec![0u8; 1024 * 1024]
 Rule: build any array that a stack-size lint flags for heap residence with
 `vec![x; n].into_boxed_slice()`, or collect an exact-length iterator into `Box<[T]>`. Use
 `Box::new_uninit_slice` only when you write every element yourself. Never write `Box::new([T; N])` for a large `N`, and never return
-`[T; N]` by value for a large `N`. Hot-path code also falls under the allocation rules of the
-`rust-hot-path` skill.
+`[T; N]` by value for a large `N`.
 
 Two lints are the mechanical check, and the `rust-lints` skill owns both thresholds in
 `clippy.toml`. `clippy::large_stack_arrays` (pedantic) flags one array over
@@ -168,7 +167,8 @@ local: measured on clippy 1.99.1, an 8000-byte local array gives `this function 
 8026 bytes on the stack`, and `large_stack_arrays` stays silent.
 
 `Vec::into_boxed_slice` is not free when capacity exceeds length. The `rust-hot-path` skill, when
-it is installed, owns the measured pointer and capacity table and its allocator caveat. When the
+it is installed, owns the measured table; the call runs `shrink_to_fit`, a `realloc` that can
+move the buffer. When the
 length is exact, build the boxed slice straight from the iterator, which allocates once:
 
 ```rust

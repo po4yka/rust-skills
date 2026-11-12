@@ -9,9 +9,7 @@ license: BSD-3-Clause
 Build and verify Rust for the exact WebAssembly host that runs it. A `.wasm`
 suffix does not define an ABI, an import set, or a runtime.
 
-Related skills, when installed: `cargo-workflows` for features and profiles,
-`rust-async-internals` for executor-independent futures, `rust-performance` and
-`rust-hot-path` for a measured hotspot. This skill owns the host event loop,
+Related skill, when installed: `cargo-workflows` for features and profiles. This skill owns the host event loop,
 WebAssembly limits, artifact size, and boundary costs.
 
 ## Write the host contract first

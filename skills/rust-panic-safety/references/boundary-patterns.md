@@ -316,8 +316,10 @@ its panic guard. Consequences:
 - Swift calls a non-throwing export through `try!`, so a panic there ends the app. Keep such
   exports, for example a cancel call, panic-free, or give them a typed error.
 
-See the `uniffi-boundary` skill for the type mapping and the `ffi-error-progress-cancel`
-skill for the error, progress, and cancellation contract.
+The `uniffi-boundary` skill owns the type mapping: every fallible export returns
+`Result<_, E>`, and `E` derives `uniffi::Error`. The `ffi-error-progress-cancel` skill owns the
+error, progress, and cancellation contract: map `Cancelled` to `CancellationException` in Kotlin
+and `CancellationError` in Swift, never to a domain error.
 
 ## Async work behind a synchronous boundary
 

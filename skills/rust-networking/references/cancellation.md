@@ -27,5 +27,6 @@ On server cancellation, stop application work promptly, but do not claim that
 a partial response can be withdrawn from the peer.
 
 Use `rust-async-internals`, when it is installed, to implement the cancellation
-tree and to verify that dropped futures leave no locks, permits, or
-transactions behind.
+tree. At minimum, give every spawned task an owner that cancels its
+`CancellationToken` and then joins its `JoinHandle`, and verify that dropped
+futures leave no locks, permits, or transactions behind.

@@ -64,14 +64,14 @@ cargo test --locked
   installed, for any change that adds or edits an atomic operation that a test
   reaches. Without it, report the atomic change as not checked by Miri. Each
   seed is one schedule, and Miri emulates only some weak memory effects, so a
-  pass is evidence, not proof. Miri model flags and CI setup live in the
-  `rust-sanitizers-miri` skill, when it is installed.
+  pass is evidence, not proof. Add `MIRIFLAGS="-Zmiri-many-seeds=0..16"`; the
+  `rust-sanitizers-miri` skill, when it is installed, owns the other flags and CI.
 - **loom** runs for a lock-free structure, a hand-written lock, or publication
   through `UnsafeCell`. It checks only code built on its types: `loom::sync`
   atomics, `loom::thread`, and `loom::cell::UnsafeCell` for the payload. A
   payload in `std::cell::UnsafeCell` is invisible to loom, so gate the cell type
-  with `cfg(loom)` too. Setup lives in the `rust-test-tools` skill, when it is
-  installed. Know its two limits. It treats `SeqCst` loads and stores as
+  with `cfg(loom)` too. Run it with `RUSTFLAGS="--cfg loom"`; the
+  `rust-test-tools` skill, when it is installed, owns the setup. Know its two limits. It treats `SeqCst` loads and stores as
   `AcqRel`, so a failure in `SeqCst` code can be a false alarm (`fence(SeqCst)`
   is modelled). It does not explore load buffering, so a pass is not proof. A
   `LOOM_MAX_PREEMPTIONS` bound also limits what a pass covers.
