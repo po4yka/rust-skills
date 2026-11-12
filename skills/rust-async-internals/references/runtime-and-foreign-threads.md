@@ -1,19 +1,42 @@
 # Runtime Setup and Foreign Threads
 
-Reference material for `SKILL.md`. Read it when you write the shared-runtime initializer, set a
-thread stack size, or make a thread that tokio does not own start or wait for async work.
+Reference material for `SKILL.md`. Read it when you choose a mechanism for blocking work, write
+the shared-runtime initializer, pick a runtime flavor, set a thread stack size, or make a thread
+that tokio does not own start or wait for async work.
 
 ## Contents
 
+- [Blocking work](#blocking-work)
 - [Shared runtime](#shared-runtime)
+- [Runtime flavors](#runtime-flavors)
 - [Thread stacks](#thread-stacks)
 - [Enter the runtime from a foreign thread](#enter-the-runtime-from-a-foreign-thread)
 - [Rules for both shapes](#rules-for-both-shapes)
 - [Adopt a received socket](#adopt-a-received-socket)
 
+## Blocking work
+
+| Work shape | Mechanism | Reason |
+|---|---|---|
+| Bounded CPU work, target < 100 ms | `spawn_blocking` | it returns the pool thread quickly |
+| Occasional blocking syscall, short file I/O | `spawn_blocking` | same |
+| Many CPU-bound jobs at once | a `Semaphore` around `spawn_blocking`, or `rayon` | the blocking pool admits up to 512 threads by default |
+| Data-parallel compute (decode, geometry, raster) | `rayon` inside one `spawn_blocking`, or `rayon::spawn` plus a `oneshot` for the result | a `rayon` call blocks its caller until the parallel work ends |
+| Indefinite blocking loop, watcher, persistent synchronous connection | `std::thread::spawn` | it would occupy a pool thread for ever |
+| Anything on a `current_thread` runtime | `spawn_blocking` | `block_in_place` panics there |
+| Blocking I/O in a synchronous engine with no runtime | keep it synchronous | a runtime adds cost and no benefit there |
+
+Load data before a `rayon` region; do not do blocking I/O inside a `rayon` task.
+
+A synchronous protocol client that runs on its own `std::thread`, outside the runtime, is a valid
+design. Write a comment at the spawn site that states the intent, so that a later reader does
+not "fix" it into async.
+
 ## Shared runtime
 
-Build one runtime explicitly and share it. Each build creates a new thread pool.
+Build one runtime explicitly and share it. Each build creates a new thread pool, so do not build
+a runtime per session, per request, or per FFI call. Set `worker_threads` explicitly on mobile
+and embedded targets; the default is one thread per core.
 
 ```rust
 use std::sync::OnceLock;
@@ -38,6 +61,17 @@ fn runtime() -> std::io::Result<&'static Runtime> {
 ```
 
 Name the threads. A named thread makes a stack dump readable.
+
+## Runtime flavors
+
+| Flavor | Use it for | Constraint |
+|---|---|---|
+| `multi_thread` | production I/O concurrency | `tokio::spawn` needs `Send + 'static` |
+| `current_thread` | tests, and synchronous wrapper APIs that call `block_on` | `block_in_place` panics; `tokio::spawn` still needs `Send` |
+| `LocalRuntime` (tokio 1.51+) | `!Send` tasks through `spawn_local`, with no `LocalSet` | cannot move between threads; build with `Builder::new_current_thread().enable_all().build_local(LocalOptions::default())` |
+
+Find a large future with `clippy::large_futures` (pedantic), and `Box::pin` it. A stack overflow
+in a library that a host process loads can show as a plain SIGSEGV in the host crash report.
 
 ## Thread stacks
 
@@ -87,8 +121,8 @@ Use this only when the caller is a dedicated service thread that has nothing els
    original at any time. An `OwnedFd` closes on every error path with no cleanup code.
 4. Set a received socket to nonblocking before `from_std` or `AsyncFd::register`. On Unix,
    `from_std` panics in debug builds on a blocking socket. `AsyncFd::register` does not check,
-   and a blocking fd then blocks a worker thread inside a read in every build. Since Tokio
-   1.53.3, use the unsafe `register` API instead of the deprecated `new`. Prove that the owned
+   and a blocking fd then blocks a worker thread inside a read in every build. Since tokio
+   1.53.3 (backported to 1.51.6, per the tokio 1.54.1 CHANGELOG), use the unsafe `register` API instead of the deprecated `new`. Prove that the owned
    descriptor stays valid and open, refers to the same underlying file description, and that
    every `as_raw_fd()` call returns that same descriptor for the entire `AsyncFd` lifetime.
    Do not close or replace it through another owner or through `get_mut`. Call `register`

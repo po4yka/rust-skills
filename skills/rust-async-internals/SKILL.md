@@ -172,21 +172,11 @@ by name.
 
 ## Blocking work
 
-| Work shape | Mechanism | Reason |
-|---|---|---|
-| Bounded CPU work, target < 100 ms | `spawn_blocking` | it returns the pool thread quickly |
-| Occasional blocking syscall, short file I/O | `spawn_blocking` | same |
-| Many CPU-bound jobs at once | a `Semaphore` around `spawn_blocking`, or `rayon` | the blocking pool admits up to 512 threads by default |
-| Data-parallel compute (decode, geometry, raster) | `rayon` inside one `spawn_blocking`, or `rayon::spawn` plus a `oneshot` for the result | a `rayon` call blocks its caller until the parallel work ends |
-| Indefinite blocking loop, watcher, persistent synchronous connection | `std::thread::spawn` | it would occupy a pool thread for ever |
-| Anything on a `current_thread` runtime | `spawn_blocking` | `block_in_place` panics there |
-| Blocking I/O in a synchronous engine with no runtime | keep it synchronous | a runtime adds cost and no benefit there |
-
-Load data before a `rayon` region; do not do blocking I/O inside a `rayon` task.
-
-A synchronous protocol client that runs on its own `std::thread`, outside the runtime, is a valid
-design. Write a comment at the spawn site that states the intent, so that a later reader does
-not "fix" it into async.
+Put bounded blocking or CPU work (target < 100 ms) in `spawn_blocking`, and an indefinite loop
+on `std::thread::spawn`. Do not call `block_in_place` on a `current_thread` runtime: it panics.
+Read [references/runtime-and-foreign-threads.md](references/runtime-and-foreign-threads.md#blocking-work)
+when you choose a mechanism for many CPU-bound jobs, data-parallel `rayon` work, or a
+synchronous client.
 
 ## Send, 'static, and async bounds
 
@@ -236,29 +226,14 @@ when you write such a loop.
 
 ## Runtime setup and foreign threads
 
-Build one runtime explicitly and share it from a `static OnceLock<Runtime>`. Do not build a
-runtime per session, per request, or per FFI call: each build creates a new thread pool. Set
-`worker_threads` explicitly on mobile and embedded targets; the default is one thread per core.
-Find a large future with `clippy::large_futures` (pedantic), and `Box::pin` it. A stack overflow
-in a library that a host process loads can show as a plain SIGSEGV in the host crash report.
-
-| Flavor | Use it for | Constraint |
-|---|---|---|
-| `multi_thread` | production I/O concurrency | `tokio::spawn` needs `Send + 'static` |
-| `current_thread` | tests, and synchronous wrapper APIs that call `block_on` | `block_in_place` panics; `tokio::spawn` still needs `Send` |
-| `LocalRuntime` (tokio 1.51+) | `!Send` tasks through `spawn_local`, with no `LocalSet` | cannot move between threads; build with `Builder::new_current_thread().enable_all().build_local(LocalOptions::default())` |
-
-A foreign thread (a JNI call, a C callback, a platform service thread) cannot `.await`; it enters
-the runtime through `block_on`. Do not call `block_on` for long-running work on a callback thread
-that the host expects to return promptly. `block_on` polls the root future on the calling
-thread, and `thread_stack_size` does not size that stack; give a thread you create for
-`block_on` an explicit `stack_size`. Wrap a `block_on` body under an `extern "C"` entry in
-`catch_unwind` when the host must get an error, because since Rust 1.81 a panic there aborts the
-process. Read
+Build one runtime and share it from a `static OnceLock<Runtime>`; each build creates a new
+thread pool. A foreign thread (a JNI call, a C callback) enters through `block_on`, which polls
+the root future on the calling thread, so `thread_stack_size` does not size that stack. Under an
+`extern "C"` entry, wrap the `block_on` body in `catch_unwind`: since Rust 1.81 a panic there
+aborts the process. Read
 [references/runtime-and-foreign-threads.md](references/runtime-and-foreign-threads.md) when you
-write the shared-runtime initializer, set a thread stack size, or make a foreign thread start or
-wait for async work. It has the hand-off and blocking shapes and the rules to adopt a received
-file descriptor or socket. The
+write the shared-runtime initializer, pick a runtime flavor, set a thread stack size, or make a
+foreign thread start or wait for async work. The
 `rust-jni` and `ffi-error-progress-cancel` skills own the boundary contract, and
 `uniffi-boundary` owns a generated boundary. Each applies when it is installed.
 

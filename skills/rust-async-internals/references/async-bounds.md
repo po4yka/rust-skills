@@ -304,10 +304,9 @@ Correct approaches, in order of preference:
    `spawn_local` on a `LocalRuntime` (tokio 1.51+) or inside a `LocalSet`. `tokio::spawn` needs
    `Send` on every runtime flavor. Do not hold a `RefCell` borrow across `.await`.
 
-No route hands a `&mut State` to a future. `Context::ext` is nightly, and it is empty under
-tokio. A pointer smuggled through `Waker::data()` breaks under `FuturesUnordered`. A coroutine
-resume argument is not higher-ranked. The `rust-event-loop-state` skill, when it is installed,
-holds the diagnostics, in its section "The three escapes, and why none works".
+No route hands a `&mut State` to a future: `Context::ext` (nightly, empty under tokio), a pointer
+in `Waker::data()`, and a coroutine resume argument all fail. The `rust-event-loop-state` skill,
+when it is installed, owns the evidence for each.
 
 ## Why a future or an FFI type needs Pin
 
