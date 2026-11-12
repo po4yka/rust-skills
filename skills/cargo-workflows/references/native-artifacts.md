@@ -40,8 +40,7 @@ panic = "unwind"
   `rust-android-build` skill, `ios-release` in the `rust-ios-build` skill, when they are
   installed. Do not add `mobile-release` next to it.
 - Measure `opt-level = "z"` against `"s"` and `3` on the real artifact before you ship it. Both
-  `"s"` and `"z"` disable loop vectorization, so a compute-bound path can prefer `3`. The
-  `rust-performance` skill has the measurement workflow, when it is installed.
+  `"s"` and `"z"` disable loop vectorization, so a compute-bound path can prefer `3`.
 - Select the profile from a host build property. Give local development a separate default, so a
   debug loop does not pay for a release build.
 
@@ -85,11 +84,9 @@ crate, and its doc-tests cannot compile.
   1.99.1). Do not remove `pub` to silence the lint: `#[unsafe(no_mangle)]` exports the symbol
   either way, so the caller still gets a safe signature over an unchecked pointer. Visibility
   is a separate decision. On jni 0.22, do not type `Java_*` symbol names by hand:
-  use `#[jni_mangle]` or `native_method!` with `RegisterNatives`. The `rust-jni` skill owns the
-  entry-point design.
+  use `#[jni_mangle]` or `native_method!` with `RegisterNatives`.
 - Keep the unsafe-documentation lints at the workspace level, and satisfy them: write the
-  `# Safety` section or the `// SAFETY:` comment. Do not relax them for a binding crate. The
-  `rust-lints` skill has the binding-layer lint rules, when it is installed.
+  `# Safety` section or the `// SAFETY:` comment. Do not relax them for a binding crate.
 - A UniFFI crate uses the proc-macro path: `#[uniffi::export]`, `#[derive(uniffi::Record)]` and
   similar, and `uniffi::setup_scaffolding!()`. UniFFI generates the entry points, so write no
   `#[no_mangle]` functions. Gate the bindgen CLI behind a feature, so a default workspace build
@@ -104,8 +101,9 @@ name = "uniffi-bindgen"
 required-features = ["cli"]
 ```
 
-The `uniffi-packaging-versioning` skill owns binding generation and version pinning. The
-`uniffi-boundary` and `ffi-error-progress-cancel` skills own the boundary design.
+The `uniffi-packaging-versioning` skill owns binding generation and version pinning. Run
+`uniffi-bindgen` from this binary, never from a global `cargo install`: a global binary drifts
+from the `uniffi` version in `Cargo.lock`, and the bindings then fail their checksum check.
 
 ## Native artifact mapping
 

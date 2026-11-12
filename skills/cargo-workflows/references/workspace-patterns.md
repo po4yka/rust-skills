@@ -121,13 +121,12 @@ cargo tree --locked -i <crate>            # Confirms who pulls it in
 ## Adding a member crate
 
 - Add `[lints] workspace = true` to the new member. Without it, the member silently builds with
-  default lint levels. The lint table itself lives in the `rust-lints` skill.
+  default lint levels.
 - Set `edition.workspace = true` and `rust-version.workspace = true`, so the member follows the
   workspace MSRV and edition.
 - Put `#![forbid(unsafe_code)]` in the crate root of every crate with no hand-written `unsafe`.
   A crate that calls FFI only through a safe wrapper crate qualifies. Do not set it in the
-  workspace lint table: every member inherits that table, and the FFI crate needs `unsafe`. The
-  `rust-unsafe` skill owns this rule.
+  workspace lint table: every member inherits that table, and the FFI crate needs `unsafe`.
 
 ## Selective build commands
 
