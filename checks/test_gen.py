@@ -58,6 +58,11 @@ class TestPrelude(unittest.TestCase):
         source, _ = gen.wrap("fn f() -> Result<()> { todo!() }", "type Result<T> = std::io::Result<T>;")
         self.assertNotIn(gen.RESULT_ALIAS, source)
 
+    def test_a_hash_line_in_another_fence_is_not_a_heading(self):
+        lines = ["## Real", "```bash", "## not a heading", "```", "```rust", "fn f() {}", "```"]
+        blocks = list(gen.blocks_of(lines))
+        self.assertEqual([(section, block) for _, section, _, block in blocks], [("Real", "fn f() {}")])
+
     def test_bad_entries_are_reported(self):
         import tempfile, pathlib
         with tempfile.TemporaryDirectory() as d:

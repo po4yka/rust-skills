@@ -505,6 +505,33 @@ skills = ["rust-c"]
         self.assertIn("'core' shows 2 skills in the Install table; bundles.toml lists 3",
                       validate_skills.failures[0])
 
+    COMMANDS_README = (
+        "## Install\n\n| Bundle |\n| --- |\n| `core` |\n| `edge` |\n\n```bash\n"
+        "# core\nfor s in rust-a rust-b; do\n  gh skill install o/r \"$s\"\ndone\n"
+        "# edge\nfor s in rust-c; do\n  gh skill install o/r \"$s\"\ndone\n```\n\n```bash\n"
+        "# core\nnpx skills add o/r --skill rust-a rust-b\n# edge\nnpx skills add o/r --skill rust-c\n"
+        "```\n\n## Next\n"
+    )
+
+    def check_commands(self, readme: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.use_tree(tmp, {"bundles.toml": self.BUNDLES, "README.md": readme})
+            validate_skills.check_bundles(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
+        return list(validate_skills.failures)
+
+    def test_install_commands_in_step_with_the_bundles_pass(self):
+        self.assertEqual(self.check_commands(self.COMMANDS_README), [])
+
+    def test_an_install_command_that_drops_a_skill_fails(self):
+        found = self.check_commands(self.COMMANDS_README.replace("--skill rust-a rust-b", "--skill rust-a"))
+        self.assertEqual(len(found), 1)
+        self.assertIn("install command for bundle 'core'", found[0])
+
+    def test_a_bundle_without_both_install_commands_fails(self):
+        found = self.check_commands(self.COMMANDS_README.replace("# edge\nnpx skills add o/r --skill rust-c\n", ""))
+        self.assertEqual(len(found), 1)
+        self.assertIn("'edge' has 1 labelled install commands", found[0])
+
     # The plugin marketplace: one entry per bundle, in step with bundles.toml.
 
     def entries(self) -> list[dict]:

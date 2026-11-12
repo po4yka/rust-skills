@@ -27,16 +27,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="x86_64-unknown-linux-gnu"
-SKILLS_CLI_VERSION="1.7.4"
+SKILLS_CLI_VERSION="1.8.1"
 # The Claude Code CLI for the plugin install gate. This line is the one pin:
 # .github/workflows/plugin-eval.yml and client-compat.yml read it, so the
 # install gate and the evaluations judge the plugin with the same client.
-CLAUDE_CODE_VERSION="2.1.316"
+CLAUDE_CODE_VERSION="2.1.322"
 # The Codex CLI for the same gate. Codex reads .claude-plugin/marketplace.json
 # as a legacy-compatible marketplace, so a Codex release can change the result.
 # After a bump, check CODEX_BUILTIN_SKILLS in checks/plugin_install.py: a new
 # built-in skill shows up as a foreign skill in the gate.
-CODEX_VERSION="0.166.0"
+CODEX_VERSION="0.167.2"
 
 FAST=0
 CLIENTS=1
@@ -204,8 +204,16 @@ if command -v npx > /dev/null 2>&1; then
             failed=1
         fi
     done
+    # The name check above proves nothing is missing. The count proves nothing extra
+    # is discovered either, such as a stray SKILL.md outside skills/.
+    expected="$(ls -1d skills/*/ | wc -l | tr -d ' ')"
+    found="$(sed -n 's/.*Found \([0-9][0-9]*\) skills.*/\1/p' "$RUN_DIR/discovered.txt" | head -1)"
+    if [ "$found" != "$expected" ]; then
+        echo "  the skills CLI found ${found:-no count of} skills; skills/ holds ${expected}"
+        failed=1
+    fi
     [ "$failed" -eq 0 ] || exit 1
-    echo "  the skills CLI discovered all $(ls -1d skills/*/ | wc -l | tr -d ' ') skills"
+    echo "  the skills CLI discovered all ${expected} skills and nothing else"
 else
     echo "  SKIPPED: no npx on this host. CI runs this gate on every push."
 fi
