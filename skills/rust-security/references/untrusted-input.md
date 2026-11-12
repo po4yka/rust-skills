@@ -98,15 +98,20 @@ fn validate_coordinate(x: f64, y: f64) -> Result<(), ParseError> {
 Validate at the parse boundary, not at the point of use. A value that enters
 your domain types unvalidated will be used unvalidated somewhere.
 
-### Reject unknown schema versions and unknown fields
+### Reject unknown schema versions
 
-Accept only the schema identities and versions your reader implements. Reject
-unknown fields rather than ignoring them. A reader that silently accepts drift
-accepts attacker-chosen fields, and it hides format-version mismatches until a
-later stage fails in a worse place.
+Accept only the schema identities and versions your reader implements. A reader
+that silently accepts an unknown version hides a format mismatch until a later
+stage fails in a worse place.
 
-Do not add a legacy reader or a migration path as a hardening workaround. A
-second reader is a second attack surface.
+Unknown fields are a compatibility decision, not only a security one. Follow the
+encoding table of the `rust-serde` skill: `deny_unknown_fields` for a file a human
+writes, additive fields with `default` for a message a newer peer may send.
+
+For an authenticated container or an archive, do not add a legacy reader as a
+hardening workaround. A second reader of attacker-supplied bytes is a second
+attack surface. A planned migration of your own versioned data is a separate
+decision.
 
 ### Reject path traversal
 
@@ -120,11 +125,21 @@ not exist yet. A separate check followed by create also has a symlink race.
 
 Open the private staging root once as a directory handle. Walk and create every
 component relative to that handle. Disable symlink and reparse-point following
-on every operation. Use exclusive creation for the final file. On Linux, use
-`openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`. Use equivalent
-directory-relative operations on other platforms. Reject archive symlink and
-hard-link entries. If the platform API cannot provide these semantics, do not
-extract an untrusted archive there.
+on every operation. Use exclusive creation for the final file. The standard
+library has no directory-relative file API, so use one of these crates:
+
+- **Portable: cap-std.** Open the root with
+  `cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())`. Create
+  directories with `Dir::create_dir` and files with `Dir::open_with` and an
+  `OpenOptions` that sets `create_new(true)`. A `Dir` refuses every path that
+  resolves outside it, through `..`, an absolute path, or a symlink.
+- **Linux only: rustix.** Call `rustix::fs::openat2(root_fd, name, oflags, mode,
+  ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS)` for each component, with
+  `OFlags::CREATE | OFlags::EXCL` for the final file, and `rustix::fs::mkdirat`
+  for a directory. `openat2` needs Linux 5.6 or later; on `ENOSYS`, fail closed.
+
+Reject archive symlink and hard-link entries. If the platform API cannot provide
+these semantics, do not extract an untrusted archive there.
 
 A library `extract` or `unpack_in` helper is not a traversal gate. RustSec records an
 arbitrary file write in `zip` extraction (RUSTSEC-2025-0168) and a symlink-following
