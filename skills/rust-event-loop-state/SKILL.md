@@ -10,14 +10,12 @@ license: BSD-3-Clause
 the other.** Every rule below follows from this sentence. `E0499` in a dispatch loop almost
 never needs a different line. It needs a different owner.
 
-This skill covers synchronous loops. For runtime behavior under tokio (`select!`, `JoinSet`,
-`FuturesUnordered`, wakers, cancellation), use the `rust-async-internals` skill when it is
-installed. The diagnostics below are from rustc 1.99.1, edition 2024.
+This skill covers synchronous loops; under tokio, use the `rust-async-internals` skill when it
+is installed. The diagnostics below are from rustc 1.99.1, edition 2024.
 
 ## Pick the structure from the shape of the handler set
 
-Read the left column first. Stop at the first row that describes your handler set. Each row
-down has a concrete cost, needed or not.
+Stop at the first row that describes your handler set. Each row down has a concrete cost.
 
 | Shape of the handler set | Structure | What it costs |
 | --- | --- | --- |
@@ -45,17 +43,16 @@ down has a concrete cost, needed or not.
 
 | Move | What actually happens |
 | --- | --- |
-| `Rc<RefCell<State>>` cloned into every handler, re-borrowed during dispatch | The `E0499` becomes a `RefCell already borrowed` or `RefCell already mutably borrowed` panic the first time one handler calls another. The compile error told you the truth |
-| `Arc<Mutex<State>>` inside one thread, re-locked during dispatch | The nested `lock()` never returns. std leaves the outcome unspecified: it can deadlock or panic. A deadlock gives no output and no backtrace, and it needs no load to happen |
+| `Rc<RefCell<State>>` cloned into every handler, re-borrowed during dispatch | The `E0499` becomes a `RefCell already borrowed` panic the first time one handler calls another |
+| `Arc<Mutex<State>>` inside one thread, re-locked during dispatch | The nested `lock()` deadlocks or panics (std leaves it unspecified), with no output and no load needed |
 | `unsafe { &mut *ptr }` to hand two handlers the state | Two live `&mut` to one place are undefined behavior. Miri rejects it under Stacked Borrows and Tree Borrows |
-| Two live `async fn(&mut State)` routines as suspendable routines over one state | `E0499` before any executor runs: each future holds the `&mut` until it completes |
-| An ECS taken for ergonomics, not for an open component set | You pay run-time conflict panics for a component set the compiler could have checked |
+| Two live `async fn(&mut State)` routines over one state | `E0499` before any executor runs: each future holds the `&mut` until it completes |
+| An ECS taken for ergonomics, not for an open component set | Run-time conflict panics for a component set the compiler could check |
 | `std::mem::take(&mut st.handlers)`, then `st.handlers = hs` | Every handler registered during the tick is silently dropped. Call `hs.append(&mut st.handlers)` first |
 | A bare `usize` slot key when slots are removed or reused | The key names a different slot, or an out-of-bounds slot, with no error. Use a generational key |
 
-The first two rows are about re-entrant dispatch inside one synchronous loop. Under a runtime
-the same shapes read differently: `Arc<Mutex<State>>` across separate tasks is a valid,
-serializing choice.
+The first two rows are about one synchronous loop: `Arc<Mutex<State>>` across separate tasks is
+a valid choice.
 
 ## Verify
 
@@ -67,23 +64,16 @@ The change is complete when every row that applies to it is green.
 | No re-entrant `RefCell` or `Mutex` path remains | `rg -e 'Rc<RefCell<' -e 'Arc<Mutex<'` over the state and handler types. Then a test that dispatches one event through every handler, including a handler that triggers another, under the timeout below | Paths the test does not reach. A cell behind a type alias |
 | A handler that enqueues cannot stall the tick | A test with a handler that enqueues on every event. Run one tick under the timeout below | Handlers that enqueue only on some events |
 | No ECS access conflict | A test that initializes and runs every real schedule once against an empty world | Systems added to a schedule at run time |
-| Dispatch that still contains `unsafe` does not alias | When a nightly toolchain with the `miri` component is installed, `cargo +nightly miri test --locked` on the dispatch tests. Otherwise report the dispatch as not checked by Miri | Paths the tests do not reach |
+| Dispatch that still contains `unsafe` does not alias | `cargo +nightly miri test --locked` on the dispatch tests when nightly `miri` is installed; otherwise report it as not checked by Miri | Paths the tests do not reach |
 
-The `rust-sanitizers-miri` skill, when it is installed, owns the Miri flags and the Stacked
-Borrows and Tree Borrows policy. Without it, gate on the default Stacked Borrows run and treat
-`MIRIFLAGS="-Zmiri-tree-borrows"` as a second opinion.
+The `rust-sanitizers-miri` skill, when it is installed, owns the Miri flags. Without it, gate on
+the default Stacked Borrows run and treat `MIRIFLAGS="-Zmiri-tree-borrows"` as a second opinion.
 
-A re-locked `Mutex` (std may also panic) and an always-enqueuing `while let` drain usually
-fail as a hang. libtest warns after 60 seconds and never ends the test.
-Build the state and run one tick inside `std::thread::spawn`. Send `()` on a
-`std::sync::mpsc` channel when the tick returns. Assert
-`rx.recv_timeout(Duration::from_secs(5)).is_ok()`. A panic in the thread drops the sender, so
-the same assert also catches a `RefCell` panic. If cargo-nextest is installed,
-`slow-timeout = { period = "5s", terminate-after = 1 }` under `[profile.default]` in
-`.config/nextest.toml` also ends a hung test.
-
-Read `references/review-checklist.md` when you review an existing loop. It asks one question
-per defect class in this skill.
+A re-locked `Mutex` and an always-enqueuing `while let` drain usually fail as a hang, and
+libtest never ends a hung test. Run one tick inside `std::thread::spawn` and assert
+`rx.recv_timeout(Duration::from_secs(5)).is_ok()` on a channel that the thread signals. Read
+`references/review-checklist.md` ("Hang test") for the harness, and for the review questions
+when you review an existing loop.
 
 ## The loop owns both, separately
 
@@ -103,36 +93,10 @@ fn tick(st: &mut State, ev: Event) {
 }
 ```
 
-No interior mutability fixes this. Move the collection out. Two locals in the loop are two
-independent owners, so the two borrows are provably disjoint:
+No interior mutability fixes this. Move the collection out: two locals in the loop are two
+owners, and their borrows are disjoint. The "Two owners" section of
+`references/state-partitioning.md` has the runnable version.
 
-```rust,run
-struct Event(u32);
-struct State { counter: u32 }
-trait Handler { fn handle(&mut self, st: &mut State, ev: &Event); }
-
-struct Add;
-impl Handler for Add {
-    fn handle(&mut self, st: &mut State, ev: &Event) { st.counter += ev.0; }
-}
-struct Double;
-impl Handler for Double {
-    fn handle(&mut self, st: &mut State, _ev: &Event) { st.counter *= 2; }
-}
-
-fn tick(handlers: &mut [Box<dyn Handler>], st: &mut State, ev: Event) {
-    for h in handlers.iter_mut() { h.handle(st, &ev); }
-}
-
-fn main() {
-    let mut handlers: Vec<Box<dyn Handler>> = vec![Box::new(Add), Box::new(Double)];
-    let mut st = State { counter: 0 };
-    tick(&mut handlers, &mut st, Event(3));   // (0 + 3) * 2
-    tick(&mut handlers, &mut st, Event(4));   // (6 + 4) * 2
-    assert_eq!(st.counter, 20);
-    println!("counter={}", st.counter);       // counter=20
-}
-```
 
 When an existing codebase cannot move the field yet, use one of two repairs:
 
@@ -140,9 +104,7 @@ When an existing codebase cannot move the field yet, use one of two repairs:
   and dispatch `&mut st.rest`. `st.handlers` and `st.rest` are disjoint field borrows, so the
   handler field can stay.
 - Use `std::mem::take(&mut st.handlers)` for the tick only when a handler must also mutate the
-  handler set. The put-back is the trap: a handler that registers a new handler during the
-  tick puts it into the empty field, and a plain assignment drops it. Append the newcomers
-  first. Read the "Migration" section of `references/state-partitioning.md` for the runnable
+  handler set, and append the newcomers before the put-back. Read the "Migration" section of `references/state-partitioning.md` for the runnable
   version and its panic limit.
 
 ## Drain the queue by value
@@ -151,43 +113,23 @@ When an existing codebase cannot move the field yet, use one of two repairs:
 call, so NLL keeps it live across the call, and the whole state stays borrowed (`E0502`).
 `pop_front()` produces an owned `Event`, so no borrow of the state survives into the
 handler, and a handler can push more events back:
+`while let Some(ev) = st.queue.pop_front() { handle(&mut st, ev); }`. The "Queue drain
+diagnostic" section of `references/state-partitioning.md` has the runnable version.
 
-```rust,run
-use std::collections::VecDeque;
 
-struct Event(u32);
-struct State { counter: u32, queue: VecDeque<Event> }
-
-fn handle(st: &mut State, ev: Event) {
-    st.counter += ev.0;
-    if ev.0 > 1 { st.queue.push_back(Event(ev.0 - 1)); }   // handlers may enqueue
-}
-
-fn main() {
-    let mut st = State { counter: 0, queue: VecDeque::from([Event(3)]) };
-    while let Some(ev) = st.queue.pop_front() { handle(&mut st, ev); }
-    assert_eq!(st.counter, 6);
-    println!("counter={}", st.counter);   // counter=6
-}
-```
-
-A handler that enqueues on every event makes that `while let` spin forever. Read the length
-first and drain exactly one batch per tick: `for _ in 0..st.queue.len() { let Some(ev) =
+A handler that enqueues on every event makes that `while let` spin forever. Drain one batch
+per tick: `for _ in 0..st.queue.len() { let Some(ev) =
 st.queue.pop_front() else { break }; handle(st, ev); }`.
 
 ## A handler stores a key, never a borrow
 
-A handler built from a field of the state carries that borrow into every dispatch, and the
-`&mut State` argument is then a second borrow. `Caching { cache: &mut st.caches[0] }`
-followed by `h.handle(st)` is `E0499`, "first borrow later used by call". Store the slot
+A handler built from a field of the state carries that borrow into every dispatch:
+`Caching { cache: &mut st.caches[0] }` followed by `h.handle(st)` is `E0499`. Store the slot
 instead, `struct Caching { slot: usize }`, and resolve it at the top of each call:
-`st.caches[self.slot].hits += 1`. Handler construction then does not touch the state, so one
-registry serves every tick. A handler that needs two slots at once resolves both keys in one
-call with `st.caches.get_disjoint_mut([a, b])` (Rust 1.86+). An overlapping or out-of-range
-pair is an `Err`, not a panic.
-
-A bare `usize` goes stale with no error when a slot is removed or reused. Use a generational
-key when slots are freed. Read the "Key-holding handler" section of
+`st.caches[self.slot].hits += 1`. For two slots at once, use
+`st.caches.get_disjoint_mut([a, b])` (Rust 1.86+), which returns an `Err` on overlap. A bare
+`usize` goes stale with no error when a slot is reused; use a generational key when slots are
+freed. Read the "Key-holding handler" section of
 `references/state-partitioning.md` for the diagnostic, the runnable version, and the
 staleness rules.
 
@@ -199,13 +141,8 @@ Read `references/suspendable-routines.md` when a routine must pause and resume n
 
 ## Related skills
 
-Use these skills when they are installed:
-
-| Skill | Boundary |
-| --- | --- |
-| `rust-async-internals` | Everything under a runtime: `select!`, `JoinSet`, waker plumbing, cancellation, and two futures over disjoint fields of one struct |
-| `rust-compiler-errors` | `E0499` and `E0502` as diagnostics, with the general repairs |
-| `rust-discipline` | `Deref` on non-pointer types, blanket impls and semver |
-| `rust-unsafe` | The aliasing rules and the Miri reproduction behind the raw-pointer rows |
-| `rust-iterator-impl` | `iter::from_fn` for a routine that only yields values; the `gen` block status |
-| `rust-crate-architecture` | Which crate holds the handler trait and the state type (`cargo tree --locked -p <crate>`) |
+When installed: `rust-async-internals` (everything under a runtime), `rust-compiler-errors`
+(`E0499` and `E0502` in general), `rust-discipline` (`Deref` on non-pointer types, blanket
+impls), `rust-unsafe` (the aliasing rules behind the raw-pointer rows), `rust-iterator-impl`
+(`iter::from_fn` for a routine that only yields), and `rust-crate-architecture` (which crate holds
+the handler trait; `cargo tree --locked -p <crate>`).
