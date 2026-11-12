@@ -7,175 +7,129 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-12
+
+A full audit of the catalog and of the gates that check it. Every skill and every harness script
+was read against its claims, and each finding was re-checked on Rust 1.99.1, Miri
+nightly-2026-11-09, the crate sources, or a probe before it was fixed: 17 factual errors, about
+70 rule and instruction defects, and the smaller corrections. Four new skills bring the catalog
+to 50. The `language` bundle splits into `language` and `design`, so every bundle fits the
+always-on skill listing. Every SKILL.md body is at or under 4,500 estimated tokens, and
+`scripts/catalog-ceilings.toml` is empty: nothing in the catalog is over a limit. The toolchain
+pin stays at Rust 1.99.1.
+
+**Plugin users:** `rust-skills-language` now holds 8 skills. Install `rust-skills-design` as well
+to keep rust-discipline, rust-code-style, rust-crate-architecture, rust-lints, and rust-cli,
+which moved there with the new rust-error-handling.
+
 ### Added
 
-- Four skills for the catalog gaps the audit found:
-  - `rust-error-handling` (design): error types in libraries and applications, thiserror and
-    anyhow, the `Error::source` chain, dependency errors as SemVer, and `ExitCode`.
-  - `rust-pyo3` (ffi): PyO3 0.30 modules on the `Bound` API, maturin wheels, abi3 and
-    free-threaded Python.
-  - `rust-cxx` (ffi): C++ interop with `cxx::bridge` and cxx-build.
-  - `rust-cross-compilation` (build): other Linux targets, static musl binaries, cross,
-    cargo-zigbuild, Docker, and qemu-user test runs.
+- `rust-error-handling` (design): error types in libraries and applications, thiserror enums
+  with `#[from]` and `#[source]`, the `Error::source` chain, `anyhow::Context`, dependency
+  errors as SemVer, chain printing, stable error codes, and `ExitCode`.
+- `rust-pyo3` (ffi): PyO3 0.30 modules on the `Bound` API, attach and detach, `PyErr` and
+  `PanicException`, abi3 and free-threaded wheels, and maturin builds.
+- `rust-cxx` (ffi): C++ interop with `cxx::bridge`, `UniquePtr`, `CxxString`, `Pin<&mut T>`
+  methods, exceptions as `Result`, and cxx-build.
+- `rust-cross-compilation` (build): other Linux targets, per-target linkers and `CC_<target>`,
+  static musl binaries, cross, cargo-zigbuild glibc floors, Docker builds, and qemu-user tests.
+- The `design` bundle and its `rust-skills-design` plugin.
+- Gates:
+  - a second compile of the examples with `--profile test`, so `#[test]`, `#[cfg(test)]`, and
+    `#[tokio::test]` code is type-checked (seven test blocks did not compile and now do);
+  - `checks/ignored.txt`, which lists every `rust,ignore` block with its reason;
+  - `--ceilings-base`: CI compares `scripts/catalog-ceilings.toml` with the merge base, so an
+    added or raised ceiling fails;
+  - a fallback check for every code span that names a skill of another bundle, not only the
+    "the `x` skill" form;
+  - README install commands and the router row order checked against `bundles.toml`, and the
+    skills-CLI gate fails on an extra skill as well as a missing one;
+  - the validator rejects files other than `SKILL.md` and `references/*.md` in a skill, a
+    reference `SKILL.md` does not link, a link to its own file, reference-style and HTML links
+    that leave the skill, unknown fence languages and every Rust fence spelling `gen.py` skips,
+    and routing rows it cannot parse, shorter than three characters, or claimed by another skill.
+- `.github/workflows/client-compat.yml`: every week the plugin install gate runs on the newest
+  Claude Code and Codex and opens an issue when a plugin stops loading exactly its skills.
+- `bash checks/check.sh --no-clients`, which skips the three `npx` gates.
+- An outcome case for the design bundle (`design-error-source-chain`), and routing-eval prompts
+  for the four new skills.
+- pyo3 0.30, cxx 1, tokio `test-util`, `mutants`, and `hyper` in the compile harness.
 
 ### Changed
 
-- The `language` bundle splits in two: `language` (8 skills, semantics and compiler errors) and
-  `design` (6 skills, API design, error handling, lints, architecture, CLI), each under the
-  5,000-character listing budget. A consumer of `rust-skills-language` gets the moved skills from
-  the new `rust-skills-design` plugin.
-- Every SKILL.md body is at or under 4,500 estimated tokens; conditional material moved to
-  references. `scripts/catalog-ceilings.toml` holds no entry: no body, bundle, or cross-bundle
-  reference is over its limit.
-- The catalog description total is reported, not capped; each bundle stays capped.
-- rust-code-style hands the thiserror-versus-anyhow choice to rust-error-handling, and
-  cargo-workflows hands the general cross-compile workflow to rust-cross-compilation.
-- The harness holds pyo3 0.30 and cxx 1.
-
-### Changed (cross-bundle fallbacks)
-
-- The validator checks every code span that names a skill of another bundle, in prose, lists,
-  and table cells, not only the "the `x` skill" form. It found 251 references with no fallback,
-  not 130. Each now carries the owner's rule with its command or API in the same or the next
-  sentence, or was deleted where it only repeated a rule already stated nearby. No skill keeps a
-  `[cross_refs]` ceiling, so any new reference without a fallback fails. Bodies grew only under
-  the documented exception (60 tokens per resolved reference); most shrank.
-
-### Changed (audit P3)
-
-- Bodies moved conditional material to references: 30 skills are smaller, and `memory-model` is
-  under the 4,800-token target. New references hold, among others, fuzzing and golden files
-  (`rust-test-tools`), FFI stubs (`rust-sanitizers-miri`), vetting steps (`rust-security`), CI and
-  nextest config (`cargo-workflows`), global state (`memory-model`), rustc transcripts
-  (`rust-send-sync`), and consumer tests (`rust-swift-ffi`).
+- Bundles: `language` (8 skills: semantics and compiler errors) and `design` (6 skills: API
+  design, error handling, lints, architecture, CLI) replace the 13-skill `language`, which was
+  the one bundle over the 5,000-character listing budget. The catalog description total is
+  reported, no longer capped; each bundle stays capped.
+- Every SKILL.md body is at or under 4,500 estimated tokens, down from up to 7,900. Long
+  examples, transcripts, measurements, and platform procedures moved to references with a "Read
+  `references/x.md` when" pointer; triage tables, hard rules, and verifiers stayed.
+- 251 cross-bundle references now carry the owner's rule with its command or API, or were
+  removed where they only repeated a rule stated nearby.
+- One home per rule: golden files, fixtures, proptest, and loom in rust-test-tools; Miri in
+  rust-sanitizers-miri; temporaries in rust-borrow-semantics; Drop and E0509 split between
+  rust-discipline and rust-compiler-errors; Swift isolation in rust-swift-ffi; the
+  thiserror-versus-anyhow choice in rust-error-handling; the general cross-compile workflow in
+  rust-cross-compilation.
 - Toolchain labels move to Rust 1.99.1 only where the claim was re-run on 1.99.1; macOS, device,
-  and uninstalled-crate measurements keep their labels. Version labels for cargo-flamegraph,
-  smallvec, wild-linker, proptest, hyper, and serde_json are current as of 2026-11.
-- Small corrections across the catalog: the `&Vec` search regex, `extern fn` with no ABI string,
-  `nm --demangle` checks, `CARGO_BUILD_WARNINGS=deny` (ignored before Cargo 1.97),
-  `avoid-breaking-exported-api = true`, one ban for `mem::forget`, a jq-free crate-edge check,
-  the AsyncFn diagnostics, new rustc triage rows (E0310, E0369, E0015, E0599 bounds), a foldhash
-  row, and grep fallbacks for rg commands.
-- Harness: `gen.py` skips `##` lines inside non-Rust fences; the validator checks the README
-  install commands and the router row order against `bundles.toml`; the skills-CLI gate also
-  fails on extra skills; an uncoded `compile_fail` block that fails only on an undefined name now
-  fails the gate. Client pins: skills 1.8.1, Claude Code 2.1.322, Codex 0.167.2.
+  and uninstalled-crate measurements keep their labels. Miri messages are re-measured on
+  nightly-2026-11-09.
+- `analyze.py` excuses nothing without a listing: the "artifact" and "low" buckets are gone, a
+  `compile_fail` fence that names a code fails on any other coded error, and an uncoded
+  `compile_fail` block that fails only on an undefined name fails the gate.
+- The edit hook reports a validator crash instead of staying silent.
+- Client pins: skills 1.8.1, Claude Code 2.1.322, Codex 0.167.2.
+- CI: each client gate runs once (`Validate catalog` runs `--fast`, `Compile-check examples` runs
+  `--no-clients`); a push to `main` no longer cancels an earlier run; both jobs fetch full
+  history for the ceilings comparison; `plugin-eval.yml` reads `CLAUDE_CODE_VERSION` from
+  `checks/check.sh` and gives the outcome suite 270 minutes.
+- `AGENTS.snippet.md` groups its rows by bundle, so a consumer can delete the rows of a bundle
+  they did not install.
+- AGENTS.md, README.md, SECURITY.md, `checks/README.md`, and `evals/README.md` state what the
+  gates prove, including that the chars/2.5 token estimate has no tokenizer count behind it and
+  that branch protection is a repository setting no gate proves.
 
-### Fixed (audit P2)
+### Removed
 
-About seventy P2 findings across 43 skills, each re-checked before the fix (rustc and clippy
-1.99.1, Miri nightly-2026-11-09, crate sources, or a probe). The larger ones:
-
-- Wrong or contradictory rules: the HRTB rule in `rust-discipline` (elided `Fn(&T)` is already
-  higher-ranked), a sealed blanket impl that implemented the trait for no type, removing `pub`
-  to silence `not_unsafe_ptr_arg_deref` (now `pub unsafe extern fn` with `# Safety`, in
-  `rust-lints`, `rust-jni`, `cargo-workflows`), the unknown-field policy of `rust-security`
-  against `rust-serde`, `buf.slice()` as a substitute for `flip()` in `uniffi-boundary`, and the
-  MSan line in `rust-sanitizers-miri`.
-- Unsafe instructions: publishing from a commit not on the remote (`rust-crate-release`),
-  `Task.detached` for long blocking FFI calls (now a dedicated `Thread`), a predictable temp
-  directory in a `rust-cli` probe, a fake that swallowed unmodelled faults (`rust-tdd`), and a
-  refcount pattern with no overflow guard (`memory-model`).
-- Commands that failed or proved nothing: blocking `adb logcat`, a `cargo tree` provider check
-  that passed without rustls, gates in `rust-observability` that only printed, `sqlx prepare
-  --check` without its preconditions, and greps that missed the `.cast::<T>()` form.
-- Build and platform: `strip = "debuginfo"` keeps the `target_features` section for wasm-opt,
-  the modulemap moves under a module directory, the Android release smoke test sets
-  `testBuildType`, and `rust-embedded-no-std` triages `#[panic_handler]`, E0463, and E0152.
-- One home per rule: golden files, fixtures, proptest, and loom in `rust-test-tools`; Miri in
-  `rust-sanitizers-miri`; temporaries in `rust-borrow-semantics`; Drop and E0509 split between
-  `rust-discipline` and `rust-compiler-errors`; Swift isolation in `rust-swift-ffi`; rustflags
-  precedence in one `rust-performance` reference. `rust-panic-safety` loses
-  `references/hosts-hooks-and-tasks.md`, and `rust-event-loop-state` loses
-  `references/generic-and-dynamic-state.md`; their rules moved to the owners.
-- Routing: `trybuild`, `E0133`, and SQL injection now route to `rust-macros`, `rust-unsafe`, and
-  `rust-database`.
-- Harness: the edit hook reports a validator crash, and a `compile_fail` fence that names a code
-  fails when the block carries another coded error.
+- `rust-panic-safety/references/hosts-hooks-and-tasks.md`,
+  `rust-event-loop-state/references/generic-and-dynamic-state.md`, and
+  `rust-networking/references/diagnostics.md`; their rules moved to the owning reference or
+  SKILL.md.
+- Every entry of `scripts/catalog-ceilings.toml`.
 
 ### Fixed
 
-Seventeen factual errors from the catalog audit, each reproduced before the fix:
+- Seventeen factual errors, among them:
+  - the hyper-util accept loop in rust-networking left a client that sends nothing connected;
+    it now bounds protocol detection;
+  - `RUSTFLAGS="--cfg loom"` stops tokio from compiling (rust-test-tools);
+  - the strict lint template in rust-lints could never pass (`unreachable_pub` against
+    `clippy::redundant_pub_crate`);
+  - method lookup: the receiver shape outranks "inherent first" (rust-discipline);
+  - the Swift header check rejected `#pragma once` and missed nullability (rust-swift-ffi);
+  - `catch (e: Exception)` swallowed `CancellationException` around a `suspend` export
+    (ffi-error-progress-cancel);
+  - GDB slice conditions, the panic breakpoint, and the LLDB formatter check (rust-debugging);
+  - the rpds write cost, the `recursion_limit` crate, `*mut T` variance, `cargo info`,
+    `--print target-spec-json`, `cargo rustc --lib`, and runtime-symbol lint levels.
+- About seventy rule and instruction defects, among them: publishing from a commit not on the
+  remote (rust-crate-release); `Task.detached` for long blocking FFI calls; a refcount pattern
+  with no overflow guard (memory-model); dropping `pub` to silence `not_unsafe_ptr_arg_deref`
+  instead of `pub unsafe extern fn` with `# Safety`; `buf.slice()` in place of `flip()`
+  (uniffi-boundary); `strip = "symbols"` dropping the wasm `target_features` section; the
+  XCFramework modulemap collision; blocking `adb logcat`; gates in rust-observability that only
+  printed; the unknown-field policy of rust-security against rust-serde.
+- Smaller corrections across the catalog: search regexes, grep fallbacks for rg commands,
+  version labels, contents lists, and stale pointers.
 
-- `rust-copy-on-write`: the 585x `rpds` write cost is 8x for the `&self -> Self` API (against
-  `push_back_mut`) and about 72x for the crate design, not the API shape alone.
-- `rust-crate-release`: `cargo info` describes the local member on Cargo 1.92 already; the
-  "1.94" floor is gone.
-- `rust-swift-ffi`: the header check compiles an `#include` of the header, because the
-  main-file form rejects `#pragma once` and skips `-Wnullability-completeness`; the reference
-  states what cbindgen 0.29.4 emits.
-- `ffi-error-progress-cancel`: rethrow `CancellationException` before `catch (e: Exception)`
-  around a `suspend` export.
-- `rust-macros`: the recursion limit of the invoking crate applies.
-- `rust-iterator-impl`: the `into_iter` search uses `rg -U`, or it misses rustfmt output.
-- `rust-variance`: `*mut T` does not make a struct invariant over `'a`; `Box<dyn Fn(&'a T)>`
-  breaks the lengthening, not the shortening.
-- `rust-test-tools`: `RUSTFLAGS="--cfg loom"` stops tokio from compiling; two fixes.
-- `rust-port`, `rust-review`: create or report the missing `Cargo.lock` before `--locked`.
-- `rust-networking`: the hyper-util accept loop bounds protocol detection, so a client that
-  sends nothing is closed; the test seam covers it.
-- `rust-debugging`: GDB 15 needs `set language c` for a slice condition and the full
-  `__rustc::rust_panic` name; `type category list` does not prove the LLDB formatters work.
-- `rust-lints`: the strict template allows `clippy::redundant_pub_crate`, which contradicts
-  `unreachable_pub`; the lint gate skips `allow` entries.
-- `rust-discipline`: the receiver shape outranks "inherent first" in method lookup.
-- `memory-model`: `--print target-spec-json` needs nightly; stable reads the assembly.
-- `rust-unsafe`: `cargo rustc` needs `--lib` on a multi-target package; a wrong runtime-symbol
-  type is only a warning (`suspicious_runtime_symbol_definitions`).
+### Security
 
-### Added
-
-- `.github/workflows/client-compat.yml`: every week, the plugin install gate runs on the newest
-  Claude Code and Codex and opens a `client-compat` issue when a plugin stops loading exactly its
-  skills. The required gate stays on the versions that `checks/check.sh` pins.
-- `bash checks/check.sh --no-clients` skips the three gates that run a client through `npx`.
-- `check.sh` compiles the examples a second time with `--profile test`. The first run never
-  type-checked a `#[test]` function, a `#[cfg(test)]` module, or a `#[tokio::test]` body; seven
-  such blocks in `rust-tdd` and `rust-test-tools` did not compile and now have preludes. The
-  harness gains tokio `test-util` and `mutants`.
-- `checks/ignored.txt` lists every `rust,ignore` block with its reason; an unlisted one fails.
-  Five `rust-unsafe` blocks that `cargo check` can judge lost the tag and are checked.
-- `check.sh` compares `scripts/catalog-ceilings.toml` with the merge base of `origin/main`
-  (`validate-skills.py --ceilings-base`), so an added or raised ceiling fails CI. A body may
-  rise by one fallback sentence per resolved cross-bundle reference.
-- The validator rejects: the optional frontmatter keys (`allowed-tools`, `metadata`,
-  `compatibility`); invisible and control characters in skill files; an untagged fence, a fence
-  language outside the list, and every Rust fence spelling `gen.py` skips; a file in a skill
-  other than `SKILL.md` and `references/*.md`; a reference `SKILL.md` does not link; a link to
-  its own file; a reference-style or HTML link that leaves the skill; a routing row it cannot
-  parse, shorter than three characters, or claimed by another description; a marketplace key
-  outside the allowlist; and a plugin component (`hooks/`, `.mcp.json`, `commands/`, `agents/`,
-  and others) at the repository root.
-
-### Changed
-
-- `analyze.py` has no "artifact" or "low" bucket. A block that failed only on E0282, a `...`
-  placeholder, or a doc comment with no item passed with no listing; it is now a suspect.
-- Fourteen leftover "Read [this file](this file) when ..." pointers inside references are
-  removed or turned into in-page anchors; four references reachable only through another
-  reference are linked from their `SKILL.md`.
-- `tests/routing-cases.md`: three rows that another description also claimed now use a phrase
-  only the owner claims (`NDK linker setup`, `a lending iterator and E0207`), the `E0499` row is
-  gone (`rust-event-loop-state` claims it for dispatch loops), and `rust-crate-architecture`
-  states its proc-macro boundary as a `Not for` clause.
-- CI: every checkout sets `persist-credentials: false`; a push to `main` no longer cancels an
-  earlier run; both CI jobs fetch full history for the ceilings comparison. CODEOWNERS covers
-  `tests/`, `evals/`, `docs/`, `research/`, the root documents, and the plugin component paths.
-- AGENTS.md, SECURITY.md, README.md, `checks/README.md`, and `evals/README.md` now say what the
-  gates prove: the token limit is a target for 43 of 46 bodies, the chars/2.5 ratio is not
-  backed by a tokenizer count, branch protection is a repository setting no gate proves, the
-  plugin root is the whole repository, the outcome suite has eight cases, and the recorded
-  evaluations show no measurable effect on Claude for the plugin suite.
-
-- CI runs each client gate once. `Validate catalog` runs `check.sh --fast` in place of its own
-  copy of the client steps, and `Compile-check examples` runs `check.sh --no-clients`. The
-  validate job caches `~/.npm`. In CI, `check.sh` fails when `npx` is missing, where a local run
-  skips the client gates.
-- `plugin-eval.yml` reads `CLAUDE_CODE_VERSION` from `checks/check.sh`, so one line pins
-  Claude Code for the install gate and the evaluations.
-- README: the `testing` bundle shows 6 skills, and the `0.3.0` entry below names Tokio 1.54.1.
-  The validator now fails when a bundle count in the README Install table differs from
-  `bundles.toml` (#23).
+- The validator rejects the optional frontmatter keys, so `allowed-tools` cannot pre-approve
+  tools for every consumer; invisible and control characters in skill files; marketplace keys
+  outside an allowlist; and plugin components (`hooks/`, `.mcp.json`, `commands/`, `agents/`)
+  at the repository root, which every plugin with source `"./"` would install.
+- Every workflow checkout sets `persist-credentials: false`, and CODEOWNERS covers `tests/`,
+  `evals/`, `docs/`, `research/`, the root documents, and the plugin component paths.
 
 ## [0.3.0] - 2026-11-02
 
@@ -305,7 +259,8 @@ binary releases. The harness came with it: frontmatter and link validation, the 
 `tests/routing-cases.md`, and a gate that type-checks every `rust` block, requires
 `compile_fail` blocks to fail with their named code, and runs `rust,run` probes.
 
-[Unreleased]: https://github.com/po4yka/rust-skills/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/po4yka/rust-skills/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/po4yka/rust-skills/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/po4yka/rust-skills/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/po4yka/rust-skills/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/po4yka/rust-skills/releases/tag/v0.1.0
