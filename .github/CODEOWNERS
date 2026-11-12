@@ -9,3 +9,24 @@
 /.codex/          @po4yka
 /bundles.toml     @po4yka
 /AGENTS.snippet.md @po4yka
+# Gate inputs and code that CI executes, and the documents that state the rules.
+/tests/           @po4yka
+/evals/           @po4yka
+/docs/            @po4yka
+/research/        @po4yka
+/AGENTS.md        @po4yka
+/README.md        @po4yka
+/SECURITY.md      @po4yka
+/CHANGELOG.md     @po4yka
+# Plugin component paths. The validator rejects each of them at the root, because
+# every plugin's source is the repository root; ownership guards that rule too.
+/hooks/           @po4yka
+/commands/        @po4yka
+/agents/          @po4yka
+/output-styles/   @po4yka
+/monitors/        @po4yka
+/bin/             @po4yka
+/.mcp.json        @po4yka
+/.lsp.json        @po4yka
+/.app.json        @po4yka
+/settings.json    @po4yka

@@ -18,7 +18,8 @@ Every ` ```rust ` block in the catalog declares what CI must do with it, and CI 
 toolchain that `checks/rust-toolchain.toml` pins. An untagged block is extracted and
 type-checked; a `rust,run` block must also execute successfully; a `rust,compile_fail` block has
 to fail and can name the required error code; `rust,ignore` is the only way a block leaves the
-gate. Nothing is skipped in silence.
+gate, and `checks/ignored.txt` must list each such block with the reason. Nothing is skipped in
+silence.
 
 ## What the skills change
 
@@ -34,7 +35,10 @@ Measured with [evals/outcome/](evals/README.md) on Claude Code (`claude-opus-5-5
 | Review a library module and write a report (Codex) | 8 of 18 graders | 18 of 18 graders |
 
 Both models already fix most planted defects on their own, so the overall gain is about one
-grader in 84. The skills matter most where a model does not know the verifier or the process:
+grader in 84. On Claude, the `evals/plugin` suite scored 1.00 with and without the plugin on all
+six cases, and Claude loaded the owning skill in 10 of 18 outcome runs; the planted-defect row
+was measured on a 44-skill snapshot. Read the rows above as the cases where the catalog changed
+the result, not as an average effect. The skills matter most where a model does not know the verifier or the process:
 the API diff of a release, a port that keeps its tests and records the original's output. The
 method, the per-grader tables, and the caveats are in
 [research/outcome-baseline-2026-11.md](research/outcome-baseline-2026-11.md) and

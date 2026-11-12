@@ -40,7 +40,7 @@ assets, or index files unless a task asks for them.
 ## The SKILL.md contract
 
 Each `SKILL.md` starts with YAML frontmatter that follows the Agent Skills specification.
-Three keys, and nothing else by default:
+Exactly three keys:
 
 ```yaml
 ---
@@ -62,7 +62,9 @@ Rules:
   Aim for 300 to 600 characters. Do not write "you", a capability inventory, or a catch-all such
   as "any Rust change". Add a "not for X" boundary only where a sibling skill is a likely misroute.
 - `license` is `BSD-3-Clause` for every skill in this repo.
-- Add no other frontmatter key unless a task asks for it.
+- Add no other frontmatter key. The validator rejects the spec's optional keys too:
+  `allowed-tools` pre-approves tools in Claude Code for every consumer, and `metadata` and
+  `compatibility` are free text that no gate reads.
 
 The body starts at an `# Title` heading directly after the frontmatter.
 
@@ -78,8 +80,14 @@ The body starts at an `# Title` heading directly after the frontmatter.
 - Remove every project-specific path, crate name, package name, and internal tool name. The
   skills must apply to any Rust workspace.
 - Tag every code block with a language: `rust`, `bash`, `toml`, `yaml`, `kotlin`, `swift`,
-  `text`.
-- Keep `SKILL.md` under 500 lines and 4,800 estimated tokens; the validator enforces both. Put
+  `text`, and, for a host language a skill shows, `c`, `json`, `sql`, `xml`, `gdb`, `lldb`, or
+  `javascript`. Open every fence with exactly three backticks. `checks/gen.py` reads only
+  ```` ```rust ````, so the validator rejects an untagged fence, another language, and every other
+  spelling of a Rust fence (`rs`, `Rust`, `~~~rust`, four backticks, a space before the tag).
+- Keep `SKILL.md` under 500 lines and 4,800 estimated tokens. The validator enforces both for a
+  new skill. A body that was already over the token limit has a ceiling in
+  `scripts/catalog-ceilings.toml` and may only shrink; 43 of 46 bodies had one on 2026-11-12, so
+  for most skills the limit is a target, not the current state. Put
   gotchas, triage tables, verifier commands, and escalation rules first. Move conditional
   material, long examples, and background to `references/<topic>.md`. Link each reference from
   `SKILL.md` at the point of need with the condition to read it ("Read `references/x.md` when
@@ -116,7 +124,8 @@ The body starts at an `# Title` heading directly after the frontmatter.
 - Tag ```` ```rust,ignore ```` only for code no `cargo check` can judge: a build-script
   `include!`, a nightly-only feature, a failure that arrives at monomorphization, or a crate the
   harness cannot hold (the list is in `checks/Cargo.toml`). It is the one way out of the gate,
-  and nothing else removes a block from it. Prefer fixing the example.
+  and nothing else removes a block from it. List the block in `checks/ignored.txt` with the
+  reason; the gate fails on an unlisted one. Prefer fixing the example.
 
 ## How to add a skill
 
@@ -179,15 +188,25 @@ Tests: `scripts/test_agent_hook.py`.
 
 `python3 scripts/validate-skills.py` checks, for every skill:
 
-- frontmatter keys stay inside the spec with the three required keys; `name` equals the
+- the frontmatter has exactly `name`, `description`, and `license`; `name` equals the
   directory name; `description` is one plain line of 80 to 1024 characters; `SKILL.md` is at
   most 500 lines;
+- a skill directory holds only `SKILL.md` and `references/*.md`, with no symlink, and `SKILL.md`
+  links every reference (an install copies every file, and a reference two links deep is one an
+  agent rarely reaches);
+- no skill file holds an invisible character: a C0 or C1 control other than tab and newline, a
+  zero-width or bidirectional formatting character, or a Unicode tag character;
+- every code fence uses three backticks and a tag from the list under "Authoring conventions",
+  and every fence closes;
 - every frontmatter value survives a real YAML parser unchanged: no `: `, no ` #`, no leading
   indicator character, because the skills CLI and the agent runtimes read the file with one;
-- every Markdown link resolves from the file that holds it and stays inside the skill directory,
+- every link outside a code fence (inline, reference-style, or HTML `href`/`src`) resolves from
+  the file that holds it, stays inside the skill directory, and does not point at its own file;
   every `references/*.md` code span exists, and no file names a `skills/<name>/` repository path;
-- every phrase in `tests/routing-cases.md` still appears in the description it routes to, and
-  every skill has at least one routing case;
+- every phrase in `tests/routing-cases.md` still appears in the description it routes to, is at
+  least three characters long, and appears in no other description outside a `Not for` sentence;
+  every table line of that file is a row the check reads; and every skill has at least one
+  routing case;
 - the README catalog and its Mermaid routing graph name every skill on disk exactly once;
 - every skill is in exactly one bundle of `bundles.toml`, and each bundle has a README install
   row; `AGENTS.snippet.md` names every skill exactly once in at most 60 lines;
@@ -195,17 +214,27 @@ Tests: `scripts/test_agent_hook.py`.
   per bundle, each with source `"./"`, the bundle's skills in `bundles.toml` order, a correct
   "N Rust agent skills" count, the BSD-3-Clause license, and no `version`; and no
   `.claude-plugin/plugin.json` exists (`docs/releasing.md` says why for both);
+- the marketplace and each entry use only the keys the catalog needs, and no plugin component
+  (`hooks/`, `.mcp.json`, `.lsp.json`, `commands/`, `agents/`, and the others in
+  `PLUGIN_COMPONENTS`) exists at the repository root: every plugin's source is `"./"`, so a
+  client would install it next to the skills and run it on the consumer's machine;
 - descriptions stay under 5,000 characters per bundle (about 2,000 tokens, the skill listing of
   a 200K-context client) and 20,000 in total, and each body stays under 4,800 estimated tokens
-  (characters / 2.5; the calibration is in `research/token-calibration-2026-10.md`);
+  (characters / 2.5; the calibration is in `research/token-calibration-2026-10.md`). The ratio
+  was calibrated against the counts `claude plugin details` projects, which is itself a character
+  estimate, not a tokenizer; no count from a Claude tokenizer backs it yet;
 - a reference to a skill in another bundle carries a fallback with a code span in the same or
   the next sentence, and no description claims a phrase of `evals/routing/negative-cases.md`.
 
 A value already over a limit sits in `scripts/catalog-ceilings.toml`. The validator fails when it
 grows and warns when it shrinks; then lower the entry, or remove it once the value is under the
-limit. Never raise an entry to make a change pass; the one exception is a cross-bundle fallback
-sentence, which may raise `body_tokens` by its own size. `--report budget` prints sizes, and
-`--report cross-refs` lists every reference that has no fallback.
+limit. Never raise an entry to make a change pass. `check.sh` runs the validator with
+`--ceilings-base` set to the merge base of `HEAD` and `origin/main`, so an added or raised entry
+fails CI; a local clone without `origin/main` skips that comparison and says so. The one
+exception is mechanical: a change that resolves cross-bundle references may raise that skill's
+`body_tokens` by up to 60 per resolved reference, the size of one fallback sentence.
+`--report budget` prints sizes, and `--report cross-refs` lists every reference that has no
+fallback.
 
 ### 2. Compile and behavior-check the examples
 
@@ -217,7 +246,11 @@ touches that name. Supply the name in `checks/preludes/<skill>.toml`. A fragment
 `checks/fragments.txt` does not list fails the gate; that file holds two blocks no prelude can
 complete, so do not add to it.
 Add a crate to `checks/Cargo.toml` when a skill starts using it, or every block that imports it
-silently degrades to a fragment.
+fails the gate as a new fragment.
+`check.sh` compiles the examples twice: once as written, and once with `--profile test`, which
+sets `cfg(test)`. The first run never reads a `#[test]` function, a `#[cfg(test)]` module, or a
+`#[tokio::test]` body, so test code meets the same gates only through the second. Neither run
+sets `cfg(miri)`, `cfg(loom)`, or a non-x86_64 `target_arch`, so code under those stays unchecked.
 
 `check.sh` then runs `npx skills add ./ --list`, which lists the skills and installs nothing.
 Run it after any frontmatter edit. The CLI and the agent runtimes parse frontmatter with a real
@@ -256,10 +289,14 @@ installed sees shorter descriptions.
 
 ### What `main` enforces
 
-Branch protection, not convention, guards `main`: it requires the `Validate catalog` and
-`Compile-check examples` checks and a Code Owners review, and rejects direct pushes, force-pushes,
-deletion, and unsigned commits (`docs/releasing.md` lists every setting). `npx skills add` copies
-`main` into consumers' agent directories, so an unchecked commit is a supply-chain change.
+The intended guard on `main` is branch protection: it requires the `Validate catalog` and
+`Compile-check examples` checks and a Code Owners review, and rejects direct pushes,
+force-pushes, deletion, and unsigned commits (`docs/releasing.md` lists every setting). These
+settings live in the repository settings, not in this tree, so no gate here proves them. On
+2026-11-10 the branch-protection API, read with a non-admin token, listed no required status
+check and no ruleset; an owner confirms the state under Settings, Branches and Rules. `npx
+skills add` copies `main` into consumers' agent directories, so an unchecked commit is a
+supply-chain change.
 
 ### Do not run `skills remove` inside this repository
 

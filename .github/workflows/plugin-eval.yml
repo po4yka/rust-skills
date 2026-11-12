@@ -37,12 +37,15 @@ jobs:
   eval:
     name: claude plugin eval
     runs-on: ubuntu-latest
-    # 36 agent runs for the outcome suite (6 cases, 3 runs, 2 arms), four at a time: nine
+    # 48 agent runs for the outcome suite (8 cases, 3 runs, 2 arms), four at a time: twelve
     # batches of at most 15 minutes, plus the judge, the scaffolds, and the toolchain install.
     timeout-minutes: ${{ inputs.suite == 'outcome' && 240 || 60 }}
     environment: plugin-eval
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No later step needs git credentials; gh reads GH_TOKEN from the step env.
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

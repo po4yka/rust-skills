@@ -13,8 +13,43 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
   Claude Code and Codex and opens a `client-compat` issue when a plugin stops loading exactly its
   skills. The required gate stays on the versions that `checks/check.sh` pins.
 - `bash checks/check.sh --no-clients` skips the three gates that run a client through `npx`.
+- `check.sh` compiles the examples a second time with `--profile test`. The first run never
+  type-checked a `#[test]` function, a `#[cfg(test)]` module, or a `#[tokio::test]` body; seven
+  such blocks in `rust-tdd` and `rust-test-tools` did not compile and now have preludes. The
+  harness gains tokio `test-util` and `mutants`.
+- `checks/ignored.txt` lists every `rust,ignore` block with its reason; an unlisted one fails.
+  Five `rust-unsafe` blocks that `cargo check` can judge lost the tag and are checked.
+- `check.sh` compares `scripts/catalog-ceilings.toml` with the merge base of `origin/main`
+  (`validate-skills.py --ceilings-base`), so an added or raised ceiling fails CI. A body may
+  rise by one fallback sentence per resolved cross-bundle reference.
+- The validator rejects: the optional frontmatter keys (`allowed-tools`, `metadata`,
+  `compatibility`); invisible and control characters in skill files; an untagged fence, a fence
+  language outside the list, and every Rust fence spelling `gen.py` skips; a file in a skill
+  other than `SKILL.md` and `references/*.md`; a reference `SKILL.md` does not link; a link to
+  its own file; a reference-style or HTML link that leaves the skill; a routing row it cannot
+  parse, shorter than three characters, or claimed by another description; a marketplace key
+  outside the allowlist; and a plugin component (`hooks/`, `.mcp.json`, `commands/`, `agents/`,
+  and others) at the repository root.
 
 ### Changed
+
+- `analyze.py` has no "artifact" or "low" bucket. A block that failed only on E0282, a `...`
+  placeholder, or a doc comment with no item passed with no listing; it is now a suspect.
+- Fourteen leftover "Read [this file](this file) when ..." pointers inside references are
+  removed or turned into in-page anchors; four references reachable only through another
+  reference are linked from their `SKILL.md`.
+- `tests/routing-cases.md`: three rows that another description also claimed now use a phrase
+  only the owner claims (`NDK linker setup`, `a lending iterator and E0207`), the `E0499` row is
+  gone (`rust-event-loop-state` claims it for dispatch loops), and `rust-crate-architecture`
+  states its proc-macro boundary as a `Not for` clause.
+- CI: every checkout sets `persist-credentials: false`; a push to `main` no longer cancels an
+  earlier run; both CI jobs fetch full history for the ceilings comparison. CODEOWNERS covers
+  `tests/`, `evals/`, `docs/`, `research/`, the root documents, and the plugin component paths.
+- AGENTS.md, SECURITY.md, README.md, `checks/README.md`, and `evals/README.md` now say what the
+  gates prove: the token limit is a target for 43 of 46 bodies, the chars/2.5 ratio is not
+  backed by a tokenizer count, branch protection is a repository setting no gate proves, the
+  plugin root is the whole repository, the outcome suite has eight cases, and the recorded
+  evaluations show no measurable effect on Claude for the plugin suite.
 
 - CI runs each client gate once. `Validate catalog` runs `check.sh --fast` in place of its own
   copy of the client steps, and `Compile-check examples` runs `check.sh --no-clients`. The
