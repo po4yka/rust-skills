@@ -93,7 +93,7 @@ GDB 15.1 resolves no `rust_panic` location (Rust 1.97 and 1.99.1), so set the br
 prints `Error in testing condition` and stops on every hit. In Rust mode `bytes.length` on a
 `&[u8]` is that error (`Attempt to extract a component of a value that is not a structure`);
 after `set language c` it evaluates. Test a condition with `print` at a stop before you rely on it. Do not break on
-`std::panicking::begin_panic`: on 1.98.1 it exists only as generic instances, and LLDB resolves
+`std::panicking::begin_panic`: on 1.99.1 it exists only as generic instances, and LLDB resolves
 the plain path to no location.
 
 A conditional breakpoint on the argument that triggers the bug is faster than stepping through
@@ -254,7 +254,7 @@ echo '__RNvCsbhslDugC6KQ_2m211foo_bar_baz' | c++filt -_
 ```
 
 Grep for `_R`, not `_ZN`. A `_ZN` pattern matches no Rust symbol in a current build and returns
-nothing without an error. Measured on rustc 1.98.1: `-C symbol-mangling-version=v0` changes no
+nothing without an error. Measured on rustc 1.99.1: `-C symbol-mangling-version=v0` changes no
 symbol, and `-C symbol-mangling-version=legacy` fails with "requires `-Z unstable-options`",
 which stable does not accept. The panic entry demangles to `__rustc::rust_panic`; 1.88.0 already
 emits that name.

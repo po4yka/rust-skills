@@ -93,8 +93,10 @@ Read a tombstone in this order:
 1. `signal` line. 6 (SIGABRT) is an abort, including a panic that hit an unguarded export.
    11 (SIGSEGV) is a memory fault. 7 (SIGBUS) is usually misalignment.
 2. `Abort message` line. It is present only when the aborting code set it: Rust
-   `panic = "abort"` (Rust copies a `&str` or `String` panic payload into it) or a bionic fatal
-   error. Treat it as sensitive. With `panic = "unwind"`, a panic that reaches an unguarded
+   `panic = "abort"` or a bionic fatal error. Rust copies a `&str` or `String` panic payload
+   into it through `android_set_abort_message` (in `panic_abort` as of Rust 1.99.1), whatever
+   the panic hook does. Every crash report that uploads the tombstone carries that text, so the
+   panic message must hold no user data. Treat the line as sensitive. With `panic = "unwind"`, a panic that reaches an unguarded
    export aborts with no `Abort message`; look for `core::panicking::panic_cannot_unwind` in the
    symbolicated backtrace.
 3. `backtrace:` block. Find the first frame whose path ends in your `.so`, for example
