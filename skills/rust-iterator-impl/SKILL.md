@@ -22,7 +22,7 @@ aarch64-apple-darwin.
 | `error[E0277]: ... ExactSizeIterator is not satisfied`, pointing at `.rev()` | [Adapter order](#adapter-order-enumeraterev-needs-exactsizeiterator) |
 | `error[E0658]: gen blocks are experimental` | [Stateful generators](#stateful-generators-use-iterfrom_fn) |
 | `error[E0432]: unresolved import std::ops::Generator` | [Stateful generators](#stateful-generators-use-iterfrom_fn) |
-| The impls are correct, and iteration is slow | the `rust-hot-path` skill |
+| The impls are correct, and iteration is slow | the `rust-hot-path` skill; for a known length, `with_capacity` plus `extend` |
 
 ## Verify
 
@@ -224,7 +224,8 @@ The default `size_hint` is `(0, None)`. Two consequences.
 
 **`collect` falls back to the growth ladder.** Measured on 1.99.1: 500 items from a source
 with no hint collect into a `Vec` of capacity 512; the same 500 items from a `Range` land on
-capacity 500. The `rust-hot-path` skill has the allocation counts.
+capacity 500. The `rust-hot-path` skill has the allocation counts; for a known output length, use
+`with_capacity` plus `extend`.
 
 **`ExactSizeIterator` panics at run time.** `impl ExactSizeIterator for X {}` compiles clean
 with no `size_hint` override. The default `len()` asserts that the hint is exact, so the first
