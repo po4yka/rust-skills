@@ -222,7 +222,7 @@ layer. It also holds the runnable proof of `discard_panic_payload`.
 
 ## JNI, UniFFI, and the panic hook
 
-Read `references/hosts-hooks-and-tasks.md` when the entry point is a JNI export, `JNI_OnLoad`, or a UniFFI export, or when you install or review the panic hook that reports a caught panic.
+Read `references/jni-boundary.md` for a JNI export or `JNI_OnLoad`, `references/panic-hook.md` for the panic hook, and `references/hosts-hooks-and-tasks.md` for a UniFFI export.
 
 ## `.unwrap()` and `.expect()` on FFI-reachable paths
 

@@ -56,11 +56,6 @@ is 16 bytes by default and 24 under `#[repr(C)]`. Apply it only where a layout c
 it: an FFI type (the `rust-unsafe` skill holds the contract) or a byte-view derive such as
 `ByteHash`.
 
-Read [type-size-reduction.md](type-size-reduction.md) when you read a
-`-Zprint-type-sizes` block, freeze a `Vec` into `Box<[T]>` (a `collect` into it is not a
-cheaper path), merge wrapped fields, narrow indices, probe the copy boundary on your target, or
-tune the clippy size thresholds.
-
 ## Read one `-Zprint-type-sizes` block
 
 Within one compilation unit the blocks print in descending total size. A `cargo build` is many

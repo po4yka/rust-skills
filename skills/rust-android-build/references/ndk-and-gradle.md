@@ -121,6 +121,4 @@ must link the Android artifact.
 
 Compute `<api>` per ABI from the NDK metadata, and fail when the application `minSdk` is below the
 NDK floor. Pin one NDK version in the build. Do not put NDK paths in `.cargo/config.toml`: a
-checked-in absolute path breaks on every other machine, so the config file holds flags only. Read
-[ndk-and-gradle.md](ndk-and-gradle.md) when you set up the NDK toolchain,
-compute `<api>`, or bump the NDK.
+checked-in absolute path breaks on every other machine, so the config file holds flags only.

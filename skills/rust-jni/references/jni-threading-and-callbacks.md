@@ -396,10 +396,6 @@ rebuild a handle from `vm.get_raw()`.
   a bare statement or `let _ =` detaches before the next JNI call. Use
   `attach_current_thread_permanently` for a long-lived 0.21 worker.
 
-Read [jni-threading-and-callbacks.md](jni-threading-and-callbacks.md)
-when you write an attach call, wire a callback, build the load-time cache, or
-ask the JVM to act on a native socket.
-
 ## The env must not cross an await point
 
 The env handle is `!Send + !Sync`. Holding it across `.await` in a `Send` future
@@ -421,6 +417,4 @@ Use the env synchronously, extract owned data, then spawn. The task captures a
 JVM thread that calls a native method is not a Tokio runtime thread, so a bare
 `tokio::spawn` panics there. Spawn through a `Handle` that the library keeps in
 its load-time cache. Never `unwrap` a JNI error on a path that can run during
-shutdown: the JVM may already be tearing the thread down. Read
-[jni-threading-and-callbacks.md](jni-threading-and-callbacks.md)
-when you spawn async work from a native method; it has the worked example.
+shutdown: the JVM may already be tearing the thread down.

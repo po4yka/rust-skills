@@ -55,10 +55,6 @@ For a rare branch that is not its own function, call `core::hint::cold_path()` a
 statement of that branch (Rust 1.95). On 1.98.1 it puts `branch_weights` on the branch in the
 IR. The code stays inline.
 
-Read [inlining-and-codegen.md](inlining-and-codegen.md) when you split a
-hot call site from cold ones, outline a rare path, count a function's MIR statements, price the
-compile time of `#[inline]`, or read the IR to see what was inlined.
-
 ## Where the inliner actually stops
 
 A crate boundary is the barrier. A codegen-unit boundary inside one crate is not.
@@ -496,10 +492,6 @@ Reach for `get_unchecked` only when all these shapes, `as_chunks` included, fail
 benchmark justifies it. It is `unsafe` and it needs a SAFETY comment that proves the bound; the
 `rust-unsafe` skill holds the rules. Clippy's `missing_asserts_for_indexing` finds the sites
 mechanically, from the `restriction` group.
-
-Read [inlining-and-codegen.md](inlining-and-codegen.md) when the MSRV is
-below 1.88 or the chunk size is known only at run time, or when you need the probe functions,
-the vector-instruction counts, or a `core::arch` example.
 
 ## Bounds checks: the probe evidence
 

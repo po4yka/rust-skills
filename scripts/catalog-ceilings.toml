@@ -1,18 +1,20 @@
 # Accepted values above a hard limit in scripts/validate-skills.py. A ratchet:
 # the validator fails when a listed value grows, and asks for the entry to be
 # lowered or removed when it shrinks. Never raise an entry to make a change
-# pass; move material to references/ or shorten the text instead. One exception:
-# a commit that adds a cross-bundle fallback sentence may raise body_tokens for
-# that skill by the size of the sentence, and its message must say so.
+# pass; move material to references/ or shorten the text instead. check.sh
+# compares this file with the merge base (--ceilings-base), so an added or
+# raised entry fails CI. One exception, checked there too: a change that
+# resolves a cross-bundle reference may raise that skill's body_tokens by up
+# to 60 per resolved reference, the size of one fallback sentence.
 #
 # Regenerate after a change that shrinks a value:
 #   python3 scripts/validate-skills.py --emit-ceilings > scripts/catalog-ceilings.toml
 
 [description]
-total = 22278
+total = 22262
 
 [bundle_descriptions]
-language = 6385
+language = 6369
 
 [body_tokens]
 cargo-workflows = 6780
@@ -31,7 +33,7 @@ rust-database = 6098
 rust-debugging = 7294
 rust-discipline = 7292
 rust-embedded-no-std = 7724
-rust-event-loop-state = 5626
+rust-event-loop-state = 5624
 rust-hot-path = 5541
 rust-ios-build = 6954
 rust-iterator-impl = 7765
@@ -41,7 +43,7 @@ rust-macros = 7912
 rust-native-linking = 7354
 rust-networking = 6032
 rust-observability = 7779
-rust-panic-safety = 6513
+rust-panic-safety = 6508
 rust-pattern-semantics = 5873
 rust-performance = 7640
 rust-pin-projection = 7800

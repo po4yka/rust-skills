@@ -96,7 +96,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | compare-exchange | memory-model |
 | 16 KiB page alignment | rust-android-build |
 | jniLibs | rust-android-build |
-| NDK | rust-android-build |
+| NDK linker setup | rust-android-build |
 | native debug symbols | rust-android-build |
 | Prefab | rust-android-build |
 | 16 KB page size | rust-android-build |
@@ -116,7 +116,6 @@ wrong skill, and put the phrase in the right description in the same change.
 | import grouping | rust-code-style |
 | unreachable_pub | rust-code-style |
 | E0382 | rust-compiler-errors |
-| E0499 | rust-compiler-errors |
 | E0282 | rust-compiler-errors |
 | E0283 | rust-compiler-errors |
 | E0284 | rust-compiler-errors |
@@ -285,7 +284,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | ExactSizeIterator | rust-iterator-impl |
 | lending iterator | rust-iterator-impl |
 | unconditional_recursion | rust-iterator-impl |
-| E0207 | rust-iterator-impl |
+| a lending iterator and E0207 | rust-iterator-impl |
 | global state | memory-model |
 | static mut | memory-model |
 | OnceLock | memory-model |

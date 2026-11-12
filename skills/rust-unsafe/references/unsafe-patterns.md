@@ -640,7 +640,7 @@ run over the code that builds the `&str` proves nothing about that `&str`.
 
 The undefined behavior surfaces in the consumer, and only in one kind of consumer:
 
-```rust,ignore
+```rust
 // `v` ends with a lone 0xF0, so `s` is not valid UTF-8.
 let s: &str = unsafe { std::str::from_utf8_unchecked(&v) };
 
@@ -671,7 +671,7 @@ optimizer failing to notice something is not an argument.
 
 The shape appears when code validates bytes and then reuses the buffer:
 
-```rust,ignore
+```rust
 // Do not do this. The unsafe block buys nothing over the safe call.
 let s = match String::from_utf8_lossy(std::hint::black_box(&v)) {
     Cow::Owned(s) => s,
@@ -679,7 +679,7 @@ let s = match String::from_utf8_lossy(std::hint::black_box(&v)) {
 };
 ```
 
-```rust,ignore
+```rust
 // Do this. One validation pass, no unsafe, and the bad input is reported.
 let s = String::from_utf8(v)?;
 ```
@@ -749,8 +749,7 @@ be dropped at any `.await`, so its correctness must not depend on its `Drop` eit
 `Drop::drop` must not panic. A panic in a destructor during an unwind aborts the process with
 `panic in a destructor during cleanup`, and `catch_unwind` cannot catch it. Move fallible
 cleanup, such as `self.flush().unwrap()`, into a `close()` or `flush()` that returns `Result`,
-and let `drop()` only log. Read [unsafe-patterns.md](unsafe-patterns.md)
-when you write that pair.
+and let `drop()` only log.
 
 ## Unsafe operations and declarations
 
@@ -760,9 +759,7 @@ If a block does none of these, delete it. Taking a raw pointer needs no `unsafe`
 `&raw mut SOME_STATIC_MUT` (1.82) and `&raw const my_union.field` (1.92). An `unsafe impl`, an
 unsafe attribute, and an `unsafe extern` block are declarations; each needs its own review and
 its own SAFETY comment. `unsafe trait` binds the implementor and `unsafe fn` binds the caller, so
-put each `# Safety` section where its obligation sits. Read
-[unsafe-patterns.md](unsafe-patterns.md) when you declare an
-`unsafe trait`, or when you need the full list of unsafe calls.
+put each `# Safety` section where its obligation sits.
 
 ## Pointer arithmetic, syscalls, and unmangled exports
 
@@ -771,9 +768,7 @@ dereference; `wrapping_add` is always sound to compute. Pointer methods return a
 assign a cursor back: `self.ptr = unsafe { self.ptr.add(1) };`. Check every syscall return value
 and convert `io::Error::last_os_error()`; never discard `errno`. Duplicate a descriptor that a
 foreign caller passes in (`BorrowedFd::borrow_raw`, then `try_clone_to_owned`) before you own it,
-or the foreign runtime closes it under you. Read
-[unsafe-patterns.md](unsafe-patterns.md) when you write pointer
-arithmetic, `offset_from`, `NonNull`, or a `getsockopt`, `ioctl`, C union, or descriptor wrapper.
+or the foreign runtime closes it under you.
 
 When two libraries in one process export the same unmangled symbol, the linker silently picks
 one, and the wrong function runs. Read

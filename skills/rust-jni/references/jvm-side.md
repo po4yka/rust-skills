@@ -72,10 +72,6 @@ Registry rules:
   compatibility contracts. Change both sides in one patch, with contract tests
   on both sides.
 
-Read [jvm-side.md](jvm-side.md) when you write the Kotlin
-binding class (library loading, the `private external fun` layout) or design a
-handle-based session surface.
-
 ## Add or rename a native method
 
 The library file name and every registered or exported method are compatibility

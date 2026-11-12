@@ -88,11 +88,11 @@ tests with the `rust-sanitizers-miri` flags.
 | Rust reads freed bytes after a call returns | Rust kept the temporary `withUnsafeBytes` pointer | Copy the bytes before the closure returns |
 | Crash after several progress events | The callback used `takeRetainedValue()` | Use `takeUnretainedValue()` and release only in the release callback |
 | Crash or corrupt state when an Objective-C API raises in a callback | An `NSException` unwound into an `extern "C"` Rust frame, which is UB | Call the API through an `@try`/`@catch` shim, or keep it out of the callback |
-| `main actor-isolated ... can not be referenced from a nonisolated context`, `main actor-isolated default value in a nonisolated context`, `call to main actor-isolated ... in a synchronous nonisolated context`, or a `deinit` Sendable error | The module uses default MainActor isolation | Mark `nonisolated` every type, extension, function, and global that Rust reaches |
+| `main actor-isolated ... can not be referenced from a nonisolated context`, `main actor-isolated default value in a nonisolated context`, `call to main actor-isolated ... in a synchronous nonisolated context`, or a `deinit` Sendable error | The module uses default MainActor isolation | Mark `nonisolated` every declaration that Rust reaches (`references/swift-isolation.md`) |
 | UI hangs while an async wrapper waits on Rust | A `nonisolated` async method runs on the main actor under `nonisolated(nonsending)` | Mark it `@concurrent` |
 | Thread Sanitizer reports a race in a context box that compiles clean in Swift 6 | `Unmanaged` hides a non-`Sendable` box | Make the box a `final class` marked `Sendable`, with `let` properties and a `let` lock |
 | Trap in `dispatch_assert_queue` on the first callback | `MainActor.assumeIsolated` ran on a Rust thread | Make the box `nonisolated` and hop with `Task { @MainActor in ... }` |
-| UI isolation warning or crash | Rust called a main-actor value directly | Copy the event and schedule it with `Task { @MainActor in ... }` |
+| UI isolation warning or crash | Rust called a main-actor value directly | Copy the event and hop with `Task { @MainActor in ... }` |
 | Newer library breaks an older app's `switch` | The status is an `enum_extensibility(closed)` C enum, so Swift has no unknown case | Map codes through an unknown case, or use an `int32_t` status or an open enum |
 | Owner stays alive after the job | Swift owner, job, and callback form a cycle | Use a weak owner and release the callback at terminal state |
 | Callback arrives after cancellation | Cancel was treated as synchronous completion | Stop, drain callbacks, then release the context |

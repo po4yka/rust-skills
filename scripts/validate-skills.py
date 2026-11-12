@@ -20,6 +20,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -35,11 +36,23 @@ CEILINGS = ROOT / "scripts" / "catalog-ceilings.toml"
 PLUGIN_MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 
-# The Agent Skills spec allows six keys. This repository uses three; the other
-# three stay allowed so a skill can declare them when it genuinely needs them.
-# Any key outside this set is a hard packaging error on upload, not a warning.
-ALLOWED_KEYS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
+# The Agent Skills spec allows six keys. This repository allows exactly three
+# (AGENTS.md, "The SKILL.md contract"). The other three are not harmless:
+# `allowed-tools` pre-approves tools in Claude Code, so a one-line frontmatter
+# edit would widen what every consumer's agent may run without a prompt, and
+# `metadata` and `compatibility` are free text that no gate here reads.
 REQUIRED_KEYS = {"name", "description", "license"}
+ALLOWED_KEYS = REQUIRED_KEYS
+
+# Characters that a reader does not see and a model does: C0 and C1 controls
+# (a YAML reader rejects most of them, which drops the whole skill), zero-width
+# and bidirectional formatting characters, and the Unicode tag block, which can
+# carry a whole hidden instruction inside the one text every agent reads. Tab
+# and newline are the only controls a Markdown file in this catalog needs.
+INVISIBLE = re.compile(
+    "[\x00-\x08\x0b-\x1f\x7f-\x9f\u00ad\u200b-\u200f\u202a-\u202e"
+    "\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000e0000-\U000e007f]"
+)
 
 # A frontmatter value is written unquoted, so a YAML reader has to give it back
 # unchanged. That reader is what an agent runtime and the skills CLI use, not
@@ -77,40 +90,6 @@ def plain_scalar_problem(value: str) -> str | None:
     return None
 
 
-def metadata_string(raw: str, where: str, label: str) -> str | None:
-    """Decode one supported YAML string scalar and reject typed scalars."""
-    if raw.startswith('"'):
-        try:
-            value = json.loads(raw)
-        except json.JSONDecodeError:
-            fail(where, f"{label} is not a valid double-quoted YAML string")
-            return None
-        if not isinstance(value, str):
-            fail(where, f"{label} must be a YAML string")
-            return None
-        return value
-
-    if raw.startswith("'"):
-        if len(raw) < 2 or not raw.endswith("'"):
-            fail(where, f"{label} is not a valid single-quoted YAML string")
-            return None
-        inner = raw[1:-1]
-        if "'" in inner.replace("''", ""):
-            fail(where, f"{label} is not a valid single-quoted YAML string")
-            return None
-        return inner.replace("''", "'")
-
-    if YAML_NULL_OR_BOOL.fullmatch(raw) or YAML_NUMBER.fullmatch(raw):
-        fail(where, f"{label} must be a YAML string; quote {raw!r}")
-        return None
-
-    problem = plain_scalar_problem(raw)
-    if problem:
-        fail(where, f"{label} {problem}")
-        return None
-    return raw
-
-
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_NAME = 64
 MAX_DESCRIPTION = 1024
@@ -118,7 +97,6 @@ MIN_DESCRIPTION = 80
 # The Agent Skills spec recommends a SKILL.md under 500 lines. Longer material
 # belongs in references/, which the agent opens only when it needs it.
 MAX_SKILL_LINES = 500
-MAX_COMPATIBILITY = 500
 
 # Token estimates. The gate counts characters and divides by 2.5, so every
 # host computes the same number with no tokenizer and no network. The ratio is
@@ -129,7 +107,11 @@ MAX_COMPATIBILITY = 500
 # this catalog by 25 % to 32 %. `--report budget` also prints a cl100k count
 # when tiktoken happens to be installed; the gate never reads it, because a
 # verdict that depends on an optional package is not reproducible, and cl100k
-# is not the tokenizer of any Claude model.
+# is not the tokenizer of any Claude model. What the calibration does not prove:
+# `claude plugin details` does not say how it counts, and its ratio is 2.57 to
+# 2.61 for every body, prose-heavy or code-heavy, which a real tokenizer would
+# not give. It is most likely a character estimate itself, so no Claude
+# tokenizer count backs this ratio yet; the limits below are character budgets.
 CHARS_PER_TOKEN = 2.5
 
 # The always-on skill listing. Claude Code keeps it within 1% of the context
@@ -150,6 +132,10 @@ WARN_BODY_TOKENS = 4_500
 # The router snippet is pasted into a consuming repository's always-on
 # instructions, so it has to stay small.
 MAX_SNIPPET_LINES = 60
+
+# The shortest routing phrase the corpus accepts. NDK, LTO, and PDB are real
+# three-letter tokens a user pastes; anything shorter matches by accident.
+MIN_ROUTING_PHRASE = 3
 
 failures: list[str] = []
 warnings: list[str] = []
@@ -185,32 +171,11 @@ def split_frontmatter(text: str, where: str) -> dict[str, object] | None:
         return None
 
     fields: dict[str, object] = {}
-    metadata: dict[str, str] | None = None
     for line in text[4:end].split("\n"):
         if not line.strip():
             continue
         if line.startswith((" ", "\t")):
-            if metadata is None:
-                fail(
-                    where,
-                    f"only metadata can contain an indented mapping, found: {line.strip()!r}",
-                )
-                continue
-            raw_key, sep, raw_value = line.strip().partition(":")
-            raw_key = raw_key.strip()
-            raw_value = raw_value.strip()
-            if not sep or not raw_key or not raw_value:
-                fail(where, f"metadata line is not 'key: value': {line.strip()!r}")
-                continue
-            key = metadata_string(raw_key, where, "metadata key")
-            if key is None:
-                continue
-            if key in metadata:
-                fail(where, f"duplicate metadata key: {key!r}")
-                continue
-            value = metadata_string(raw_value, where, f"metadata.{key}")
-            if value is not None:
-                metadata[key] = value
+            fail(where, f"indented frontmatter line; only name, description, and license are allowed: {line.strip()!r}")
             continue
         key, sep, value = line.partition(":")
         if not sep:
@@ -220,12 +185,7 @@ def split_frontmatter(text: str, where: str) -> dict[str, object] | None:
         if key in fields:
             fail(where, f"duplicate frontmatter key: {key!r}")
             continue
-        if key == "metadata" and not value.strip():
-            metadata = {}
-            fields[key] = metadata
-        else:
-            metadata = None
-            fields[key] = value.strip()
+        fields[key] = value.strip()
 
     body = text[end + 5 :]
     if not body.strip():
@@ -233,19 +193,144 @@ def split_frontmatter(text: str, where: str) -> dict[str, object] | None:
     return fields
 
 
-def check_rust_fences(text: str, where: str) -> None:
-    """Reject a Rust fence that reaches the end of a Markdown file."""
+# A fence is the unit every cargo gate reads, and checks/gen.py recognises
+# only a line that starts with exactly three backticks and `rust`. Any other
+# spelling of a Rust fence (```rs, ```Rust, ~~~rust, ````rust, ``` rust) is
+# silently skipped by the compile check, so the validator rejects it here.
+FENCE_OPEN = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+FENCE_LANGUAGES = {
+    "rust", "bash", "toml", "yaml", "kotlin", "swift", "text",
+    "c", "json", "sql", "xml", "gdb", "lldb", "javascript",
+}
+RUST_FENCE = re.compile(r"rust(?:,run|,ignore|,compile_fail(?:,E\d{4})*)?")
+
+
+def check_fences(text: str, where: str) -> str:
+    """Check every code fence and return the prose: the text with fenced lines blanked."""
+    prose: list[str] = []
     opened_at: int | None = None
-    for lineno, line in enumerate(text.splitlines(), 1):
-        fence = line.strip()
+    for lineno, line in enumerate(text.split("\n"), 1):
         if opened_at is not None:
-            if fence == "```":
+            prose.append("")
+            if line.strip() == "```":
                 opened_at = None
             continue
-        if fence.startswith("```rust"):
-            opened_at = lineno
+        match = FENCE_OPEN.match(line)
+        if match is None:
+            prose.append(line)
+            continue
+        prose.append("")
+        opened_at = lineno
+        marker, info = match.groups()
+        at = f"{where}:{lineno}"
+        if marker != "```":
+            fail(at, f"fence {marker!r}: use exactly three backticks, the only fence checks/gen.py reads")
+        if not info.strip():
+            fail(at, f"untagged code fence; tag it with one of {sorted(FENCE_LANGUAGES)}")
+            continue
+        if info != info.strip():
+            fail(at, f"fence info {info!r} has surrounding space; write ```{info.strip()}")
+        info = info.strip()
+        language = info.split(",", 1)[0]
+        if language.lower() in ("rust", "rs"):
+            if not RUST_FENCE.fullmatch(info):
+                fail(at, f"Rust fence {info!r}: use rust, rust,run, rust,ignore, or rust,compile_fail[,E0000...]")
+        elif language not in FENCE_LANGUAGES:
+            fail(at, f"fence language {language!r} is not in {sorted(FENCE_LANGUAGES)}")
     if opened_at is not None:
-        fail(f"{where}:{opened_at}", "Rust code fence is not closed")
+        fail(f"{where}:{opened_at}", "code fence is not closed")
+    return "\n".join(prose)
+
+
+INLINE_LINK = re.compile(r"\]\(([^)]*)\)")
+REFERENCE_DEFINITION = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(\S+)", re.M)
+HTML_LINK = re.compile(r"""\b(?:href|src)\s*=\s*["']([^"']*)["']""", re.I)
+INLINE_CODE = re.compile(r"`[^`\n]*`")
+
+
+def link_targets(prose: str) -> set[str]:
+    """Every link target in Markdown prose: inline, reference-style, and HTML."""
+    text = INLINE_CODE.sub("", prose)
+    targets = set()
+    for raw in INLINE_LINK.findall(text):
+        raw = re.sub(r'\s+"[^"]*"\s*$', "", raw.strip())
+        targets.add(raw.strip("<>"))
+    targets |= {raw.strip("<>") for raw in REFERENCE_DEFINITION.findall(text)}
+    targets |= set(HTML_LINK.findall(text))
+    return targets
+
+
+def check_skill_files(skill_dir: Path) -> None:
+    """Shape, characters, fences, and links of every file an install copies.
+
+    `npx skills add` and both plugin clients copy the whole skill directory,
+    so every file in it ships, and an installed skill carries only its own
+    directory: a link that leaves it is dead after the install.
+    """
+    skill_md = skill_dir / "SKILL.md"
+    for path in sorted(skill_dir.rglob("*")):
+        rel = path.relative_to(skill_dir)
+        where = str(path.relative_to(ROOT))
+        if path.is_symlink():
+            fail(where, "is a symlink; an install copies it, and it can point outside the skill")
+        elif path.is_file() and not (
+            rel.parts == ("SKILL.md",)
+            or (len(rel.parts) == 2 and rel.parts[0] == "references" and rel.suffix == ".md")
+        ):
+            fail(where, "only SKILL.md and references/*.md may live in a skill; every other file ships to consumers")
+
+    linked_from_skill: set[Path] = set()
+    for markdown in sorted(skill_dir.rglob("*.md")):
+        if markdown.is_symlink():
+            continue
+        rel = str(markdown.relative_to(ROOT))
+        try:
+            text = markdown.read_text(encoding="utf-8")
+        except UnicodeDecodeError as error:
+            fail(rel, f"is not UTF-8: {error}")
+            continue
+        for lineno, line in enumerate(text.split("\n"), 1):
+            for match in INVISIBLE.finditer(line):
+                fail(
+                    f"{rel}:{lineno}",
+                    f"contains invisible character U+{ord(match.group()):04X} at column "
+                    f"{match.start() + 1}; a reader cannot see what an agent reads",
+                )
+        prose = check_fences(text, rel)
+
+        # A bare code span in a prose list is the other way the skills name a
+        # reference, so it has to resolve too.
+        for target in sorted(set(re.findall(r"`(references/[^`]+\.md)`", text))):
+            if not (skill_dir / target).is_file():
+                fail(rel, f"points at a missing reference file: {target}")
+            elif markdown == skill_md:
+                linked_from_skill.add((skill_dir / target).resolve())
+
+        for target in sorted(link_targets(prose)):
+            path = target.split("#", 1)[0]
+            if not path or re.match(r"[a-z][a-z0-9+.-]*:", path):
+                continue
+            resolved = (markdown.parent / path).resolve()
+            if not resolved.is_relative_to(skill_dir.resolve()):
+                fail(rel, f"links outside its skill directory: {target}; name the other skill instead")
+            elif not resolved.exists():
+                fail(rel, f"points at a missing file: {target}")
+            elif resolved == markdown.resolve():
+                fail(rel, f"links to itself: {target}; the reader is already in this file, so delete the pointer")
+            elif markdown == skill_md:
+                linked_from_skill.add(resolved)
+
+        for span in sorted(set(re.findall(r"\bskills/[a-z0-9-]+/[^\s`)]*", text))):
+            fail(rel, f"names a repository path: {span}; name the skill, or use a path relative to this file")
+
+    # A reference that SKILL.md never names is reachable only by chance: the
+    # agent loads SKILL.md, and a pointer two files deep is one it rarely follows.
+    for reference in sorted((skill_dir / "references").glob("*.md")):
+        if reference.resolve() not in linked_from_skill:
+            fail(
+                str(reference.relative_to(ROOT)),
+                "is not linked from SKILL.md; link it at the point of need with the condition to read it",
+            )
 
 
 def check_skill(skill_dir: Path) -> None:
@@ -286,8 +371,6 @@ def check_skill(skill_dir: Path) -> None:
             problem = plain_scalar_problem(value)
             if problem:
                 fail(where, f"{key} {problem}. Rewrite the line so it needs no quoting.")
-        elif key == "metadata" and isinstance(value, dict):
-            pass
         else:
             fail(where, f"{key} must be a string")
 
@@ -316,51 +399,7 @@ def check_skill(skill_dir: Path) -> None:
     if license_value and license_value != "BSD-3-Clause":
         fail(where, f"license is {license_value!r}, this repository publishes BSD-3-Clause")
 
-    compatibility = fields.get("compatibility")
-    if compatibility is not None:
-        if not isinstance(compatibility, str) or not compatibility:
-            fail(where, "compatibility must be a non-empty string")
-        elif len(compatibility) > MAX_COMPATIBILITY:
-            fail(
-                where,
-                f"compatibility is {len(compatibility)} characters, the limit is "
-                f"{MAX_COMPATIBILITY}",
-            )
-
-    allowed_tools = fields.get("allowed-tools")
-    if allowed_tools is not None and (not isinstance(allowed_tools, str) or not allowed_tools):
-        fail(where, "allowed-tools must be a non-empty space-separated string")
-
-    metadata_value = fields.get("metadata")
-    if metadata_value is not None and not isinstance(metadata_value, dict):
-        fail(where, "metadata must be a mapping from string keys to string values")
-
-    # Every pointer to a reference file must resolve, or the agent hits a dead
-    # end halfway through a task. The skills name a reference in two ways: as a
-    # Markdown link, and as a bare code span in a prose list. Check both, or the
-    # check silently covers only part of the catalog.
-    for markdown in skill_dir.rglob("*.md"):
-        rel = str(markdown.relative_to(ROOT))
-        text = markdown.read_text(encoding="utf-8")
-        check_rust_fences(text, rel)
-        targets = set(re.findall(r"`(references/[^`]+\.md)`", text))
-        for target in sorted(targets):
-            if not (skill_dir / target).is_file():
-                fail(rel, f"points at a missing reference file: {target}")
-        # A Markdown link resolves from the file that holds it. An installed
-        # skill carries only its own directory, so a link that leaves it, or a
-        # repository path to another skill, is dead after `npx skills add`.
-        for target in sorted(set(re.findall(r"\]\(([^)\s]+)\)", text))):
-            path = target.split("#", 1)[0]
-            if not path or re.match(r"[a-z][a-z0-9+.-]*:", path):
-                continue
-            resolved = (markdown.parent / path).resolve()
-            if not resolved.is_relative_to(skill_dir.resolve()):
-                fail(rel, f"links outside its skill directory: {target}; name the other skill instead")
-            elif not resolved.exists():
-                fail(rel, f"points at a missing file: {target}")
-        for span in sorted(set(re.findall(r"`(skills/[a-z0-9-]+/[^`]*)`", text))):
-            fail(rel, f"names a repository path: {span}; name the skill, or use a path relative to this file")
+    check_skill_files(skill_dir)
 
 
 def routing_rows(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
@@ -394,10 +433,50 @@ def check_routing_cases(descriptions: dict[str, str]) -> None:
         fail("tests/routing-cases.md", "routing corpus is missing")
         return
 
-    rows, guarded = routing_rows(ROUTING.read_text(encoding="utf-8"))
+    text = ROUTING.read_text(encoding="utf-8")
+    rows, guarded = routing_rows(text)
     if not rows:
         fail("tests/routing-cases.md", "routing corpus has no rows")
         return
+
+    # A row the two patterns above do not read is a row no gate checks: a
+    # backticked skill name, a fourth column, or a leading space drops it in
+    # silence. Every table line must be a header, a separator, or a row.
+    lines = text.split("\n")
+    row_line = re.compile(r"^\|\s*[^|]+?\s*\|\s*[a-z0-9-]+\s*\|(?:\s*[a-z0-9-]+\s*\|)?\s*$")
+    separator_line = re.compile(r"^\|(?:\s*:?-+:?\s*\|)+\s*$")
+    for index, line in enumerate(lines):
+        if not line.lstrip().startswith("|"):
+            continue
+        following = lines[index + 1] if index + 1 < len(lines) else ""
+        if separator_line.match(line) or separator_line.match(following):
+            continue
+        if not row_line.match(line):
+            fail(f"tests/routing-cases.md:{index + 1}", f"table line is not a routing row, so no gate reads it: {line.strip()!r}")
+
+    for phrase, skill in rows:
+        # A phrase that every description shares ("Use when") or a one- or
+        # two-letter token passes the substring check without saying anything
+        # about this skill.
+        if len(phrase) < MIN_ROUTING_PHRASE:
+            fail("tests/routing-cases.md", f"phrase {phrase!r} is shorter than {MIN_ROUTING_PHRASE} characters")
+            continue
+        # A guarded row names its rival; the guard below reports that case.
+        named = {rival for p_, owner, rival in guarded if p_ == phrase and owner == skill}
+        rivals = sorted(
+            other
+            for other, description in descriptions.items()
+            if other != skill
+            and other not in named
+            and phrase.lower() in description_claims(description).lower()
+        )
+        if rivals:
+            fail(
+                "tests/routing-cases.md",
+                f"phrase {phrase!r} routes to {skill!r} but the description of {', '.join(rivals)} "
+                f"claims it too; pick a phrase only {skill!r} claims, or move the other mention "
+                f"into a 'Not for' clause",
+            )
 
     for phrase, skill in rows:
         if skill not in descriptions:
@@ -564,6 +643,14 @@ def load_json(path: Path, where: str) -> dict | None:
     return data
 
 
+MARKETPLACE_KEYS = {"name", "owner", "description", "plugins"}
+PLUGIN_ENTRY_KEYS = {"name", "source", "description", "license", "skills", "author", "homepage", "repository"}
+# Plugin components a Claude Code or Codex client loads from a plugin root.
+PLUGIN_COMPONENTS = (
+    "hooks", ".mcp.json", ".lsp.json", ".app.json", "commands", "agents",
+    "output-styles", "monitors", "bin", "settings.json",
+)
+
 # "13 Rust agent skills" in a plugin description. The /plugin panel shows it
 # before an install, so a stale count misleads a consumer about what they get.
 SKILL_COUNT = re.compile(r"\b(\d+) Rust agent skills\b")
@@ -590,9 +677,23 @@ def check_marketplace(bundles: dict[str, list[str]], skill_names: set[str]) -> N
                 "must not exist; Codex then refuses every bundle whose name differs from it. "
                 "Put plugin metadata in the marketplace entries",
             )
+    # Every entry has source "./", so the plugin root is the repository root,
+    # and a client loads whatever plugin component it finds there: hooks run
+    # commands on the consumer's machine, an MCP or LSP server starts a
+    # process, and agents and commands add instructions no skill gate reads.
+    # The catalog ships skills only.
+    for component in PLUGIN_COMPONENTS:
+        if os.path.lexists(ROOT / component):
+            fail(
+                component,
+                "must not exist at the repository root: every plugin's source is \"./\", so a "
+                "client installs it next to the skills. This catalog ships skills only",
+            )
     market = load_json(MARKETPLACE, where)
     if market is None:
         return
+    for key in sorted(set(market) - MARKETPLACE_KEYS - {"version"}):
+        fail(where, f"top-level key {key!r} is not allowed; use only {sorted(MARKETPLACE_KEYS)}")
 
     full = market.get("name")
     if not isinstance(full, str):
@@ -616,6 +717,12 @@ def check_marketplace(bundles: dict[str, list[str]], skill_names: set[str]) -> N
             fail(where, f"plugins[{index}] name must be a string")
             continue
         seen.append(name)
+        for key in sorted(set(entry) - PLUGIN_ENTRY_KEYS - {"version"}):
+            fail(
+                where,
+                f"{label} sets {key!r}; an entry may set only {sorted(PLUGIN_ENTRY_KEYS)}, because "
+                f"hooks, mcpServers, agents, commands, and strict change what a consumer runs",
+            )
         if name not in expected:
             fail(where, f"{label} matches no bundle in bundles.toml; name it {full}-<bundle>")
             continue
@@ -648,6 +755,61 @@ def load_ceilings() -> dict:
     if not CEILINGS.is_file():
         return {}
     return load_toml(CEILINGS, "scripts/catalog-ceilings.toml") or {}
+
+
+# A commit that adds a cross-bundle fallback sentence may raise that skill's
+# body_tokens ceiling by this much per fallback it adds: about one sentence.
+FALLBACK_SENTENCE_TOKENS = 60
+
+
+def check_ceilings_against(ref: str, ceilings: dict) -> None:
+    """The ratchet only turns one way: no entry may be added or raised against `ref`.
+
+    The per-value checks compare the tree with the ceilings file, so they
+    cannot see an edit to the file itself. This compares the file with the
+    one at `ref`, the merge base in CI. The one exception is the documented
+    one: body_tokens may rise by FALLBACK_SENTENCE_TOKENS for each cross-bundle
+    reference the same change resolves.
+    """
+    where = "scripts/catalog-ceilings.toml"
+    shown = subprocess.run(
+        ["git", "-C", str(ROOT), "show", f"{ref}:scripts/catalog-ceilings.toml"],
+        capture_output=True,
+        text=True,
+    )
+    if shown.returncode != 0:
+        if "does not exist" in shown.stderr or "exists on disk, but not in" in shown.stderr:
+            print(f"ceilings: {ref} has no ceilings file; nothing to compare")
+            return
+        fail(where, f"cannot read the ceilings file at {ref}: {shown.stderr.strip()}")
+        return
+    try:
+        base = tomllib.loads(shown.stdout)
+    except tomllib.TOMLDecodeError as error:
+        fail(where, f"the ceilings file at {ref} is not valid TOML: {error}")
+        return
+    before = len(failures)
+    base_refs = base.get("cross_refs", {})
+    current_refs = ceilings.get("cross_refs", {})
+    for section, entries in sorted(ceilings.items()):
+        if not isinstance(entries, dict):
+            continue
+        for key, value in sorted(entries.items()):
+            old = base.get(section, {}).get(key)
+            if old is not None and value <= old:
+                continue
+            if section == "body_tokens" and old is not None:
+                resolved = base_refs.get(key, 0) - current_refs.get(key, 0)
+                if resolved > 0 and value - old <= resolved * FALLBACK_SENTENCE_TOKENS:
+                    continue
+            change = f"added at {value}" if old is None else f"raised from {old} to {value}"
+            fail(
+                where,
+                f"[{section}] {key} is {change} against {ref}. The ratchet only shrinks: move "
+                f"material to references/ or shorten the text instead",
+            )
+    if len(failures) == before:
+        print(f"ceilings: no entry added or raised against {ref}")
 
 
 def check_description_budget(bundles: dict[str, list[str]], ceilings: dict) -> None:
@@ -918,9 +1080,11 @@ def emit_ceilings(bundles: dict[str, list[str]]) -> str:
         "# Accepted values above a hard limit in scripts/validate-skills.py. A ratchet:",
         "# the validator fails when a listed value grows, and asks for the entry to be",
         "# lowered or removed when it shrinks. Never raise an entry to make a change",
-        "# pass; move material to references/ or shorten the text instead. One exception:",
-        "# a commit that adds a cross-bundle fallback sentence may raise body_tokens for",
-        "# that skill by the size of the sentence, and its message must say so.",
+        "# pass; move material to references/ or shorten the text instead. check.sh",
+        "# compares this file with the merge base (--ceilings-base), so an added or",
+        "# raised entry fails CI. One exception, checked there too: a change that",
+        "# resolves a cross-bundle reference may raise that skill's body_tokens by up",
+        "# to 60 per resolved reference, the size of one fallback sentence.",
         "#",
         "# Regenerate after a change that shrinks a value:",
         "#   python3 scripts/validate-skills.py --emit-ceilings > scripts/catalog-ceilings.toml",
@@ -952,6 +1116,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate the skill catalog.")
     parser.add_argument("--report", choices=["budget", "cross-refs"], action="append", default=[])
     parser.add_argument("--emit-ceilings", action="store_true", help="print the ratchet file for the current tree")
+    parser.add_argument(
+        "--ceilings-base",
+        metavar="REF",
+        help="fail when scripts/catalog-ceilings.toml adds or raises an entry against this git ref",
+    )
     args = parser.parse_args(argv)
 
     if not SKILLS_DIR.is_dir():
@@ -977,6 +1146,8 @@ def main(argv: list[str] | None = None) -> int:
         report_cross_refs(bundles)
     check_bundles(bundles, skill_names)
     check_marketplace(bundles, skill_names)
+    if args.ceilings_base:
+        check_ceilings_against(args.ceilings_base, ceilings)
     check_description_budget(bundles, ceilings)
     check_body_tokens(ceilings)
     check_snippet(skill_names)
