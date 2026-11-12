@@ -7,8 +7,8 @@ license: BSD-3-Clause
 # Rust callback bounds
 
 `for<'a> FnMut(&'a T) -> &'a K` **is legal and compiles on stable**. Only a *separate* generic
-parameter, as in `FnMut(&T) -> K`, cannot name the higher-ranked lifetime. Do not reach for a GAT,
-a macro crate, or `Box<dyn Fn>` when the callback returns a plain borrow of its argument.
+parameter, as in `FnMut(&T) -> K`, cannot name the higher-ranked lifetime. For a callback that returns a
+plain borrow of its argument, do not reach for a GAT, a macro crate, or `Box<dyn Fn>`.
 
 Every quoted diagnostic comes from rustc 1.98.1, edition 2024, on aarch64-apple-darwin.
 
@@ -21,14 +21,12 @@ Every quoted diagnostic comes from rustc 1.98.1, edition 2024, on aarch64-apple-
 | Callback must return a borrow of its argument | [Return a borrow of the argument](#return-a-borrow-of-the-argument) |
 | `error[E0521]: borrowed data escapes outside of closure` | [for<'a> is a no-escape promise](#fora-is-a-no-escape-promise) |
 | `error[E0308]: ... one type is more general than the other` | [Closure inference is positional](#closure-inference-is-positional) |
-| `error[E0282]: type annotations needed` on a closure argument | [Closure inference is positional](#closure-inference-is-positional). For `\|o\| async move { .. }` against `AsyncFn`, write `async \|o\| ..`; see [Pick the bound](#pick-the-bound-from-the-return-type) |
-| `implementation of AsyncFn is not general enough` on `\|o\| async move { .. }` | Write `async \|o\| ..`; see [Pick the bound](#pick-the-bound-from-the-return-type) |
+| `error[E0282]: type annotations needed` on a closure argument | [Closure inference is positional](#closure-inference-is-positional) |
+| E0282 or `implementation of AsyncFn is not general enough` on `\|o\| async move { .. }` | Write `async \|o\| ..`; see [Pick the bound](#pick-the-bound-from-the-return-type) |
 | `error[E0309]` then `error[E0621]` then `error[E0502]` on one function | [Do not hoist the lifetime](#do-not-hoist-the-lifetime) |
 | `sort_by_key` rejects `\|o\| &o.field` | Read [key-projections.md](references/key-projections.md#change-what-the-callback-receives) |
 | Callback output is generic over `'a` and your signature cannot name it | Read [key-projections.md](references/key-projections.md#generic-outputs-need-rpitit-or-a-gat) |
-| Deciding between `F: Fn`, `Box<dyn Fn>`, and `fn(..)` in a field | Read [storing-callables.md](references/storing-callables.md#store-a-callable-in-a-field) |
-| `error[E0747]: constant provided when a type was expected` | Read [storing-callables.md](references/storing-callables.md#store-a-callable-in-a-field) |
-| `error[E0562]: impl Trait is not allowed in field types` | Read [storing-callables.md](references/storing-callables.md#store-a-callable-in-a-field) |
+| Deciding between `F: Fn`, `Box<dyn Fn>`, and `fn(..)` in a field; `error[E0747]: constant provided when a type was expected`, or `error[E0562]: impl Trait is not allowed in field types` | Read [storing-callables.md](references/storing-callables.md#store-a-callable-in-a-field) |
 | `expected an Fn() closure, found Arc<dyn Fn()>` | Read [storing-callables.md](references/storing-callables.md#arc-and-rc-of-dyn-fn-do-not-implement-fn) |
 | `reached the recursion limit while instantiating` on a writer or visitor trait | Read [storing-callables.md](references/storing-callables.md#by-value-impl-trait-plus-a-delegating-impl-is-a-monomorphization-bomb) |
 | A `move` closure unexpectedly implements `Fn`, captures a whole owner, or changes drop timing | Read [closure-capture-semantics.md](references/closure-capture-semantics.md) |
@@ -47,30 +45,27 @@ Read the row that matches what the callback returns. The argument is always `&T`
 | A borrow of the argument | `impl for<'a> Fn(&'a T) -> &'a K`, plus `K: ?Sized` | Yes |
 | A composite over `'a` your signature can name | `impl for<'a> FnMut(&'a T) -> Reverse<&'a str>` | Yes |
 | An output that stays a type parameter over `'a` | Your own trait with RPITIT, or with a GAT | No. Pass a named unit struct |
-| An async result, awaited on the caller's task | `impl AsyncFn(&T) -> R` (Rust 1.85+) | Yes, as `async \|o\| ..`. `\|o\| async move { .. }` fails: E0282 when the body uses `o`, else `implementation of AsyncFn is not general enough`. Annotating `\|o: &T\|` then fails with `lifetime may not live long enough` (Rust 1.99.1) |
+| An async result, awaited on the caller's task | `impl AsyncFn(&T) -> R` (Rust 1.85+) | Yes, as `async \|o\| ..`. `\|o\| async move { .. }` fails, annotated or not (Rust 1.99.1) |
 | A future that must be `Send` because the task that awaits it is spawned (`tokio::spawn`), or a callback stored as `Box<dyn ..>` | `impl for<'a> Fn(&'a T) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>` | Yes, when the body is `Box::pin(async move { .. })` |
 
-`AsyncFn` has no stable way to bound its future as `Send`, and it is not dyn compatible:
-`Box<dyn AsyncFn(&T) -> R>` is E0038. A generic field `F: AsyncFn(&T) -> R` compiles; only a
-type-erased store needs the boxed form. A future that borrows `&T` is not `'static`, so spawning
+`AsyncFn` has no stable way to bound its future as `Send`, and `Box<dyn AsyncFn(&T) -> R>` is
+E0038; a generic field `F: AsyncFn(&T) -> R` compiles. A future that borrows `&T` is not `'static`, so spawning
 the callback's own future fails with E0521; take the argument by value or as `Arc<T>` for that.
-The `rust-async-internals` skill owns the rest of the async rules; for example, a lock held
-across `.await` needs `tokio::sync::Mutex`.
+The `rust-async-internals` skill, when installed, owns the other async callback rules; for
+example, a lock held across `.await` needs `tokio::sync::Mutex`.
 
-Add `K: ?Sized` on every `-> &'a K` row. Without it `|o| &o.name` on a `String` field still
-works, but `|o| o.name.as_str()` and `|b| &b.bytes[..]` fail, because `str` and `[u8]` are not
-`Sized`.
+Add `K: ?Sized` on every `-> &'a K` row. Without it `|o| o.name.as_str()` and
+`|b| &b.bytes[..]` fail, because `str` and `[u8]` are not `Sized`.
 
 ## for<'a> is a no-escape promise
 
 `for<'a>` on a callback bound is machine-checked: the callback cannot store the reference
-anywhere that outlives the call. Do not widen it to a fixed `'a` (`impl FnMut(&'a T) -> K` with
-`arr: &'a [T]`) to silence E0521. The error means the caller's closure wants to keep a reference
-that your API promised it would not keep. When the body does not mutate the collection,
-widening compiles and the API silently permits the store from then on. When the body mutates,
-widening fails loudly; see [Do not hoist the lifetime](#do-not-hoist-the-lifetime). Fix the
-caller, not the bound. Read [hrtb-diagnostics.md](references/hrtb-diagnostics.md#a-fixed-a-permits-the-escape)
-when you need the side-by-side example and the full E0521 text.
+anywhere that outlives the call. E0521 means the caller's closure wants to keep a reference that
+your API promised it would not keep. Fix the caller, not the bound. Never widen `for<'a>` to a
+fixed `'a` (`impl FnMut(&'a T) -> K` with `arr: &'a [T]`): when the body does not mutate the
+collection, it compiles and silently permits the store from then on. Read
+[hrtb-diagnostics.md](references/hrtb-diagnostics.md#a-fixed-a-permits-the-escape) when you need
+the side-by-side example and the full E0521 text.
 
 E0521 also fires for `'static` escapes out of `thread::spawn`. That variant is a different cause
 with a different fix; see the `rust-compiler-errors` skill.
@@ -83,105 +78,61 @@ proves nothing about the closures callers write.
 | Claim | Check |
 | --- | --- |
 | The bound accepts the closures callers write | A caller test or doctest that passes inline, unannotated closures: `\|o\| &o.field`, `\|o\| o.name.as_str()`, and one that captures a local. Run `cargo test` |
-| The API promises no escape | A minimal `compile_fail` doctest whose closure stores the argument in an outer variable (E0521). If someone widens `for<'a>` to a fixed `'a`, the doctest compiles and the test fails. Stable rustdoc ignores the error code, so pair it with a passing doctest that differs only in the store line; the pair proves the failure comes from the escape |
-| A size or allocation claim for a stored callable | A `size_of` assertion, the size probe in [storing-callables.md](references/storing-callables.md#field-sizes-are-measurable), or the counting-allocator probe in [storing-callables.md](references/storing-callables.md#boxdyn-fn-allocates-for-a-non-zero-sized-closure-value) |
-| A writer or visitor trait that takes `impl Trait` | A test or example that calls the method with a concrete writer, such as `t.ser(Vec::new())`, then `cargo test` or `cargo build --all-targets`. A library-only `cargo build` instantiates no generic method and exits 0. `cargo check` and `cargo clippy` also miss the recursion-limit error |
+| The API promises no escape | A `compile_fail` doctest whose closure stores the argument in an outer variable (E0521); a widened `'a` makes it compile and fail. Stable rustdoc ignores the error code, so pair it with a passing doctest that differs only in the store line |
+| A size or allocation claim for a stored callable | A `size_of` assertion, or the size and counting-allocator probes in [storing-callables.md](references/storing-callables.md#field-sizes-are-measurable) |
+| A writer or visitor trait that takes `impl Trait` | A test that calls the method with a concrete writer (`t.ser(Vec::new())`), then `cargo test` or `cargo build --all-targets`. A library-only `cargo build`, `cargo check`, and `cargo clippy` miss the recursion-limit error |
 | The MSRV accepts the syntax | `cargo +<msrv> check` when `rust-version` is below 1.85 (`AsyncFn`, `async \|..\|`) or 1.87 (`use<..>` in a trait) |
 
 ## Checklist
-
-Review a change against the sections above; these items have no section of their own.
 
 - No `'a` was hoisted onto the function, and no `for<'a>` was widened, to silence a closure error.
 - `sort_by`, `iter().max_by_key`, or `Vec<&T>` was considered before any projection trait.
 - A public generic type that stores behaviour declares its own trait with a blanket `FnOnce` impl.
   No public struct hands users a value through `-> S<impl Fn(..)>`.
-- Every [Verify](#verify) row that the change touches has run and passed.
+- Every [Verify](#verify) row the change touches passed.
 
 ## A free type parameter cannot name 'a
 
 `impl FnMut(&T) -> K` desugars to `for<'a> FnMut(&'a T) -> K`. The binder introduces `'a`, but
 `K` was fixed at the outer function's scope, before `'a` existed. No closure that returns a borrow
-of its argument can satisfy it:
-
-```rust,compile_fail
-struct Order { country: String }
-
-fn sort_by_key<T, K: Ord>(_arr: &mut [T], _key: impl FnMut(&T) -> K) {}
-
-fn process(orders: &mut [Order]) {
-    sort_by_key(orders, |order| &order.country);
-}
-```
+of its argument can satisfy it.
 
 `std` has the same shape. `Vec::sort_by_key` is `FnMut(&T) -> K`, so `v.sort_by_key(|o| &o.country)`
-reports the same error, word for word. The error names the closure, so the reflex is to annotate
-the closure. No annotation repairs it. The bound is wrong, not the closure. Read
-[hrtb-diagnostics.md](references/hrtb-diagnostics.md#a-free-type-parameter-cannot-name-a) when
-you need the full diagnostic to match against.
+reports the same error. No annotation on the closure repairs it. The bound is wrong, not the
+closure. Read [hrtb-diagnostics.md](references/hrtb-diagnostics.md#a-free-type-parameter-cannot-name-a)
+when you need the failing code and the full diagnostic.
 
 ## Do not hoist the lifetime
 
-The first error names a closure, so the reflex is to add a lifetime to the function. Each `help:`
-on that path is locally correct, and the path is a dead end. Hoist `'a` into
-`impl FnMut(&'a T) -> K` and rustc reports E0309 (add `T: 'a`), E0621 (add `arr: &'a mut [T]`),
-and E0502. Follow both `help:` lines and E0502 remains, and no change to the body can fix it: a
-fixed `'a` keeps every element handed to the callback borrowed past the loop body, so the body
-can never mutate the collection. Stop at the first error, restore the elided argument, and pick a
-row from the decision table. Read
+Hoist `'a` into `impl FnMut(&'a T) -> K` and rustc reports E0309 (add `T: 'a`), E0621 (add
+`arr: &'a mut [T]`), and E0502. Each `help:` is locally correct; follow both and E0502 remains,
+because a fixed `'a` keeps every element borrowed past the loop body. Stop at the first error,
+restore the elided argument, and pick a row from the decision table. Read
 [hrtb-diagnostics.md](references/hrtb-diagnostics.md#the-hoisted-lifetime-dead-end) when you need
 the terminal code and the three diagnostics.
 
 ## Return a borrow of the argument
 
-Put the output inside the binder. The bound accepts an unannotated closure:
+Put the output inside the binder: `mut key: impl for<'a> FnMut(&'a T) -> &'a K` with
+`K: Ord + ?Sized`. The bound accepts an unannotated closure such as `|o| &o.country`. The
+`&mut [T]` receiver stays mutable inside the body, because the higher-ranked `'a` ends at each
+call and no borrow of an element survives to block `arr.swap`. Read
+[hrtb-diagnostics.md](references/hrtb-diagnostics.md#a-borrow-returning-bound-in-use) when you
+need a complete function and caller, or a second reference argument.
 
-```rust
-struct Order { country: String, code: u32 }
-
-fn sort_by_key_ref<T, K: Ord + ?Sized>(
-    arr: &mut [T],
-    mut key: impl for<'a> FnMut(&'a T) -> &'a K,
-) {
-    for i in 0..arr.len() {
-        for j in (i + 1)..arr.len() {
-            if key(&arr[j]) < key(&arr[i]) { arr.swap(i, j); }
-        }
-    }
-}
-
-fn main() {
-    let mut v = vec![
-        Order { country: "cz".into(), code: 3 },
-        Order { country: "at".into(), code: 1 },
-    ];
-    sort_by_key_ref(&mut v, |o| &o.country); // bare closure, no annotation
-    assert_eq!(v[0].code, 1);
-}
-```
-
-The `&mut [T]` receiver stays mutable inside the body. That is the whole point: the higher-ranked
-`'a` ends at each call, so no borrow of an element survives to block `arr.swap`.
-
-Write the binder explicitly. Elision refuses a second reference argument with `error[E0106]`;
-`for<'a> FnMut(&'a A, &'a B) -> &'a K` compiles and ties both arguments to one region, so give the
-second its own `'b` unless you mean to tie them. The shape also works for a `T` that carries a
-lifetime, such as `Order<'s>`; a trait with a lifetime parameter can fail there (see
-[key-projections.md](references/key-projections.md#generic-outputs-need-rpitit-or-a-gat)).
+Write the binder explicitly when the callback takes two references: elision refuses that with
+`error[E0106]`.
 
 ## Closure inference is positional
 
 A reference-projecting closure must be written **inline at the call site**. Bind the identical
 text to a `let` first (`let g = |o: &Order| &o.country; register(g);`) and it stops satisfying the
 identical bound: `lifetime may not live long enough` on the `let`, then
-`error[E0308]: ... one type is more general than the other` on the call.
-
-Closure signature inference reads the *expectation* at the closure expression. At a call site the
-expectation is the higher-ranked parameter bound, so the closure is inferred higher-ranked. A bare
-`let` supplies none, so each region resolves to one fixed region. An annotation supplies the
-expectation: `let g: fn(&Order) -> &String = |o| &o.country;` compiles for a closure that captures
-nothing, and `&dyn for<'a> Fn(&'a Order) -> &'a String` works for a capturing closure. Or route
-the `let` through one generic identity function. One copy serves the whole crate:
+`error[E0308]: ... one type is more general than the other` on the call. The call site supplies a
+higher-ranked expectation; a bare `let` supplies none. Annotate the `let`
+(`let g: fn(&Order) -> &String = |o| &o.country;` for a closure that captures nothing,
+`&dyn for<'a> Fn(&'a Order) -> &'a String` for a capturing one), or route it through one generic
+identity function for the whole crate:
 
 ```rust
 fn hrtb_ref<In, Out: ?Sized, F>(f: F) -> F
@@ -203,22 +154,15 @@ fn main() {
 Do not add a macro crate for this, and do not write a per-type `force_hrtb`. The turbofish is
 needed only when the surrounding call leaves `In` or `Out` ambiguous.
 
-Only an `Fn`, `FnMut`, or `FnOnce` obligation supplies the expectation. Put the higher-ranked
-bound on your own trait (`where for<'a> F: MyTrait<&'a T>`) and **every** closure form fails:
-E0282 unannotated, `lifetime may not live long enough` annotated, even with the return type
-annotated. Pass a named `fn`, whose item type is already higher-ranked, or wrap the closure in
+Only an `Fn`, `FnMut`, or `FnOnce` obligation supplies the expectation. With the bound on your
+own trait (`where for<'a> F: MyTrait<&'a T>`), **every** closure form fails, annotated or not.
+Pass a named `fn`, whose item type is already higher-ranked, or wrap the closure in
 `hrtb_ref(..)`. Read [hrtb-diagnostics.md](references/hrtb-diagnostics.md) when you need the
 worked examples and the full diagnostics.
 
 ## Related skills
 
-Use these skills when they are installed.
-
-| Skill | Boundary |
-| --- | --- |
-| `rust-discipline` | API review of stored callbacks: `Box<dyn Fn>` over `Box<dyn FnMut>`, `&'a mut` fields, forwarding impls |
-| `rust-compiler-errors` | Reading E0521, E0502, and E0277 in general, beyond the callback shapes here |
-| `rust-async-internals` | Every other `async` callback rule: `AsyncFn`, boxed `Send` futures, spawn |
-| `rust-iterator-impl` | The producing side, when the answer is a lending iterator rather than a callback |
-| `rust-performance` | Build-time cost of a by-value `impl Trait` parameter (`cargo --timings`, `llvm-lines`) |
-| `rust-lints` | The `refining_impl_trait` lint and the workspace lint tables that gate it |
+When installed: `rust-discipline` reviews stored callbacks (`Box<dyn Fn>` over `Box<dyn FnMut>`,
+`&'a mut` fields), `rust-compiler-errors` owns general E0521 and E0277 triage,
+`rust-iterator-impl` owns lending iterators, and `rust-performance` measures the
+build cost of a by-value `impl Trait` (`cargo build --timings`).

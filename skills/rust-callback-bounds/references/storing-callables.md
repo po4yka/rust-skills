@@ -533,4 +533,5 @@ type reachable from outside the crate report `refining_impl_trait_reachable`; bo
 `refining_impl_trait` group. Repeat `impl Ord + use<'a>` in the impl and the warning disappears.
 When the concrete type really is part of your published API, put
 `#[expect(refining_impl_trait, reason = "...")]` on the impl method, not the `#[allow]` that the
-note suggests. The `rust-lints` skill owns the rule, when it is installed.
+note suggests. The `rust-lints` skill, when it is installed, owns the workspace lint table that sets
+`refining_impl_trait`.
