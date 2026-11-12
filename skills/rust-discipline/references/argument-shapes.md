@@ -56,7 +56,7 @@ per argument type. Take `String` when you keep the value and the common caller c
 
 | Parameter | `&'static str` | `String` | `&Path` | `PathBuf` | `&PathBuf` |
 | --- | --- | --- | --- | --- | --- |
-| `&Path` | `f(Path::new(x))` | NO, E0308 | `f(x)` | `f(&x)` | `f(x)` |
+| `&Path` | `f(Path::new(x))` | `f(Path::new(&x))`; `f(&x)` is E0308 | `f(x)` | `f(&x)` | `f(x)` |
 | `&PathBuf` | NO, E0308 | NO, E0308 | NO, E0308 | `f(&x)` | `f(x)` |
 | `impl AsRef<Path>` | `f(x)` | `f(x)` | `f(x)` | `f(x)` | `f(x)` |
 | `impl Borrow<Path>` | **NO, E0277** | **NO, E0277** | `f(x)` | `f(x)`, moves | **NO, E0277** |
@@ -363,8 +363,9 @@ error[E0599]: no method named `capacity` found for reference `&str` in the curre
 error[E0599]: no method named `capacity` found for reference `&[u32]` in the current scope
 ```
 
-Take the owned reference when the body calls `capacity`, `reserve`, `shrink_to_fit`,
-`into_boxed_slice`, `push`, or `truncate` with a following shrink. Clippy already encodes this:
+Take `&Vec<T>` or `&String` when the body only reads allocation state with `capacity`. Take
+`&mut Vec<T>` or `&mut String` when the body calls `reserve`, `push`, `truncate`, or
+`shrink_to_fit`. `into_boxed_slice` takes `self`, so it needs the owned `Vec<T>`. Clippy already encodes this:
 `clippy::ptr_arg` is body-aware and stays silent on `fn(v: &Vec<u32>) -> usize { v.capacity() }`
 and on `fn(v: &mut Vec<u32>) { v.push(1); }`, while it fires on
 `fn(v: &mut Vec<u32>) { v.sort(); }` with `writing '&mut Vec' instead of '&mut [_]' involves a new

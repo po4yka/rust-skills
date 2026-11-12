@@ -4,6 +4,15 @@
 file = "rust-discipline/references/ownership-and-concurrency-traps.md"
 section = "Integer overflow panics in debug and wraps in release"
 block = 1
+setup = '''
+let a: u32 = todo!();
+let b: u32 = todo!();
+'''
+
+[[block]]
+file = "rust-discipline/references/ownership-and-concurrency-traps.md"
+section = "Integer overflow panics in debug and wraps in release"
+block = 2
 items = '''
 #[derive(Debug)]
 enum Error { Overflow }
@@ -12,6 +21,24 @@ impl std::fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 '''
+setup = '''
+let a: u32 = todo!();
+let b: u32 = todo!();
+'''
+
+[[block]]
+file = "rust-discipline/references/ownership-and-concurrency-traps.md"
+section = "Integer overflow panics in debug and wraps in release"
+block = 3
+setup = '''
+let a: u32 = todo!();
+let b: u32 = todo!();
+'''
+
+[[block]]
+file = "rust-discipline/references/ownership-and-concurrency-traps.md"
+section = "Integer overflow panics in debug and wraps in release"
+block = 4
 setup = '''
 let a: u32 = todo!();
 let b: u32 = todo!();

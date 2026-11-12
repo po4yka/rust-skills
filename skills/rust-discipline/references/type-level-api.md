@@ -75,6 +75,11 @@ pub struct Options {
 }
 ```
 
+Downstream code also cannot write `Options { retries: 3, ..Default::default() }`: that is a
+struct expression too, and Rust 1.99.1 rejects it with E0639. Give a `#[non_exhaustive]` struct a
+constructor or a builder, or derive `Default` and let the caller assign fields on a `let mut`
+value (`let mut o = Options::default(); o.retries = 3;`).
+
 Apply it to every public error enum and every public options struct, from the first release. It
 is free before publication and a breaking change to add afterwards. Do not apply it to a type
 whose whole purpose is exhaustive matching inside one crate; the wildcard arm it forces then
