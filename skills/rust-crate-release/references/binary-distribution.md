@@ -286,6 +286,12 @@ Stop the release sequence when a required target fails, an archive has an unsafe
 differs, a signature has the wrong identity, provenance names the wrong source or artifact, or an
 upload result is uncertain.
 
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Two clean binary builds have different digests | Path, timestamp, linker, toolchain component, or archive metadata differs | Find the variation or remove the reproducibility claim |
+| Binary upload times out | The host can have accepted the asset | Download and hash the remote bytes; follow the retry table above |
+| Signature verifies for an unexpected identity | The signature is valid but the trust policy is wrong | Stop and pin the expected identity and issuer |
+
 Keep an incomplete release non-final when the workflow supports that state. Do not delete or hide
 a public release without explicit authorization. For changed bytes, create a new version and
 explain the superseded release. If a secret or signing key enters an asset, revoke it
