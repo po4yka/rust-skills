@@ -23,7 +23,7 @@ structural mapping.
 | Fixed-size buffers and their truncation | Growable types. Keep the limit only when it is behavior, and test it |
 | `#define` constants and function-like macros | `const`, enums, and functions |
 | Global or static mutable state | A struct that the caller owns |
-| `strtol`, `atoi`, `sscanf` | `str::parse` with the matching integer type. Both skip leading space and stop at the first bad character (`atoi("12abc")` is 12); `atoi` returns 0 when no digit is present and has undefined behavior on overflow, where `strtol` clamps and sets `ERANGE`. Port that rule on purpose or reject the input, record which, and make overflow an error |
+| `strtol`, `atoi`, `sscanf` | `str::parse` with the matching integer type; it rejects leading space. `strtol` and `atoi` both skip leading space and stop at the first bad character (`atoi("12abc")` is 12); `atoi` returns 0 when no digit is present and has undefined behavior on overflow, where `strtol` clamps and sets `ERANGE`. Port that rule on purpose or reject the input, record which, and make overflow an error |
 | Signed overflow (undefined behavior in C) | `checked_*` and an error: the original had no defined result to keep |
 | `char` arithmetic on bytes | `u8` methods (`is_ascii_digit`, `to_ascii_lowercase`); `char` only for Unicode scalar values |
 | C++ inheritance used for code reuse | Composition and plain functions |
