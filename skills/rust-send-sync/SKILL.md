@@ -6,8 +6,9 @@ license: BSD-3-Clause
 
 # Rust Send and Sync
 
-Every error text below comes from rustc 1.98.1, edition 2024, on aarch64-apple-darwin. The
-quotes are excerpts.
+Every error text below comes from rustc 1.99.1, edition 2024, on x86_64-unknown-linux-gnu. The
+quotes are excerpts. Read [references/rustc-transcripts.md](references/rustc-transcripts.md) when
+an error does not match a short quote here: it holds the full transcript of each case.
 
 ## Route the symptom to a section
 
@@ -139,15 +140,8 @@ fn main() {
 }
 ```
 
-```text
-error[E0277]: `Cell<i32>` cannot be shared between threads safely
-  = help: the trait `Sync` is not implemented for `Cell<i32>`
-  = note: if you want to do aliasing and mutation between multiple threads, use
-          `std::sync::RwLock` or `std::sync::atomic::AtomicI32` instead
-  = note: required for `Arc<Cell<i32>>` to implement `Send`
-```
-
-Put the lock inside the `Arc`. `Arc<Mutex<Cell<i32>>>` is
+The error says `` `Cell<i32>` cannot be shared between threads safely ``, with a `note:` that suggests `RwLock` or
+`AtomicI32`. Put the lock inside the `Arc`. `Arc<Mutex<Cell<i32>>>` is
 both `Send` and `Sync`, because `Mutex<T>: Sync` needs only `T: Send`. The `note:` means
 "replace the `Cell`": `Arc<AtomicI32>` and `Arc<RwLock<i32>>` both work. Do not wrap the `Cell`
 in the suggested `RwLock`: `RwLock<Cell<i32>>` fails again (see
@@ -169,37 +163,17 @@ fn main() {
 }
 ```
 
-```text
-error[E0277]: `Rc<i32>` cannot be sent between threads safely
-  = help: within `&mut Rc<i32>`, the trait `Send` is not implemented for `Rc<i32>`
-  = note: required because it appears within the type `&mut Rc<i32>`
-```
-
 A `&mut T` is a move channel, not a view. `std::mem::replace(x, T::default())` takes the value out
 through the reference, so the receiving thread owns and drops it. That is the `Send` obligation.
 
 ## `unsafe impl Send` cannot target a reference (E0321)
 
-You cannot decide per reference type whether it is `Send`. The impl does not exist to be written:
-
-```rust,compile_fail,E0321
-pub struct Handle(*mut u8);
-unsafe impl Send for &Handle {}
-unsafe impl Send for &mut Handle {}
-```
-
-```text
-error[E0321]: cross-crate traits with a default impl, like `Send`, can only be implemented
-              for a struct/enum type, not `&Handle`
-2 | unsafe impl Send for &Handle {}
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ can't implement cross-crate trait with a default impl
-  |                              for non-struct/enum type
-```
-
-`unsafe impl Send for Handle {}` compiles, because `Handle` is a struct in this crate. `Sync` is
-the only lever that reaches `&Handle`: write `unsafe impl Sync for Handle {}`, and `&Handle`
-becomes `Send` through the blanket impl. That is a stronger promise. The `rust-unsafe` skill holds
-the audit it needs.
+`unsafe impl Send for &Handle {}` fails with `error[E0321]: cross-crate traits with a default impl,
+like Send, can only be implemented for a struct/enum type`. You cannot decide per reference type
+whether it is `Send`. `unsafe impl Send for Handle {}` compiles, because `Handle` is a struct in
+this crate. `Sync` is the only lever that reaches `&Handle`: write `unsafe impl Sync for Handle {}`,
+and `&Handle` becomes `Send` through the blanket impl. That is a stronger promise. The
+`rust-unsafe` skill holds the audit it needs.
 
 ## Lock payload bounds: `Mutex` and `RwLock` are not interchangeable
 
@@ -223,12 +197,6 @@ fn assert_sync<T: Sync>() {}
 fn main() { assert_sync::<RwLock<Cell<i32>>>(); }
 ```
 
-```text
-error[E0277]: `Cell<i32>` cannot be shared between threads safely
-  = help: the trait `Sync` is not implemented for `Cell<i32>`
-  = note: required for `std::sync::RwLock<Cell<i32>>` to implement `Sync`
-```
-
 Changing a read-heavy `Mutex<T>` to an `RwLock<T>` is therefore **not** a drop-in change. It stops
 compiling as soon as the payload holds a `Cell` or a `RefCell`, and the error lands on the
 `Arc<RwLock<...>>` at a call site far from the edit. Check the payload first. An `Rc` payload is
@@ -245,11 +213,6 @@ the locking thread, so the guard's `Drop` must run where the guard was created.
 use std::sync::MutexGuard;
 fn assert_send<T: Send>() {}
 fn main() { assert_send::<MutexGuard<'static, i32>>(); }
-```
-
-```text
-error[E0277]: `std::sync::MutexGuard<'static, i32>` cannot be sent between threads safely
-  = help: the trait `Send` is not implemented for `std::sync::MutexGuard<'static, i32>`
 ```
 
 Do not read that as "nothing derived from the guard leaves the thread". The guard is `Sync`
@@ -298,18 +261,12 @@ it has the auto-trait marker table, and the marker that removes only `Send`.
 ## Auto traits leak out of `impl Trait` and `async fn`
 
 A public `-> impl Trait` with no explicit `+ Send` publishes whatever auto traits the **body**
-happens to have. Adding one `Rc` inside the function is then a breaking change, and the compiler
-reports it at every distant call site, with a `note:` that points into your private body:
+happens to have. Adding one `Rc` inside the function is then a breaking change. The compiler
+reports it at every distant call site, with a `note: required because it appears within the type
+impl Iterator<Item = u32>` that points into your private body.
 
-```text
-error[E0277]: `Rc<Vec<u32>>` cannot be sent between threads safely
-10 |     std::thread::spawn(move || { let _: Vec<u32> = it.collect(); });
-   |                        ^^^^^^^ within this `{closure@...}`
-note: required because it appears within the type `impl Iterator<Item = u32>`
-```
-
-Spell the bound in the signature. The guarantee is then frozen, and the body is the thing that
-must comply:
+Spell the bound in the signature. The guarantee is then frozen, and the same offending body fails
+at the definition:
 
 ```rust
 pub fn ids() -> impl Iterator<Item = u32> + Send {
@@ -318,60 +275,23 @@ pub fn ids() -> impl Iterator<Item = u32> + Send {
 fn main() { assert_eq!(ids().sum::<u32>(), 6); }
 ```
 
-With `+ Send` written, the same offending body fails at the definition:
-
-```rust,compile_fail,E0277
-use std::rc::Rc;
-pub fn ids() -> impl Iterator<Item = u32> + Send {
-    let names: Rc<Vec<u32>> = Rc::new(vec![1, 2, 3]);
-    (0..3).map(move |i| names[i])
-}
-```
-
-```text
-error[E0277]: `Rc<Vec<u32>>` cannot be sent between threads safely
-3 | pub fn ids() -> impl Iterator<Item = u32> + Send {
-  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<Vec<u32>>` cannot be sent ...
-5 |     (0..3).map(move |i| names[i])
-  |     ----------------------------- return type was inferred to be `Map<...>` here
-```
-
 Write `+ Send` only when you intend it, and add `+ Sync` when callers share the returned value. An
 API that is single-threaded by design cannot carry the bound, because it then fails at the
 definition. Record that decision in the doc comment.
 
-This is not async-specific. `async fn f() -> T` desugars to `fn f() -> impl Future<Output = T>`.
-It has the same leak. On stable Rust 1.98.1, no syntax puts a bound on an `async fn` return type.
+This is not async-specific. `async fn f() -> T` desugars to `fn f() -> impl Future<Output = T>`
+and has the same leak. On stable Rust 1.99.1, no syntax puts a bound on an `async fn` return type.
 Write the desugared form:
+`fn load(id: u32) -> impl Future<Output = u32> + Send { async move { id + 1 } }`. Do not silence the `async_fn_in_trait` warning when callers spawn the future. For
+`async fn` in a trait that callers spawn, and for return type notation, use the
+`rust-async-internals` skill, when it is installed.
 
-```rust
-use std::future::Future;
-
-pub fn load(id: u32) -> impl Future<Output = u32> + Send {
-    async move { id + 1 }
-}
-
-fn main() { let _ = load(1); }
-```
-
-Do not silence the `async_fn_in_trait` warning when callers spawn the future. For `async fn`
-in a trait that callers spawn, and for return type notation, use the `rust-async-internals`
-skill, when it is installed.
-
-The async diagnostic has **no error code**, so a search for E0277 finds nothing:
-
-```text
-error: future cannot be sent between threads safely
-  |                         ^^^^ future created by async block is not `Send`
-note: future is not `Send` as this value is used across an await
-5 |         let names = Rc::new(vec![1u32, 2, 3]);
-  |             ----- has type `Rc<Vec<u32>>` which is not `Send`
-6 |         std::future::ready(()).await;
-  |                                ^^^^^ await occurs here, with `names` maybe used later
-```
-
-Read the `note:`. It names the value and the exact `.await` that traps it. The
-`rust-compiler-errors` skill covers the message shape; the fix here is the signature.
+The async diagnostic, `error: future cannot be sent between threads safely`, has **no error
+code**, so a search for E0277 finds nothing. Its `note: future is not Send as this value is used
+across an await` names the value and the exact `.await` that traps it. The
+`rust-compiler-errors` skill covers the message shape; the fix here is the signature. Read
+[references/rustc-transcripts.md](references/rustc-transcripts.md) for both transcripts and the
+failing `+ Send` body.
 
 ## Related skills
 
