@@ -1,6 +1,6 @@
 ---
 name: rust-sanitizers-miri
-description: Use when running Miri or a sanitizer (ASan, ThreadSanitizer, MSan, HWASan) on Rust code, choosing between Stacked Borrows and Tree Borrows, reading a Miri or ASan report, stubbing FFI that Miri cannot execute, enabling Android MTE or Xcode sanitizers for a Rust library, running UBSan on a C dependency, or wiring these checks into CI. Not for writing or reviewing unsafe code itself; use `rust-unsafe`. Triggers on "miri", "MIRIFLAGS", "sanitizer", "-Zsanitizer", "TSan", "SEGV_MTESERR", "SEGV_MTEAERR".
+description: Use when running Miri or a sanitizer (ASan, ThreadSanitizer or TSan, MSan, HWASan) on Rust code with MIRIFLAGS or -Zsanitizer, choosing between Stacked Borrows and Tree Borrows, reading a Miri or ASan report, stubbing FFI that Miri cannot execute, enabling Android MTE (SEGV_MTESERR, SEGV_MTEAERR) or Xcode sanitizers, running UBSan on a C dependency, or wiring these checks into CI. Not for writing or reviewing unsafe code itself; use rust-unsafe.
 license: BSD-3-Clause
 ---
 
@@ -79,7 +79,7 @@ seed and the flags.
 
 ## 4. Run a sanitizer on the host
 
-`-Zsanitizer` is unstable as of Rust 1.98.1, so every sanitizer run needs
+`-Zsanitizer` is unstable as of Rust 1.99.1, so every sanitizer run needs
 nightly.
 
 ```bash
@@ -184,92 +184,36 @@ MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked  # Tree Borrow
 ## 7. Stub an FFI dependency that Miri cannot execute
 
 Run Miri over the Rust logic while the foreign call is replaced or skipped.
-Select the strategy from the shape of the dependency.
 
-| FFI situation | Strategy |
-|---|---|
-| `extern "C"` block that you declare in your own crate | Gate the block with `#[cfg(not(miri))]`. Add a `#[cfg(miri)]` stub with the same signature. |
-| Inline `asm!` or `global_asm!` | Add a pure-Rust fallback behind `#[cfg(miri)]`. Keep both paths under one test. |
-| Third-party crate that links C or C++ | You cannot stub it. Exclude the crate from the Miri run, or gate the tests that reach it. |
-| Generated FFI scaffolding, for example a UniFFI or JNI binding layer | Do not stub the generated code. Gate the tests that cross the boundary. |
-| Test that needs a live host runtime, for example a JVM, a GPU driver or a database | Gate the test with `#[cfg_attr(miri, ignore)]`. Do not stub. |
-| Platform syscall through `libc` with a simple return value | Stub it behind `#[cfg(miri)]` and return the success value. |
+- Gate an `extern` block that you declare with `#[cfg(not(miri))]`, and put a
+  `#[cfg(miri)]` stub with the same signature next to it. Use the built-in
+  `cfg(miri)`, not a Cargo feature.
+- Keep the return domain: a stub that returns a pointer returns a pointer into
+  a real allocation. A stub stores each pointer that the foreign side stores,
+  and dereferences it on a later call.
+- Do not stub a third-party C crate or generated bindings. Exclude the crate
+  (`--exclude`) or gate the tests that reach it. Gate a test that needs a live
+  host runtime with `#[cfg_attr(miri, ignore)]` and a comment with the reason.
+- Every path that a stub, a skip or an exclusion removes from Miri needs an ASan
+  run on the host, or a HWASan or MTE run on a device. `cargo +nightly careful
+  test` without `-Zcareful-sanitizer` is not a substitute.
 
-### Stub a foreign function that you declare
-
-```rust
-#[cfg(not(miri))]
-unsafe extern "C" {
-    fn platform_specific_call(fd: i32) -> i32;
-}
-
-#[cfg(miri)]
-unsafe fn platform_specific_call(_fd: i32) -> i32 {
-    0 // Deterministic success value for the interpreter.
-}
-```
-
-The stub must keep the signature, the safety contract and the return domain of
-the real function:
-
-- If the real function returns a pointer that the caller dereferences, the stub
-  returns a pointer into a real allocation. A null stub moves the defect
-  instead of removing it.
-- If the real function stores a pointer, the stub stores it too, and the stub
-  of each later call that uses it dereferences it. Otherwise Miri cannot see an
-  alias against the stored pointer (section 8).
-- Do not let a stub hide the UB that you want to find. A stub that always
-  returns `0` for a function whose error path frees a buffer removes the test
-  you need.
-
-Keep the stub next to the real declaration, in the same module, so it cannot
-drift from the signature. Use the built-in `cfg(miri)`, not a `miri` Cargo
-feature: Miri sets the cfg itself, and a feature can be enabled by accident in
-a normal build.
-
-### Skip a test or exclude a crate
-
-Put a comment with the reason on each `#[cfg_attr(miri, ignore)]`, and name
-the job that covers the path instead.
-
-```bash
-# Select the crates that Miri can interpret.
-cargo +nightly miri test --locked -p my-core -p my-parser
-
-# Or run the workspace and exclude the crates that reach foreign code.
-cargo +nightly miri test --locked --workspace --exclude my-ffi
-```
-
-Every path that a stub, a skip or an exclusion removes from Miri needs an ASan
-run on the host, or a HWASan or MTE run on a device. A `cargo +nightly careful
-test` run without `-Zcareful-sanitizer` is not a substitute: it adds std debug
-assertions, not memory-error detection.
+Read `references/ffi-stubs.md` when you pick the strategy for a dependency or
+write a stub. It has the strategy table, the stub example, and the commands.
 
 ## 8. A `Box` and a pointer that foreign code keeps
 
 A `Box<T>` asserts unique access while it is live. If foreign code stores a
-`*mut T` taken from the `Box`, and Rust then writes through the `Box`, the
-stored pointer is invalid. A later foreign access (read or write) through it
-is UB.
+`*mut T` taken from the `Box`, and Rust then writes through the `Box`, a later
+foreign access through the stored pointer is UB. Transfer ownership with
+`Box::into_raw`, and recover it with `Box::from_raw` exactly once, after the
+foreign side unregisters it and no callback can still run.
 
-Miri sees this only when Miri-executed code uses the stored pointer after the
-`Box` access. Make the `#[cfg(miri)]` stubs keep the pointer and read through
-it on a later call, as the foreign side does. Then both SB and TB report the
-read. With a stub that ignores the pointer, neither model reports anything.
-Read `references/miri-ub-patterns.md` ("`Box` plus FFI aliasing") when you
-write these stubs for a registration API. It has the full stubs and test.
-
-Correct patterns:
-
-- Transfer ownership with `Box::into_raw` and never use the original `Box`
-  again. Access the value only through the raw pointer. Recover it with
-  `Box::from_raw` exactly once, after the foreign side unregisters it and no
-  foreign call or callback can still use the pointer. An unregister call can
-  return while a callback on a foreign thread still runs.
-- For a synchronous foreign borrow, do not access or reborrow the value until
-  the call returns.
-- Use `Pin<Box<T>>` only when `T` has a pinning invariant. It keeps the address
-  stable. It does not permit aliasing or concurrent foreign access.
+Miri sees this only when the `#[cfg(miri)]` stubs keep the pointer and read
+through it on a later call. Read `references/ffi-stubs.md` ("Ownership
+patterns for a `Box`") for the synchronous-borrow and `Pin` rules, and
+`references/miri-ub-patterns.md` ("`Box` plus FFI aliasing") for the full stubs
+and test.
 
 ## 9. Miri jobs and flag hazards
 
@@ -315,13 +259,8 @@ MIRIFLAGS table.
 
 ## 10. Read an ASan report
 
-| ASan error | Likely Rust cause |
-|---|---|
-| `heap-buffer-overflow` | `unsafe` slice or pointer access past the end of a buffer |
-| `heap-use-after-free` | Raw pointer kept across a `Vec` or `String` reallocation, or used after `drop()` |
-| `stack-use-after-return` | Raw pointer to a local that escaped its function |
-| `double-free` | `Box::from_raw` called twice on one pointer, or ownership passed to FFI and also dropped in Rust |
-| `alloc-dealloc-mismatch` | C++ `new` memory freed with `free`, or the reverse, across the FFI boundary |
+Read `references/miri-ub-patterns.md` ("ASan error names") when you map an
+ASan error name to its usual Rust cause.
 
 Triage order:
 

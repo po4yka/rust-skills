@@ -3,7 +3,8 @@
 Worked examples of the undefined behaviour (UB) classes that Miri detects, the
 message Miri prints, and the correct pattern. Use this file when a Miri run
 fails and you need the shape of the defect, or when you decide which tool runs
-on each crate (the last two sections).
+on each crate ("Sanitizer comparison" and "Coverage decision table"). The last
+section maps ASan error names to their usual Rust causes.
 
 Contents:
 
@@ -16,6 +17,7 @@ Contents:
 - Lifetime extension through a raw pointer
 - Sanitizer comparison
 - Coverage decision table
+- ASan error names
 
 The Miri messages were measured on nightly 2026-11-09 (`miri 0.1.0
 (ac8310ba64 2026-11-09)`). Tags such as `<TAG>` and allocation ids such as
@@ -23,7 +25,7 @@ The Miri messages were measured on nightly 2026-11-09 (`miri 0.1.0
 on the rest of the text.
 Re-measure a message before you quote it for a newer nightly.
 
-The stub strategies are in `SKILL.md`, section 7.
+The stub strategies are in `references/ffi-stubs.md`.
 
 ## Dangling pointer after reallocation
 
@@ -170,7 +172,8 @@ shape. Miri is a confirmation here, never the gate.
 
 ## `Box` plus FFI aliasing
 
-The rule and the correct patterns are in `SKILL.md`, section 8. This is the
+The rule is in `SKILL.md`, section 8, and the correct patterns are in
+`references/ffi-stubs.md`. This is the
 Miri test for a registration API: foreign code stores a pointer from a `Box`,
 Rust writes through the `Box`, and a later foreign call reads the stored
 pointer.
@@ -278,7 +281,7 @@ a raw-pointer cast to silence a lifetime error.
 
 The `dangling_pointers_from_locals` lint (warn by default since Rust 1.91)
 catches the form that returns `&x as *const u32` directly. It does not fire on
-the `&*(&x as *const u32)` form above (checked on Rust 1.98.1).
+the `&*(&x as *const u32)` form above (checked on Rust 1.99.1).
 
 ## Sanitizer comparison
 
@@ -312,3 +315,15 @@ Use this table to decide which tool to run against each crate in a workspace.
 | Generated FFI scaffolding, for example UniFFI or JNI | No | HWASan or MTE on the device | Gate the crossing tests with `#[cfg_attr(miri, ignore)]` |
 | Inline assembly | No, unless a fallback exists | ASan on the real path | Add a pure-Rust fallback behind `#[cfg(miri)]` |
 | `std::arch` intrinsics | Partly | ASan on the real path | Miri implements a subset. Enable the feature for the run with `RUSTFLAGS="-Ctarget-feature=+avx2"` (and `RUSTDOCFLAGS` for doctests); on a non-x86 host add `--target x86_64-unknown-linux-gnu`. Add a fallback for what Miri rejects |
+
+## ASan error names
+
+| ASan error | Likely Rust cause |
+|---|---|
+| `heap-buffer-overflow` | `unsafe` slice or pointer access past the end of a buffer |
+| `heap-use-after-free` | Raw pointer kept across a `Vec` or `String` reallocation, or used after `drop()` |
+| `stack-use-after-return` | Raw pointer to a local that escaped its function |
+| `double-free` | `Box::from_raw` called twice on one pointer, or ownership passed to FFI and also dropped in Rust |
+| `alloc-dealloc-mismatch` | C++ `new` memory freed with `free`, or the reverse, across the FFI boundary |
+
+The triage order is in `SKILL.md`, section 10.
