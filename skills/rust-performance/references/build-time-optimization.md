@@ -111,10 +111,10 @@ cargo build --locked --release --target aarch64-apple-ios-sim
 
 `x86_64-apple-ios` (the simulator on an Intel host) is optional. Build it only when a supported
 consumer still needs it. Packaging the slices into an XCFramework belongs to the `rust-ios-build`
-skill, when it is installed.
+skill, when it is installed; it assembles them with `xcodebuild -create-xcframework`.
 
 Binding generation for an FFI layer runs once per target and costs almost nothing next to
-compilation. See `uniffi-packaging-versioning` and `rust-android-build`.
+compilation.
 
 ---
 
@@ -134,8 +134,6 @@ Rules that actually help:
 - Put proc-macros in their own crate. A proc-macro crate blocks every dependent crate.
 - Keep frequently-changed code isolated, so a small edit invalidates a small part of the cache.
 - Keep leaf crates such as shared error types and domain types small and stable. Everything depends on them, so every edit to them rebuilds everything.
-
-See `rust-crate-architecture` for the layering rules behind this.
 
 ---
 

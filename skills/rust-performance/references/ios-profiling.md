@@ -2,7 +2,7 @@
 
 Profiling a Rust static library inside an iOS app. [SKILL.md](../SKILL.md) section 3 holds the
 routing rule. Packaging (XCFramework, SwiftPM) belongs to the `rust-ios-build` skill, when it is
-installed.
+installed; it assembles the slices with `xcodebuild -create-xcframework`.
 
 ## Instruments
 
