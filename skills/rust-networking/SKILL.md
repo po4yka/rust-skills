@@ -72,10 +72,10 @@ cargo deny --config deny.toml --locked check advisories
 |---|---|---|
 | `rg` | Each bypass, key log, unbounded body, `408` timeout, and unbounded serve or client construction is visible | That the configured values fit the contract |
 | `cargo tree` | Which rustls provider features are on; it skips a graph with no rustls. Output other than one `ring` or `aws_lc_rs` line means `main` must install a provider | That the provider is installed before first TLS use |
-| `cargo deny` | No known vulnerability in rustls, h2, hyper, quinn, or the rest of the graph. An unsound advisory in a transitive crate fails only with `unsound = "all"` (the `rust-security` skill owns this `deny.toml` policy) | Protocol correctness |
+| `cargo deny` | No known vulnerability in rustls, h2, hyper, quinn, or the rest of the graph. An unsound advisory in a transitive crate fails only with `unsound = "all"` (the `rust-security` skill owns this `deny.toml` policy). Without cargo-deny, run `cargo audit --deny warnings` | Protocol correctness |
 
-A green grep does not prove the timing contract; the tests in "Test
-deterministic seams" do. The work is complete when each contract field and each
+A green grep does not prove the timing contract; the tests in
+`references/test-seams.md` do. The work is complete when each contract field and each
 stack-defaults row has a finite, configurable, tested value, and the TLS root
 source, the pool key, the outcome-unknown error state, and the diagnostics
 field list match their sections. In a review, each gap is a finding.
@@ -196,25 +196,20 @@ Count the first request as attempt one. Use a small finite attempt limit. Cap
 retries again with the operation deadline. Never retry forever in a background
 task.
 
-Also bound retries per upstream across the process. Require a retry permit or
-token before a second attempt. Limit retry concurrency, and suppress retries
-when the local service is overloaded or the upstream failure rate crosses the
-configured threshold. If no retry budget remains, return the original failure
-instead of adding outage load. `tower::retry::budget::TpsBudget` implements
-such a budget for a tower stack.
-
-Use exponential backoff with full jitter. Let `base` be the first cap and
-`maximum` be the largest cap. For retry number `n`, starting at zero, select a
-uniform delay in `0 ..= min(maximum, base * 2^n)`.
-
-Parse both `Retry-After` forms: delay seconds and HTTP date. Reject invalid or
-negative values. Use the larger of the server delay and the local jitter delay.
-Do not sleep past the operation deadline. Clamp arithmetic to prevent overflow.
-
-Keep delay calculation pure. Pass the random sample and current time into it.
-This seam makes retry tests deterministic without a mock HTTP framework. Read
+Also bound retries per upstream across the process with a retry budget
+(`tower::retry::budget::TpsBudget` in a tower stack); read
 [references/deadlines-and-retries.md](references/deadlines-and-retries.md) when
-you write the delay function: it has a tested implementation.
+you add one.
+
+Use exponential backoff with full jitter. Parse both `Retry-After` forms: delay
+seconds and HTTP date. Reject invalid or negative values. Use the larger of the
+server delay and the local jitter delay. Do not sleep past the operation
+deadline. Clamp arithmetic to prevent overflow. Keep the delay calculation pure:
+pass the random sample and current time into it, so a retry test needs no mock
+HTTP framework. Read
+[references/deadlines-and-retries.md](references/deadlines-and-retries.md) when
+you write the delay function: it has the jitter formula and a tested
+implementation.
 
 ## Stream with hard limits and backpressure
 
@@ -242,33 +237,24 @@ Stop reading after cancellation, a body-limit error, or an expired deadline.
 Release or reset the protocol stream as the library requires. Do not return a
 connection to the pool when its protocol state is uncertain.
 
-## Define cancellation at the network boundary
-
-Read `references/cancellation.md` when a caller can cancel a state-changing
-request, or the application must recover from an `Outcome unknown` result.
-
-## Treat proxy and DNS as connection identity
-
-Read `references/proxy-and-dns.md` when you key or reuse a connection pool,
-or configure a proxy, `NO_PROXY`, a resolver, or a DNS cache.
-
-## Bound server overload
-
-Read `references/overload-and-shutdown.md` when you set server admission,
-concurrency, queue, or handler-timeout limits.
-
-## Shut down in a fixed order
-
-Read `references/overload-and-shutdown.md` when you add or review graceful
-shutdown for a server or a client.
-
 ## Emit safe network diagnostics
 
-Read `references/diagnostics.md` when you add a log field, metric label, or
-trace attribute to network code.
+Record bounded, low-cardinality fields: route template or operation name (not
+the full URL), method, attempt number, retry reason class, timeout phase,
+elapsed bucket, status class, bytes sent and received, TLS version, certificate
+error class, pool reuse, DNS result count, and a proxy-used boolean. Do not
+record URL queries, raw paths with identifiers, headers, cookies, tokens,
+certificate contents, body fragments, proxy credentials, or peer error text that
+can echo those values. Do not put the remote address into a metric label. Use
+`rust-observability`, when it is installed, for redaction and cardinality gates.
 
-## Test deterministic seams
+## Conditional references
 
-Test policy without a real public network. Read `references/test-seams.md`
-when you write a network policy test: it maps each control to the smallest
-seam that exposes it, and gives the paused-clock and test-run rules.
+Test policy without a real public network.
+
+| Read | When |
+|---|---|
+| `references/cancellation.md` | A caller can cancel a state-changing request, or the application must recover from an `Outcome unknown` result |
+| `references/proxy-and-dns.md` | You key or reuse a connection pool, or configure a proxy, `NO_PROXY`, a resolver, or a DNS cache |
+| `references/overload-and-shutdown.md` | You set server admission, concurrency, queue, or handler-timeout limits, or add or review graceful shutdown |
+| `references/test-seams.md` | You write a network policy test: it maps each control to the smallest seam, and gives the paused-clock and test-run rules |

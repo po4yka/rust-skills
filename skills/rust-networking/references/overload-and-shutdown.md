@@ -1,7 +1,7 @@
 # Server overload and shutdown
 
-Admission limits and the shutdown sequence behind "Bound server overload" and
-"Shut down in a fixed order" in `SKILL.md`.
+Admission limits and the shutdown sequence that the "Conditional references" table in
+`SKILL.md` points to.
 
 ## Bound server overload
 

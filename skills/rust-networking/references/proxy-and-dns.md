@@ -1,7 +1,7 @@
 # Proxy and DNS
 
-Connection identity, proxy, and DNS rules behind "Treat proxy and DNS as connection identity" in
-`SKILL.md`.
+Connection identity, proxy, and DNS rules that the "Conditional references" table in `SKILL.md`
+points to.
 
 ## Treat proxy and DNS as connection identity
 
@@ -19,9 +19,6 @@ idle lifetime. Let the protocol implementation detect stale connections.
 HTTP/2 and HTTP/3 multiplex requests over a connection. A connection count is
 not a request concurrency limit. Bound in-flight requests separately. Drain the
 old pool when proxy, trust, identity, or protocol policy changes.
-
-Send `Proxy-Authorization` only to the proxy, and never reuse origin
-credentials as proxy authentication.
 
 ## Proxy
 
