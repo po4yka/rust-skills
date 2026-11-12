@@ -3,6 +3,28 @@
 The rule and the governance steps are in [SKILL.md](../SKILL.md). This file lists what the lint
 reports for each source of `unsafe`, and why a macro from a dependency escapes it.
 
+## Governance detail
+
+A written rule such as "no unsafe in this crate" is not enforcement. Enforce it with
+`#![forbid(unsafe_code)]` at the crate root, a lint level, or a CI check. Add the attribute to
+every crate that has no hand-written `unsafe`, including a crate that reaches C or the OS only
+through a safe wrapper crate. A local `#[allow(unsafe_code)]` cannot weaken it (E0453). The lint
+also rejects `#[unsafe(no_mangle)]`, `#[unsafe(export_name)]`, and `#[unsafe(link_section)]`, so a
+crate with an unmangled export cannot carry it. Before 1.98 it ignores other unsafe attributes,
+such as `#[unsafe(naked)]`.
+
+The lint checks the crate's own source, not the code it compiles to. An unsafe block or an
+`#[unsafe(no_mangle)]` export that a dependency's macro expands builds with no diagnostic, and
+`cargo clippy -- -D unsafe_code` is silent too. So a `forbid` hit does not prove that the crate
+compiles to no unsafe. The table below gives the diagnostic per source of unsafe.
+
+Removing `#![forbid(unsafe_code)]` is a reviewable event. Remove it in the commit that adds the
+unsafe code, not in advance, and state which unsafe operation forced it and where it lives. Keep
+the set of unsafe crates small, for example only the FFI adapter.
+
+In a periodic audit, also grep the macro expansion of each crate, because `forbid(unsafe_code)`
+does not see dependency macro code; the nightly command is below.
+
 ## Result by source of `unsafe`
 
 The lint checks the crate's own source text. It does not check the code the crate compiles to.
