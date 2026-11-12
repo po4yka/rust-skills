@@ -17,7 +17,7 @@ Contents:
 
 This file owns the `Drop` design rule, the escape hatches, and drop order. The
 `rust-compiler-errors` skill, when it is installed, owns the error-to-fix entry for each code in
-the cost table.
+the cost table, whose `Fix` column covers each code without it.
 
 ---
 

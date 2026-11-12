@@ -340,8 +340,8 @@ pub fn difference(left: Option<u32>, right: Option<u32>) -> u32 {
 }
 ```
 
-Let chains need edition 2024 and rustc 1.88+. The `rust-pattern-semantics` skill, when it is
-installed, has the gate errors and the fallback.
+Let chains (`if let Some(x) = a && x > 0`) need edition 2024 and rustc 1.88+; the
+`rust-pattern-semantics` skill, when it is installed, has the gate errors and the fallback.
 
 ## When not to reach for any of these
 

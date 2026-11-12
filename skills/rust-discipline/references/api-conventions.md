@@ -8,6 +8,7 @@ is listed only with a pointer.
 - [Naming](#naming)
 - [Standard traits](#standard-traits)
 - [Shape of functions and types](#shape-of-functions-and-types)
+- [Return a slice, not the container type](#return-a-slice-not-the-container-type)
 - [Crate documentation](#crate-documentation)
 - [Rules owned elsewhere](#rules-owned-elsewhere)
 
@@ -40,7 +41,7 @@ missing impl is a defect that only you can fix.
 | C-COMMON-TRAITS | A public type implements, where the fields allow it: `Debug`, `Clone`, `PartialEq`, `Eq`, `Hash`, `PartialOrd`, `Ord`, `Default`. `Copy` only for small plain values, because the compiler then copies without a word | Read the derives; `data-shape-traps.md` owns the `Hash`/`Eq` and `Ord`/`PartialOrd` agreement |
 | C-DEBUG | Every public type implements `Debug`; a hand-written impl redacts secrets and lists every field (`finish_non_exhaustive` when it hides one) | `missing_debug_implementations` (rustc, allow by default); `clippy::missing_fields_in_debug` |
 | C-CONV-TRAITS | Implement `From`, `TryFrom`, `AsRef`, `AsMut`; never `Into` or `TryInto`, which the blanket impls derive from `From` | `clippy::from_over_into` |
-| C-COLLECT | A collection implements `FromIterator` and `Extend` | Read the impls; `rust-iterator-impl` owns them |
+| C-COLLECT | A collection implements `FromIterator` and `Extend` | Read the `FromIterator` and `Extend` impls; the `rust-iterator-impl` skill owns their rules |
 | C-NUM-FMT | A number-like type implements the `fmt` traits that apply (`Display`, `LowerHex`, ...) | Read the impls |
 | C-RW-VALUE | A generic reader or writer function takes `R: Read` or `W: Write` by value; `&mut R` also satisfies the bound | Read the bounds |
 | (no code) | `FromStr` instead of an inherent `from_str`, so `"..".parse()` works | `clippy::should_implement_trait` |
@@ -60,6 +61,26 @@ missing impl is a defect that only you can fix.
 | C-DEREF | `Deref` only on a smart pointer or an owning wrapper, never to fake inheritance | `trait-resolution.md` owns the traps |
 | (no code) | A builder-style or pure method that returns `Self` carries `#[must_use]` | `clippy::return_self_not_must_use`, `clippy::must_use_candidate` (both pedantic) |
 
+## Return a slice, not the container type
+
+`fn items_mut(&mut self) -> &mut Vec<String>` puts `Vec` in the public signature. A later switch
+to `Box<[String]>` breaks every caller with `E0599: no method named 'push' found for mutable
+reference '&mut [String]'`, which reads like a caller mistake and ships as a patch release.
+Inside one crate a `&mut Vec<T>` accessor costs nothing; apply the rule to a published API.
+
+```rust
+pub struct Order {
+    items: Vec<String>,
+}
+impl Order {
+    pub fn items(&self) -> &[String] { &self.items }
+    // `&mut Vec<String>` here would pin `Vec` into the public signature.
+    pub fn items_mut(&mut self) -> &mut [String] { &mut self.items }
+    // Name every operation that changes the length.
+    pub fn add_item(&mut self, item: String) { self.items.push(item); }
+}
+```
+
 ## Crate documentation
 
 | Code | Rule | Check |
@@ -71,7 +92,7 @@ missing impl is a defect that only you can fix.
 
 | Code | Owner |
 | --- | --- |
-| C-GOOD-ERR (error types implement `Error`, `Send`, `Sync`; meaningful messages) | `rust-code-style`, the error-handling section |
+| C-GOOD-ERR (error types implement `Error`, `Send`, `Sync`; meaningful messages) | The `rust-error-handling` skill |
 | C-FAILURE, C-QUESTION-MARK, C-LINK (rustdoc `# Errors`/`# Panics`/`# Safety` sections, `?` in examples, intra-doc links) | `rust-code-style`, the rustdoc contract |
 | C-SEALED, C-STRUCT-PRIVATE, C-NEWTYPE, C-NEWTYPE-HIDE | `type-level-api.md` in this skill |
 | C-STABLE (a stable crate's public dependencies are stable) and the SemVer evolution of a published API | `rust-crate-release`; `cargo semver-checks` is the check |
