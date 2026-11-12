@@ -30,7 +30,7 @@ core error crate  ──>  FFI crate (UniFFI)                ──>  Kotlin eng
   CoreError              EngineError (flat_error)              (callbackFlow)
   CoreErrorKind          ProgressEvent / ProgressStage
                          ProgressListener (foreign trait)  ──>  Swift engine client    ──> AsyncThrowingStream
-                         Engine::reserve_job / cancel_job       (actor, Task.detached)
+                         Engine::reserve_job / cancel_job       (actor, worker Thread)
 ```
 
 The core crate defines the kinds. The FFI crate translates them to the wire
@@ -288,11 +288,11 @@ rules:
   deallocates, and with `.cancelled` (Swift 6.4 probe; `AsyncStreamBuffer.swift`
   storage `deinit`). The handler can run during task cancellation, so it must
   not block.
-- Swift: run the blocking call in `Task.detached`, not in a `nonisolated async`
-  helper. Under Swift 6.2 approachable concurrency, such a helper runs on the
-  caller's actor, which can be the main actor. In a module with MainActor default
-  isolation, mark every helper that the closures call (`toDomain`, `toFfi`, and
-  the error `map`) `nonisolated`; otherwise the bridge does not compile.
+- Swift: run the blocking engine call on a dedicated `Thread`. `Task.detached`
+  and `@concurrent` hold a thread of the fixed-size cooperative pool for the
+  whole job, and a `nonisolated async` helper can run on the main actor. Mark
+  the helpers that the closures call (`toDomain`, `toFfi`, `map`) `nonisolated`;
+  the `rust-swift-ffi` skill owns isolation.
 - Swift: make `ProgressListenerImpl` a `final class` that holds a `@Sendable`
   closure, and keep captured values such as `ExportRequest` `Sendable`. Rust
   calls the listener on its own worker thread.

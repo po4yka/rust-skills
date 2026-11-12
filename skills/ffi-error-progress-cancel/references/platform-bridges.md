@@ -444,14 +444,14 @@ actor EngineClient {
             let listener = ProgressListenerImpl { event in
                 continuation.yield(event.toDomain())
             }
-            Task.detached {
+            Thread {                                 // not the cooperative pool
                 do {
                     _ = try ffi.export(request: request.toFfi(), listener: listener)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: EngineClient.map(error))
                 }
-            }
+            }.start()
         }
     }
 }
@@ -482,27 +482,19 @@ That last point is why the "unknown or finished id is a no-op success" rule in
 `SKILL.md` is not optional: this bridge depends on it. `SKILL.md` section 2
 holds the assignment-order and non-blocking rules for the handler.
 
-The detached task is not cancelled from the handler. `Task.cancel()` does not
-interrupt a synchronous FFI call; the Rust flag does.
+The handler does not stop the worker thread. Nothing in Swift interrupts a
+synchronous FFI call; the Rust flag does.
 
 ### Listener
 
 - The generated foreign-trait protocol inherits `Sendable` (UniFFI Swift
   overview). The implementation is a `final class` with only `let` properties of
   `Sendable` type, and its closure is `@Sendable`.
-- In a module built with MainActor default isolation (SE-0466:
-  `-default-isolation MainActor`, or SwiftPM `.defaultIsolation(MainActor.self)`),
-  unannotated declarations are inferred `@MainActor`. A class that directly
-  conforms to the `Sendable` listener protocol is exempt, but the conversion
-  helpers it and the detached task call (`toDomain`, `toFfi`) are not. Swift
-  6.4 then rejects the bridge with "call to main actor-isolated instance method
-  'toDomain()' in a synchronous nonisolated context". Mark those helpers
-  `nonisolated`, or keep the wrapper in a target that keeps the default
-  `nonisolated` isolation. A free error `map` function is also inferred
-  `@MainActor`; Swift 6.4 accepts the static `EngineClient.map` above. The
-  explicit `nonisolated` on the listener (Swift 6.1+) states that it has no
-  actor isolation.
-- The listener must outlive the engine call. The detached task captures it,
+- In a module built with `-default-isolation MainActor`, mark `nonisolated`
+  the conversion helpers that the listener and the worker call (`toDomain`,
+  `toFfi`, a free error `map`), or the bridge does not compile. The
+  `rust-swift-ffi` skill owns the isolation settings and diagnostics.
+- The listener must outlive the engine call. The worker closure captures it,
   which is enough. Do not let the listener hold a strong reference back to the
   client: the callback runs on the engine worker thread, and a retain cycle
   there is invisible in the UI.
@@ -537,16 +529,18 @@ static func map(_ error: Error) -> Error {
   `localizedDescription` safe to show: the `NSError` bridge text still names the
   module and the type. Map the error either way.
 
-### Actor isolation
+### Actor isolation and the worker thread
 
-The client is an `actor`, and the blocking engine call runs in `Task.detached`
-so it inherits no actor. The stream factory is `nonisolated` because it only
-builds the stream.
+The client is an `actor`. The stream factory is `nonisolated` because it only
+builds the stream. The blocking engine call runs on a dedicated `Thread`, so it
+inherits no actor and holds no thread of the cooperative pool.
 
-Do not move the blocking call into a `nonisolated async` helper. Under Swift 6.2
-`NonisolatedNonsendingByDefault` (SE-0461, part of approachable concurrency),
-such a helper runs on the caller's actor, which can be the main actor. If you
-need a helper, mark it `@concurrent`.
+Do not run a long engine call in `Task.detached` or a `@concurrent` method. Both
+use the cooperative pool, which does not grow when a thread blocks, so up to
+`MAX_ACTIVE_JOBS` (64 in the model above) blocked jobs can stall every `await`
+in the app. `MAX_ACTIVE_JOBS` also bounds the worker threads. Do not use a
+`nonisolated async` helper either: under approachable concurrency it can run on
+the main actor. The `rust-swift-ffi` skill owns these isolation rules.
 
 ---
 
