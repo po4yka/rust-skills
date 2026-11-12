@@ -1,8 +1,27 @@
 # Miri Flags and CI Jobs
 
 The full MIRIFLAGS table and a GitHub Actions example for the jobs in
-`SKILL.md`. The job commands and the flag hazards are in `SKILL.md`, section 9.
+`SKILL.md`, and the flag hazards. The job commands are in `SKILL.md`, section 9.
 The CI rules that protect secrets are in `SKILL.md`, section 5 ("Nightly and cache rules").
+
+## Flag hazards
+
+- A misaligned read passes default Miri on some seeds and fails on others. Add
+  `-Zmiri-symbolic-alignment-check` to make the failure certain. It gives false
+  positives when code aligns a pointer with manual integer arithmetic;
+  `align_to` is fine in both modes.
+- `-Zmiri-strict-provenance` rejects every deliberate exposure, including
+  `with_exposed_provenance`. Run exposing code in a separate job without the
+  flag. No `cfg` reports the flag, so `cfg_attr(miri, ignore)` cannot select
+  these tests. Keep them out of the gate with `-- --skip <name>` or by crate
+  (`--exclude`). `-Zmiri-permissive-provenance` only silences the warning.
+  Miri can miss bugs on exposed pointers either way.
+- Miri reports 1 CPU by default, so `cargo miri test` runs one test at a
+  time and does not detect a race between two tests on a shared resource
+  (measured on nightly 2026-11-09). Add `-Zmiri-num-cpus=4` or
+  `-- --test-threads=4` for that job. `RUST_TEST_THREADS` does not reach the
+  program under isolation. `cargo miri nextest run` runs each test in its own
+  process and never detects such a race.
 
 ## MIRIFLAGS reference
 
