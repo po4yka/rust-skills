@@ -35,7 +35,7 @@ VALIDATOR = ROOT / "scripts" / "validate-skills.py"
 
 # The files that scripts/validate-skills.py reads. An edit to any other file
 # cannot change its verdict.
-CATALOG_PREFIXES = ("skills/",)
+CATALOG_PREFIXES = ("skills/", "hooks/", "commands/", "agents/", "output-styles/", "monitors/", "bin/")
 CATALOG_FILES = {
     "README.md",
     "AGENTS.snippet.md",
@@ -48,6 +48,11 @@ CATALOG_FILES = {
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
     "plugin.json",
+    # Root plugin components the validator rejects (PLUGIN_COMPONENTS there).
+    ".mcp.json",
+    ".lsp.json",
+    ".app.json",
+    "settings.json",
 }
 PATCH_PATH = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$", re.M)
 MAX_LINES = 40

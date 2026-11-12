@@ -29,13 +29,13 @@ Four shapes, and the choice is not stylistic.
 | `B` on `struct S<B: MyTrait>` with a blanket impl | Size of `B`. 0 for a user unit struct | Yes | No | Yes, if the user declares a named type | No |
 
 The coercion to `fn(u32)` is silent: no warning, no lint. Read
-[storing-callables.md](storing-callables.md#field-sizes-are-measurable) when you
+[storing-callables.md](#field-sizes-are-measurable) when you
 need the size probe.
 
 `Box` of a zero-sized value does not call the allocator. A non-capturing closure is a ZST, and so
 is a closure that captures only zero-sized values. Measure the closure value with `size_of_val`;
 capture presence alone is not the rule. Read
-[storing-callables.md](storing-callables.md#boxdyn-fn-allocates-for-a-non-zero-sized-closure-value)
+[storing-callables.md](#boxdyn-fn-allocates-for-a-non-zero-sized-closure-value)
 when you must prove an allocation claim.
 
 A caller cannot write the type of a generic callable field. A `fn` item path in type position is
@@ -43,7 +43,7 @@ A caller cannot write the type of a generic callable field. A `fn` item path in 
 directly"). Returning `-> Gadget<impl Fn(u32)>` only defers the problem: a field typed
 `Gadget<impl Fn(u32)>` is ``error[E0562]: `impl Trait` is not allowed in field types``. The
 generic parameter does not block `dyn`: implement your own trait for `Gadget<F>` and box that.
-Read [storing-callables.md](storing-callables.md#a-generic-callable-field-cannot-be-named)
+Read [storing-callables.md](#a-generic-callable-field-cannot-be-named)
 when you need the three compile-checked examples.
 
 A public generic type that stores user-supplied behaviour declares its own one-method trait plus
@@ -53,7 +53,7 @@ of the orphan rule: only the crate that defines the struct can implement `FnOnce
 crate does not. The same holds for any foreign trait, such as `Display`. There is no stable
 shortcut: `type OnDrop = impl FnOnce(u32);` in an associated type is still `error[E0658]` on
 1.98.1, issue #63063. Read
-[storing-callables.md](storing-callables.md#declare-your-own-callable-trait) when you
+[storing-callables.md](#declare-your-own-callable-trait) when you
 write the trait.
 
 ## A generic callable field cannot be named

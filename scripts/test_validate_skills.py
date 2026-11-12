@@ -124,72 +124,25 @@ license: BSD-3-Clause
             finally:
                 validate_skills.ROOT = original_root
 
-    def test_optional_spec_fields_are_supported(self):
-        frontmatter = """name: rust-example
-description: Use when you need a sufficiently detailed example for optional field validation.
-license: BSD-3-Clause
-compatibility: Requires Rust and network access
-metadata:
-  author: example-org
-  version: v1.0
-allowed-tools: Bash(cargo:*) Read"""
-        self.assertEqual(self.run_skill(frontmatter), [])
-
-    def test_metadata_must_be_a_mapping(self):
-        frontmatter = """name: rust-example
-description: Use when you need a sufficiently detailed example for optional metadata validation.
-license: BSD-3-Clause
-metadata: author"""
-        found = self.run_skill(frontmatter)
-        self.assertEqual(len(found), 1)
-        self.assertIn("metadata must be a mapping", found[0])
-
-    def test_quoted_metadata_strings_pass(self):
-        frontmatter = """name: rust-example
-description: Use when you need a sufficiently detailed example for quoted metadata validation.
-license: BSD-3-Clause
-metadata:
-  version: "1.0"
-  published: 'true'"""
-        self.assertEqual(self.run_skill(frontmatter), [])
-
-    def test_non_string_metadata_scalars_fail(self):
-        for value in ("1.0", "42", "true", "false", "null", "~"):
-            with self.subTest(value=value):
-                frontmatter = f"""name: rust-example
-description: Use when you need a sufficiently detailed example for typed metadata validation.
-license: BSD-3-Clause
-metadata:
-  value: {value}"""
+    def test_optional_spec_fields_fail(self):
+        # allowed-tools pre-approves tools in Claude Code; the other two are
+        # free text no gate reads. AGENTS.md allows exactly three keys.
+        for extra in (
+            "allowed-tools: Bash(*)",
+            "compatibility: Requires Rust",
+            "metadata:\n  author: example-org",
+        ):
+            with self.subTest(extra=extra):
+                frontmatter = (
+                    "name: rust-example\n"
+                    "description: Use when you need a sufficiently detailed example for frontmatter key validation.\n"
+                    f"license: BSD-3-Clause\n{extra}"
+                )
                 found = self.run_skill(frontmatter)
-                self.assertEqual(len(found), 1)
-                self.assertIn("metadata.value must be a YAML string", found[0])
-
-    def test_metadata_keys_must_be_yaml_strings(self):
-        quoted = """name: rust-example
-description: Use when you need a sufficiently detailed example for quoted metadata key validation.
-license: BSD-3-Clause
-metadata:
-  "1": value"""
-        self.assertEqual(self.run_skill(quoted), [])
-
-        unquoted = """name: rust-example
-description: Use when you need a sufficiently detailed example for typed metadata key validation.
-license: BSD-3-Clause
-metadata:
-  true: value"""
-        found = self.run_skill(unquoted)
-        self.assertEqual(len(found), 1)
-        self.assertIn("metadata key must be a YAML string", found[0])
-
-    def test_compatibility_length_is_limited(self):
-        frontmatter = """name: rust-example
-description: Use when you need a sufficiently detailed example for optional compatibility validation.
-license: BSD-3-Clause
-compatibility: {}""".format("x" * 501)
-        found = self.run_skill(frontmatter)
-        self.assertEqual(len(found), 1)
-        self.assertIn("limit is 500", found[0])
+                self.assertTrue(found)
+                self.assertTrue(
+                    any("outside the spec" in f or "indented frontmatter line" in f for f in found), found
+                )
 
     def test_description_must_start_with_use_when(self):
         frontmatter = """name: rust-example
@@ -211,7 +164,7 @@ license: BSD-3-Clause"""
     def test_links_resolve_from_the_file_that_holds_them(self):
         found = self.run_skill(
             self.VALID,
-            body="Read [a](references/a.md) when needed.\n",
+            body="Read [a](references/a.md) when needed. Read `references/b.md` when needed.\n",
             files={
                 "references/a.md": "See [b](b.md#part) and [back](../SKILL.md) and [web](https://example.com).\n",
                 "references/b.md": "# B\n",
@@ -220,7 +173,11 @@ license: BSD-3-Clause"""
         self.assertEqual(found, [])
 
     def test_missing_sibling_reference_fails(self):
-        found = self.run_skill(self.VALID, files={"references/a.md": "See [b](b.md).\n"})
+        found = self.run_skill(
+            self.VALID,
+            body="Read [a](references/a.md) when needed.\n",
+            files={"references/a.md": "See [b](b.md).\n"},
+        )
         self.assertEqual(len(found), 1)
         self.assertIn("missing file: b.md", found[0])
 
@@ -236,9 +193,71 @@ license: BSD-3-Clause"""
         self.assertIn("repository path", found[0])
 
     def test_unclosed_rust_fence_fails(self):
-        validate_skills.check_rust_fences("# Example\n\n```rust\nfn main() {}\n", "example.md")
+        validate_skills.failures.clear()
+        validate_skills.check_fences("# Example\n\n```rust\nfn main() {}\n", "example.md")
         self.assertEqual(len(validate_skills.failures), 1)
-        self.assertIn("Rust code fence is not closed", validate_skills.failures[0])
+        self.assertIn("code fence is not closed", validate_skills.failures[0])
+
+    def fences(self, text: str) -> list[str]:
+        validate_skills.failures.clear()
+        validate_skills.check_fences(text, "example.md")
+        return list(validate_skills.failures)
+
+    def test_every_fence_spelling_gen_py_skips_fails(self):
+        # checks/gen.py reads only a line that starts with ```rust. Each of these
+        # once passed both gates while no cargo run ever saw the block.
+        for opener in ("```rs", "```Rust", "~~~rust", "````rust", "``` rust", "```rust,no_run", "```"):
+            with self.subTest(opener=opener):
+                close = "~~~" if opener.startswith("~") else "````" if opener.startswith("````") else "```"
+                found = self.fences(f"{opener}\nfn main() {{}}\n{close}\n")
+                self.assertTrue(found, opener)
+
+    def test_known_fences_pass(self):
+        for opener in ("```rust", "```rust,run", "```rust,ignore", "```rust,compile_fail,E0499,E0502", "```bash", "```text"):
+            with self.subTest(opener=opener):
+                self.assertEqual(self.fences(f"{opener}\nx\n```\n"), [])
+
+    def test_a_language_outside_the_list_fails(self):
+        found = self.fences("```haskell\nmain = pure ()\n```\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("'haskell'", found[0])
+
+    def test_invisible_characters_fail(self):
+        for char in ("\u200b", "\u202e", "\U000e0041", "\x07"):
+            with self.subTest(char=repr(char)):
+                found = self.run_skill(self.VALID, body=f"Run the tests.{char}\n")
+                self.assertEqual(len(found), 1)
+                self.assertIn("invisible character", found[0])
+
+    def test_a_file_outside_skill_md_and_references_fails(self):
+        found = self.run_skill(self.VALID, files={"scripts/run.sh": "echo hi\n"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("only SKILL.md and references/*.md", found[0])
+
+    def test_a_reference_skill_md_never_names_fails(self):
+        found = self.run_skill(self.VALID, files={"references/a.md": "# A\n"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("is not linked from SKILL.md", found[0])
+
+    def test_a_link_to_its_own_file_fails(self):
+        found = self.run_skill(
+            self.VALID,
+            body="Read [a](references/a.md) when needed.\n",
+            files={"references/a.md": "Read [a.md](a.md#part) when you write it.\n"},
+        )
+        self.assertEqual(len(found), 1)
+        self.assertIn("links to itself", found[0])
+
+    def test_reference_style_and_html_links_cannot_leave_the_skill(self):
+        for body in ("See [other][o].\n\n[o]: ../rust-unsafe/SKILL.md\n", '<a href="../rust-unsafe/SKILL.md">x</a>\n'):
+            with self.subTest(body=body):
+                found = self.run_skill(self.VALID, body=body)
+                self.assertEqual(len(found), 1)
+                self.assertIn("links outside its skill directory", found[0])
+
+    def test_link_syntax_inside_a_code_fence_is_code(self):
+        found = self.run_skill(self.VALID, body="```rust\nlet y = table[0](arg);\n```\n")
+        self.assertEqual(found, [])
 
     def run_catalog(self, readme: str, skills: set[str]) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
@@ -355,6 +374,32 @@ class TestRoutingGuard(unittest.TestCase):
         )
         self.assertEqual(len(found), 1)
         self.assertIn("rust-panic-safety", found[0])
+
+    def test_a_table_line_no_gate_reads_fails(self):
+        for row in ("| catch_unwind | `rust-panic-safety` |", "| catch_unwind | rust-panic-safety | x | y |", " | catch_unwind | rust-panic-safety |"):
+            with self.subTest(row=row):
+                corpus = "| Phrase | Skill |\n| --- | --- |\n| catch_unwind | rust-panic-safety |\n" + row + "\n"
+                found = self.run_corpus({"rust-panic-safety": "covers catch_unwind"}, corpus)
+                self.assertTrue(any("not a routing row" in f for f in found), found)
+
+    def test_a_phrase_every_description_shares_fails(self):
+        corpus = "| Phrase | Skill |\n| --- | --- |\n| Use when | rust-panic-safety |\n| ab | rust-discipline |\n"
+        found = self.run_corpus(
+            {"rust-panic-safety": "Use when a panic crosses FFI", "rust-discipline": "Use when an API ab"}, corpus
+        )
+        self.assertTrue(any("'Use when'" in f and "claims it too" in f for f in found), found)
+        self.assertTrue(any("shorter than" in f for f in found), found)
+
+    def test_a_rival_mention_inside_not_for_is_allowed(self):
+        corpus = "| Phrase | Skill |\n| --- | --- |\n| catch_unwind | rust-panic-safety |\n| API design | rust-discipline |\n"
+        found = self.run_corpus(
+            {
+                "rust-panic-safety": "covers catch_unwind",
+                "rust-discipline": "covers API design. Not for catch_unwind; use rust-panic-safety.",
+            },
+            corpus,
+        )
+        self.assertEqual(found, [])
 
     def test_a_two_column_row_still_works(self):
         corpus = "| Phrase | Skill |\n| --- | --- |\n| catch_unwind | rust-panic-safety |\n"
@@ -543,6 +588,65 @@ skills = ["rust-c"]
         found = self.marketplace(entries + [entries[2]])
         self.assertEqual(len(found), 1)
         self.assertIn("'kit-edge' appears 2 times", found[0])
+
+    def test_an_entry_key_that_changes_what_a_consumer_runs_fails(self):
+        for key, value in (("hooks", "./hooks/hooks.json"), ("mcpServers", {}), ("agents", []), ("strict", False)):
+            with self.subTest(key=key):
+                validate_skills.failures.clear()
+                entries = self.entries()
+                entries[1][key] = value
+                found = self.marketplace(entries)
+                self.assertEqual(len(found), 1)
+                self.assertIn(f"sets {key!r}", found[0])
+
+    def test_an_unknown_top_level_key_fails(self):
+        found = self.marketplace(self.entries(), top={"metadata": {"pluginRoot": "./x"}})
+        self.assertEqual(len(found), 1)
+        self.assertIn("top-level key 'metadata'", found[0])
+
+    def test_a_plugin_component_at_the_root_fails(self):
+        for path in ("hooks/hooks.json", ".mcp.json", "commands/x.md", "agents/x.md"):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as tmp:
+                validate_skills.failures.clear()
+                self.use_tree(
+                    tmp,
+                    {
+                        "bundles.toml": self.BUNDLES,
+                        ".claude-plugin/marketplace.json": json.dumps({"name": "kit", "plugins": self.entries()}),
+                        path: "{}",
+                    },
+                )
+                validate_skills.check_marketplace(validate_skills.load_bundles(), {"rust-a", "rust-b", "rust-c"})
+                found = list(validate_skills.failures)
+                self.assertEqual(len(found), 1)
+                self.assertIn("must not exist at the repository root", found[0])
+
+    def test_a_raised_or_added_ceiling_fails_against_the_base(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "scripts").mkdir()
+            ceilings = root / "scripts" / "catalog-ceilings.toml"
+            ceilings.write_text("[body_tokens]\nrust-a = 5000\n\n[cross_refs]\nrust-a = 3\n", encoding="utf-8")
+            git = lambda *a: subprocess.run(["git", "-C", tmp, *a], check=True, capture_output=True)
+            git("init", "-q")
+            git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "add", ".")
+            git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "base")
+            validate_skills.ROOT = root
+            cases = {
+                "unchanged": ({"body_tokens": {"rust-a": 5000}, "cross_refs": {"rust-a": 3}}, 0),
+                "lowered": ({"body_tokens": {"rust-a": 4900}, "cross_refs": {"rust-a": 3}}, 0),
+                "raised": ({"body_tokens": {"rust-a": 5001}, "cross_refs": {"rust-a": 3}}, 1),
+                "added": ({"body_tokens": {"rust-a": 5000, "rust-b": 4900}, "cross_refs": {"rust-a": 3}}, 1),
+                # The documented exception: a fallback sentence for each resolved reference.
+                "fallback": ({"body_tokens": {"rust-a": 5100}, "cross_refs": {"rust-a": 1}}, 0),
+                "too much": ({"body_tokens": {"rust-a": 5200}, "cross_refs": {"rust-a": 2}}, 1),
+            }
+            for name, (current, expected) in cases.items():
+                with self.subTest(case=name):
+                    validate_skills.failures.clear()
+                    validate_skills.check_ceilings_against("HEAD", current)
+                    self.assertEqual(len(validate_skills.failures), expected, validate_skills.failures)
 
     def test_a_root_plugin_json_fails(self):
         # Codex refuses every bundle whose name differs from the root manifest.

@@ -135,3 +135,53 @@ setup = '''
 let sock: std::net::UdpSocket = todo!();
 let ifr: libc::ifreq = todo!();
 '''
+
+# Five statement blocks that were rust,ignore although cargo check can judge
+# them: the undefined behavior they show happens at run time, not at compile time.
+[[block]]
+file = "rust-unsafe/references/miri-and-aliasing.md"
+section = "The `ManuallyDrop<String>` fabrication, and why Miri clears it"
+block = 2
+items = '''
+use std::mem::ManuallyDrop;
+'''
+
+[[block]]
+file = "rust-unsafe/references/miri-and-aliasing.md"
+section = "Never materialize two `&mut` from one raw pointer"
+block = 1
+items = '''
+pub struct State {
+    pub counter: u32,
+}
+'''
+setup = '''
+let p: *mut State = todo!();
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = "Broken UTF-8 fails nowhere near where you built it"
+block = 1
+setup = '''
+let v: Vec<u8> = todo!();
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = "`black_box` is not a soundness argument"
+block = 1
+items = '''
+use std::borrow::Cow;
+'''
+setup = '''
+let v: Vec<u8> = todo!();
+'''
+
+[[block]]
+file = "rust-unsafe/references/unsafe-patterns.md"
+section = "`black_box` is not a soundness argument"
+block = 2
+setup = '''
+let v: Vec<u8> = todo!();
+'''

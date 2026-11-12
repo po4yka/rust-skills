@@ -141,12 +141,12 @@ every fixture builds offline on the pinned toolchain, `cargo test` on it does wh
 says (pass, fail, or hang), and every probe fails on the fixture and passes on the reference
 fix. What
 a recorded run proves: on that client, model, judge, and catalog commit, the plugin arm scored as
-reported against the no-plugin arm on these six tasks. What it does not prove:
+reported against the no-plugin arm on these eight tasks. What it does not prove:
 
 - that the judge is right. The judged graders read files and traces; spot-check a sample of the
   verdicts in the JSON before you trust a delta;
 - anything about a skill without a case, or about another client or model family;
-- that a delta is real when it is one grader wide. Three runs per arm on six cases is a small
+- that a delta is real when it is one grader wide. Three runs per arm on eight cases is a small
   sample; repeat a run before you change a skill because of it;
 - that a client loads the skill on its own in a crowded listing. The `skill-fired` indicator
   reports that for each run, outside the score.

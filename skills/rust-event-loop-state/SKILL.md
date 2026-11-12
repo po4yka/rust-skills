@@ -195,7 +195,7 @@ staleness rules.
 
 Read `references/generic-and-dynamic-state.md` when handlers are reused across states (structure row 2), a context pairs a static state with a dynamic world, or the component set is open at run time (structure row 3).
 
-Read `references/suspendable-routines.md` when a routine must pause mid-work and continue next tick, or someone proposes `async fn(&mut State)`, a coroutine, or a generator for it.
+Read `references/suspendable-routines.md` when a routine must pause and resume next tick, and `references/coroutines-and-generators.md` when someone proposes `async fn(&mut State)`, a coroutine, or a generator for it.
 
 ## Related skills
 
@@ -207,5 +207,5 @@ Use these skills when they are installed:
 | `rust-compiler-errors` | `E0499` and `E0502` as diagnostics, with the general repairs |
 | `rust-discipline` | `Deref` on non-pointer types, blanket impls and semver |
 | `rust-unsafe` | The aliasing rules and the Miri reproduction behind the raw-pointer rows |
-| `rust-iterator-impl` | `iter::from_fn` for a routine that only yields values. The `Generator` to `Coroutine` rename and the `gen` block status |
+| `rust-iterator-impl` | `iter::from_fn` for a routine that only yields values; the `gen` block status |
 | `rust-crate-architecture` | Which crate the handler trait and the state type live in |

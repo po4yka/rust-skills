@@ -26,6 +26,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No later step needs git credentials; gh reads GH_TOKEN from the step env.
+          persist-credentials: false
 
       - name: Compare the pin with the stable channel
         id: probe

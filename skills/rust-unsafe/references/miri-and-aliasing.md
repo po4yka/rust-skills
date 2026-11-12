@@ -187,7 +187,7 @@ nothing to report.
 The private field is therefore the whole safety argument, and `ManuallyDrop::into_inner` is a
 safe method that removes it:
 
-```rust,ignore
+```rust
 let lit = "Hello World";
 let s = unsafe {
     ManuallyDrop::new(String::from_raw_parts(lit.as_ptr() as *mut u8, lit.len(), lit.len()))
@@ -253,7 +253,7 @@ reference.
 Both models reject it, and no compile-time diagnostic exists for it. Each `&mut *p` performs a
 `Unique` retag, and the second retag kills the first reference:
 
-```rust,ignore
+```rust
 let s1 = unsafe { &mut *p };   // p: *mut State
 let s2 = unsafe { &mut *p };   // second Unique retag invalidates s1
 s1.counter += 1;               // Stacked Borrows fails here
@@ -362,8 +362,7 @@ Before you write the impl:
 4. Write a `// SAFETY:` comment on the impl that names the fields audited and the argument.
 
 Objects from a C or C++ library are usually not thread-safe, even when the Rust binding
-compiles. Read [miri-and-aliasing.md](miri-and-aliasing.md) when you write
-the impl; it has the field assertion and the derive leak.
+compiles.
 
 ## Reference fabrication
 
@@ -377,5 +376,3 @@ live `&T`.
 Never fabricate a `&String` from a `&str` with `ManuallyDrop<String>` and
 `String::from_raw_parts`. It breaks the allocator and capacity contract, and Miri accepts it
 under every model because that contract is a library rule. Accept `&str` or `impl AsRef<str>`.
-Read [miri-and-aliasing.md](miri-and-aliasing.md) when you review either
-pattern.

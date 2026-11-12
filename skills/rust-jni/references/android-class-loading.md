@@ -165,7 +165,4 @@ each class to a global reference, cache its method and field IDs with it, and
 publish the cache only after every lookup and registration succeeds. Never
 cache a local `jclass` or an env handle. For a dynamic feature or a custom
 loader, pass a `Class` or a `ClassLoader` from managed code; a process-lifetime
-global class reference pins its loader. Read
-[android-class-loading.md](android-class-loading.md)
-before you add an application-class lookup, cache a method or field ID, enable
-R8 for a JNI surface, or test a callback from a Rust-created thread.
+global class reference pins its loader.

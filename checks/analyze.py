@@ -8,11 +8,16 @@ bucketed instead:
 
   FRAGMENT  every error is a name that the surrounding prose defines.
             Missing harness dependencies and features are suspects.
-  ARTIFACT  the extraction caused it: a `&self` method body lifted into a free
-            function, a doc comment with no item after it, pseudocode tokens.
-  LOW       only "type annotations needed", which the real context supplies.
+            fragments.txt must list it, or the gate fails.
   SUSPECT   everything else: type mismatch, missing method, wrong arity, bad
-            syntax. These are real defects until shown otherwise.
+            syntax, "type annotations needed", a doc comment with no item
+            after it. These are real defects until shown otherwise, and
+            baseline.txt must list each one, or the gate fails.
+
+There is no third bucket. An earlier version excused "wrapper artifacts" and
+"low signal" errors without any listing, so a block that failed only on
+E0282 or on a `...` placeholder passed in silence. A block that does not
+compile is fixed, given a prelude, or tagged.
 
 An error code enters the excused sets only when it means "the name is defined in
 the prose, not in the block". Every other code, and every code this file does
@@ -26,10 +31,19 @@ Four gates run before the buckets:
   every compile_fail example does fail,
   every error code a compile_fail fence names does occur.
 
+`--test-pass FILE` reads a second cargo run with `--profile test`, which sets
+cfg(test). The first run never type-checks a `#[test]` function, a
+`#[cfg(test)]` module, or a `#[tokio::test]` body, so the test code the
+testing skills teach would otherwise pass unread. The errors of the second run
+join those of the first for every compile and run block, and every gate below
+applies to the union.
+
 Usage:
   analyze.py check.json                        summary plus suspect detail
   analyze.py check.json --emit-baseline        one signature per suspect
   analyze.py check.json --check-baseline FILE  exit 1 on a suspect not in FILE
+  analyze.py check.json --check-ignored FILE   exit 1 on a rust,ignore block not in FILE
+  analyze.py check.json --test-pass FILE       join the errors of a cfg(test) run
 
 A signature is `file :: section :: block hash :: sorted error codes`. It carries
 no line number, so it survives edits above the block, and the hash keeps two
@@ -78,23 +92,6 @@ RESOLUTION_PREFIXES = (
     "maybe a missing crate",
     "unresolved module",
 )
-LOW_CODES = {"E0282", "E0283"}
-
-# Errors the wrapper itself causes.
-ARTIFACT_CODES = {
-    "E0585",  # a doc comment with no item following it
-    "E0586",  # inclusive range with no end, from an elided example
-    "E0424",  # `self` used where the body was lifted out of an impl block
-}
-ARTIFACT_MESSAGES = (
-    "parameter is only allowed in associated functions",
-    "await is only allowed inside",
-    "expected value, found module `self`",
-    "`...`",
-    "missing documentation",
-)
-
-
 def code_of(diagnostic: dict) -> str | None:
     return (diagnostic.get("code") or {}).get("code")
 
@@ -134,13 +131,6 @@ def is_resolution_cascade(diagnostic: dict) -> bool:
     return code_of(diagnostic) == "E0599" and bool(
         NEVER_TYPE_CASCADE.match(diagnostic.get("message", ""))
     )
-
-
-def is_artifact(diagnostic: dict) -> bool:
-    if code_of(diagnostic) in ARTIFACT_CODES:
-        return True
-    message = diagnostic.get("message", "")
-    return any(fragment in message for fragment in ARTIFACT_MESSAGES)
 
 
 def token(diagnostic: dict) -> str:
@@ -185,6 +175,27 @@ def parse(path: str) -> tuple[dict[str, list[dict]], set[str], bool]:
             if message.get("level") == "error":
                 errors[target].append(message)
     return errors, seen, finished
+
+
+def diagnostic_key(diagnostic: dict) -> tuple:
+    spans = diagnostic.get("spans") or [{}]
+    return (code_of(diagnostic), diagnostic.get("message", ""), spans[0].get("line_start"))
+
+
+def merge_test_pass(manifest: dict, errors: dict, test_errors: dict) -> None:
+    """Add the cfg(test) errors of every compile and run block to `errors`.
+
+    A compile_fail block fails in both runs by design, so only the first run
+    judges it.
+    """
+    for name, diagnostics in test_errors.items():
+        if manifest.get(name, {}).get("mode") not in ("compile", "run"):
+            continue
+        known = {diagnostic_key(d) for d in errors.get(name, [])}
+        for diagnostic in diagnostics:
+            if diagnostic_key(diagnostic) not in known:
+                errors.setdefault(name, []).append(diagnostic)
+                known.add(diagnostic_key(diagnostic))
 
 
 def unbuilt(manifest: dict, seen: set[str]) -> list[str]:
@@ -264,28 +275,19 @@ def bucket(diagnostics: list[dict]) -> tuple[str, list[dict]]:
         unresolved = [d for d in unresolved if not is_resolution_cascade(d)]
     if not unresolved:
         return "fragment", []
-    if all(is_artifact(d) for d in unresolved):
-        return "artifact", []
-    real = [d for d in unresolved if not is_artifact(d)]
-    if all(code_of(d) in LOW_CODES for d in real):
-        return "low", []
-    return "suspect", [d for d in real if code_of(d) not in LOW_CODES]
+    return "suspect", unresolved
 
 
 def classify(errors: dict[str, list[dict]]):
-    fragment = artifact = low = 0
+    fragment = 0
     suspects: dict[str, list[dict]] = {}
     for example, diagnostics in errors.items():
         kind, real = bucket(diagnostics)
         if kind == "fragment":
             fragment += 1
-        elif kind == "artifact":
-            artifact += 1
-        elif kind == "low":
-            low += 1
         else:
             suspects[example] = real
-    return fragment, artifact, low, suspects
+    return fragment, suspects
 
 
 def fragment_examples(errors: dict[str, list[dict]]) -> list[str]:
@@ -332,6 +334,11 @@ def main() -> int:
     path = next((a for a in args if not a.startswith("--")), "check.json")
     errors, seen, finished = parse(path)
     require_cargo_ran(path, finished, seen)
+    if "--test-pass" in args:
+        test_path = args[args.index("--test-pass") + 1]
+        test_errors, test_seen, test_finished = parse(test_path)
+        require_cargo_ran(test_path, test_finished, test_seen)
+        merge_test_pass(manifest, errors, test_errors)
 
     missing = unbuilt(manifest, seen)
     if missing:
@@ -369,7 +376,7 @@ def main() -> int:
         for name, diagnostics in errors.items()
         if manifest.get(name, {}).get("mode") == "compile"
     }
-    fragment, artifact, low, suspects = classify(compile_errors)
+    fragment, suspects = classify(compile_errors)
 
     def signature(example: str, diagnostics: list[dict]) -> str:
         info = manifest.get(example, {})
@@ -429,6 +436,24 @@ def main() -> int:
             print(f"note: {len(stale_fragments)} fragments.txt entr(ies) no longer occur; remove them:")
             print("\n".join(f"  - {s}" for s in stale_fragments))
 
+    if "--check-ignored" in args:
+        accepted = load_signatures(args[args.index("--check-ignored") + 1])
+        ignored = {fragment_signature(n) for n, info in manifest.items() if info.get("mode") == "ignore"}
+        unlisted = sorted(ignored - accepted)
+        if unlisted:
+            print(f"FAIL: {len(unlisted)} rust,ignore block(s) not in ignored.txt:\n")
+            print("\n".join(f"  + {s}" for s in unlisted))
+            print(
+                "\nrust,ignore takes a block out of every gate. AGENTS.md allows it only for"
+                " code\nno cargo check can judge. Fix the example, or add the signature to"
+                " checks/ignored.txt\nwith the reason."
+            )
+            return 1
+        stale = sorted(accepted - ignored)
+        if stale:
+            print(f"note: {len(stale)} ignored.txt entr(ies) no longer occur; remove them:")
+            print("\n".join(f"  - {s}" for s in stale))
+
     if "--check-baseline" in args:
         baseline_path = args[args.index("--check-baseline") + 1]
         known = load_signatures(baseline_path)
@@ -480,8 +505,6 @@ def main() -> int:
     print("== compile-check summary ==")
     print(f"compiled clean              : {clean}")
     print(f"fragments (undefined syms)  : {fragment}")
-    print(f"wrapper artifacts           : {artifact}")
-    print(f"low signal (needs type ann) : {low}")
     print(f"SUSPECT (review these)      : {len(suspects)}")
 
     rows = []

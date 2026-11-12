@@ -1,0 +1,47 @@
+# rust,ignore blocks accepted as unchecked, by signature (file :: section :: block hash).
+# AGENTS.md allows the tag only for code no cargo check can judge. Each entry says why.
+# CI fails on an ignore block that is not listed here; analyze.py prints the signature.
+# Fix the example before you add a line.
+
+# Fails only at monomorphization, which cargo check never reaches.
+rust-callback-bounds/references/storing-callables.md :: By-value `impl Trait` plus a delegating impl is a monomorphization bomb :: a38ca5a7
+
+# A build-script include! of OUT_DIR; the harness has no build script.
+rust-code-style/references/module-layout.md :: Avoid `#[path]` :: 13bffdb7
+
+# A complete no_std lib.rs; the harness builds every block as a std binary example.
+rust-embedded-no-std/SKILL.md :: Put no_std at the correct boundary :: c2dd13b4
+
+# Nightly-only: #![feature(coroutine_trait, coroutines)].
+rust-event-loop-state/references/coroutines-and-generators.md :: The resume argument is not higher-ranked :: ad8c6ab2
+
+# bevy_ecs: the harness cannot hold it (checks/Cargo.toml says why).
+rust-event-loop-state/references/state-partitioning.md :: Reproducing the conflict panic :: 41af07fa
+rust-event-loop-state/references/state-partitioning.md :: The repair :: 8b012371
+
+# Nightly-only: #![feature(portable_simd)].
+rust-hot-path/references/inlining-and-codegen.md :: When inlining is not the answer :: 59aa9d63
+
+# A facade crate and its derive crate in separate packages; one harness
+# example is one crate, and a proc-macro needs a proc-macro crate type.
+rust-macros/references/derive-macro-crates.md :: The two-crate split :: f82e2883
+rust-macros/references/derive-macro-crates.md :: The two-crate split :: e1aa28ff
+rust-macros/references/derive-macro-crates.md :: The back edge as a dev-dependency is legal :: 5cb067f4
+rust-macros/references/derive-macro-crates.md :: A syn 3 derive skeleton :: d1ac379f
+rust-macros/references/derive-macro-crates.md :: Emit absolute paths :: 3b3bd175
+rust-macros/references/derive-macro-crates.md :: Emit absolute paths :: 00abe808
+rust-macros/references/derive-macro-crates.md :: Emit absolute paths :: ab46f9d0
+
+# rustls with aws-lc-rs: the C build breaks the cross-host type check.
+rust-networking/references/stack-defaults.md :: rustls crypto provider :: bc1c21e9
+
+# tikv-jemallocator or mimalloc: the C build breaks the cross-host type check.
+rust-performance/references/build-configuration.md :: 6. The global allocator :: 67e52843
+rust-performance/references/build-configuration.md :: 6. The global allocator :: fdccfca9
+
+# Two crates (a library and its user) across a crate boundary.
+rust-type-erasure/references/gat-anymap.md :: Shipping it as a library :: dbcc692a
+rust-type-erasure/references/gat-anymap.md :: Shipping it as a library :: 1188445a
+
+# A probe template whose `C` and `S` the reader replaces with real types.
+rust-variance/SKILL.md :: Settle it with a probe :: 10882a48

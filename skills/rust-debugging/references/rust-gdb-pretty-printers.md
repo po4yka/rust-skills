@@ -26,7 +26,7 @@ ship the wrapper. Source the loader that the toolchain ships. Do not call
 current objfile, the call gets `None`, and it raises. The shipped loader falls back to the
 program space.
 
-```python
+```gdb
 # ~/.gdbinit
 python
 import subprocess

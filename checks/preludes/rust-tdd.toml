@@ -74,3 +74,276 @@ impl<T: PartialEq> FaultQueue<T> {
     }
 }
 '''
+
+# The test blocks below are type-checked only by the cfg(test) run in
+# checks/check.sh. Their types come from references/fault-injection.md; the
+# service stub has the shape the prose describes.
+[[block]]
+file = "rust-tdd/SKILL.md"
+section = "Fault injection for error paths"
+block = 1
+items = '''
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+#[derive(Debug)]
+pub enum TransportError {
+    Io,
+    Timeout,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransportFault {
+    Start,
+    Send,
+    Receive,
+    Stop,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FaultOutcome {
+    Error,
+    Timeout,
+    Drop,
+    Reset,
+    MalformedPayload,
+    BlankPayload,
+    Panic,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FaultScope {
+    OneShot,
+    Persistent,
+}
+
+#[derive(Clone, Debug)]
+pub struct FaultSpec<T> {
+    pub target: T,
+    pub outcome: FaultOutcome,
+    pub scope: FaultScope,
+    pub message: Option<String>,
+    pub payload: Option<Vec<u8>>,
+}
+
+pub struct FaultQueue<T> {
+    specs: Mutex<VecDeque<FaultSpec<T>>>,
+}
+
+impl<T> Default for FaultQueue<T> {
+    fn default() -> Self {
+        Self { specs: Mutex::new(VecDeque::new()) }
+    }
+}
+
+impl<T: PartialEq> FaultQueue<T> {
+    pub fn enqueue(&self, spec: FaultSpec<T>) {
+        self.specs.lock().expect("fault queue lock poisoned").push_back(spec);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.specs.lock().expect("fault queue lock poisoned").is_empty()
+    }
+}
+
+#[derive(Default)]
+pub struct FakeTransport {
+    pub start_calls: AtomicUsize,
+    pub send_calls: AtomicUsize,
+    pub last_frame: Mutex<Option<Vec<u8>>>,
+    pub faults: FaultQueue<TransportFault>,
+}
+
+// The service under test. The prose names only its constructor, its methods,
+// and the error variant the test matches.
+#[derive(Debug)]
+pub enum ServiceError {
+    Transport { source: TransportError },
+}
+
+pub struct Service {
+    transport: Arc<FakeTransport>,
+}
+
+impl Service {
+    pub fn new(transport: Arc<FakeTransport>) -> Self {
+        Self { transport }
+    }
+
+    pub fn start(&self) -> Result<(), ServiceError> {
+        todo!()
+    }
+
+    pub fn send(&self, frame: &[u8]) -> Result<(), ServiceError> {
+        todo!()
+    }
+}
+'''
+
+[[block]]
+file = "rust-tdd/references/fault-injection.md"
+section = "Asserting that the fault fired"
+block = 1
+items = '''
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+#[derive(Debug)]
+pub enum TransportError {
+    Io,
+    Timeout,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransportFault {
+    Start,
+    Send,
+    Receive,
+    Stop,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FaultOutcome {
+    Error,
+    Timeout,
+    Drop,
+    Reset,
+    MalformedPayload,
+    BlankPayload,
+    Panic,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FaultScope {
+    OneShot,
+    Persistent,
+}
+
+#[derive(Clone, Debug)]
+pub struct FaultSpec<T> {
+    pub target: T,
+    pub outcome: FaultOutcome,
+    pub scope: FaultScope,
+    pub message: Option<String>,
+    pub payload: Option<Vec<u8>>,
+}
+
+pub struct FaultQueue<T> {
+    specs: Mutex<VecDeque<FaultSpec<T>>>,
+}
+
+impl<T> Default for FaultQueue<T> {
+    fn default() -> Self {
+        Self { specs: Mutex::new(VecDeque::new()) }
+    }
+}
+
+impl<T: PartialEq> FaultQueue<T> {
+    pub fn enqueue(&self, spec: FaultSpec<T>) {
+        self.specs.lock().expect("fault queue lock poisoned").push_back(spec);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.specs.lock().expect("fault queue lock poisoned").is_empty()
+    }
+}
+
+#[derive(Default)]
+pub struct FakeTransport {
+    pub start_calls: AtomicUsize,
+    pub send_calls: AtomicUsize,
+    pub last_frame: Mutex<Option<Vec<u8>>>,
+    pub faults: FaultQueue<TransportFault>,
+}
+
+// The service under test. The prose names only its constructor, its methods,
+// and the error variant the test matches.
+#[derive(Debug)]
+pub enum ServiceError {
+    Transport { source: TransportError },
+}
+
+pub struct Service {
+    transport: Arc<FakeTransport>,
+}
+
+impl Service {
+    pub fn new(transport: Arc<FakeTransport>) -> Self {
+        Self { transport }
+    }
+
+    pub fn start(&self) -> Result<(), ServiceError> {
+        todo!()
+    }
+
+    pub fn send(&self, frame: &[u8]) -> Result<(), ServiceError> {
+        todo!()
+    }
+}
+'''
+
+[[block]]
+file = "rust-tdd/SKILL.md"
+section = "Test names and panic tests"
+block = 1
+items = '''
+pub struct Buffer {
+    capacity: usize,
+}
+
+impl Buffer {
+    pub fn new(capacity: usize) -> Self {
+        assert!(capacity > 0, "capacity must be non-zero");
+        Self { capacity }
+    }
+}
+'''
+
+# A fake gated by two tokio oneshot channels, and a service whose start is
+# async and whose state the test reads in flight.
+[[block]]
+file = "rust-tdd/references/async-tests.md"
+section = "Assert an intermediate state"
+block = 1
+items = '''
+use std::sync::Arc;
+use tokio::sync::oneshot;
+
+pub struct FakeTransport;
+
+impl FakeTransport {
+    pub fn gated(started: oneshot::Sender<()>, release: oneshot::Receiver<()>) -> Self {
+        todo!()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    Stopped,
+    Starting,
+    Running,
+}
+
+#[derive(Debug)]
+pub struct ServiceError;
+
+pub struct Service {
+    transport: Arc<FakeTransport>,
+}
+
+impl Service {
+    pub fn new(transport: Arc<FakeTransport>) -> Self {
+        Self { transport }
+    }
+
+    pub async fn start(&self) -> Result<(), ServiceError> {
+        todo!()
+    }
+
+    pub fn state(&self) -> State {
+        todo!()
+    }
+}
+'''

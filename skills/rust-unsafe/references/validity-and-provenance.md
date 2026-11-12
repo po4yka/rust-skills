@@ -104,9 +104,6 @@ runs on a value that no constructor built. Use `MaybeUninit<T>` when the proof i
 `assume_init` only after the API reports that it wrote a complete, valid `T`.
 
 Creating an invalid typed value is immediate undefined behavior, even if code never reads it.
-Read [validity-and-provenance.md](validity-and-provenance.md) when you
-create a reference from a raw pointer, initialize a type from bytes, or convert a pointer through
-an integer address.
 
 ## Authoritative references
 

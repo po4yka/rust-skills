@@ -4,8 +4,17 @@
 
 This repository ships Markdown only: `skills/<name>/SKILL.md` and `skills/<name>/references/*.md`.
 An install copies or symlinks those files into an agent's skill directory (`.claude/`, `.codex/`,
-`.cursor/`, and others). No script, binary, test file, or build step ships with a skill. The
-harness under `checks/`, `scripts/`, `evals/`, and `.github/` runs only in this repository's CI.
+`.cursor/`, and others). No script, binary, test file, or build step ships inside a skill
+directory, and `scripts/validate-skills.py` fails on any file there other than `SKILL.md` and
+`references/*.md`.
+
+The plugin install is wider. Every plugin in `.claude-plugin/marketplace.json` has the source
+`"./"`, the repository root, so Claude Code reads the plugin from the whole clone and Codex copies
+the whole repository into its cache. Both then load only the listed skills: the validator rejects
+any marketplace key and any root-level plugin component (`hooks/`, `.mcp.json`, `.lsp.json`,
+`commands/`, `agents/`, and the others it names) that would make a client run something else.
+The harness under `checks/`, `scripts/`, `evals/`, and `.github/` is present in that copy, but no
+client executes it; it runs only in this repository's CI and on a contributor's machine.
 
 The content is still in scope, because an agent executes it. A skill contains shell commands
 (`cargo install`, `cargo`, `rustup`, build and release commands) and Rust examples that an agent

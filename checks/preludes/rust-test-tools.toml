@@ -52,3 +52,70 @@ fn compute_ttl(header: &str) -> Result<Duration, TtlError> { todo!() }
 setup = '''
 let input: &str = todo!();
 '''
+
+# The proptest block names a parser, a codec, and a text parser that the prose
+# describes. The stubs have the signatures the properties need.
+[[block]]
+file = "rust-test-tools/SKILL.md"
+section = "proptest"
+block = 1
+items = '''
+#[derive(Debug)]
+pub struct ParseError;
+
+pub struct Header {
+    len: usize,
+}
+
+impl Header {
+    pub fn parse(buf: &[u8]) -> Result<Header, ParseError> {
+        todo!()
+    }
+
+    pub fn write_to(&self, out: &mut Vec<u8>) {
+        todo!()
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Message {
+    id: u32,
+}
+
+impl Message {
+    pub fn encode(&self) -> Vec<u8> {
+        todo!()
+    }
+}
+
+pub fn arb_valid_message() -> impl proptest::strategy::Strategy<Value = Message> {
+    proptest::strategy::Strategy::prop_map(proptest::prelude::any::<u32>(), |id| Message { id })
+}
+
+pub fn decode(bytes: &[u8]) -> Result<Message, ParseError> {
+    todo!()
+}
+
+pub fn parse_document(text: &str) -> Result<(), ParseError> {
+    todo!()
+}
+'''
+
+[[block]]
+file = "rust-test-tools/references/mutation-testing.md"
+section = "Test boundary conditions"
+block = 1
+items = '''
+pub const MAX_OFFSET: u64 = 4096;
+
+#[derive(Debug)]
+pub struct OffsetError;
+
+pub fn validate_offset(offset: u64) -> Result<u64, OffsetError> {
+    todo!()
+}
+'''
