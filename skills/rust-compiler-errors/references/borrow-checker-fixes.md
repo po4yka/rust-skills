@@ -4,6 +4,7 @@ Worked fixes for the errors in [SKILL.md](../SKILL.md). Every fix compiles on ru
 Each entry states the fix and what it costs, because several of these trade a build error for a
 run-time cost. Read only the section that matches the error.
 
+- [Who owns the value](#who-owns-the-value): E0382 instead of a clone
 - [Disjoint access to one collection](#disjoint-access-to-one-collection): E0499 on two indices
 - [A read borrow that blocks a write](#a-read-borrow-that-blocks-a-write): E0502
 - [A `&self` helper that blocks a field write](#a-self-helper-that-blocks-a-field-write): E0506
@@ -15,6 +16,18 @@ run-time cost. Read only the section that matches the error.
 - [Drop and the borrow checker](#drop-and-the-borrow-checker): E0597, E0502, E0507, E0509,
   E0184, E0367
 - [E0631: a function item is not a coercion site](#e0631-a-function-item-is-not-a-coercion-site)
+
+## Who owns the value
+
+A clone answers "both get one". Pick the answer from the kind of value:
+
+| The value is | The answer |
+| --- | --- |
+| Small, and the copy is the point | Clone, or derive `Copy` |
+| Read by several places, never written | `&T`, or `Arc<T>` across a thread |
+| Written by several places | `Arc<Mutex<T>>`; check the lock order |
+| An identity: a connection, a file, a job | One owner; pass `&mut` or a handle |
+| Large and consumed once | Move it; restructure the caller |
 
 ## Disjoint access to one collection
 
