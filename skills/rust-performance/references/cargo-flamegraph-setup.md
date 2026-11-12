@@ -6,7 +6,7 @@ Setup and invocations for `cargo flamegraph` and `samply` on Linux and macOS, me
 authoring is in [benchmarking.md](benchmarking.md).
 
 Contents: Linux prerequisites (`--no-rosegment`, DWARF or frame pointers), macOS prerequisites,
-Installation, Invocations, Check the result, Read a flamegraph.
+Installation, Invocations, Check the result, Read a flamegraph, Failure triage.
 
 ## Linux prerequisites
 
@@ -152,7 +152,17 @@ patterns apply to a `simpleperf` flamegraph from an Android device.
 | Wide plateau at the top | Leaf hotspot | Change that function; see the `rust-hot-path` skill |
 | Wide frame with tall narrow towers above it | Hot dispatch | Reduce call overhead, inline, or devirtualize |
 | Unexpected `alloc` / `dealloc` / `drop` frames | Allocation pressure | Confirm the sites with DHAT, then reuse buffers |
-| Stacks cut off, or `[unknown]` under your frames | Unwinding failed | See the failure triage in SKILL.md |
+| Stacks cut off, or `[unknown]` under your frames | Unwinding failed | See Failure triage below |
 | Raw `_R...` symbol names | The tool cannot demangle v0 symbols | See the failure triage in SKILL.md |
 
 A differential flamegraph uses color: red marks growth, blue marks a reduction.
+
+## Failure triage
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Linux stacks wrong, or no function names, under `cargo flamegraph` or `perf` | `rust-lld` without `--no-rosegment`, or a build without debug info | Profile the `profiling` profile; pass `-Clink-arg=-Wl,--no-rosegment` through `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` |
+| Stacks stop at the same depth in deep call chains, or are cut off in `--call-graph fp` mode | DWARF mode copies only 64000 bytes of stack per sample; or no frame pointers in your code | Add `-Cforce-frame-pointers=yes` to `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` (not `RUSTFLAGS`), rebuild, and run `cargo flamegraph --profile profiling --cmd "record -F 997 --call-graph fp" --bin myapp` |
+| `cargo flamegraph --locked` fails with `unexpected argument` | `cargo flamegraph` has no `--locked` | Run `cargo build --locked ...` first, then `cargo flamegraph` without it |
+| `cargo flamegraph` fails on Linux | `perf_event_paranoid` too high | Set it to 1 or lower |
+| `cargo flamegraph` fails on macOS | `xctrace` permission, or a `--freq` other than 997 | Grant the permission and drop `--freq`, or use `samply`; do not weaken SIP |

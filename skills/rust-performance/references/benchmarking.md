@@ -184,7 +184,8 @@ fn bench_async(c: &mut Criterion) {
 
 ## 6. Prove the benchmark measured something
 
-SKILL.md section 6 states the rule and how to read the ratio. The evidence: LLVM rewrites
+SKILL.md section 6 states the rule. Do not require a ratio near 10: cache effects make it
+superlinear, and fixed per-iteration overhead makes it sublinear. The evidence: LLVM rewrites
 `(0..n).sum()` into the closed form `n * (n - 1) / 2`, and a `black_box` on each end does not
 bring the loop back. Measured under `cargo +nightly bench`, `black_box` on both sides:
 `closed_form_2m` 0.58 ns/iter and `closed_form_20m` 0.57 ns/iter. A 10x input moved the time by 1.02x. The same 10x change on a
@@ -236,7 +237,7 @@ Three gates, from cheap to strict:
 | Smoke run | `cargo test --locked --workspace --benches` | Each Criterion benchmark, and each Gungraun benchmark as of 0.20.0, ran once without a panic. Both run in test mode here and measure nothing. Only Gungraun 0.20.0 and later supports this on a host without Valgrind or perf |
 | Regression | Gungraun limits against a main-branch baseline | Instruction counts did not grow past the limit, if the log compares against `main` with numbers, not `N/A` |
 
-SKILL.md section 6 says why Criterion alone cannot gate a pull request. Compare Criterion
+The Silent failures list in SKILL.md says why Criterion alone cannot gate a pull request. Compare Criterion
 baselines on one dedicated runner with a fixed power state, and have a person read the `change`
 interval.
 
@@ -245,7 +246,7 @@ version as the `gungraun` library, or use the `gungraun/setup-gungraun` action p
 commit SHA.
 
 Gungraun stores results under `target/gungraun` in the workspace root, or under `GUNGRAUN_HOME`.
-Separate CI jobs and runners do not share it, and SKILL.md section 6 says what a run without the
+Separate CI jobs and runners do not share it, and the SKILL.md Silent failures list says what a run without the
 baseline reports. Run both in one job, checked out with the full history (`fetch-depth: 0`):
 
 ```bash
