@@ -38,7 +38,7 @@ x86 and fail on a phone or on an Apple silicon Mac.
 | `static mut` used for shared data | Use `Mutex`, `RwLock`, `OnceLock`, `LazyLock`, or an atomic. |
 | `const` used for shared state with interior mutability | Declare it `static`. A `const` is inlined, so every use site mutates a fresh copy. |
 | Non-atomic data guarded only by an atomic flag | Guard the payload with a lock. Hand-rolled `UnsafeCell` publication needs a loom test and an unsafe review. |
-| `Relaxed` decrement in a reference count | Use `AcqRel`, or `Release` plus an `Acquire` fence before the destructor. |
+| Reference count: `Relaxed` decrement, or no overflow abort | `AcqRel` decrement; abort above `isize::MAX`, as `Arc::clone` does. |
 | `compare_exchange` on a pointer or index that can be freed and reused (ABA) | Pack a generation counter with the value, or use epoch-based reclamation. |
 | Side effect in an `update` or `try_update` closure | Keep the closure free of side effects. It runs again after each lost race. |
 | `compiler_fence` used to order memory between threads | Use `fence` or an ordered atomic. `compiler_fence` emits no CPU barrier. |
@@ -75,9 +75,8 @@ cargo test --locked
   `AcqRel`, so a failure in `SeqCst` code can be a false alarm (`fence(SeqCst)`
   is modelled). It does not explore load buffering, so a pass is not proof. A
   `LOOM_MAX_PREEMPTIONS` bound also limits what a pass covers.
-- **A weakly ordered host** runs the suite before you ship a lock-free
-  structure. An Apple silicon Mac qualifies. A finite run that does not fail
-  proves only that this run did not fail.
+- **A weakly ordered host**, such as an Apple silicon Mac, runs the suite
+  before you ship a lock-free structure. A pass proves only that run.
 
 ## Review checklist
 
@@ -88,8 +87,7 @@ Check each item before you approve a diff that touches atomics.
       that names the data it publishes.
 - [ ] No `SeqCst` remains without a stated multi-atomic ordering requirement.
 - [ ] Non-atomic shared data is guarded by a lock, not by the flag alone.
-- [ ] Reference-count decrements use `AcqRel`, or `Release` plus an `Acquire`
-      fence.
+- [ ] A reference count follows its row in [Choosing an ordering](#choosing-an-ordering).
 - [ ] Every compare-exchange and `update` failure ordering is `Relaxed`,
       `Acquire`, or `SeqCst`, and is chosen for what the losing thread reads.
 - [ ] Every CAS on a pointer or index is safe against ABA.
@@ -206,9 +204,10 @@ Stop flag or progress counter; reader uses nothing else   Relaxed
 Stop flag or progress counter; reader then reads state    Release store, Acquire load
 Publish data from one thread to another                   Release store, Acquire load
 Read-modify-write that both consumes and publishes        AcqRel
-Reference count                                           Relaxed increment;
+Reference count                                           Relaxed increment, abort above isize::MAX;
                                                           Release or AcqRel decrement;
-                                                          Acquire (load or fence) before the destructor
+                                                          Acquire (load or fence) before the destructor;
+                                                          weak upgrade: CAS loop that refuses 0
 Lock word of a hand-written mutex or spinlock             Acquire on the lock CAS (Relaxed on failure);
                                                           Release on unlock
 Global order across several different atomics             SeqCst on every participating access
@@ -224,8 +223,7 @@ need the formal happens-before rules, or need the per-target barrier and
 compare-exchange cost.
 
 Read [ordering-patterns.md](references/ordering-patterns.md) when you write or review a counter
-or unique id, publish/subscribe, a stop flag or progress counter, or a reference count. It holds
-one worked example per pattern.
+or unique id, publish/subscribe, a stop flag or progress counter, or a reference count.
 
 ## Compare-exchange and update loops
 
@@ -244,7 +242,6 @@ when you write or review a `fence` or `compiler_fence`.
 
 ## Related skills
 
-Use these skills when they are installed: `rust-send-sync` for `Send` and `Sync`
-bounds before any ordering question, `rust-async-internals` for tokio task,
-cancellation, and runtime behavior, and `rust-performance` to measure the
-barrier cost before you keep a stronger ordering.
+When installed: `rust-send-sync` (`Send` and `Sync` bounds first),
+`rust-async-internals` (tokio tasks and cancellation), and `rust-performance`
+(measure the barrier cost before you keep a stronger ordering).
