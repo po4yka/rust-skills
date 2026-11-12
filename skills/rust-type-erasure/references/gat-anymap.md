@@ -123,7 +123,7 @@ MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri run --locked
 
 Both run clean, with no diagnostics. That is a clean run on this program, not a proof for every
 program. The `rust-sanitizers-miri` skill, when it is installed, says what a clean Miri run does
-not cover.
+not cover: a stubbed or skipped path, and foreign code, which needs `-Zsanitizer=address`.
 
 The property the run cannot show is the compile-time rejection of a borrow shorter than the map.
 Put a `Cow::from(&s2)` where `s2` dies inside an inner block, and the store refuses it:
