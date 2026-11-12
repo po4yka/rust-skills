@@ -22,6 +22,7 @@ Every quoted diagnostic comes from rustc 1.98.1, edition 2024, on aarch64-apple-
 | `error[E0521]: borrowed data escapes outside of closure` | [for<'a> is a no-escape promise](#fora-is-a-no-escape-promise) |
 | `error[E0308]: ... one type is more general than the other` | [Closure inference is positional](#closure-inference-is-positional) |
 | `error[E0282]: type annotations needed` on a closure argument | [Closure inference is positional](#closure-inference-is-positional). For `\|o\| async move { .. }` against `AsyncFn`, write `async \|o\| ..`; see [Pick the bound](#pick-the-bound-from-the-return-type) |
+| `implementation of AsyncFn is not general enough` on `\|o\| async move { .. }` | Write `async \|o\| ..`; see [Pick the bound](#pick-the-bound-from-the-return-type) |
 | `error[E0309]` then `error[E0621]` then `error[E0502]` on one function | [Do not hoist the lifetime](#do-not-hoist-the-lifetime) |
 | `sort_by_key` rejects `\|o\| &o.field` | Read [key-projections.md](references/key-projections.md#change-what-the-callback-receives) |
 | Callback output is generic over `'a` and your signature cannot name it | Read [key-projections.md](references/key-projections.md#generic-outputs-need-rpitit-or-a-gat) |
@@ -46,7 +47,7 @@ Read the row that matches what the callback returns. The argument is always `&T`
 | A borrow of the argument | `impl for<'a> Fn(&'a T) -> &'a K`, plus `K: ?Sized` | Yes |
 | A composite over `'a` your signature can name | `impl for<'a> FnMut(&'a T) -> Reverse<&'a str>` | Yes |
 | An output that stays a type parameter over `'a` | Your own trait with RPITIT, or with a GAT | No. Pass a named unit struct |
-| An async result, awaited on the caller's task | `impl AsyncFn(&T) -> R` (Rust 1.85+) | Yes, as `async \|o\| ..`. `\|o\| async move { .. }` fails with E0282 |
+| An async result, awaited on the caller's task | `impl AsyncFn(&T) -> R` (Rust 1.85+) | Yes, as `async \|o\| ..`. `\|o\| async move { .. }` fails: E0282 when the body uses `o`, else `implementation of AsyncFn is not general enough`. Annotating `\|o: &T\|` then fails with `lifetime may not live long enough` (Rust 1.99.1) |
 | A future that must be `Send` because the task that awaits it is spawned (`tokio::spawn`), or a callback stored as `Box<dyn ..>` | `impl for<'a> Fn(&'a T) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>` | Yes, when the body is `Box::pin(async move { .. })` |
 
 `AsyncFn` has no stable way to bound its future as `Send`, and it is not dyn compatible:
@@ -88,24 +89,12 @@ proves nothing about the closures callers write.
 
 ## Checklist
 
-- No `Fn(&T) -> K` with a free `K` where a caller may project a field. Every `-> &'a K` bound has
-  an explicit `for<'a>` and `K: ?Sized`.
+Review a change against the sections above; these items have no section of their own.
+
 - No `'a` was hoisted onto the function, and no `for<'a>` was widened, to silence a closure error.
-- Every reference-projecting closure is inline, annotated as `fn`/`dyn Fn`, or in `hrtb_ref`. Its
-  higher-ranked bound is on `Fn`/`FnMut`/`FnOnce`, not a custom trait.
-- `sort_by`, `iter().max_by_key`, or `Vec<&T>` was considered before any projection trait. An
-  RPITIT impl repeats `impl Trait + use<..>`, not the concrete type.
-- An async callback takes `AsyncFn` unless its future must be `Send` or the callback is `dyn`.
+- `sort_by`, `iter().max_by_key`, or `Vec<&T>` was considered before any projection trait.
 - A public generic type that stores behaviour declares its own trait with a blanket `FnOnce` impl.
   No public struct hands users a value through `-> S<impl Fn(..)>`.
-- A field that always holds the same function is not typed `fn(..)`: the coercion silently adds
-  one machine word and an indirect call.
-- No `Arc<dyn Fn()>` or `Rc<dyn Fn()>` is passed to an `F: Fn()` bound.
-- The call trait comes from the closure body, not from `move`. Capture precision and drop timing
-  are tested when they affect ownership, `Send`, or cleanup. Read
-  [closure-capture-semantics.md](references/closure-capture-semantics.md) when they do.
-- No trait method takes a writer or visitor as `impl Trait` by value while a delegating
-  `impl<T: Trait + ?Sized> Trait for &mut T` is in scope.
 - Every [Verify](#verify) row that the change touches has run and passed.
 
 ## A free type parameter cannot name 'a
@@ -219,21 +208,6 @@ E0282 unannotated, `lifetime may not live long enough` annotated, even with the 
 annotated. Pass a named `fn`, whose item type is already higher-ranked, or wrap the closure in
 `hrtb_ref(..)`. Read [hrtb-diagnostics.md](references/hrtb-diagnostics.md) when you need the
 worked examples and the full diagnostics.
-
-## Change what the callback receives
-
-Read `references/key-projections.md` when `sort_by_key` rejects `|o| &o.field`, before you build a
-projection trait: `sort_by`, `iter().max_by_key`, or a `Vec<&T>` often needs no new bound.
-
-## Generic outputs need RPITIT or a GAT
-
-Read [key-projections.md](references/key-projections.md#generic-outputs-need-rpitit-or-a-gat) when
-the callback output must stay a type parameter over `'a`, such as `-> impl Ord`.
-
-## Store a callable in a field
-
-Read [storing-callables.md](references/storing-callables.md#store-a-callable-in-a-field) when you
-choose between `F: Fn`, `Box<dyn Fn>`, `fn(..)`, and your own trait for a field, or on E0747 or E0562.
 
 ## Related skills
 
