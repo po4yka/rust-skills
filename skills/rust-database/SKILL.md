@@ -10,10 +10,9 @@ Keep the database, driver, and migration tool that the workspace already uses.
 Use their native pool and transaction types before you add wrappers. Adapt
 error codes and DDL behavior to the selected engine.
 
-Other skills own neighboring work, when installed: `rust-async-internals`
-(future cancellation and task ownership), `rust-networking` (HTTP deadlines and
-retries), `rust-observability` (telemetry), and `rust-security` (the
-dependency advisory gate).
+When installed, `rust-networking` owns HTTP deadlines and retries, and
+`rust-observability` owns telemetry. `rust-async-internals` owns task ownership;
+to keep a commit sequence atomic, run it in `tokio::spawn` and join the handle.
 
 Read the section of
 [references/engine-and-driver-notes.md](references/engine-and-driver-notes.md)
