@@ -58,7 +58,7 @@ in [bundles.toml](bundles.toml).
 | --- | --- | ---: | --- |
 | `language` | Language semantics and compiler errors | 8 | `rust-skills-language` |
 | `design` | API design, code discipline, and tooling | 6 | `rust-skills-design` |
-| `build` | Build, dependencies, and supply chain | 9 | `rust-skills-build` |
+| `build` | Build, dependencies, and supply chain | 10 | `rust-skills-build` |
 | `testing` | Correctness and testing | 6 | `rust-skills-testing` |
 | `concurrency` | Concurrency and unsafe code | 6 | `rust-skills-concurrency` |
 | `production` | Networking, database, performance, debugging, and observability | 7 | `rust-skills-production` |
@@ -88,7 +88,7 @@ for s in rust-discipline rust-code-style rust-crate-architecture rust-lints rust
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # build
-for s in cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std; do
+for s in cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std rust-cross-compilation; do
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # testing
@@ -208,7 +208,7 @@ npx skills add po4yka/rust-skills --skill rust-compiler-errors rust-borrow-seman
 # design
 npx skills add po4yka/rust-skills --skill rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli rust-error-handling
 # build
-npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std
+npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std rust-cross-compilation
 # testing
 npx skills add po4yka/rust-skills --skill rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port rust-review
 # concurrency
@@ -317,6 +317,7 @@ Enter by the symptom, not by the skill name.
 | `because --locked was passed to prevent this`, or a feature that another crate turned on | [cargo-workflows](skills/cargo-workflows/SKILL.md) |
 | A SemVer bump, `cargo package`, `cargo publish`, crates.io trusted publishing, or a yank | [rust-crate-release](skills/rust-crate-release/SKILL.md) |
 | `build.rs`, `pkg-config`, an undefined symbol, or a packaged DLL failure | [rust-native-linking](skills/rust-native-linking/SKILL.md) |
+| Cross-compiling to another Linux target, a static musl binary, or ``version `GLIBC_2.xx' not found`` | [rust-cross-compilation](skills/rust-cross-compilation/SKILL.md) |
 | A new workspace crate, a layering violation, or a dependency cycle between crates | [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) |
 | HTTP timeout, safe retries, TLS verification, body limits, or graceful shutdown | [rust-networking](skills/rust-networking/SKILL.md) |
 | Pool exhaustion, transaction rollback, migration ordering, or serialization failure | [rust-database](skills/rust-database/SKILL.md) |
@@ -392,6 +393,7 @@ flowchart LR
     F --> F7[rust-native-linking]
     F --> F8[rust-wasm]
     F --> F9[rust-embedded-no-std]
+    F --> F10[rust-cross-compilation]
 
     G --> G1[rust-cli]
 ```
@@ -436,7 +438,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Build, dependencies, and supply chain</b> — nine skills</summary>
+<summary><b>Build, dependencies, and supply chain</b> — ten skills</summary>
 
 <br>
 
@@ -451,6 +453,7 @@ owns it.
 | [rust-ios-build](skills/rust-ios-build/SKILL.md) | iOS device and simulator static libraries, C headers and modulemaps, XCFramework and SwiftPM packaging (UniFFI builds included), deployment-target and symbol verification, signing, and simulator and device release smoke tests. |
 | [rust-wasm](skills/rust-wasm/SKILL.md) | Exact WebAssembly host and target selection, JavaScript boundary ownership, panic and async behavior, WASI capabilities, runtime tests, feature compatibility, and packaged size gates. |
 | [rust-embedded-no-std](skills/rust-embedded-no-std/SKILL.md) | Bare-metal and `no_std` policy for runtime and memory layout, panic and allocation, interrupts and critical sections, task frameworks, finite resource budgets, and real-device diagnostics. |
+| [rust-cross-compilation](skills/rust-cross-compilation/SKILL.md) | Cross-compiling for other Linux targets: rustup targets, per-target linker and `CC_<target>`, static musl and `crt-static` binaries, `cross`, cargo-zigbuild glibc floors, Docker multi-stage builds, qemu-user test runs, and artifact checks. |
 
 </details>
 

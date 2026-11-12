@@ -63,7 +63,7 @@
     {
       "name": "rust-skills-build",
       "source": "./",
-      "description": "Build, dependencies, and supply chain: 9 Rust agent skills.",
+      "description": "Build, dependencies, and supply chain: 10 Rust agent skills.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -80,7 +80,8 @@
         "./skills/rust-android-build",
         "./skills/rust-ios-build",
         "./skills/rust-wasm",
-        "./skills/rust-embedded-no-std"
+        "./skills/rust-embedded-no-std",
+        "./skills/rust-cross-compilation"
       ]
     },
     {

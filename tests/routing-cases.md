@@ -366,4 +366,7 @@ claiming a phrase the other owns.
 | PyO3 | rust-pyo3 |
 | maturin | rust-pyo3 |
 | PanicException | rust-pyo3 |
+| cross-compiling Rust | rust-cross-compilation |
+| x86_64-unknown-linux-musl | rust-cross-compilation |
+| cargo-zigbuild | rust-cross-compilation |
 | panic policy | rust-panic-safety | rust-discipline |

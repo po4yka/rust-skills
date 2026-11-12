@@ -46,6 +46,7 @@ skills = [
     "rust-ios-build",
     "rust-wasm",
     "rust-embedded-no-std",
+    "rust-cross-compilation",
 ]
 
 [bundles.testing]

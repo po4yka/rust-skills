@@ -30,6 +30,7 @@ design, build, testing, concurrency, production, ffi. Delete the rows of a bundl
 | `IPHONEOS_DEPLOYMENT_TARGET`, XCFramework, SwiftPM | rust-ios-build |
 | `wasm32-unknown-unknown`, WASI, `wasm-bindgen`, Wasm size | rust-wasm |
 | `no_std`, `memory.x`, interrupts, Embassy, RTIC, `defmt` | rust-embedded-no-std |
+| Cross-compiling to another Linux target, a musl static binary, ``version `GLIBC_2.xx' not found`` | rust-cross-compilation |
 | Reproduce a bug as a failing test, or refactor under a safety net | rust-tdd |
 | loom, proptest, cargo-fuzz, cargo-mutants | rust-test-tools |
 | Miri, ThreadSanitizer, HWASan, or MTE report | rust-sanitizers-miri |
