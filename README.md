@@ -50,9 +50,9 @@ method, the per-grader tables, and the caveats are in
 Install one bundle, not the whole catalog. A bundle is one subject group of the catalog below.
 The full catalog costs about 9,300 tokens of always-on skill listing (as `claude plugin details`
 projects it), and a client with a 200K-token window keeps about 2,000: Claude Code then drops
-whole descriptions, and those skills stop loading. Five bundles fit that budget. `language`
-(about 2,700 tokens) does not; on a 200K window, add the router snippet below with it. The
-bundles are defined in [bundles.toml](bundles.toml).
+whole descriptions, and those skills stop loading. Every bundle fits that budget: the validator
+caps each bundle at 5,000 description characters (about 2,000 tokens). The bundles are defined
+in [bundles.toml](bundles.toml).
 
 | Bundle | Subject | Skills | Plugin |
 | --- | --- | ---: | --- |
@@ -396,7 +396,7 @@ Forty-four skills in six groups. Deep material sits in `references/*.md` next to
 owns it.
 
 <details open>
-<summary><b>Language, interfaces, and code discipline</b> — thirteen skills</summary>
+<summary><b>Language semantics and compiler errors</b> — eight skills</summary>
 
 <br>
 
@@ -405,15 +405,25 @@ owns it.
 | [rust-compiler-errors](skills/rust-compiler-errors/SKILL.md) | Diagnostic triage, fixes that compile and hide the bug, E0432/E0433 unresolved imports, E0282/E0283/E0284 and never-type anchors, borrow and `Drop` fixes, E0716 routing, and E0038. |
 | [rust-borrow-semantics](skills/rust-borrow-semantics/SKILL.md) | Syntax-sensitive temporary lifetimes, drop scopes, place and value expressions, method autoref, reservation versus activation in two-phase borrows, and edition 2024 temporary-scope changes. |
 | [rust-pattern-semantics](skills/rust-pattern-semantics/SKILL.md) | Binding modes, partial moves, match-guard repetition, `if let` guards and let chains with their version gates, scrutinee ownership, or-patterns, exhaustiveness policy, and edition 2024 match ergonomics. |
+| [rust-variance](skills/rust-variance/SKILL.md) | Variance, subtyping, and lifetime coercion: the two probe functions that settle any case in one `rustc` run, the table for every constructor and `PhantomData` form, why a trait bound matches by equality, and why adding interior mutability is a breaking change. |
+| [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) | Callable bounds, HRTB reference projections, positional inference, `move` call traits, capture precision and drop timing, plus generic fields against `Box<dyn Fn>`. |
+| [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) | The producing side of iteration: a hand-written `Iterator`, the three `IntoIterator` impls, `FromIterator` and `Extend`, `size_hint`, and the `unconditional_recursion` stack overflow. |
+| [rust-type-erasure](skills/rust-type-erasure/SKILL.md) | Type-keyed storage when the values are not `'static`: why `Any` is bound to `'static`, the ladder from a lifetime-parameterized enum to a `Box<dyn Any>` map to the GAT owner/element bijection, and where the pattern turns unsound. |
+| [rust-macros](skills/rust-macros/SKILL.md) | `macro_rules!` textual scope and hygiene, fragment follow sets, the recursion limit, proc-macro crate rules, and the facade-and-derive crate split. |
+
+</details>
+
+<details>
+<summary><b>API design, code discipline, and tooling</b> — five skills</summary>
+
+<br>
+
+| Skill | What it covers |
+| --- | --- |
 | [rust-discipline](skills/rust-discipline/SKILL.md) | API shape review: pub signatures, trait bounds, blanket and sealed impls, newtypes, `Drop` guards, and SemVer hazards; method lookup, autoderef, UFCS, and coherence (E0034, E0119, E0117). |
 | [rust-code-style](skills/rust-code-style/SKILL.md) | Module file layout, `lib.rs` re-export policy, visibility levels, item order, import groups, the `thiserror` versus `anyhow` choice, and rustdoc `# Errors` and `# Panics` sections. |
 | [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) | Workspace layering, dependency direction rules, the crate-versus-module decision, and crate split, merge, and delete procedures. |
 | [rust-lints](skills/rust-lints/SKILL.md) | `workspace.lints`, `clippy.toml`, and `rustfmt.toml` policy, rustc, clippy, and rustdoc lint levels, safe lint tightening, suppression justification, and red-gate triage. |
-| [rust-macros](skills/rust-macros/SKILL.md) | `macro_rules!` textual scope and hygiene, fragment follow sets, the recursion limit, proc-macro crate rules, and the facade-and-derive crate split. |
-| [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) | The producing side of iteration: a hand-written `Iterator`, the three `IntoIterator` impls, `FromIterator` and `Extend`, `size_hint`, and the `unconditional_recursion` stack overflow. |
-| [rust-variance](skills/rust-variance/SKILL.md) | Variance, subtyping, and lifetime coercion: the two probe functions that settle any case in one `rustc` run, the table for every constructor and `PhantomData` form, why a trait bound matches by equality, and why adding interior mutability is a breaking change. |
-| [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) | Callable bounds, HRTB reference projections, positional inference, `move` call traits, capture precision and drop timing, plus generic fields against `Box<dyn Fn>`. |
-| [rust-type-erasure](skills/rust-type-erasure/SKILL.md) | Type-keyed storage when the values are not `'static`: why `Any` is bound to `'static`, the ladder from a lifetime-parameterized enum to a `Box<dyn Any>` map to the GAT owner/element bijection, and where the pattern turns unsound. |
 | [rust-cli](skills/rust-cli/SKILL.md) | Stable command-line contracts for arguments, stdout and stderr, exit status, configuration precedence, signals, terminal behavior, atomic file output, and packaged shell completions. |
 
 </details>
