@@ -33,9 +33,40 @@ A dot call and a trait bound use two different algorithms. Do not reason about o
 other.
 
 `receiver.method()` builds the autoderef chain: the receiver type, then each `Deref::Target`
-after it. At every step the compiler tries inherent methods first, then the methods of traits
-in scope. The first step that supplies one candidate wins. A trait method at step 0 therefore
-beats an inherent method at step 1.
+after it. At every step the compiler tries three receiver shapes in order: the type by value,
+then `&T`, then `&mut T`. For each shape it tries inherent methods first, then the methods of
+traits in scope. The first shape that supplies one candidate wins. A trait method at step 0
+therefore beats an inherent method at step 1. Inside one step, the receiver shape outranks
+"inherent first": a trait method that takes `self` beats an inherent method that takes `&self`,
+and a trait `&self` method beats an inherent `&mut self` method (Rust 1.99.1):
+
+```rust,run
+struct S;
+impl S {
+    fn who(&self) -> &'static str { "inherent &self" }
+}
+trait Who { fn who(self) -> &'static str; }
+impl Who for S {
+    fn who(self) -> &'static str { "trait self" }
+}
+
+struct M;
+impl M {
+    fn go(&mut self) -> &'static str { "inherent &mut self" }
+}
+trait Go { fn go(&self) -> &'static str; }
+impl Go for M {
+    fn go(&self) -> &'static str { "trait &self" }
+}
+
+fn main() {
+    assert_eq!(S.who(), "trait self");
+    assert_eq!(M.go(), "trait &self");
+    assert_eq!(S::who(&S), "inherent &self"); // path syntax picks the inherent method
+    let mut m = M;
+    assert_eq!(M::go(&mut m), "inherent &mut self");
+}
+```
 
 ```rust
 use std::ops::Deref;
@@ -342,8 +373,9 @@ An extension trait adds a method to a type you do not own. Method lookup then gi
 a fixed priority against every other candidate, and the priority can change under you with no
 warning and no error.
 
-Direction 1: your extension method loses to a new inherent method. This block resolves
-`b.len()` to `Measure::len`:
+Direction 1: your extension method loses to a new inherent method whose receiver shape comes
+at the same point or earlier in the order above. This block resolves `b.len()` to
+`Measure::len`:
 
 ```rust
 // The extension trait supplies `len`. Every call site resolves to it.
@@ -380,6 +412,10 @@ fn main() {
 Direction 2: your extension method wins over an inherent method that the caller expects. An
 extension trait implemented on a wrapper takes step 0 of the deref chain, so it beats the
 target's inherent method of the same name. That is the first section of this file.
+
+The receiver shape also cuts the other way. An extension method that takes `self` keeps
+winning over a new inherent `&self` method of the same name, so the owner's addition changes
+nothing at your call sites but `(&b).len()` and `Buf::len(&b)`.
 
 Rule: give an extension-trait method a name that no inherent method on the type, and no
 inherent method on any type in its deref chain, already uses. When the name must collide, call
