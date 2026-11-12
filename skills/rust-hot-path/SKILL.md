@@ -1,6 +1,6 @@
 ---
 name: rust-hot-path
-description: Use when changing Rust code at a hot spot that a profile or benchmark already names, such as cutting allocations (with_capacity, reserve_exact, clone_from, SmallVec, ThinVec, swap_remove), shrinking a type (print-type-sizes, memcpy, large_enum_variant), choosing a hasher (FxHashMap), removing a bounds check, placing inline(always) or a cold path hint, or buffering I/O (BufWriter). Not for choosing a profiler (use rust-performance) or input most calls return unchanged (use rust-copy-on-write). Triggers on "reduce allocations", "too many allocations", "this type is too big", "which hasher".
+description: Use when changing Rust code at a hot spot that a profile or benchmark names, such as cutting allocations (with_capacity, reserve_exact, clone_from, SmallVec, ThinVec, swap_remove), shrinking a type (print-type-sizes, memcpy, large_enum_variant), choosing a hasher (FxHashMap), removing a bounds check, placing inline(always) or a cold path hint, or buffering I/O (BufWriter). Not for choosing a profiler (use rust-performance) or input most calls return unchanged (use rust-copy-on-write). Triggers on "reduce allocations", "too many allocations", "this type is too big", "which hasher".
 license: BSD-3-Clause
 ---
 
@@ -62,7 +62,8 @@ rustc -O --emit asm --crate-type=lib probe.rs -o out.s && grep -c 'panic_bounds_
 touch src/lib.rs && cargo +nightly rustc --release -q -- -Zprint-type-sizes
 
 # A dependency function crosses the crate boundary with no attribute: no line names it.
-cargo build --release -p dep && nm -g target/release/libdep.rlib | grep '_R'
+# binutils >= 2.36 demangles v0; with an older nm, pipe through rustfilt before the grep.
+cargo build --release -p dep && nm -g --demangle target/release/libdep.rlib 2>/dev/null | grep 'dep::helper'
 ```
 
 - Mark every probe function `#[inline(never)]`. Without it a small `pub fn` with no caller is
@@ -89,8 +90,8 @@ Pin an allocation count with a `dhat` test: one heap test per integration test f
 its own `#[global_allocator]`, because dhat panics when two profilers run at once and libtest
 runs tests in parallel. Read [references/allocation-reduction.md](references/allocation-reduction.md)
 when you write the `dhat` test: it holds the test file, the `--test-threads=1` fallback, and
-the testing-mode rule. Keep that allocator out of `src/`, because in a library it
-replaces the allocator of every binary that links it. Pin a time with a Criterion baseline
+the testing-mode rule. Keep that allocator out of a library's `src/`, because there it
+replaces the allocator of every binary that links the library. Pin a time with a Criterion baseline
 through the `rust-performance` skill.
 
 ## Lookups
@@ -103,12 +104,12 @@ removes a security property.
 | --- | --- | --- |
 | Anything a caller outside the process controls: headers, query strings, JSON keys, archive entry names | Keep std `RandomState` | The random per-process seed is the HashDoS defence |
 | Untrusted keys, and hashing is measured hot | `ahash::RandomState` | Fast and still randomly seeded per process |
+| Keys inside the trust boundary that still want a seed | `foldhash::fast::RandomState` | The default hasher of `hashbrown` 0.16 and 0.17. Seeded without the OS RNG; its docs call it minimally DoS-resistant |
 | Internal keys: interned symbols, node indices, enum tags | `rustc_hash::FxHashMap` | Fastest measured, unseeded |
 | Counters and dense integer ids | `nohash_hasher::IntMap` | Identity hash. Wrong for ids with constant low bits |
 
 On 1M inserts plus lookups, `FxHasher` was 4.7-5.0x faster than SipHash on `u64` keys and
-2.2-2.4x on 18-byte string keys. `fnv` is not the middle option its reputation suggests: it
-was slower than `FxHasher` on integers and only about 1.2x faster than SipHash on strings.
+2.2-2.4x on 18-byte string keys. Do not pick `fnv`: it was slower than `FxHasher` on both.
 
 `FxHashMap` is a type alias for `HashMap` with a different hasher, and std supplies `new` and
 `with_capacity` only for `RandomState`, so both fail with E0599. Write `FxHashMap::default()`
@@ -162,7 +163,7 @@ holds the byte-exact `strip_eol` helper and the `read_until` trade.
 ## Allocation rate
 
 **`Vec` does not double from 4.** The first non-zero capacity depends on the element size,
-and each growth then doubles. Measured on rustc 1.97.0, it is 8 for 1-byte elements (`Vec<u8>`,
+and each growth then doubles. Measured on rustc 1.99.1, it is 8 for 1-byte elements (`Vec<u8>`,
 `String`), 4 for 2 to 1024 bytes (`Vec<u32>`, `Vec<u64>`), and 1 above 1024 bytes. Twenty
 `push` calls on a `Vec<u32>` therefore cost four allocations and end at capacity 32, with
 twelve slots of waste. One `Vec::with_capacity(20)` costs one allocation and no waste.
@@ -180,13 +181,10 @@ b.reserve_exact(1);
 assert_eq!(b.capacity(), 4);        // exactly len + additional
 ```
 
-On an empty vector both give the exact request when it is at least the minimum non-zero
-capacity above. Below that minimum, `reserve` rounds up and `reserve_exact` does not: on
-rustc 1.99.1, `reserve(1)` gives 4 on a `Vec<u32>`, `reserve_exact(1)` gives 1, and
-`reserve(5)` gives 8 on a `Vec<u8>`. A test that starts from `Vec::new()` with a large request
-shows them as identical and hides a 50% overshoot in the real path. Use `reserve_exact`
-when you know the final length and you are memory-bound. Use `try_reserve` when the size
-comes from untrusted input; the `rust-panic-safety` skill covers it.
+Use `reserve_exact` when you know the final length and you are memory-bound. Use `try_reserve`
+when the size comes from untrusted input; the `rust-panic-safety` skill covers it. Read
+[references/allocation-reduction.md](references/allocation-reduction.md) when a test compares
+the two from `Vec::new()`: it shows them identical and hides the overshoot.
 
 **`clone_from` reuses the destination buffer.** `a = b.clone()` allocates every time.
 `a.clone_from(&b)` writes into the buffer `a` already holds.
@@ -219,8 +217,7 @@ capacity 1000, and after a `filter` its 500 survivors land at capacity 512 throu
 ladder. When you know the output length, use `with_capacity` plus `extend`.
 
 **Format into one reused buffer.** `format!` allocates a `String` per call. `write!` into one
-cleared buffer. For one integer, call `n.format_into(&mut buf)` on one `core::fmt::NumBuffer`
-per integer type (Rust 1.98), declared outside the loop.
+cleared buffer, or, for one integer, use `format_into` (Rust 1.98).
 
 Read [references/allocation-reduction.md](references/allocation-reduction.md) when the
 allocation is a `HashMap` reserve, a `collect` chain, a zero-filled buffer, an inline-capacity

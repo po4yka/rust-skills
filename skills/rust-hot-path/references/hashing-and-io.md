@@ -4,7 +4,7 @@ Reference for [SKILL.md](../SKILL.md). It holds the full hasher measurements, th
 mechanism, the byte-wise hash derives, the buffered I/O numbers, and the line-reading loop
 behind the Lookups, Allocation rate, and I/O sections.
 
-Sections: 1-7 hashers (cost, `ahash` on aarch64, the seeding check, the collision failure
+Sections: 1-7 hashers (cost, `ahash` and `foldhash` on aarch64, the seeding check, the collision failure
 mode, crate choice, workspace enforcement, rustc's own history); 8 byte-wise hashing; 9-11
 buffered output and capacity; 12-13 line reading; 14 triage.
 
@@ -40,6 +40,15 @@ AES-accelerated throughput for a stable ARM target.
 `ahash` 0.8.12 enables `runtime-rng` and `getrandom` as default features, so
 `ahash::RandomState` is seeded per process out of the box. Turning default features off for
 a `no_std` build removes the seed, and with it the reason to choose `ahash` over `FxHasher`.
+
+`foldhash` 0.2.0, the default hasher of `hashbrown` 0.16.1 and 0.17.1 (their `default-hasher`
+feature), has no AES path and no target-specific path on aarch64 or x86_64: every target runs the
+same folded multiply. Its `fast::RandomState` is seeded per process from address-space layout
+(stack, function, and static addresses), plus the clock and a heap address when its `std`
+feature is on. It does not read the OS random source, and its crate docs disclaim HashDoS
+resistance beyond "minimally DoS-resistant". Use it for keys inside the trust boundary, not as
+the replacement for `RandomState` on hostile keys. It is not in the section 1 table: no figure
+here measures it.
 
 ## 3. Verify the seeding claim yourself
 
@@ -95,6 +104,7 @@ is hot and fed from the network keeps a seeded hasher.
 | Fastest, unseeded | `rustc-hash` 2.1.3 | Types `FxHashMap`, `FxHashSet`, `FxBuildHasher`, `FxHasher` |
 | Fastest, unseeded | not `fxhash` 0.2.1 | The name still resolves. The crate is stale |
 | Fast and seeded | `ahash` 0.8.12 | Keep default features. See section 2 |
+| Seeded without the OS RNG, trusted keys | `foldhash` 0.2.0 | `foldhash::fast::RandomState`; the `hashbrown` default. See section 2 |
 | Identity hash | `nohash-hasher` 0.2.0 | Types `IntMap<K, V>` and `IntSet<K>`. There is no `NoHashMap` |
 
 `FxHashMap::new` and `FxHashMap::with_capacity` fail with E0599 (SKILL.md *Lookups*). These two

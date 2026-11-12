@@ -5,7 +5,7 @@ bounds-check probes, and the commands that show what the compiler did. It holds 
 and Bounds checks rules for [SKILL.md](../SKILL.md): the four attribute forms, the safe shapes
 that remove a check, and the rule that every attribute needs a number.
 
-All figures come from rustc 1.97.0 unless the text names 1.98.1. The host is
+All figures come from rustc 1.97.0 unless the text names another version. The host is
 `aarch64-apple-darwin` unless the text names another target.
 
 Sections: [Inlining](#inlining); [Bounds checks](#bounds-checks); where the inliner stops and
@@ -68,7 +68,7 @@ A crate boundary is the barrier. A codegen-unit boundary inside one crate is not
 | 60-line generic `pub fn`, no attribute | `lto = false`, `codegen-units = 16` | None. Inlined |
 | 60-line private `fn` in another module of the same crate | `lto = false`, `codegen-units = 16` | None. Inlined |
 
-The 60-line row reproduces on 1.98.1 with a body of `x = x + k` and `x = x ^ k` lines on a
+The 60-line row reproduces on 1.99.1 with a body of `x = x + k` and `x = x ^ k` lines on a
 `u32`: `--emit=mir` counts 121 statements plus the return, over the budget of rule 1, and `nm`
 shows the symbol. The first 8 of those lines count 17 plus the return, under the budget.
 
@@ -96,7 +96,7 @@ the same crate does not add a barrier. Moving it into its own crate does.
 
 Rule 1 depends on the build. rustc skips the inference in incremental builds and at
 `opt-level = 0`. The MIR inliner, which removes small calls such as `u32::wrapping_mul` before
-the check, runs only at `opt-level` 2 and 3 in a non-incremental build. Measured on 1.98.1: a
+the check, runs only at `opt-level` 2 and 3 in a non-incremental build. Measured on 1.99.1: a
 leaf built from operators, `(x ^ 0x5555) >> 3`, crossed at opt-level 1, 2, 3, `"s"`, and
 `"z"`. A leaf that calls `x.wrapping_mul(31)` crossed only at 2 and 3.
 
@@ -107,11 +107,15 @@ makes the defining crate alone enough to answer the question:
 
 ```bash
 cargo build --release -p dep
-nm -g target/release/libdep.rlib | grep '_R'
+nm -g --demangle target/release/libdep.rlib 2>/dev/null | grep 'dep::helper'
 ```
 
-No line for the function: the body crosses the boundary already, and `#[inline]` buys nothing.
-A line for the function: the body does not qualify, and only `#[inline]` or LTO gets it across.
+`nm --demangle` reads v0 names in GNU binutils 2.36 and later (checked with 2.42). With an
+older `nm`, pipe the raw output through `rustfilt` before the `grep`. A bare `grep '_R'` lists
+every exported function of the crate, so it answers nothing about one function.
+
+No line: the body crosses the boundary already, and `#[inline]` buys nothing.
+A line: the body does not qualify, and only `#[inline]` or LTO gets it across.
 Run the probe again after each edit to the body. `target/` is the default target directory;
 use yours when `CARGO_TARGET_DIR` or `build.target-dir` moves it.
 
@@ -129,7 +133,7 @@ disqualifies the function. Otherwise count every line in the blocks except `Stor
 `dep.mir` in the workspace root, and it writes nothing when the crate is fresh, so keep the
 `touch`.
 
-Run the probe in the profile you ship. Measured on 1.98.1:
+Run the probe in the profile you ship. Measured on 1.99.1 (the macOS row on 1.98.1):
 
 | Build | What the probe shows |
 | --- | --- |
@@ -259,15 +263,15 @@ Faster than IR when you only need a yes or no answer.
 
 ```bash
 cargo build --release
-nm target/release/app | grep '_R'
+nm --demangle target/release/app 2>/dev/null | grep 'dep::plain'
 ```
 
 A function that was inlined everywhere leaves no symbol. In the 60-line test above, `nm`
 printed exactly one line for the dependency, and it was the function with no attribute.
 
-**Expect `_R`, not `_ZN`.** v0 mangling is the default since 1.97. Mach-O adds one leading
-underscore, so the same symbol reads `__RNv...` on macOS and `_RNv...` on ELF; grep `_R` to
-match both. The `rust-debugging` skill covers mangling and demanglers.
+**Raw names start with `_R`, not `_ZN`.** v0 mangling is the default since 1.97. Mach-O adds one
+leading underscore, so the same symbol reads `__RNv...` on macOS and `_RNv...` on ELF. Grep the
+demangled path, not `_R`: every Rust symbol matches `_R`. The `rust-debugging` skill covers mangling and demanglers.
 
 ### Assembly for one function
 
