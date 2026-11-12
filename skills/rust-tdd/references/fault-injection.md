@@ -151,7 +151,8 @@ impl Transport for FakeTransport {
             Some(FaultOutcome::Error) => Err(TransportError::Io),
             Some(FaultOutcome::Timeout) => Err(TransportError::Timeout),
             Some(FaultOutcome::Panic) => panic!("simulated fault: transport start"),
-            _ => Ok(()),
+            None => Ok(()),
+            Some(other) => panic!("FakeTransport::start does not model {other:?}"),
         }
     }
 
@@ -160,11 +161,16 @@ impl Transport for FakeTransport {
         *self.last_frame.lock().expect("fake lock poisoned") = Some(frame.to_vec());
         match self.faults.take(&TransportFault::Send) {
             Some(FaultOutcome::Error) => Err(TransportError::Io),
-            _ => Ok(frame.len()),
+            None => Ok(frame.len()),
+            Some(other) => panic!("FakeTransport::send does not model {other:?}"),
         }
     }
 }
 ```
+
+Never end the match with `_ => Ok(..)`. The queue already removed the entry, so an outcome the
+fake does not model passes as success, `faults.is_empty()` is true, and the test is a false
+green. Panic on every outcome the fake does not model.
 
 ## Outcome selection
 
@@ -230,3 +236,7 @@ fn send_retries_once_after_a_transient_error() {
     assert_eq!(transport.send_calls.load(Ordering::Relaxed), 2);
 }
 ```
+
+`faults.is_empty()` proves only that every `OneShot` fault fired. A `Persistent` entry stays in
+the queue whether it fired or not. For a `Persistent` fault, assert the call counter instead: a
+retry loop that gives up after 3 attempts must leave `send_calls` at 3.

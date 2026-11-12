@@ -2,7 +2,7 @@
 
 Extended reference for the `rust-tdd` skill. Read this when you review a test suite that
 somebody else wrote, or when you chase a flaky test. `SKILL.md` already covers fakes, panic
-tests, async synchronization, and the blessing rules; this file adds the rest.
+tests, and async synchronization; this file adds the rest.
 
 Contents: shared resources, design of the test body, golden fixtures, flaky-test triage.
 
@@ -52,12 +52,9 @@ drops every remaining task at its current `.await`, so async cleanup such as a f
 graceful close never runs. A child process outlives the test: `std::process::Child` never
 kills the process on drop, and tokio's `Child` does so only with `kill_on_drop(true)`.
 
-**Commit proptest regression files.** When proptest finds a failing case, it writes the seed
-to a regression file. For a test in `src/`, the file is under `proptest-regressions/` at the
-crate root. For an integration test in `tests/`, it is `tests/<name>.proptest-regressions`.
-Commit both kinds, and never add them to `.gitignore`. Without them the failure depends on
-the random seed and disappears from CI. The `rust-test-tools` skill, when it is installed,
-covers property testing in depth.
+**Commit proptest regression files.** Without them a failure depends on the random seed and
+disappears from CI. The `rust-test-tools` skill, when it is installed, owns their paths and
+property testing in depth.
 
 ## Design of the test body
 
@@ -67,9 +64,10 @@ file, or introduce a seam: a trait, a constructor parameter, or a returned value
 a private field through `unsafe` pointer casts. A test that depends on the internal layout
 breaks on every rename and every field reorder.
 
-**No conditional logic in a test.** An `if` or a loop in a test body means that the test
-asserts different things in different runs. Split it into separate test functions, or drive
-a table of cases in which every case asserts the same property.
+**No branch that can skip the assertion.** An `if`, a `match` arm, or an early `return` that
+bypasses the assertion makes the test assert different things in different runs. Split it
+into separate test functions. A loop over a table of cases is fine when every case reaches
+the same assertion.
 
 **Prefer `expect` on the value under test.** `expect("<what should have happened>")` puts the
 intent next to the error value in the failure report. A test that returns `Result` and uses
@@ -77,9 +75,8 @@ intent next to the error value in the failure report. A test that returns `Resul
 
 ## Golden fixtures
 
-**Correct fixture directory.** Keep fixtures in `tests/golden/` inside the crate that owns
-the contract. A fixture in the wrong crate makes the test read a file that no change ever
-updates, so the test passes forever and proves nothing.
+The `rust-test-tools` skill, when it is installed, owns the fixture layout and the blessing
+rules.
 
 **One fixture, one contract.** Do not concatenate several outputs into one large fixture. A
 one-byte change then produces an unreadable diff, and reviewers approve it without reading.
