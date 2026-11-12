@@ -65,7 +65,8 @@ form omits. Where LSE is in the target baseline, both forms compile to the same
 instruction.
 
 Compare-exchange cost depends on the target baseline. Measured with
-`rustc 1.98.1 -O --emit asm`:
+`rustc 1.98.1 -O --emit asm`; the Android, iOS, and `linux-gnu` lines were
+re-run on Rust 1.99.1:
 
 - `aarch64-linux-android` and `aarch64-apple-ios` have no LSE in their
   baseline. The strong form is an `ldaxr`/`stlxr` loop, and the weak form is
@@ -81,8 +82,12 @@ Compare-exchange cost depends on the target baseline. Measured with
   <target>`. Stable 1.99.1 rejects `--print target-spec-json` without that flag.
   On stable, emit assembly and look for the helper call:
   `cargo rustc --release --target <target> -- --emit asm`, then search the `.s`
-  file for `bl __aarch64_cas`. The Android line above was measured with
-  `-C target-feature=+outline-atomics`.
+  file for `bl __aarch64_cas`.
+
+The Android and iOS lines are for the default target features. With
+`-C target-feature=+outline-atomics`, both forms on those two targets also
+compile to the `__aarch64_cas8_acq_rel` call. Rust 1.99.1 warns that this
+feature is unstable for `-C target-feature`.
 
 ## Fences
 
