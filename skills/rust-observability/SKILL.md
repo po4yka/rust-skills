@@ -9,8 +9,9 @@ license: BSD-3-Clause
 These rules assume a Rust library that another process, language, or runtime
 embeds: a cdylib behind FFI, a staticlib, or a crate that a host CLI or service
 links. The host owns the process. The library owns only its emissions. For a
-service or CLI binary, *Host and embedded sink see different things* says which
-rules apply.
+service or CLI binary, read
+[references/dispatcher-install.md](references/dispatcher-install.md#host-bootstrap-and-embedded-sink)
+to see which rules apply.
 
 ## The six rules that are not style
 
@@ -47,19 +48,22 @@ below. The hot-path search finds rule 5 candidates, and the determinism test in
 Run these before you push a change to an emission or its crate.
 
 ```bash
+set -e
 cargo test --locked -p <observability-crate>
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo tree --locked -p <library-crate> -e normal --target all --prefix none > deps.txt
-if grep -q '^tracing-subscriber ' deps.txt; then echo 'FAIL: library links tracing-subscriber'; exit 1; fi
-cargo tree --locked -p <library-crate> -e features --target all --prefix none > features.txt
-if grep -qE '^(tracing|log) feature "(release_)?max_level_' features.txt; then echo 'FAIL: max_level_* under a library'; exit 1; fi
+deps="$(cargo tree --locked -p <library-crate> -e normal --target all --prefix none)"
+if grep -q '^tracing-subscriber ' <<<"$deps"; then echo 'FAIL: library links tracing-subscriber'; exit 1; fi
+features="$(cargo tree --locked -p <library-crate> -e features --target all --prefix none)"
+if grep -qE '^(tracing|log) feature "(release_)?max_level_' <<<"$features"; then echo 'FAIL: max_level_* under a library'; exit 1; fi
 ```
 
 Run both checks once for each engine crate and inner FFI crate. Gate on the
 `grep`, not on the exit status of an inverted `cargo tree -i`: it exits 101 when
 the library is clean and 0 when it prints a real failure. Do not write `! grep`:
-`set -e` ignores a negated command. Each `cargo tree` line fails only when Cargo
-itself fails, so a wrong `-p` name stops the gate instead of passing it.
+`set -e` ignores a negated command. Do not pipe `cargo tree` into `grep -q`
+either: an early match kills Cargo with SIGPIPE, and a failed Cargo only makes
+the `if` false. Each assignment fails only when Cargo itself fails, so under
+`set -e` a wrong `-p` name stops the gate instead of passing it.
 
 Run the hot-path search on each crate that does per-item or per-byte work. It
 finds rule 5 candidates for review. The pattern leaves out `error!` and `warn!`,
@@ -161,8 +165,8 @@ Diagnostic emission and every telemetry snapshot must not carry:
   identifier must be random, short-lived, and scoped to one process or session.
   Never derive it from a forbidden value. Bytes are not allowed.
 - User data in a panic, `expect`, or `unreachable!` message. A panic message is
-  a log line: on Android, `panic = "abort"` copies it into the tombstone
-  "Abort message". The `rust-panic-safety` skill owns the redacted panic report.
+  a log line that can reach a crash report; the `rust-debugging` skill has the
+  Android tombstone case.
 
 Audit before a release.
 
@@ -276,62 +280,21 @@ subscriber, the `log` bridge, the install test, or an Android bootstrap sink.
 It has the registry API, the interest-cache rebuild rule, the exact `init`
 failure messages, and the six install-test steps.
 
-## Host and embedded sink see different things
-
-- **Host** (a CLI, a service, or a test binary): it owns rule 1's single
-  install and may call `init()`. Rules 5 and 6 apply as written. Rules 2 to 4
-  apply to each emission that leaves the process (an exporter, a log store, a
-  crash reporter). A `tracing-subscriber`
-  formatting layer renders the full event, including an error's `Display`
-  message. Write to stderr so stdout stays machine-readable. In a CLI, keep the
-  layer off unless an environment filter is set. The layer renders untrusted
-  text: use `tracing-subscriber` 0.3.20 or later, which escapes ANSI sequences
-  in logged values (RUSTSEC-2025-0055), and gate advisories with
-  `cargo deny --config deny.toml --locked check advisories`.
-
-  ```bash
-  RUST_LOG=my_pipeline=debug my-cli render input.toml
-  ```
-
-- **Bootstrap `cdylib`** (the application-owned outermost library that a mobile
-  app or plugin host loads): it owns the install and may depend on
-  `tracing-subscriber`. In a shipped build, its platform sink receives the
-  redacted record, like any embedded sink. On Android, stderr and `RUST_LOG` do
-  not apply, and `tracing-logcat` writes the full text, message included: add
-  it only in a debug or opt-in build.
-
-- **Embedded sink** (a callback registered across FFI): receives a redacted
-  record — severity, target, callsite name, and the fields that survive the
-  visitor. **Never the message.** An error arrives as its kind, a frozen
-  enumeration case, and nothing else.
+## Host, bootstrap, and embedded sink
 
 Only a host binary and the bootstrap `cdylib` depend on `tracing-subscriber`.
-Engine crates, the shared observability crate, and inner FFI library crates do
-not. Put the layer in the host instead.
+An embedded sink receives a redacted record and **never the message**. Read
+[references/dispatcher-install.md](references/dispatcher-install.md#host-bootstrap-and-embedded-sink)
+when you write a host binary's formatting layer, a bootstrap `cdylib`, or an
+embedded sink: it says what each one sees and which rules apply.
 
 ## Counters, the bounded queue, and the snapshot
 
-Count data-plane work with `AtomicU64::fetch_add(n, Ordering::Relaxed)`. A
-counter needs atomicity, not a happens-before edge; see the `memory-model` skill.
-Two relaxed counters read in one pass are not consistent with each other, so do
-not derive an invariant from their ratio.
-
-Put a data-plane event that a consumer must see individually into a bounded
-queue, one per domain. On overflow it atomically drops the oldest record, for
-example with `crossbeam_queue::ArrayQueue::force_push`, and counts the drop. The
-newest records are the ones you need after a fault. Do not use
-`tokio::sync::broadcast`, an unbounded queue, or a blocking mutex-backed buffer.
-
-The host polls one serialized snapshot that carries the counters and the
-drained queue. Do not call across the FFI boundary per item or per telemetry
-event: the per-call cost is the whole budget on a hot path. A one-shot readiness
-callback is the one exception.
-
-Read [references/embedded-telemetry-surface.md](references/embedded-telemetry-surface.md)
-when you implement or change the event queue, the snapshot entry point, or
-readiness, golden-test a snapshot, or work on the telemetry side of panic
-reporting or on stall detection. It has the ring code and queue contract, the
-snapshot key-order and scrub-path rules, and the heartbeat.
+Count with `AtomicU64::fetch_add(n, Ordering::Relaxed)`, queue into a bounded
+drop-oldest queue that counts its drops, and let the host poll one snapshot; no
+FFI call per item. Read [references/embedded-telemetry-surface.md](references/embedded-telemetry-surface.md)
+when you implement or change a counter, the queue, the snapshot, or readiness:
+it has the ring code, the queue contract, the snapshot rules, and the heartbeat.
 
 ## Production metrics and distributed context
 
@@ -359,8 +322,6 @@ thread-based batch processors, and provider shutdown.
 
 ## Related skills
 
-`memory-model` (relaxed counters), `rust-async-internals` (`broadcast` lag, task
-shutdown), `rust-security` (`cargo deny`), `rust-panic-safety` (panic report),
-`rust-debugging` (logcat, tombstones), `rust-serde` (map order), `rust-jni`
-(FFI call cost), `ffi-error-progress-cancel` (error kinds), `rust-lints`
-(clippy configuration), `rust-performance` (emission cost).
+Other skills are named at their point of use. Two more apply when installed:
+`rust-debugging` for logcat and tombstones, and `rust-performance` for emission
+cost.

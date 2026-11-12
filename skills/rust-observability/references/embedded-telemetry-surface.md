@@ -10,6 +10,7 @@ Contents:
 
 - Why the shape differs from a server
 - Channel costs
+- Counters and the snapshot boundary
 - The bounded event ring: contract, code, and what not to use
 - The snapshot entry point, and readiness as the exception
 - Golden-test the snapshot: key order and scrub paths
@@ -37,11 +38,23 @@ Contents:
 | `tracing` events and spans through the installed subscriber | Control plane: lifecycle, configuration, errors, single-shot diagnostics, control-flow spans | Per-packet, per-byte, per-item paths | Formatting plus an atomic load on the callsite cache; roughly a few microseconds per event when a platform log writer is behind it |
 | The `log` crate, bridged into the same subscriber | Dependencies that only speak `log` | The same hot paths | Roughly 1 µs per event with no arguments, roughly 3 µs with formatted arguments, when a syscall or FFI call (for example a JNI call into the Android logger) is behind it |
 | A native trace backend, for example Perfetto through `tracing_android_trace` | Performance investigation only | Anything enabled by default in release | Heavy. Put it behind a debug-only feature flag |
-| `AtomicU64::fetch_add` | Data-plane counters: items, bytes, drops, errors | Anything that is not a count | An `ldxr`/`stxr` loop on the default `aarch64-linux-android` and `aarch64-apple-ios` targets; one `ldadd` where LSE is on (`aarch64-apple-darwin`, or `-C target-feature=+lse`). rustc 1.98.1, opt-level 3 |
+| `AtomicU64::fetch_add` | Data-plane counters: items, bytes, drops, errors | Anything that is not a count | An `ldxr`/`stxr` loop on the default `aarch64-linux-android` and `aarch64-apple-ios` targets; one `ldadd` where LSE is on (`aarch64-apple-darwin`, or `-C target-feature=+lse`). rustc 1.99.1, opt-level 3 (the `aarch64-apple-darwin` case on 1.98.1) |
 | A bounded queue drained by a poller | Data-plane events that a consumer must see individually | Anything that must never be dropped | One bounded push, no allocation on the steady path |
 
 Re-measure the microsecond figures on your own target. Treat them as orders of
 magnitude, not as constants.
+
+## Counters and the snapshot boundary
+
+Count data-plane work with `AtomicU64::fetch_add(n, Ordering::Relaxed)`. A
+counter needs atomicity, not a happens-before edge. Two relaxed counters read
+in one pass are not consistent with each other, so do not derive an invariant
+from their ratio.
+
+The host polls one serialized snapshot that carries the counters and the
+drained queue. Do not call across the FFI boundary per item or per telemetry
+event: the per-call cost is the whole budget on a hot path. A one-shot
+readiness callback is the one exception.
 
 ## The bounded event ring
 
@@ -229,9 +242,8 @@ hook. This section covers only the telemetry side of that record.
   the encoded record before it reaches a platform-specific line limit.
 - A debug or opt-in build does not make a raw panic payload safe. Keep the same
   redaction contract in every profile.
-- On Android, `panic = "abort"` copies a string panic message into the tombstone
-  "Abort message" whatever the hook does. The message itself must carry no user
-  data.
+- On Android, a panic message also reaches the tombstone; the `rust-debugging`
+  skill has the detail.
 
 ## Stall detection
 

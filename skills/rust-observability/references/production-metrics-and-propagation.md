@@ -215,7 +215,7 @@ unchanged.
 version per release. `tracing-opentelemetry` has its own number. Pick the release
 whose `opentelemetry` requirement matches yours: `tracing-opentelemetry` 0.34
 requires `opentelemetry` 0.33. Two `opentelemetry` versions in one build produce
-E0308 or E0277 errors between types that look identical. rustc 1.98.1 adds
+E0308 or E0277 errors between types that look identical. rustc 1.99.1 adds
 "note: there are multiple different versions of crate `opentelemetry` in the
 dependency graph".
 
