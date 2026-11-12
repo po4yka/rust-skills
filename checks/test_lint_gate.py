@@ -21,6 +21,7 @@ missing_docs = "warn"
 pedantic = { level = "warn", priority = -1 }
 unwrap_used = "warn"
 panic = { level = "deny" }
+redundant_pub_crate = "allow"
 
 [workspace.lints.rustdoc]
 bare_urls = "warn"
@@ -28,7 +29,7 @@ bare_urls = "warn"
 
 
 class Parsers(unittest.TestCase):
-    def test_named_lints_skip_groups_and_rustdoc(self):
+    def test_named_lints_skip_groups_rustdoc_and_allow(self):
         self.assertEqual(gate.named_lints(TABLE), {"missing_docs", "clippy::unwrap_used", "clippy::panic"})
 
     def test_toml_block_takes_the_block_after_the_heading(self):

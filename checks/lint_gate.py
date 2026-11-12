@@ -65,13 +65,20 @@ def toml_block(markdown: str, heading: str) -> str:
 
 
 def named_lints(table: str) -> set[str]:
-    """Lints that the table names one by one: rustc and clippy entries, groups excluded."""
+    """Lints that the table turns on one by one: rustc and clippy entries, groups excluded.
+
+    An `allow` entry names a lint the template switches off, so it cannot fire; the
+    unknown-lint check below still covers its name.
+    """
     data = tomllib.loads(table)["workspace"]["lints"]
     found = set()
     for tool in ("rust", "clippy"):
         for name, value in data.get(tool, {}).items():
             if isinstance(value, dict) and value.get("priority", 0) < 0:
                 continue  # a group such as `pedantic`
+            level = value.get("level") if isinstance(value, dict) else value
+            if level == "allow":
+                continue
             found.add(name if tool == "rust" else f"clippy::{name}")
     return found
 
