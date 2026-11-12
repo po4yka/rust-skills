@@ -59,6 +59,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | serialization failure | rust-database |
 | schema integration test | rust-database |
 | AssertSqlSafe | rust-database |
+| SQL injection | rust-database |
 | wasm32-unknown-unknown | rust-wasm |
 | wasm32-wasip1 | rust-wasm |
 | wasm32-wasip2 | rust-wasm |
@@ -219,6 +220,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | E0793 | rust-unsafe |
 | Strict Provenance | rust-unsafe |
 | MaybeUninit | rust-unsafe |
+| E0133 | rust-unsafe |
 | uniffi::export | uniffi-boundary |
 | callback_interface | uniffi-boundary |
 | custom_newtype | uniffi-boundary |
@@ -267,6 +269,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | cargo expand | rust-macros |
 | trailing semicolon in macro used in expression position | rust-macros |
 | syn 3 | rust-macros |
+| trybuild | rust-macros |
 | Cow<str> | rust-copy-on-write |
 | copy-on-write | rust-copy-on-write |
 | to_mut | rust-copy-on-write |
