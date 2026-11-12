@@ -46,15 +46,27 @@ fn build_client() -> reqwest::Result<reqwest::Client> {
         .build()
 }
 
+#[derive(Debug)]
+enum FetchError {
+    DeadlinePassed,
+    Http(reqwest::Error),
+}
+
 async fn fetch(
     client: &reqwest::Client,
     url: &str,
     deadline: Instant,
-) -> reqwest::Result<reqwest::Response> {
+) -> Result<reqwest::Response, FetchError> {
     let remaining = deadline.saturating_duration_since(Instant::now());
-    client.get(url).timeout(remaining).send().await
+    if remaining.is_zero() {
+        return Err(FetchError::DeadlinePassed);
+    }
+    client.get(url).timeout(remaining).send().await.map_err(FetchError::Http)
 }
 ```
+
+Return a deadline error when no time is left, instead of starting an attempt with a zero
+timeout that reports a transport timeout for a deadline the caller already spent.
 
 `Response::bytes()`, `text()`, and `json()` collect the whole body with no size limit. For an
 untrusted or unbounded peer, read with `Response::chunk()`, count the bytes, and stop at the limit.
@@ -93,10 +105,15 @@ that uses rustls, at its first TLS use.
 Check the enabled features:
 
 ```bash
-cargo tree --locked -e features -i rustls --prefix none | grep -oE '^rustls feature "(ring|aws_lc_rs|custom-provider)"' | sort -u
+if cargo tree --locked -i rustls --depth 0 > /dev/null 2> rustls.err; then
+  cargo tree --locked -e features -i rustls --prefix none | grep -oE '^rustls feature "(ring|aws_lc_rs|custom-provider)"' | sort -u
+elif ! grep -q 'did not match any packages' rustls.err; then cat rustls.err; exit 1; fi
 ```
 
-`-o` drops the ` (*)` suffix that `cargo tree` adds to repeated lines, so each feature prints once.
+The first command checks that rustls is in the graph. Without it, `cargo tree -i rustls` exits
+101 with "did not match any packages", the pipe hides the exit status, and the empty output reads
+like the zero-provider case. Any other failure, such as an ambiguous name when two rustls
+versions resolve, stops the check. `-o` drops the ` (*)` suffix that `cargo tree` adds to repeated lines, so each feature prints once.
 If zero lines, two provider lines, or `custom-provider` appear, install one provider at the top of
 `main`, before any TLS client or server exists. With more than one rustls version in the graph,
 name it: `-i rustls@0.23.45`.
