@@ -7,38 +7,33 @@ license: BSD-3-Clause
 # Rust Swift FFI
 
 This skill owns the contract between a hand-written C ABI and its Swift
-wrapper. Keep the exported C surface small, and keep domain behavior out of it.
+wrapper. Keep the C surface small, and keep domain behavior out of it.
 
 Route neighboring work to these skills when they are installed:
-
-- `uniffi-boundary` when UniFFI generates the Swift API. Do not keep a second
-  hand-written ABI for the same surface.
-- `rust-ios-build` for Apple targets, modulemap staging, XCFramework, SwiftPM.
-- `rust-native-linking` for `build.rs` and `cbindgen` setup.
-- `rust-unsafe` for raw-pointer soundness, layout, and the `unsafe_code` policy.
-- `rust-sanitizers-miri` for Miri and sanitizer flags.
-- `rust-panic-safety` for the unwind audit and the panic hook.
-- `ffi-error-progress-cancel` for mobile errors, progress, and cancellation.
+`uniffi-boundary` when UniFFI generates the Swift API (never keep a second
+hand-written ABI for it), `rust-ios-build` (Apple targets,
+XCFramework, SwiftPM), `rust-native-linking` (`build.rs`, `cbindgen`),
+`rust-unsafe` (pointer soundness, layout), `rust-sanitizers-miri`,
+`rust-panic-safety`, and `ffi-error-progress-cancel` (mobile errors, progress,
+cancellation).
 
 ## First decide whether a hand-written ABI is necessary
 
-Use UniFFI when Kotlin and Swift consume the same object model, records,
-errors, and async operations. Use a hand-written C ABI only when at least one
-condition is true:
+Use UniFFI when Kotlin and Swift consume the same object model. Use a
+hand-written C ABI only when at least one condition is true:
 
 - The public product is an existing C-compatible SDK.
 - The Swift wrapper must preserve a fixed ABI across independent releases.
 - The surface uses a C library convention that UniFFI cannot represent.
 - The project needs a very small leaf interface and accepts manual ownership.
 
-Do not select a hand-written ABI only to avoid one generator step. The manual
-path owns every destructor, callback race, error conversion, and Swift
-concurrency annotation.
+Do not select a hand-written ABI only to avoid one generator step: the manual
+path owns every destructor, callback race, and error conversion.
 
 ## Completion evidence
 
-Prove the boundary with the artifact that ships. A Rust unit test, a generated
-header, or a clean archive link does not prove that Swift can use the boundary.
+Prove the boundary with the artifact that ships: a Rust test, a generated
+header, or a clean archive link does not prove that Swift can use it.
 
 | Claim | Check | Run it when |
 | --- | --- | --- |
@@ -53,27 +48,12 @@ header, or a clean archive link does not prove that Swift can use the boundary.
 | Every shipped slice works | A smoke test on each supported Apple slice (`rust-ios-build` owns the lanes) | Before release |
 
 Keep a small Swift consumer test outside the generated artifact directory. It
-uses the same import path as the application and runs against the real release
-library or XCFramework, not a Cargo target file. It does these operations:
-
-- Import the Clang module.
-- Create and release every handle kind.
-- Pass empty and non-empty `Data`.
-- Receive empty and non-empty Rust-owned buffers, then release them.
-- Map one known error code and one unknown error code.
-- Receive a callback from a Rust-created thread.
-- Cancel during a callback and during idle work.
-- Drop the Swift owner while work runs.
-- Assert that the context release occurs once and that no later callback
-  arrives.
-
-The Xcode sanitizers instrument only the Swift, C, and Objective-C code that
-they compile. ASan checks no Rust memory access, but it still catches a double
-free or an invalid free on the Rust side. The `rust-debugging` skill, when it is
-installed, owns the details. Miri sees only Rust. Only the consumer test proves
-the cross-language lifetime, for the paths that it runs.
-When unsafe boundary code changes, also run a host ASan build of the Rust
-tests with the `rust-sanitizers-miri` flags.
+uses the application's import path and runs against the real release library or
+XCFramework, not a Cargo target file. Only that test proves the cross-language
+lifetime, for the paths that it runs: the Xcode sanitizers check no Rust memory
+access, and Miri sees only Rust. Read
+[references/consumer-test.md](references/consumer-test.md) when you write or
+extend the consumer test (its required operations) or read a sanitizer result.
 
 ## Failure triage
 
@@ -112,16 +92,13 @@ Read [references/c-header-contract.md](references/c-header-contract.md) when
 you choose the C shape or width of a value, generate, review, or
 compile-check the header, or write the modulemap.
 
-Keep the `#[unsafe(no_mangle)]` exports (required by Edition 2024) in one
-boundary crate, because `#![forbid(unsafe_code)]` rejects that attribute. Keep
-`#![forbid(unsafe_code)]` on each crate that has no hand-written `unsafe`. The
-`rust-unsafe` skill owns this policy and the boundary crate's lint list.
+Keep the `#[unsafe(no_mangle)]` exports in one boundary crate, and keep
+`#![forbid(unsafe_code)]`, which rejects that attribute, on every crate with no
+hand-written `unsafe`. The `rust-unsafe` skill owns this policy.
 
-Do not rely on a plain or `enum_extensibility(closed)` C enum as the
-compatibility guard. Swift imports the closed form as an `@frozen` enum, so an
-exhaustive `switch` has no case for a value that a newer library adds. Prefer
-an `int32_t` status with named constants, or an open enum. Reserve an unknown
-status value and map it to an `unexpected` Swift error.
+Use an `int32_t` status with named constants, or an open enum, never a plain or
+closed C enum, as the compatibility guard. Reserve an unknown status value and
+map it to an `unexpected` Swift error.
 
 ## Use one opaque type per handle kind
 
@@ -136,8 +113,7 @@ rs_engine_t * _Nullable rs_engine_create(rs_error_t * _Nonnull error_out);
 void rs_engine_release(rs_engine_t * _Nullable engine);
 ```
 
-Do not use `void *` for all handles. The C compiler then accepts a job where an
-engine is expected.
+Do not use `void *` for all handles: C then accepts a job for an engine.
 
 Use one exact create and release pair. The create function returns one owned
 reference. The release function consumes that reference. Make release accept
@@ -164,9 +140,9 @@ nonisolated final class Engine {
 }
 ```
 
-Do not make the raw pointer public. Do not make the wrapper a copyable struct.
-Do not call a blocking join from `deinit` or from the main actor. Let an active
-worker hold its own Rust reference until it stops.
+Do not make the raw pointer public or the wrapper a copyable struct. Never
+join from `deinit` or the main actor; an active worker holds its own Rust
+reference until it stops.
 
 Mark the wrapper `@unchecked Sendable` only when the Rust type behind the
 handle is `Send + Sync` and every export that takes it is safe to call
@@ -207,8 +183,7 @@ Apply these rules on the Rust side:
 
 Read [references/rust-buffer-exports.md](references/rust-buffer-exports.md)
 when you write or review the Rust export of an owned buffer or a borrowed
-Swift input. It holds the executed rules, the borrowed-pointer precondition,
-and the MSRV fallback for `Vec::into_raw_parts` (Rust 1.93).
+Swift input, or need an MSRV below 1.93 (`Vec::into_raw_parts`).
 
 Copy borrowed bytes before the Swift `withUnsafeBytes` closure returns unless
 the call is fully synchronous. Never store the temporary Swift pointer in a
@@ -230,8 +205,8 @@ struct rs_error {
 };
 ```
 
-Initialize every output on every path. A success sets `code` to zero and the
-message to the empty buffer. A failure sets a stable non-zero code and a
+Initialize every output on every path. A success sets `code` to zero and an
+empty message. A failure sets a stable non-zero code and a
 user-safe UTF-8 message. The Swift error initializer takes ownership of the
 message buffer and releases it after it copies the bytes. Keep diagnostic
 chains, paths, and backtraces in Rust logs. Swift maps codes to its own
@@ -239,19 +214,16 @@ chains, paths, and backtraces in Rust logs. Swift maps codes to its own
 
 Contain unwinding at every export. The `rust-panic-safety` skill, when it is
 installed, owns the guard, the abort rules, and the `panic` profile setting.
-A panic that escapes an export ends the process, and Swift gets no error and
-no cleanup. A fallible export returns the reserved internal-error code for a
+A fallible export returns the reserved internal-error code for a
 caught panic, never a domain code. A `void` release or cancel export logs the
 panic and returns. Keep destructor paths non-panicking. Keep the `extern "C"`
 body to validation, the panic guard, and delegation.
 
-## Callbacks and cancellation
+## Callbacks, cancellation, and AsyncStream
 
-Read `references/callbacks-and-cancellation.md` when the boundary passes a callback or a callback context, Rust calls Swift from a worker thread, or you design cancel and release for a long job.
-
-## Bridge a callback to AsyncStream
-
-Read [references/async-stream-bridge.md](references/async-stream-bridge.md)
-when you wrap a C callback in `AsyncStream` or `AsyncThrowingStream`. Use
-`bufferingPolicy: .bufferingNewest(1)` for progress, because the default
-`.unbounded` buffer grows while the consumer is slow.
+- Read `references/callbacks-and-cancellation.md` when the boundary passes a
+  callback or a callback context, Rust calls Swift from a worker thread, or you
+  design cancel and release for a long job.
+- Read [references/async-stream-bridge.md](references/async-stream-bridge.md)
+  when you wrap a C callback in `AsyncStream` or `AsyncThrowingStream`. Use
+  `bufferingPolicy: .bufferingNewest(1)` for progress (triage table).
