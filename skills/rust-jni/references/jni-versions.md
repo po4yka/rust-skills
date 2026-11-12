@@ -12,7 +12,7 @@ snippet between 0.21 and 0.22. The snippets in [../SKILL.md](../SKILL.md) use
 | Panic guard | `std::panic::catch_unwind` | `env.with_env(..).resolve::<P>()`; `native_method!` generates it |
 | Read a `JString` | `env.get_string(&s)?.into()` | `s.mutf8_chars(env)?.to_str().into_owned()` |
 | Stay attached for the thread's life | `vm.attach_current_thread_permanently()?` | `vm.attach_current_thread(closure)` |
-| Attach for one scope only | `let _guard = vm.attach_current_thread()?` | `vm.attach_current_thread_for_scope(closure)` |
+| Attach for one scope only | `let mut guard = vm.attach_current_thread()?` | `vm.attach_current_thread_for_scope(closure)` |
 | Global reference | `GlobalRef` | `Global<JObject<'static>>` |
 | Pending Java exception | `call_*` returns `Err(JavaException)`; `throw_new` returns `Ok` | `throw*` also returns `Err(JavaException)`; lookups map it to a typed error; attach returns an exception that its closure leaves pending as `CaughtJavaException` |
 | Method name and signature | `&str` literals | `jni_str!` and `jni_sig!` |
