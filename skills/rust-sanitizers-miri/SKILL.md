@@ -291,8 +291,6 @@ Treat a Miri failure as a build failure. Miri reports UB, not style.
 ## Related skills
 
 - `rust-unsafe`: unsafe patterns and the review checklist for `unsafe`
-- `memory-model`: atomics and memory ordering
+- `memory-model`: atomic orderings; an ordering change also needs a `--cfg loom` test
 - `rust-debugging`: symbolication and `addr2line` for sanitizer and tombstone frames
 - `rust-test-tools`: property tests and fuzzing that feed these tools
-- `rust-jni`, `uniffi-boundary`: FFI layers that Miri cannot execute
-- `rust-android-build`: Android target setup for the device builds
