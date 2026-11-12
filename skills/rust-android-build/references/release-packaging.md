@@ -142,8 +142,8 @@ Do not rebuild a `.so` to recreate lost symbols. A rebuild can produce a
 different build ID even at the same source revision. Retain the symbol inputs
 from the same build that produced the final package.
 
-The `rust-debugging` skill owns tombstone symbolication. Two facts depend on
-this closure. With NDK r29 or later, `ndk-stack -sym` accepts
+The `rust-debugging` skill owns tombstone symbolication; it depends on this
+closure because, with NDK r29 or later, `ndk-stack -sym` accepts
 `native-debug-symbols.zip` and finds libraries by build ID, not by file name.
 Rust frames use v0 mangling (`_R` prefix) since Rust 1.97, and NDK r30
 `llvm-cxxfilt` demangles them; `#[unsafe(no_mangle)]` exports keep their names.
