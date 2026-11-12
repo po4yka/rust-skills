@@ -225,8 +225,10 @@ Tests: `scripts/test_agent_hook.py`.
   (characters / 2.5; the calibration is in `research/token-calibration-2026-10.md`). The ratio
   was calibrated against the counts `claude plugin details` projects, which is itself a character
   estimate, not a tokenizer; no count from a Claude tokenizer backs it yet;
-- a reference to a skill in another bundle carries a fallback with a code span in the same or
-  the next sentence, and no description claims a phrase of `evals/routing/negative-cases.md`.
+- every code span that names a skill of another bundle, in prose, a list, or a table cell (the
+  frontmatter excepted), has a fallback: a code span that is not a skill name (a command, flag,
+  lint, API, or file) in the same sentence or the next one, where a table cell counts as a
+  sentence; and no description claims a phrase of `evals/routing/negative-cases.md`.
 
 A value already over a limit sits in `scripts/catalog-ceilings.toml`. The validator fails when it
 grows and warns when it shrinks; then lower the entry, or remove it once the value is under the
