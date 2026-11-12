@@ -385,7 +385,7 @@ double-free advisory that 7.0.2 removes from the tree.
 
 Read [references/persistent-collections.md](references/persistent-collections.md) before you
 add `im`, `imbl`, or `rpds`, and when you review a change that uses one. It holds the full cost
-table, the 585x write-cost split between the `&mut self` and the `&self -> Self` APIs, the
+table, the write cost of `&self -> Self` (8x) and of `rpds` against `imbl` (72x), the
 `rpds::Vector::new()` `!Send` trap, the resolved-tree advisory check, and the review checklist.
 
 ## When to use none of this

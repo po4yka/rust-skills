@@ -481,9 +481,12 @@ Edition 2024 requires `#[unsafe(no_mangle)]`, `#[unsafe(export_name = "...")]`, 
 `#[unsafe(link_section = "...")]`. The `unsafe` marks an old hazard: when two compilation units
 export the same unmangled symbol, the linker silently picks one, and the wrong function runs.
 
-Since 1.98, rustc rejects a definition of a core runtime symbol such as `memset`, `memcpy`, or
-`strlen` with a wrong signature (`invalid_runtime_symbol_definitions`, deny by default). Every
-other name still collides with no diagnostic. The JNI convention,
+Since 1.98, rustc checks a definition of a core runtime symbol such as `memset`, `memcpy`, or
+`strlen`, with two lints. A wrong number of parameters is an error
+(`invalid_runtime_symbol_definitions`, deny by default). A wrong parameter or return type with
+the right count is only a warning (`suspicious_runtime_symbol_definitions`, warn by default):
+`extern "C" fn strlen(_: u32) -> u8` builds, and fails only under `-D warnings` (Rust 1.99.1).
+Every other name still collides with no diagnostic. The JNI convention,
 `Java_<package>_<class>_<method>`, gives natural uniqueness. Check every other unmangled export
 for uniqueness across all native libraries that the host process can load at the same time,
 including libraries you do not own. The third inventory command in [SKILL.md](../SKILL.md) lists

@@ -45,7 +45,7 @@ header, or a clean archive link does not prove that Swift can use the boundary.
 | Claim | Check | Run it when |
 | --- | --- | --- |
 | The header matches the exports | Regenerate with the pinned `cbindgen`, then `git diff --exit-code -- <header>` | An exported item changes |
-| Clang accepts the header | `xcrun clang -fsyntax-only -Werror -x c <header>`, then again with `-x objective-c` | The header changes |
+| Clang accepts the header | `printf '#include "<header>"\n' \| xcrun clang -fsyntax-only -Werror -I <dir> -x c -`, and `-x objective-c` | The header changes |
 | The archive defines each header function | `nm -gU <lib>.a` shows a `T _rs_...` line for every declared function | Before packaging |
 | Swift imports and calls the real artifact | The consumer test below, built with the app target's `SWIFT_VERSION`, `SWIFT_DEFAULT_ACTOR_ISOLATION`, and `SWIFT_APPROACHABLE_CONCURRENCY`, and again in Swift 6 language mode | The boundary changes |
 | Swift code that Rust reaches is not main-actor code | Review that each declaration that Rust reaches is `nonisolated`. A clean build alone proves nothing, and Swift 5 mode reports even less | A wrapper or callback changes |
@@ -111,8 +111,8 @@ with data, or unwinding function. Swift imports the Clang module name, not a
 bridging header with a second copy of the declarations.
 
 Read [references/c-header-contract.md](references/c-header-contract.md) when
-you choose the C shape, integer width, or output style for a Rust value,
-generate or review the header with `cbindgen`, or write the modulemap.
+you choose the C shape or width of a value, generate, review, or
+compile-check the header, or write the modulemap.
 
 Keep the `#[unsafe(no_mangle)]` exports (required by Edition 2024) in one
 boundary crate, because `#![forbid(unsafe_code)]` rejects that attribute. Keep

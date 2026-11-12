@@ -167,8 +167,8 @@ Rules:
   `FusedIterator`, `Clone`. A newtype that forwards only `next` reports `(0, None)`. `collect`
   then loses the capacity hint, and an `ExactSizeIterator` impl on it panics in `len()`.
 - A wrapper that drops, adds, or merges items computes its own `size_hint`. A filter reports a
-  lower bound of 0. Claim `ExactSizeIterator` on such a wrapper only when its `size_hint` is
-  exact, because a forwarded bound then breaks the contract and `len()` returns a wrong count.
+  lower bound of 0. Claim `ExactSizeIterator` only for an exact `size_hint`; a forwarded one
+  makes `len()` wrong.
 - Give `IntoIter` a named public type when the caller may store it. `std::slice::Iter<'a, u32>`
   in a `pub` signature ties your API to that std type forever. The `&mut` impl above still names
   `std::slice::IterMut` to keep the block short. Wrap it the same way in a published crate.
@@ -217,7 +217,8 @@ over trait methods in resolution. Delete that inherent method, which is what
 The `unconditional_recursion = "deny"` level in [Verify](#verify) stops the build with
 `error: function cannot return without recursing`. Without it, a CI job that does not deny
 warnings ships the defect. In a codebase without that lint level, search for the shape:
-`rg -n 'fn into_iter\(self\) -> [^{]*\{\s*self\.into_iter' --type rust`.
+`rg -nU 'fn into_iter\(self\) -> [^{]*\{\s*self\.into_iter' --type rust`. Keep `-U`: rustfmt splits the
+body across lines.
 
 ## A collection newtype needs four impls
 

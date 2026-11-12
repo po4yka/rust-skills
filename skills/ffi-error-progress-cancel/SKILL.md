@@ -186,18 +186,18 @@ stops "show the raw error string" from becoming the default.
 | Bucket | Kinds | UX |
 | --- | --- | --- |
 | Recoverable user error | `InvalidRequest`, `OutOfMemoryRisk`, `ResourceLimitExceeded` | Inline validation, reduce the workload, fix and retry. |
-| Recoverable file or data error | `InvalidData`, `NotFound`, `InvalidArchive`, `ArchiveAuthenticationFailed`, `IoFailed` | Re-pick the file, prompt for the passphrase, re-import. Explain what to do. |
+| Recoverable file or data error | `InvalidData`, `NotFound`, `InvalidArchive`, `ArchiveAuthenticationFailed`, `IoFailed` | Re-pick the file, prompt for the passphrase, re-import. |
 | Engine bug | `ProcessingFailed`, `OutputFailed`, `Unexpected`, a Rust panic, binding and library version skew | Generic "something went wrong" plus a log entry. Never blame the user. |
 | Programmer error | A contract violation that the wrapper detects, such as a progress event for another `job_id`. | Must never ship. Assert in debug builds. |
 | Cancellation | `Cancelled` | Silent, or a short "Cancelled". Never an error dialog. |
 
-The bucket set stays stable when the kind set grows. Assign a bucket to a new
-kind in the same change that adds it.
+Assign a bucket to a new kind in the change that adds it.
 
 UniFFI turns `EngineError` into a sealed Kotlin `EngineException` hierarchy and
 a Swift `enum EngineError: Error` with one `case InvalidRequest(message: String)`
 per variant. End every Kotlin wrapper `try` with a `catch (e: Exception)` that
-maps to the engine-bug bucket. Read
+maps to the engine-bug bucket; around a `suspend` call, rethrow
+`CancellationException` first. Read
 [`references/platform-bridges.md`](references/platform-bridges.md) ("Error
 translation") when you write a mapper. It holds both mappers and explains why
 `omit_localized_error_conformance` does not make `localizedDescription` safe.

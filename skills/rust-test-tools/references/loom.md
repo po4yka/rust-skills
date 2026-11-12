@@ -109,3 +109,15 @@ LOOM_MAX_PREEMPTIONS=3 RUSTFLAGS="--cfg loom" cargo test --locked --release --te
 
 `RUSTFLAGS` replaces the rustflags in `.cargo/config.toml`, so add any flag that the build
 needs to the same variable.
+
+`RUSTFLAGS` reaches every dependency, not only your crate. tokio gates its own code on a bare
+`cfg(loom)`, so under `--cfg loom` tokio itself stops compiling (``error[E0432]: unresolved import
+`crate::sync::AtomicWaker` ``, tokio 1.54.1, Rust 1.99.1), and so does every crate that depends
+on it. Pick one fix:
+
+- Keep the loom-tested primitive in a crate with no tokio in its dependency graph, and run the
+  lane with `-p <that-crate>`. Check with `cargo tree -p <that-crate> -i tokio`, which must fail.
+- Use a cfg name only your crate reads, as crossbeam does with `crossbeam_loom`: gate the
+  `loom` imports on `cfg(<crate>_loom)`, declare it under `[lints.rust] unexpected_cfgs =
+  { level = "warn", check-cfg = ["cfg(<crate>_loom)"] }`, and run with
+  `RUSTFLAGS="--cfg <crate>_loom"`.

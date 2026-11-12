@@ -1990,6 +1990,7 @@ dependencies = [
  "crossbeam-queue",
  "dhat",
  "futures",
+ "hyper",
  "hyper-util",
  "imbl",
  "jni 0.21.1",

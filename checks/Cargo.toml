@@ -32,6 +32,8 @@ criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 crossbeam-queue = "0.3"
 dhat = "0.3"
 futures = "0.3"
+# hyper::service::service_fn in the rust-networking accept loop.
+hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["full"] }
 # 7.0.2 drops bitmaps and moves to imbl-sized-chunks 0.2 (RUSTSEC-2026-0292).
 imbl = "7.0.2"

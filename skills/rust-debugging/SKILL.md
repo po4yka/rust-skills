@@ -93,19 +93,18 @@ rust-gdb --args target/debug/my-cli <args>   # Linux
 ```
 
 ```text
-(lldb) b rust_panic                    (gdb) break rust_panic
+(lldb) b rust_panic                    (gdb) break __rustc::rust_panic
 (lldb) b my_crate::module::function    (gdb) break my_crate::module::function
 (lldb) run                             (gdb) run
 (lldb) frame variable                  (gdb) info locals
 (lldb) thread backtrace all            (gdb) thread apply all bt
 ```
 
-- In current toolchains (1.88 and later at least), the panic entry is `__rustc::rust_panic`.
-  `b rust_panic` still resolves in LLDB on 1.98.1. A tool that sets the breakpoint with a
-  legacy-name regex can miss it. In GDB, if `rust_panic` has no location, break on
-  `__rustc::rust_panic` or `core::panicking::panic_fmt`.
-- Confirm the formatters loaded before you trust a value. `(lldb) type category list` must show
-  `Rust (enabled)`. A `Vec` that prints as `buf` and `len` fields means no formatters.
+- The panic entry is `__rustc::rust_panic` (1.88 and later at least). LLDB also resolves
+  `b rust_panic`; GDB 15.1 does not, so use the full name or `core::panicking::panic_fmt`.
+- Confirm the formatters work before you trust a value: `frame variable` on a known `String`
+  and `Option` must show the text and the variant, with no Python traceback. `type category
+  list` is no proof: LLDB 18.1.3 shows `Rust (enabled)` while the 1.99 providers fail.
 - Rust 1.98 removed `lib/rustlib/etc/lldb_commands`. Inside an IDE, where the wrapper does not
   run, on Rust 1.98 and later, load the formatters with `command script import` of
   `lldb_lookup.py` only. Older toolchains also need the `lldb_commands` line (see the reference).

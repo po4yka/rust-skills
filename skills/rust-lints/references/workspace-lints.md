@@ -35,6 +35,9 @@ all                          = { level = "deny",  priority = -1 }
 pedantic                     = { level = "warn",  priority = -1 }
 nursery                      = { level = "warn",  priority = -1 }
 cargo                        = { level = "warn",  priority = -1 }
+# nursery's redundant_pub_crate asks for `pub` where rustc's unreachable_pub asks for
+# `pub(crate)`, so with both on no visibility is green. Keep unreachable_pub.
+redundant_pub_crate          = "allow"
 
 # Highest-value promotions. An explicit entry keeps the lint on if its group is relaxed later.
 mem_forget                   = "deny"   # forget on a Drop type is data loss
@@ -93,6 +96,11 @@ bare_urls                    = "warn"
 
 ## Notes on the strict template
 
+- `unreachable_pub` and the nursery lint `clippy::redundant_pub_crate` contradict each other on
+  an item in a private module: `pub fn` fires the first ("consider restricting its visibility:
+  `pub(crate)`"), and `pub(crate) fn` fires the second ("consider using: `pub`"), clippy 0.1.99.
+  The template allows `redundant_pub_crate`, so the `pub(crate)` level that the
+  `rust-code-style` skill prescribes stays green.
 - Under `-D warnings`, `warn` and `deny` both fail the gate. `deny` also stops a local
   `cargo build`, so it suits lints that are never acceptable, even for a moment.
 - `clippy::string_to_string` was deprecated in clippy 1.91; `implicit_clone` covers it. Clippy

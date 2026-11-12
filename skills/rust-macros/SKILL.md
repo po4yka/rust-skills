@@ -153,18 +153,17 @@ error: cannot find macro `only_here` in this scope
   = help: have you added the `#[macro_use]` on the module/import?
 ```
 
-Four ways to widen the scope. Prefer the first: it keeps the macro private and needs no
-crate-root placement.
+Four ways to widen the scope; prefer the first, which keeps the macro private.
 
 | Goal | Write | Effect |
 | --- | --- | --- |
 | Use it in another module, crate-private | `pub(crate) use name;` after the definition | The macro becomes an ordinary item of that module, reachable by path |
-| Use it in later modules of the same crate | `#[macro_use] mod a;` | The macro joins the crate-root macro scope from that point on |
+| Use it in later modules of the same crate | `#[macro_use] mod a;` | Later code in the parent module sees it |
 | Import it by path anywhere in the crate | `#[macro_export]` on the definition, then `use crate::name;` | The macro lands at the crate root, whatever module defines it |
 | Export it to other crates | `#[macro_export]`, then `use thatcrate::name;` in the caller | Same crate-root placement, now public |
 
-`#[macro_export]` puts the macro in the public API of the crate and at its root. Do not reach
-for it to cross a module boundary inside one crate.
+Do not use `#[macro_export]` to cross a module boundary inside one crate: it makes the macro
+public API.
 
 ## Hygiene stops at bindings
 
@@ -232,8 +231,9 @@ assumes the capture is a value expression can now receive `_`, which is not one.
 
 A `tt`-muncher costs one expansion per token. Measured with a counting muncher: 127 input
 tokens compile, 128 fail with ``error: recursion limit reached while expanding `count!` ``.
-A crate-root `#![recursion_limit = "256"]` is legitimate for a deliberately recursive macro.
-Prefer a shape that halves the input per step, because expansion time grows with the count.
+The limit of the crate that invokes the macro applies. A `#![recursion_limit = "256"]` in the
+macro's own crate does not help a downstream caller, so an exported macro must stay under 128
+expansions per call. Prefer a shape that halves the input per step.
 
 ### A trailing semicolon breaks expression position
 

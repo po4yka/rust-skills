@@ -7,6 +7,36 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+### Fixed
+
+Seventeen factual errors from the catalog audit, each reproduced before the fix:
+
+- `rust-copy-on-write`: the 585x `rpds` write cost is 8x for the `&self -> Self` API (against
+  `push_back_mut`) and about 72x for the crate design, not the API shape alone.
+- `rust-crate-release`: `cargo info` describes the local member on Cargo 1.92 already; the
+  "1.94" floor is gone.
+- `rust-swift-ffi`: the header check compiles an `#include` of the header, because the
+  main-file form rejects `#pragma once` and skips `-Wnullability-completeness`; the reference
+  states what cbindgen 0.29.4 emits.
+- `ffi-error-progress-cancel`: rethrow `CancellationException` before `catch (e: Exception)`
+  around a `suspend` export.
+- `rust-macros`: the recursion limit of the invoking crate applies.
+- `rust-iterator-impl`: the `into_iter` search uses `rg -U`, or it misses rustfmt output.
+- `rust-variance`: `*mut T` does not make a struct invariant over `'a`; `Box<dyn Fn(&'a T)>`
+  breaks the lengthening, not the shortening.
+- `rust-test-tools`: `RUSTFLAGS="--cfg loom"` stops tokio from compiling; two fixes.
+- `rust-port`, `rust-review`: create or report the missing `Cargo.lock` before `--locked`.
+- `rust-networking`: the hyper-util accept loop bounds protocol detection, so a client that
+  sends nothing is closed; the test seam covers it.
+- `rust-debugging`: GDB 15 needs `set language c` for a slice condition and the full
+  `__rustc::rust_panic` name; `type category list` does not prove the LLDB formatters work.
+- `rust-lints`: the strict template allows `clippy::redundant_pub_crate`, which contradicts
+  `unreachable_pub`; the lint gate skips `allow` entries.
+- `rust-discipline`: the receiver shape outranks "inherent first" in method lookup.
+- `memory-model`: `--print target-spec-json` needs nightly; stable reads the assembly.
+- `rust-unsafe`: `cargo rustc` needs `--lib` on a multi-target package; a wrong runtime-symbol
+  type is only a warning (`suspicious_runtime_symbol_definitions`).
+
 ### Added
 
 - `.github/workflows/client-compat.yml`: every week, the plugin install gate runs on the newest

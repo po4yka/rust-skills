@@ -44,6 +44,8 @@ cargo test --locked --workspace
 ```
 
 - Do not run `cargo fmt` without `--check`: it rewrites the code under review.
+- When the repository commits no `Cargo.lock`, `--locked` fails before anything builds. Report
+  that, then run without `--locked` only if the code is trusted.
 - Report each command and its result. Group clippy output by lint, with the lines; do not paste
   it raw. A lint that the project allows on purpose, with a reason, is not a finding.
 - If a tool cannot run (no toolchain, no network for a dependency, no approval), say so in the

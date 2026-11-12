@@ -42,10 +42,9 @@ fn con<'a, 'b: 'a>(x: C<&'a u8>) -> C<&'b u8> { x }   // compiles => contravaria
 fn cov_lt<'a, 'b: 'a>(x: S<'b>) -> S<'a> { x }        // compiles => covariant in 'a
 ```
 
-Run one command. Pass a real output path. Never pass `-o /dev/null`: rustc writes a temporary
-file and renames it onto the output path. As root, which is common in containers and CI, the
-rename replaces the `/dev/null` device with a regular file, and the command still exits 0
-(rustc 1.98.1, Linux). As a normal user, the rename fails:
+Run one command with a real output path. Never pass `-o /dev/null`: as root, rustc renames its
+output onto the device, replaces it with a regular file, and exits 0 (the reference has the
+detail):
 
 ```bash
 rustc --edition 2024 --crate-type lib --emit=metadata probe.rs -o probe.rmeta
@@ -208,10 +207,10 @@ Cell<&'a str> }` refuses the same coercion with ``note: the struct `ConfigV2<'a>
 over the parameter `'a` ``. Read [references/variance-tables.md](references/variance-tables.md)
 when you need that pair as code.
 
-Two more field changes break the same coercion. A `*mut T` field, or a `Box<dyn Fn(&'a T)>` field
-in place of `fn(&'a T)`, makes the struct invariant over `'a`. A `&'a mut T` field is different: it
-makes the struct invariant over `T`, and keeps it covariant over `'a`, so it breaks only a type
-coercion.
+A `*mut &'a T` field breaks the same coercion; a `*mut T` field does not, because it is
+invariant over `T` only. A `Box<dyn Fn(&'a T)>` field in place of `fn(&'a T)` makes the struct
+invariant over `'a`, so it also refuses the lengthening that `fn(&'a T)` allowed. A `&'a mut T`
+field is invariant over `T` and covariant over `'a`, so it breaks only a type coercion.
 
 Code that shortens a lifetime through a `&mut` unsize coercion inside `Cell`, `RefCell`, or
 `UnsafeCell` needs `rust-version = "1.98"`. Run `cargo +<msrv> check` when the MSRV is lower.

@@ -69,20 +69,24 @@ collection is read by iteration rather than by index. Otherwise keep `Vec` and c
 clone is one allocation and one `memcpy`, and 5 us for 100 000 `i32` is cheaper than the read
 penalty on almost any workload.
 
-## The API shape decides the write cost
+## Write cost: the API shape and the crate
 
-Both crates give the same guarantee behind two different signatures, and the write cost differs
-by a factor of 585.
+Building 100 000 `i32` elements one push at a time (rpds 1.2.1, imbl 7.0.2, Rust 1.99.1, counting
+allocator):
 
-| Crate | `push_back` signature | Cost per push |
-| --- | --- | --- |
-| `im`, `imbl` | `&mut self` | In place. Sharing starts at the next `clone()` |
-| `rpds` | `&self -> Self` | A fresh trie path, kept version or not |
+| Crate and call | Signature | Allocations |
+| --- | --- | ---: |
+| `rpds` `push_back` | `&self -> Self` | 932 349 |
+| `rpds` `push_back_mut` | `&mut self` | 116 134 |
+| `imbl` `push_back` | `&mut self` | 1 619 |
+| `im` `push_back` | `&mut self` | 1 594 |
 
-`rpds` allocates 932 349 times to build 100 000 elements. `im` allocates 1 594 times for the
-same work. That is not a defect of the data structure; it is the `&self -> Self` API forcing
-persistence on every write. If you only ever keep the newest version, the `&mut self` shape
-gives the same guarantee at 1/585 of the allocation count.
+The gap has two parts. The `&self -> Self` shape builds a fresh trie path on every write, kept
+version or not, and costs `rpds` a factor of 8 over its own `push_back_mut`. The remaining factor
+of about 72 is the `rpds` design itself: its `&mut self` path still allocates far more than the
+RRB tree of `im` and `imbl`, whose writes stay in place until the next `clone()`. When only the
+newest version survives, call the `_mut` methods of `rpds` (`push_back_mut`, `set_mut`,
+`drop_last_mut`), and do not expect them to reach `imbl`.
 
 Do not benchmark one crate and generalise the result to the other.
 
@@ -204,7 +208,8 @@ Check each change that adds or uses `im`, `imbl`, or `rpds`:
 
 1. Is the collection read by index? Then it is the wrong structure. Keep `Vec` and clone it.
 2. Does the write path use `&self -> Self` when only the newest version survives? Use the
-   `&mut self` shape.
+   `&mut self` shape: `push_back_mut`, `set_mut`, `drop_last_mut` on `rpds` (8x fewer
+   allocations), or `imbl` when write cost dominates (another factor of about 72).
 3. Does the value cross a thread? `rpds::Vector::new()` is not `Send`. Use `new_sync()`.
 4. Is `im`, or an `imbl` older than 7.0.2, in the lockfile? Replace it, then run the advisory
    gate above.

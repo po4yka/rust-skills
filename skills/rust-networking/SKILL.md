@@ -93,7 +93,7 @@ field list match their sections. In a review, each gap is a finding.
 | Memory grows under slow clients | Body collection or unbounded queue | Inspect decoded-byte and queue limits |
 | HTTP/2 overloads the service | Connection limit is used as request limit | Inspect in-flight streams and route permits |
 | Shutdown never finishes | New work is still admitted, each step resets grace, or axum `with_graceful_shutdown` has no outer deadline | Trace admission close and one deadline |
-| Slow clients exhaust server connections | `axum::serve` or a hyper builder without a timer has no header-read timeout | Send a partial header and time the close |
+| Slow clients exhaust server connections | `axum::serve`, or hyper with no timer, has no header-read timeout | Send zero bytes and a partial header; time each close |
 | Panic "Could not automatically determine the process-level CryptoProvider" | Zero or two provider features (or `custom-provider`) and no installed provider | Run the `cargo tree` check; install one provider in `main` |
 | Metrics leak user data | Raw URI, header, or error text is a label | Apply the closed field vocabulary |
 
@@ -144,9 +144,8 @@ the budget. Do not report every deadline failure as `connect timeout`. Read
 you set the phase caps: it gives the start, the end, and the failure mode of
 each cap.
 
-On a server, start the header-read deadline when the connection is accepted.
-A slow client must not hold an accepted-connection slot without completing a
-bounded header.
+On a server, start the header-read deadline at accept, before protocol
+detection: a client that sends nothing must not hold a connection slot.
 
 An idle timeout is not a total transfer timeout. Reset it only after useful
 progress. A peer that sends one byte before every idle timeout can still consume

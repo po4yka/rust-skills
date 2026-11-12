@@ -53,9 +53,35 @@ Review the header as C, not as Rust source:
 - Every public symbol has a stable prefix.
 - Every handle is an incomplete type.
 - Every integer has the intended width.
-- Every pointer states nullability and ownership in a comment.
+- Every pointer carries a nullability qualifier (`_Nonnull`, `_Nullable`), and a comment
+  states its ownership.
 - Every returned allocation names its matching release function.
 - No Cargo package path or private type name appears.
+
+Compile the header the way Swift reads it: included from a translation unit, not as the main
+file.
+
+```bash
+printf '#include "<header>"\n' | xcrun clang -fsyntax-only -Werror -I <header-dir> -x c -
+printf '#include "<header>"\n' | xcrun clang -fsyntax-only -Werror -I <header-dir> -x objective-c -
+```
+
+`clang -fsyntax-only -Werror -x c <header>` is the wrong check in both directions (clang 18):
+
+- It rejects a valid header that uses `#pragma once`, which cbindgen can emit:
+  `#pragma once in main file [-Werror,-Wpragma-once-outside-header]`.
+- It accepts a header that mixes a `_Nonnull` pointer with an unannotated one. Clang reports
+  `-Wnullability-completeness` only for an included header: `pointer is missing a nullability
+  type specifier (_Nonnull, _Nullable, or _Null_unspecified)`. Swift then imports the
+  unannotated pointer as an implicitly unwrapped optional.
+
+cbindgen 0.29.4 writes a qualifier only where the Rust type proves one: with
+`[ptr] non_null_attribute = "_Nonnull"`, a `&T` parameter becomes `const struct H *_Nonnull`,
+and a raw `*mut H` stays bare. Its header therefore mixes annotated and bare pointers and fails
+the include check. Do not wrap the header in `#pragma clang assume_nonnull`: that marks every
+bare pointer non-null, including one the Rust side accepts as null. Write the qualifiers in a
+reviewed header and regenerate the cbindgen output only to diff the declarations against it,
+or add `_Nullable` to the generated file in a checked post-processing step.
 
 ## Modulemap
 

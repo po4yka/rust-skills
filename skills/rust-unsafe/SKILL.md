@@ -22,16 +22,15 @@ rg -n 'unsafe\s*\{|unsafe fn|unsafe impl|unsafe extern' --type rust
 rg -n '#\[(unsafe\()?(no_mangle|export_name|link_section)' --type rust
 ```
 
-In a periodic audit, also read the expansion of each crate that applies a macro from a
-dependency, because `forbid(unsafe_code)` does not see that code. The command needs nightly, so
-keep it out of CI:
+In a periodic audit, also read the macro expansion of each crate, because
+`forbid(unsafe_code)` does not see dependency macro code. It needs nightly; keep it out of CI:
 
 ```bash
-cargo +nightly rustc -p <crate> --profile=check -- -Zunpretty=expanded \
+cargo +nightly rustc -p <crate> --lib --profile=check -- -Zunpretty=expanded \
   | rg -n 'unsafe \{|unsafe fn|unsafe impl|unsafe extern|#\[unsafe\('
 ```
 
-Hits from `std` macros are expected; review the hits from dependency macros.
+Repeat with `--bin <name>` per binary: cargo passes `--` flags to one target. Hits from `std` macros are expected; review the hits from dependency macros.
 
 ## Governance with `#![forbid(unsafe_code)]`
 
@@ -152,13 +151,12 @@ Read `references/unsafe-patterns.md` when soundness could depend on a `Drop` run
 
 ## One unsafe block breaks local reasoning
 
-One unsafe block anywhere in the call graph, a dependency included, can break a type invariant
-that safe code elsewhere relies on, so one function cannot show soundness. For example, a
-dependency calls `str::from_utf8_unchecked` on bytes whose validation was defeated, and the
+One unsafe block anywhere in the call graph, a dependency included, can break an invariant
+that safe code relies on. For example, a dependency calls `str::from_utf8_unchecked` on bytes whose validation was defeated, and the
 undefined behavior surfaces in your first decode loop. Outside a byte-string literal, neither
 the compiler nor Miri reports the construction. When you audit:
 
-1. `rg 'from_utf8_unchecked|from_raw_parts|String::from_raw_parts' --type rust -n`. Every hit
+1. `rg 'from_utf8_unchecked|from_raw_parts' --type rust -n`. Every hit
    needs a SAFETY comment that traces back to where the invariant is established.
 2. Run `cargo deny --config deny.toml --locked check advisories` to find a dependency with a
    known soundness advisory. The `rust-security` skill, when it is installed, owns the policy.

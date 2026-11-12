@@ -179,13 +179,20 @@ After the deadline, the connection tasks that axum spawned still exist. They sto
 shuts down, so return from `main` promptly.
 
 When slow-header protection must live in the process, not in a front proxy, run the accept loop
-with hyper-util. This loop sets the header timer and drains to one deadline.
+with hyper-util. The hyper header timer is not enough on its own: the `auto` builder first reads
+bytes to choose HTTP/1 or HTTP/2, and that phase has no timer. A client that sends nothing, or
+sends `PRI` and stops, holds the connection forever (hyper-util 0.1.21; `http1_only()` does not
+change it). This loop bounds the whole phase from accept to the first request with one
+deadline, keeps the hyper timer for the headers of later requests, and drains to one deadline.
 
 ```rust
 use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::Router;
+use hyper::service::{Service as _, service_fn};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::server::graceful::GracefulShutdown;
@@ -198,11 +205,12 @@ async fn serve(
     shutdown: impl Future<Output = ()>,
     grace: Duration,
 ) {
+    let header_timeout = Duration::from_secs(10);
     let mut builder = Builder::new(TokioExecutor::new());
     builder
         .http1()
         .timer(TokioTimer::new())
-        .header_read_timeout(Duration::from_secs(10));
+        .header_read_timeout(header_timeout);
     builder.http2().timer(TokioTimer::new());
 
     let graceful = GracefulShutdown::new();
@@ -215,13 +223,29 @@ async fn serve(
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 };
-                let service = TowerToHyperService::new(app.clone());
+                // Set when the first request reaches the service, so the
+                // deadline below covers protocol detection and the first header.
+                let started = Arc::new(AtomicBool::new(false));
+                let seen = Arc::clone(&started);
+                let tower = TowerToHyperService::new(app.clone());
+                let service = service_fn(move |request| {
+                    seen.store(true, Ordering::Relaxed);
+                    tower.call(request)
+                });
                 let conn = builder
                     .serve_connection_with_upgrades(TokioIo::new(stream), service)
                     .into_owned();
                 let conn = graceful.watch(conn);
                 tokio::spawn(async move {
-                    let _ = conn.await;
+                    let mut conn = std::pin::pin!(conn);
+                    tokio::select! {
+                        _ = conn.as_mut() => return,
+                        () = tokio::time::sleep(header_timeout) => {}
+                    }
+                    // No request yet: dropping the connection closes the socket.
+                    if started.load(Ordering::Relaxed) {
+                        let _ = conn.await;
+                    }
                 });
             }
             () = &mut shutdown => break,
@@ -232,7 +256,9 @@ async fn serve(
 }
 ```
 
-This loop has no connection limit. Add a semaphore permit per accepted connection when the contract
+Measured with a 1 s deadline (hyper-util 0.1.21, Rust 1.99.1): a client that sends zero bytes,
+`PRI`, or `GET / HT` is closed after 1.00 s, and a request whose handler takes 1.5 s still gets
+its response. The loop without the flag left the first two open. This loop has no connection limit. Add a semaphore permit per accepted connection when the contract
 sets one.
 
 ## tower-http timeouts
