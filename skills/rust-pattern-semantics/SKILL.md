@@ -1,6 +1,6 @@
 ---
 name: rust-pattern-semantics
-description: Use when a Rust pattern, match guard, or if let guard decides what moves, borrows, or drops, or when an edition 2024 pattern or let chain fails to compile. Triggers on "match guard", "if let guard", "partial move", "binding mode", "match ergonomics", "ref pattern", "scrutinee lifetime", "let chains", "implicitly-borrowing pattern", "guard runs twice", E0510, E0594, or E0596 in a guard.
+description: Use when a Rust pattern, match guard, or if let guard decides what moves, borrows, or drops, or when an edition 2024 pattern or let chain fails to compile. Triggers on partial move, binding mode, match ergonomics, ref pattern, let chains, implicitly-borrowing pattern, guard runs twice, E0510, E0594, or E0596 in a guard.
 license: BSD-3-Clause
 ---
 
@@ -57,10 +57,10 @@ an `if` or `while` condition does not.
 | Symptom | Likely cause | First action |
 | --- | --- | --- |
 | Value is partly usable after destructuring | The pattern made a partial move | List moved and initialized fields |
-| Partial move fails only after adding `Drop` | The destructor needs the whole value | Add a consuming method or `Option::take` |
+| Partial move fails only after adding `Drop` (E0509) | The destructor needs the whole value | Move `Drop` to a one-field guard, or `mem::take` the field. See [Partial moves](#partial-moves) |
 | Guard side effect occurs twice | Overlapping or-pattern alternatives both matched | Remove the side effect or split the arms |
 | E0510, or E0594/E0596 with "immutable for the pattern guard" | The guard mutates or mutably borrows the scrutinee or a pattern binding | Move the mutation into the arm body. A signature change does not help |
-| Lock or borrow stays held inside the arm | The lock is in the `match` scrutinee or an `if let` guard | Copy or clone the value out before the `match`, or bind the guard in a braced block that returns an owned value |
+| Lock or borrow stays held inside the arm | The lock is in the `match` scrutinee or an `if let` guard | Copy the value out first. See [Guard temporaries](#guard-temporaries) |
 | Binding became `&T` after a refactor | Match ergonomics changed the default binding mode | Probe the binding type in the target edition |
 | `... within an implicitly-borrowing pattern` | Edition 2024 reservation | Apply the fix from the edition 2024 table |
 | `let chains are only allowed in Rust 2024 or later` | Let chain in an edition 2021 `if` or `while` | Nest the `if let` and repeat the `else` branch at each level, or migrate to edition 2024 with MSRV 1.88+ (the `cargo-workflows` skill) |
@@ -123,8 +123,11 @@ fn main() {
 }
 ```
 
-Use `Option::take`, `mem::replace`, or an explicit consuming method when a resource owner must
-release one field before its destructor.
+A consuming method fails the same way: `fn into_name(self) -> String { self.name }` is E0509 on
+this type. Take the field out instead: `fn into_name(mut self) -> String { mem::take(&mut
+self.name) }`, or `Option::take` or `mem::replace` from `&mut self`. The `rust-discipline` skill,
+when it is installed, owns the guard design that avoids E0509; the `rust-compiler-errors` skill
+owns the error-to-fix entry.
 
 ## Match guards
 
@@ -188,27 +191,17 @@ fn main() {
 Move the mutation into the arm body, or compute a boolean before the match. When rustc rejects
 a guard, keep the exact pattern in the probe. A rewrite into an `if` proves a different program.
 
-### Temporaries: scrutinee, `if let` guard, boolean guard
+### Guard temporaries
 
-The three positions drop temporaries at different points. A `lock()` in the wrong position holds
-the lock through the arm body:
-
-| Position | Temporaries drop |
-| --- | --- |
-| `match` scrutinee | At the end of the enclosing temporary scope (usually the statement), after every arm |
-| `if let` guard scrutinee | When the arm body ends. If the guard fails, before the next arm |
-| Boolean guard (`if cond`) | As soon as the condition is evaluated |
+An `if let` guard keeps its scrutinee temporaries until the arm body ends, or drops them before
+the next arm when the guard fails. A boolean guard (`if cond`) drops them as soon as the condition
+is evaluated. A `lock()` in an `if let` guard therefore holds the lock through the arm body:
 
 ```rust,run
 use std::sync::Mutex;
 
 fn main() {
     let state = Mutex::new(Some(1));
-
-    match *state.lock().unwrap() {
-        Some(_) => assert!(state.try_lock().is_err()),
-        None => unreachable!(),
-    }
 
     match 0 {
         _ if let Some(_) = *state.lock().unwrap() => assert!(state.try_lock().is_err()),
@@ -222,10 +215,9 @@ fn main() {
 }
 ```
 
-To release the lock before the arm body, copy or clone the value out before the `match`
-(`let v = state.lock().expect("state mutex poisoned").clone();`), or bind the guard inside a
-braced block that returns an owned value. Do not bind the guard itself to a local in the same
-block: it then lives to the end of the block.
+Copy the value out before the `match` to release the lock first. The `rust-borrow-semantics`
+skill, when it is installed, owns the `match` scrutinee, `if let` rescope, and block-tail
+temporary rules.
 
 An arm with any guard does not count toward exhaustiveness. This includes an `if let` guard
 whose pattern cannot fail. rustc still reports E0004 for the value that the guard covers.
@@ -233,22 +225,18 @@ whose pattern cannot fail. rustc still reports E0004 for the value that the guar
 ## Scrutinee place versus value
 
 Matching a place inspects existing storage. Matching a value expression creates a temporary.
-The `match` scrutinee is not a temporary scope, so that temporary lives until the end of the
-enclosing temporary scope. That is usually the statement. For a `match` that is a block tail on
-edition 2024, it is right after the tail expression.
 
 | Scrutinee | Ownership question |
 | --- | --- |
 | `match local` | Which fields move from or borrow the local? |
 | `match &local` | Which bindings inherit a reference binding mode? |
-| `match make()` | The temporary lives through every arm. Does it hold a lock or borrow? |
+| `match make()` | Does the temporary hold a lock or borrow through the arms? |
 | `match *pointer` | Is the dereference a safe place, and what can move from it? |
-| `if let ... = make()` | Edition 2024 drops the temporary before `else`. Edition 2021 keeps it through `else` |
 
 Do not change a scrutinee between a place and a value (a named guard versus an inline `lock()`),
 and do not rewrite `match` into `if let` or the reverse, without checking destructor and borrow
-timing. The `rust-borrow-semantics` skill, when it is installed, has the full temporary-scope
-analysis.
+timing. The `rust-borrow-semantics` skill, when it is installed, owns when each scrutinee
+temporary drops, on each edition.
 
 ## Or-patterns
 
