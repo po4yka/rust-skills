@@ -12,7 +12,7 @@ never needs a different line. It needs a different owner.
 
 This skill covers synchronous loops. For runtime behavior under tokio (`select!`, `JoinSet`,
 `FuturesUnordered`, wakers, cancellation), use the `rust-async-internals` skill when it is
-installed. The diagnostics below are from rustc 1.98.1, edition 2024.
+installed. The diagnostics below are from rustc 1.99.1, edition 2024.
 
 ## Pick the structure from the shape of the handler set
 
