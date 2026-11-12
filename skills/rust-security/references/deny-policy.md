@@ -53,9 +53,20 @@ ignore = [
 ]
 ```
 
-The rules for an ignore entry and the default time box are in section 4 of
-[SKILL.md](../SKILL.md). The reason must say why the advisory is safe in this workspace,
-not why the advisory is low severity in general.
+The rules for an ignore entry are in section 4 of [SKILL.md](../SKILL.md). The reason must
+say why the advisory is safe in this workspace, not why the advisory is low severity in
+general.
+
+The default time box is below. Replace it when your team has its own policy.
+
+| Severity | Time before the ignore becomes blocking |
+|---|---|
+| Low or informational (unmaintained, no runtime exploit) | 90 days |
+| Medium (the exploit needs conditions your build does not meet) | 30 days |
+| High or critical | No ignore. Upgrade, patch, or remove the dependency within 7 days. |
+
+An unmaintained proc-macro crate is a valid low-severity ignore, because it runs only at
+compile time. An advisory in a crate that reads untrusted input at runtime is not.
 
 To ignore a yanked version, use the package-spec form:
 `{ crate = "name@1.2.3", reason = "..." }`.

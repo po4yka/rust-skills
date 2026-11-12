@@ -1,5 +1,29 @@
 # Advisory Reports and Supply-Chain Incidents
 
+Contents:
+
+- `cargo audit` commands
+- A `cargo audit` finding
+- Recent crates.io malware
+
+## `cargo audit` commands
+
+There is no `cargo audit fetch` subcommand.
+
+```bash
+cargo install cargo-audit --locked
+cargo audit                       # exit 1 on a vulnerability
+cargo audit --deny warnings       # also fail on informational advisories and yanked versions
+cargo audit --file path/to/Cargo.lock
+cargo audit --json | jq -r '.vulnerabilities.list[]
+  | "\(.advisory.id) \(.package.name) \(.package.version) \(.advisory.categories) unaffected=\(.versions.unaffected)"'
+cargo audit bin target/release/<binary>
+```
+
+`cargo audit bin` audits a shipped binary. The result is complete only for a binary built
+with `cargo auditable build`. For other binaries it recovers part of the dependency list
+from panic messages.
+
 ## A `cargo audit` finding
 
 cargo-audit 0.22.2 prints one block per finding. This is the output for `smallvec` 1.6.0:
@@ -30,6 +54,10 @@ These incidents show where a payload hides:
   credentials were likely compromised. The new patch releases added a dependency on
   `proc-macro1`, whose build script downloaded a payload. The releases were live for less
   than two hours.
+
+Since 2026-02, crates.io files a RustSec advisory with category `malicious` for every crate
+it removes for malware. `cargo audit` and the cargo-deny `advisories` check report these as
+vulnerabilities.
 
 The RustSec feed of new advisories, `malicious` ones included, is
 <https://rustsec.org/feed.xml>.
