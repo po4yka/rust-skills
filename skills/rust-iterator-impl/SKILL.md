@@ -95,65 +95,10 @@ error[E0277]: `&Bag` is not an iterator
 ```
 
 The error names the call site, so the usual repair is `for v in b.iter()`. That hides the
-defect instead of fixing it. Write all three impls once, on the container:
-
-```rust,run
-pub struct Bag { items: Vec<u32> }
-
-#[derive(Clone, Debug)]
-pub struct Iter<'a>(std::slice::Iter<'a, u32>);
-
-impl<'a> Iterator for Iter<'a> {
-    type Item = &'a u32;
-    fn next(&mut self) -> Option<&'a u32> { self.0.next() }
-    // Forward it. The default is (0, None).
-    fn size_hint(&self) -> (usize, Option<usize>) { self.0.size_hint() }
-}
-
-// Re-implement each trait the inner iterator has.
-impl DoubleEndedIterator for Iter<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> { self.0.next_back() }
-}
-impl ExactSizeIterator for Iter<'_> {}
-impl std::iter::FusedIterator for Iter<'_> {}
-
-impl Bag {
-    pub fn iter(&self) -> Iter<'_> { Iter(self.items.iter()) }
-    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, u32> { self.items.iter_mut() }
-}
-
-impl<'a> IntoIterator for &'a Bag {
-    type Item = &'a u32;
-    type IntoIter = Iter<'a>;
-    fn into_iter(self) -> Iter<'a> { self.iter() }
-}
-
-impl<'a> IntoIterator for &'a mut Bag {
-    type Item = &'a mut u32;
-    type IntoIter = std::slice::IterMut<'a, u32>;
-    fn into_iter(self) -> Self::IntoIter { self.iter_mut() }
-}
-
-impl IntoIterator for Bag {
-    type Item = u32;
-    type IntoIter = std::vec::IntoIter<u32>;
-    // Name the concrete constructor. Never `self.into_iter()`.
-    fn into_iter(self) -> Self::IntoIter { self.items.into_iter() }
-}
-
-fn total<I: IntoIterator<Item = u32>>(src: I) -> u32 { src.into_iter().sum() }
-
-fn main() {
-    let mut bag = Bag { items: vec![1, 2, 3] };
-    for v in &bag { assert!(*v > 0); }
-    for v in &mut bag { *v += 1; }
-    let mut it = bag.iter();
-    it.next();
-    assert_eq!(it.size_hint(), (2, Some(2)));
-    assert_eq!((it.len(), it.next_back()), (2, Some(&4)));
-    assert_eq!(total(bag), 9);
-}
-```
+defect instead of fixing it. Write all three impls once, on the container: `&'a C`, `&'a mut C`,
+and `C`. Read [references/impl-examples.md](references/impl-examples.md#the-three-intoiterator-impls-on-one-container)
+when you write the impls: it has a run-tested container with all three, a forwarding wrapper
+iterator, and the inherent `iter` and `iter_mut` they delegate to.
 
 Rules:
 
@@ -170,11 +115,12 @@ Rules:
   lower bound of 0. Claim `ExactSizeIterator` only for an exact `size_hint`; a forwarded one
   makes `len()` wrong.
 - Give `IntoIter` a named public type when the caller may store it. `std::slice::Iter<'a, u32>`
-  in a `pub` signature ties your API to that std type forever. The `&mut` impl above still names
-  `std::slice::IterMut` to keep the block short. Wrap it the same way in a published crate.
+  in a `pub` signature ties your API to that std type forever. The `&mut` impl in the reference
+  still names `std::slice::IterMut` to keep the block short. Wrap it the same way in a published
+  crate.
 - Do not write `type IntoIter = impl Iterator<Item = T>;`. It fails on stable with
   `error[E0658]: impl Trait in associated types is unstable` (issue 63063). Name the std type,
-  write a wrapper as above, or use `Box<dyn Iterator<Item = T> + 'a>` at the cost of one
+  write a wrapper, or use `Box<dyn Iterator<Item = T> + 'a>` at the cost of one
   allocation and a dynamic call per item. A closure that captures nothing coerces to a `fn`
   pointer, so `std::iter::Map<std::slice::Iter<'a, T>, fn(&'a T) -> U>` is a nameable type on
   stable.
@@ -236,43 +182,8 @@ The failures a `Deref<Target = Vec<T>>` newtype still has, all measured on one w
 Adding `DerefMut` makes the last row compile, because `extend` is a method call. It fixes none
 of the others. Write the impls:
 
-```rust,run
-pub struct Bag<T>(Vec<T>);
-
-impl<T> IntoIterator for Bag<T> {
-    type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
-    fn into_iter(self) -> Self::IntoIter { self.0.into_iter() }
-}
-
-impl<'a, T> IntoIterator for &'a Bag<T> {
-    type Item = &'a T;
-    type IntoIter = std::slice::Iter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter { self.0.iter() }
-}
-
-impl<T> FromIterator<T> for Bag<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(src: I) -> Self { Bag(src.into_iter().collect()) }
-}
-
-impl<T> Extend<T> for Bag<T> {
-    fn extend<I: IntoIterator<Item = T>>(&mut self, src: I) { self.0.extend(src) }
-}
-
-// Deref to the slice, not to the Vec. The read API is exposed; `push` and `truncate` are not.
-impl<T> std::ops::Deref for Bag<T> {
-    type Target = [T];
-    fn deref(&self) -> &[T] { &self.0 }
-}
-
-fn main() {
-    let mut b: Bag<u32> = (0..3).collect();
-    b.extend([3, 4]);
-    assert_eq!(b.len(), 5);                       // through the [T] deref
-    assert_eq!(b.iter().copied().max(), Some(4)); // through the [T] deref
-    assert_eq!(b.into_iter().count(), 5);         // through the trait impl
-}
-```
+Read [references/impl-examples.md](references/impl-examples.md#a-collection-newtype-with-four-impls)
+when you write them: it has a run-tested newtype with the four impls and a `Deref<Target = [T]>`.
 
 `Deref<Target = [T]>` costs the caller nothing and keeps the growth API private:
 `b.push(4)` then fails with `error[E0599]: no method named push found for struct Bag<u32>`.
@@ -311,7 +222,7 @@ defect only when a test interleaves the fabricated reference with a write. The
 
 The default `size_hint` is `(0, None)`. Two consequences.
 
-**`collect` falls back to the growth ladder.** Measured on 1.98.1: 500 items from a source
+**`collect` falls back to the growth ladder.** Measured on 1.99.1: 500 items from a source
 with no hint collect into a `Vec` of capacity 512; the same 500 items from a `Range` land on
 capacity 500. The `rust-hot-path` skill has the allocation counts.
 
@@ -330,42 +241,8 @@ Override `size_hint` before you implement `ExactSizeIterator`. Implement `Double
 well when the sequence has a defined end, because `.rev()` and `.enumerate().rev()` both need
 it:
 
-```rust,run
-pub struct Ids { lo: u32, hi: u32 }
-
-impl Iterator for Ids {
-    type Item = u32;
-    fn next(&mut self) -> Option<u32> {
-        if self.lo >= self.hi { return None; }
-        self.lo += 1;
-        Some(self.lo - 1)
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = self.hi.saturating_sub(self.lo) as usize;
-        (n, Some(n))
-    }
-}
-
-impl ExactSizeIterator for Ids {}
-
-impl DoubleEndedIterator for Ids {
-    fn next_back(&mut self) -> Option<u32> {
-        if self.lo >= self.hi { return None; }
-        self.hi -= 1;
-        Some(self.hi)
-    }
-}
-
-fn main() {
-    assert_eq!(Ids { lo: 0, hi: 3 }.len(), 3);
-    assert_eq!(Ids { lo: 0, hi: 3 }.enumerate().rev().collect::<Vec<_>>(),
-               vec![(2, 2), (1, 1), (0, 0)]);
-    // next and next_back meet in the middle and hand out each element once.
-    let mut ids = Ids { lo: 0, hi: 3 };
-    assert_eq!((ids.next(), ids.next_back(), ids.next(), ids.next_back()),
-               (Some(0), Some(2), Some(1), None));
-}
-```
+Read [references/impl-examples.md](references/impl-examples.md#an-exact-size-double-ended-iterator)
+when you write the impls: it has a run-tested iterator with both.
 
 Rules for the two traits:
 
@@ -394,7 +271,7 @@ length, or want the full error and the three orderings side by side.
 
 ## Stateful generators: use iter::from_fn
 
-Coroutines and `gen` blocks are still nightly on 1.98.1: a `gen` block gives
+Coroutines and `gen` blocks are still nightly on 1.99.1: a `gen` block gives
 `error[E0658]: gen blocks are experimental`, and `#![feature(coroutines)]` gives
 `error[E0554]: #![feature] may not be used on the stable release channel`. Pinning
 `rust-toolchain.toml` to nightly for one iterator pins the whole workspace to nightly.
