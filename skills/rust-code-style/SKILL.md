@@ -39,10 +39,13 @@ exception for `mod.rs`, or the early-return rule. A green run proves nothing abo
 
 Use `name.rs` next to a `name/` directory for every module that has children. This is the
 default because the module root then sits next to its children, and every editor tab has a
-distinct name. Use `mod.rs` only three levels deep or more. Do not mix the two patterns at one
-directory level: a reader then cannot predict where a module root is.
+distinct name. Use `mod.rs` only three levels deep or more: there, a module that lives wholly
+inside its own directory moves or deletes as one unit, which is worth more than a distinct tab
+name. Do not mix the two patterns at one directory level: a reader then cannot predict where a
+module root is.
 
-`lib.rs` declares the modules first, then re-exports the public API item by item, with no glob.
+Default: `lib.rs` declares the modules first, then re-exports the public API item by item, with
+no glob.
 A glob re-export makes every new `pub` item public API with no review. A `pub mod prelude` is
 the one module that a caller may glob-import. Keep it short, and build it from explicit
 `pub use` items. Avoid `#[path]`.
@@ -239,26 +242,9 @@ place every time.
 | `# Panics` | Every public `fn` that can panic | The exact condition. Write "Never" when a reader would expect a panic |
 | `# Safety` | Every public `unsafe fn` | What the caller must guarantee. See the `rust-unsafe` skill |
 
-```rust
-use std::path::Path;
-
-pub enum ConfigError { NotFound, PermissionDenied, InvalidUtf8 }
-
-/// Reads a configuration file and parses it as UTF-8.
-///
-/// # Errors
-///
-/// - [`ConfigError::NotFound`] if `path` does not exist.
-/// - [`ConfigError::PermissionDenied`] if the process cannot read it.
-/// - [`ConfigError::InvalidUtf8`] if the bytes are not valid UTF-8.
-///
-/// # Panics
-///
-/// Never. Every failure is reported through the returned `Result`.
-pub fn read_config(path: &Path) -> Result<String, ConfigError> {
-    todo!()
-}
-```
+Read [references/rustdoc.md](references/rustdoc.md) when you write a doc comment or a doc example: it
+has a compiled `# Errors` and `# Panics` example and the rules for hidden lines, `no_run`, and
+`ignore`.
 
 Turn on `missing_errors_doc` and `missing_panics_doc` for a published crate.
 `missing_safety_doc` is on by default.
@@ -272,23 +258,9 @@ link and on public docs that link a private item.
 
 ### Doc examples are tests
 
-`cargo test` compiles and runs every doc example in a library target. A binary target runs no
-doc examples. Use `?` in an example by returning a `Result`, and hide the scaffolding with a
-leading `#`:
-
-```text
-/// ```
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = mycrate::read_config("app.toml".as_ref())?;
-/// assert!(!config.is_empty());
-/// # Ok(())
-/// # }
-/// ```
-```
-
-Rustdoc compiles a line that starts with `# ` but does not show it. Use `no_run` for an example
-that must compile but must not run. Use `ignore` only when the example cannot compile at all.
-`ignore` skips compilation, so nothing reports the example when it goes stale.
+`cargo test` compiles and runs every doc example in a library target; a binary target runs none.
+Use `ignore` only when the example cannot compile at all: nothing then reports it when it goes
+stale.
 
 ## Naming
 
