@@ -73,20 +73,26 @@ printers are not loaded. Restart under `rust-gdb`, or fix `~/.gdbinit`.
 (gdb) break my_crate::module::function_name::{closure#0}
 
 # Every panic. Since 1.88 at least, the full name is __rustc::rust_panic.
-(gdb) break rust_panic
+(gdb) break __rustc::rust_panic
 (gdb) break core::panicking::panic_fmt
 
 # A file and line
 (gdb) break src/lib.rs:171
 
-# Stop only on the input that fails. Use fields, not method calls: a slice has
-# `length`, a Vec has `len`. GDB calls only functions that exist in the binary,
-# and `len()` is usually inlined away.
-(gdb) break my_crate::decode if bytes.length > 4096
+# Stop only on the input that fails. Use fields, not method calls: GDB calls only
+# functions that exist in the binary, and `len()` is usually inlined away.
+# A Vec has `len`. Rust mode hides the fields of a slice, so switch to C first.
 (gdb) break my_crate::process if id == 100
+(gdb) break my_crate::flush if buf.len > 4096
+(gdb) set language c
+(gdb) break my_crate::decode if bytes.length > 4096
 ```
 
-If `break rust_panic` finds no location, set it on `__rustc::rust_panic`. Do not break on
+GDB 15.1 resolves no `rust_panic` location (Rust 1.97 and 1.99.1), so set the breakpoint on
+`__rustc::rust_panic`. A condition GDB cannot evaluate does not disable the breakpoint: GDB
+prints `Error in testing condition` and stops on every hit. In Rust mode `bytes.length` on a
+`&[u8]` is that error (`Attempt to extract a component of a value that is not a structure`);
+after `set language c` it evaluates. Test a condition with `print` at a stop before you rely on it. Do not break on
 `std::panicking::begin_panic`: on 1.98.1 it exists only as generic instances, and LLDB resolves
 the plain path to no location.
 
@@ -130,12 +136,21 @@ startup commands. On Rust 1.98 and later that line is the whole setup: the scrip
 `command source <sysroot>/lib/rustlib/etc/lldb_commands`. That file does not exist in 1.98, and
 the `command source` line fails there.
 
-Check the result before you trust a printed value:
+Check the result before you trust a printed value. Stop where a known `String` and `Option` are
+in scope and print them:
 
 ```lldb
-(lldb) type category list
-Category: Rust (enabled)
+(lldb) frame variable s o
 ```
+
+`s` must show its text, `o` must show its variant and value, and no Python traceback may
+appear.
+
+`type category list` is not that check: it shows `Category: Rust (enabled)` when the category
+loaded, even when its providers fail. With the Ubuntu 24.04 LLDB 18.1.3 and the 1.97 or 1.99.1
+scripts, `frame variable` prints a Python traceback (`AttributeError: 'SBValue' object has no
+attribute 'GetSyntheticValue'`) and shows `Option<u8>` as raw `$variants$` fields. Use an LLDB
+from a current Xcode or LLVM release, or debug with `rust-gdb`.
 
 Apple's LLDB prints `This version of LLDB has no plugin for the language "rust"` at `run`. The
 warning is expected; the formatters still work. Expression evaluation of Rust syntax is limited,
