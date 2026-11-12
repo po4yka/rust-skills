@@ -12,6 +12,18 @@ version line, exit status, or machine-readable output format.
 - Use a repeatable option only when order or accumulation has defined meaning.
 - Require `--flag=value` only when syntax ambiguity makes it necessary.
 - Honor `--` as the end of options before a positional can start with `-`.
+- Validate numeric ranges in the parser, such as
+  `clap::value_parser!(u16).range(1..)`. Do not defer them to runtime.
+- State whether a repeated scalar uses first-wins, last-wins, or an error.
+  As of clap 4.6, a second `ArgAction::Set` occurrence is an error unless
+  `Command::args_override_self(true)`, or `Arg::overrides_with` that names the
+  argument's own id, makes it last-wins.
+- Do not use prefix matching for subcommands or enum values: a later addition
+  can make an accepted prefix ambiguous. SKILL.md names the `clap` settings.
+- Do not let unknown flags become positional values unless pass-through
+  arguments are the explicit contract.
+- Do not depend on the shell to expand globs, environment variables, or `~`.
+  `cmd.exe` and PowerShell pass a glob to the program unexpanded.
 
 Keep positional arguments few and stable. An optional positional before a
 required positional is ambiguous. Prefer a named option for the optional value.

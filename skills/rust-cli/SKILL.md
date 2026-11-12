@@ -221,37 +221,13 @@ paths or internals. Do not print a Rust backtrace by default.
 
 ## Merge configuration with provenance
 
-Define one precedence order and use it for every setting. A common order is:
-
-```text
-built-in default < system config < user config < project config < environment < CLI
-```
-
-Use the order required by the product. Do not add every source automatically.
-Merge typed partial values, not serialized documents. Preserve the difference
-between absent, explicit `false`, explicit zero, and an empty list.
-
-For each setting, define whether a higher source replaces or extends a list.
-Replacement is the safe default. If lists extend, define the order and a way to
-clear inherited values.
-
-Apply these rules:
-
-- Treat an explicit `--config PATH` that does not exist as an error.
-- Ignore a missing auto-discovered optional file.
-- Report a present file that cannot be read or parsed.
-- Resolve relative paths inside a config file from that file's directory unless
-  the documented format says they use the process working directory.
-- Parse environment values with the same range and enum validation as CLI values.
-- Report an invalid present environment value. Do not silently use a default.
-- Provide explicit negative flags such as `--no-color` when a boolean can come
-  from lower-precedence sources.
-- Record source provenance internally so diagnostics can name the winning value.
-- Do not print secret values in effective-configuration output.
-
-Read configuration before starting irreversible work. Validate the complete
-effective configuration once. Do not let separate subsystems reinterpret the
-same variable with different defaults.
+Define one precedence order and use it for every setting, for example
+`built-in default < user config < project config < environment < CLI`. Merge typed partial
+values, not serialized documents, so absent, explicit `false`, zero, and an empty list stay
+distinct. Treat an explicit `--config PATH` that does not exist as an error, and report an
+invalid present environment value instead of a silent default. Read
+[`references/configuration.md`](references/configuration.md) when you add a configuration
+source, a list setting, or an environment variable.
 
 Treat an auto-discovered project configuration as untrusted until the user
 trusts that project or selects the file explicitly. It must not replace a
@@ -267,24 +243,9 @@ Keep one command definition as the source for parsing, help, and completion
 generation. Do not maintain a second list of flags for documentation or
 completions.
 
-Apply these rules:
-
-- Validate numeric ranges in the parser, such as
-  `clap::value_parser!(u16).range(1..)`. Do not defer them to runtime.
-- State whether a repeated scalar uses first-wins, last-wins, or an error.
-  As of clap 4.6, a second `ArgAction::Set` occurrence is an error unless
-  `Command::args_override_self(true)`, or `Arg::overrides_with` that names the
-  argument's own id, makes it last-wins.
-- Do not use prefix matching for subcommands or enum values. A later addition
-  can make an accepted prefix ambiguous. With `clap`, keep
-  `Command::infer_subcommands` and `Command::infer_long_args` off, which is the
-  default.
-- Do not let unknown flags become positional values unless pass-through
-  arguments are the explicit contract.
-- Do not depend on the shell to expand globs, environment variables, or `~`.
-  `cmd.exe` and PowerShell pass a glob to the program unexpanded.
-- Do not read a password, token, or private key from an ordinary argument.
-  Command lines can be visible in process listings and shell history.
+Do not read a password, token, or private key from an ordinary argument: command lines can be
+visible in process listings and shell history. Do not use prefix matching for subcommands or
+enum values; with `clap`, keep `Command::infer_subcommands` and `Command::infer_long_args` off.
 
 Use `PathBuf` or `OsString` for paths and other operating-system values. Do not
 call `to_str().unwrap()` on them. Convert to UTF-8 only at a boundary that
@@ -293,8 +254,8 @@ need not be UTF-8. On Windows, a path is a sequence of 16-bit units that can
 hold an unpaired surrogate, so `to_str()` can return `None` there too.
 
 Read [`references/compatibility.md`](references/compatibility.md) when you add
-or change a flag, subcommand, positional, or value. It holds the remaining
-grammar rules.
+or change a flag, subcommand, positional, or value. It holds the grammar rules: numeric
+ranges, repeated scalars, unknown flags, shell expansion, and positionals.
 
 ## Handle terminals without changing data semantics
 
