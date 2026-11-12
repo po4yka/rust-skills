@@ -35,7 +35,7 @@ Run them before you ask for authorization.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `cargo info` output says `(from ./...)` | No `--registry`; Cargo 1.94+ describes the local member | Pass `--registry <registry>` and read the result again |
+| `cargo info` output says `(from ./...)` | No `--registry`, so Cargo describes the local member | Pass `--registry <registry>` and read the result again |
 | `cargo package --list` misses a file | `include`, `exclude`, or a VCS ignore rule removes it | Fix the manifest and list again |
 | Archive tests fail with E0432 or E0433 on a test helper crate | A path-only dev-dependency is removed from the published manifest | Give it a published `version`, or keep those tests out of the archive and document it |
 | Package verifies in the workspace but not from the archive | Hidden path, generated file, or undeclared build input | Include the input or generate it in `OUT_DIR` |
@@ -240,8 +240,7 @@ Confirm that the version is free in the registry. Always pass `--registry`, also
 cargo info <package>@<version> --registry <registry>
 ```
 
-Since Cargo 1.94, `cargo info` in a workspace describes the local member when no registry is
-explicit. Its version line then says `(from ./<member-path>)`, which is false evidence. A free
+Inside a workspace, `cargo info` describes the local member when no registry is explicit. Its version line then says `(from ./<member-path>)`, which is false evidence. A free
 version gives:
 
 ```text
