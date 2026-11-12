@@ -7,7 +7,7 @@ workspace needs them, and the lint rules for a binding layer.
 - [Defect class per lint](#defect-class-per-lint), with the
   [`ptr_arg` suppression matrix](#the-ptr_arg-suppression-matrix)
 - [Optional block: pointer and FFI lints](#optional-block-pointer-and-ffi-lints)
-- [Optional block: async lints](#optional-block-async-lints), and `disallowed-types`
+- [Async lints: an explicit pin](#async-lints-an-explicit-pin), and `disallowed-types`
 - [Binding-layer lints](#binding-layer-lints)
 - [Lints deliberately not in the canonical set](#lints-deliberately-not-in-the-canonical-set)
 
@@ -160,20 +160,34 @@ improper_ctypes_definitions = "warn" # the default; never allow it crate-wide
 alignment story. Miri is the runtime half. Miri cannot run foreign code, so cover FFI paths
 with ASan on the host or HWASan on a device. See `rust-unsafe` and `rust-sanitizers-miri`.
 
-## Optional block: async lints
+## Async lints: an explicit pin
 
-Add these only when the workspace runs an async runtime. A synchronous,
-compute-bound workspace - even one with data parallelism - gains nothing from
-them, and carrying dead lint config trains readers to ignore the config.
-Merge these keys into the existing `[workspace.lints.clippy]` table. A second
-table header, or a key the table already has, is a TOML parse error. The strict
+`await_holding_lock`, `await_holding_refcell_ref`, and `await_holding_invalid_type` are in
+`clippy::suspicious` and warn by default (clippy 0.1.99; check with
+`cargo clippy -- -W help | grep await-holding`). The strict template (`all = "deny"`) and the
+pragmatic baseline (`suspicious = "deny"`) therefore already deny them. The block below only
+pins two of them by name, so they stay on if a group level is relaxed later. Add it when the
+workspace runs an async runtime. Merge the keys into the existing `[workspace.lints.clippy]`
+table: a second table header, or a key the table already has, is a TOML parse error. The strict
 template in [workspace-lints.md](workspace-lints.md) already sets `large_futures`.
 
 ```toml
 await_holding_lock         = "deny"  # a blocking guard held across .await deadlocks the executor
 await_holding_refcell_ref  = "deny"  # a RefCell borrow held across .await panics on re-entry
-await_holding_invalid_type = "warn"
 ```
+
+`await_holding_invalid_type` checks nothing until `clippy.toml` lists the types. Add the key
+only with a type to ban, for example a guard from your own crate:
+
+```toml
+# clippy.toml
+await-holding-invalid-types = [
+  { path = "your_crate::TxnGuard", reason = "commit or drop the transaction before .await" },
+]
+```
+
+Measured on clippy 0.1.99: with that key, the listed type held across `.await` gives `holding a
+disallowed type across an await point`; without it, nothing fires.
 
 Do not ban `std::sync::Mutex` or `RwLock` with `disallowed-types`.
 `clippy.toml` cannot scope a ban to async modules, and a std lock whose guard
@@ -181,9 +195,7 @@ does not cross `.await` is the right choice in async code.
 `await_holding_lock` already catches the guard that does cross it. The
 `rust-async-internals` skill owns the lock choice.
 
-When you introduce an async runtime into a previously synchronous workspace,
-add these lints in the same commit. Adding them later means auditing every
-`.await` that already shipped.
+>>>
 
 `disallowed-types` enforces one hasher across the project.
 
@@ -207,19 +219,36 @@ no attacker controls. See `rust-hot-path` and `rust-security`.
 
 A raw JNI layer can trip two lints, because the foreign ABI fixes the entry-point signatures.
 Both fire only on the signature styles in the table (verified on 1.98.1). An entry point that
-takes the `jni` crate's wrapper types, or a non-`pub` export, trips neither.
+takes the `jni` crate's wrapper types trips neither.
 
 | Lint | When the JNI layer trips it |
 |------|-----------------------------|
 | `missing_safety_doc` (style, warn) | The entry points are `pub unsafe extern "system"` functions with no `# Safety` section. The JVM is the only caller. |
 | `not_unsafe_ptr_arg_deref` (correctness, deny) | A safe `pub extern "system"` function dereferences a raw `JNIEnv` or object pointer argument. |
 
-Use a signature that trips neither lint. `#[unsafe(no_mangle)]` exports the symbol without
-`pub` (verified on 1.98.1 with `nm` on a `cdylib`), so do not put `pub` on an export that takes
-a raw pointer. Never suppress `not_unsafe_ptr_arg_deref` (SKILL.md, Binding and FFI crates).
+Fix an export that takes a raw pointer by making it `unsafe`, with a `# Safety` section that
+states what the caller must guarantee. That signature satisfies both lints. Measured on clippy
+0.1.99 with `#[unsafe(no_mangle)]` exports that dereference a `*const u8`: a safe `pub extern
+"C" fn` is a `not_unsafe_ptr_arg_deref` deny error, a `pub unsafe extern "C" fn` without
+`# Safety` warns `missing_safety_doc`, the same with `# Safety` is clean, and a non-`pub` safe
+`extern "C" fn` gets no lint at all. The last form only hides the defect: the symbol is still
+exported, and the foreign caller still passes a raw pointer to a function that claims to be safe.
+Choose visibility separately, for the Rust callers of the crate. Never suppress
+`not_unsafe_ptr_arg_deref` (SKILL.md, Binding and FFI crates), and do not relax either lint for
+the binding crate or the workspace.
 
-A non-`pub` export also clears `missing_safety_doc`. Give any `pub unsafe fn` that remains a
-`# Safety` section. Do not relax the lint for the binding crate or the workspace.
+```rust
+/// Reads the first byte of a buffer the foreign caller owns.
+///
+/// # Safety
+///
+/// `p` must be non-null, aligned, and valid for a one-byte read.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn first_byte(p: *const u8) -> u8 {
+    // SAFETY: the caller upholds the contract in `# Safety`.
+    unsafe { *p }
+}
+```
 
 Keep `improper_ctypes_definitions` at its default level and never allow it crate-wide. The
 `rust-jni` skill owns the entry-point signatures, and the `uniffi-boundary` skill owns generated
@@ -232,5 +261,5 @@ UniFFI scaffolding.
 | `clippy::string_to_string` | Deprecated in clippy 1.91. `implicit_clone` covers it. |
 | `expect_used` in the workspace table | A `.expect("<invariant>")` is allowed in non-test code (the `rust-discipline` skill). Add the lint per crate where no panic may escape, such as an FFI adapter (the `rust-panic-safety` skill). |
 | `clippy::restriction` (the whole group) | Contains mutually exclusive lints. Cherry-pick instead. |
-| `await_holding_*` in a synchronous workspace | Cannot fire; it is noise in the config. |
+| An explicit `await_holding_*` pin in a synchronous workspace | The group level already sets them, and they cannot fire without `.await`. |
 | `unsafe_code = "forbid"` in `[workspace.lints.rust]` | Set it per crate; see SKILL.md, Crate-level attributes. |
