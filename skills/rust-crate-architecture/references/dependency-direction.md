@@ -30,6 +30,17 @@ This lists every workspace member with its manifest path, version, features, and
 targets. Nothing else is authoritative. A diagram, a README, and a comment are
 all evidence of the past.
 
+Without jq, print the edge list of SKILL.md with Python:
+
+```bash
+cargo metadata --locked --no-deps --format-version 1 | python3 -c '
+import json, sys
+for p in json.load(sys.stdin)["packages"]:
+    for d in p["dependencies"]:
+        if d.get("path"):
+            print("%s -> %s [%s]" % (p["name"], d["name"], d["kind"] or "normal"))' | sort
+```
+
 ### 2. Assign one layer to every crate
 
 Write the table down. One row per crate, one layer per crate. A crate you cannot
