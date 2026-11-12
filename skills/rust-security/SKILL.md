@@ -230,78 +230,24 @@ Apply this gate to every package name that is new in the `Cargo.lock` diff, tran
 packages included. A `cargo update` is a vetting event too: a patch release that adds a
 dependency adds a new package name.
 
-1. **Create the candidate lockfile.** After you edit `Cargo.toml`, resolve once without
-   `--locked`. After `cargo update`, the lockfile is already written. Then read the diff:
+Read [references/vetting.md](references/vetting.md) when you run the gate. It has the
+commands for each step:
 
-   ```bash
-   cargo metadata --format-version 1 > /dev/null
-   git diff -- Cargo.lock
-   ```
+1. **Create the candidate lockfile** without a build (`cargo metadata --format-version 1`),
+   and list every new `[[package]]` name in `git diff -- Cargo.lock`.
+2. **Check the identity**: the name character by character, the first-publish date, the
+   download count, the repository, and the owners. A name close to a popular crate and
+   under 7 days old (a default threshold) is a red flag.
+3. **Read the published source**, not the repository: every build script in full, and every
+   file of a proc macro, a new or fresh release, or a package with an unexplained network,
+   process, or environment match.
+4. **Write a caret requirement at the reviewed version**, not `=1.2.3`.
+5. **Run the policy on the candidate graph**: `cargo deny --config deny.toml --locked check`.
+6. **Justify the dependency** against the standard library and the crates already in the
+   graph.
 
-   Every new `[[package]]` name is a package to vet. Do not use `cargo update -p <crate>`
-   for a crate that is not in the old lockfile. Cargo cannot select it yet. Do not run a
-   `--locked` check before this step, because the old lockfile does not hold the new graph.
-2. **Check the identity.** Compare the name character by character with the intended
-   crate. Look for an added word or character (`faster_log` for `fast_log`), a `-rs` or
-   `-rust` suffix, or a plural. crates.io treats `-` and `_` as the same name, so a swap
-   alone cannot squat. Read the first-publish date, the download count, and the repository
-   URL, and check the owners on the crate page:
-
-   ```bash
-   curl -s -A '<tool> (<contact>)' https://crates.io/api/v1/crates/<crate> \
-     | jq -r '.crate | "\(.created_at) \(.downloads) \(.repository)"'
-   ```
-
-   A crate first published less than 7 days ago (a default threshold; set your own) under
-   a name close to a popular crate is a red flag. Reject it, or read every file of it in
-   step 3.
-3. **Read the published source, not the repository.** The `.crate` can differ from the Git
-   tree. Run `cargo fetch --locked`, then find the unpacked source of each new package:
-
-   ```bash
-   cargo metadata --locked --format-version 1 \
-     | jq -r '.packages[] | select(.name == "<crate>" and .version == "<version>") | .manifest_path'
-   ```
-
-   Triage every new package. Grep the directory of that `manifest_path` for code that
-   reaches outside the process, and read each match:
-
-   ```bash
-   grep -rnE 'Command::new|TcpStream|UdpSocket|reqwest|ureq|hyper|env::var|home_dir|include_bytes!|[A-Za-z0-9+/=]{100,}' <dir>
-   ```
-
-   List the packages that run code at compile time:
-
-   ```bash
-   cargo metadata --locked --format-version 1 | jq -r '.packages[]
-     | select(any(.targets[].kind[]; . == "custom-build" or . == "proc-macro"))
-     | "\(.name) \(.version)"'
-   ```
-
-   Read the build script of each new package in full, with every file it includes. Read
-   every file of a package that is a proc macro, has a grep match that its purpose does not
-   explain, was first published or released less than 7 days ago, or has few downloads or
-   a new owner. Look for network access, `std::process::Command`, environment reads,
-   home-directory and key-file paths, embedded blobs, and file writes outside `OUT_DIR`. A
-   pure utility crate that opens a socket is a red flag.
-4. **Write a caret requirement at the reviewed version** (`name = "1.2.3"`). The committed
-   `Cargo.lock` holds the exact version. Do not vet with `=1.2.3`: it stops
-   `cargo update -p` from taking a security fix, and in a published library every other
-   requirement must accept exactly that version, which a yank breaks. Use `=` only for a
-   crate and its companion proc-macro crate.
-5. **Run the policy on the candidate graph.** Run
-   `cargo deny --config deny.toml --locked check`. Reject the dependency if it fails.
-6. **Justify the dependency.** Check whether the standard library or a crate already in
-   the graph does the job. Every new crate widens the attack surface.
-
-For a version bump of a package that is already in the lockfile, check the release date:
-
-```bash
-curl -s -A '<tool> (<contact>)' https://crates.io/api/v1/crates/<crate>/<version> | jq -r .version.created_at
-```
-
-Read the changes of a release under 7 days old or one that adds a build script or a
-proc-macro dependency: `diff -ru <old-dir> <new-dir>` on the two unpacked directories.
+For a version bump of a package that is already in the lockfile, read the diff of a release
+under 7 days old or one that adds a build script or a proc-macro dependency.
 
 ## 6. Supply chain hardening
 
@@ -309,14 +255,16 @@ proc-macro dependency: `diff -ru <old-dir> <new-dir>` on the two unpacked direct
 cargo fetch --locked
 cargo tree --locked -d             # duplicate versions
 cargo tree --locked -i <crate>     # why is this crate here
+cargo install --locked cargo-machete
 cargo machete                      # unused dependencies
-cargo install --locked cargo-vet
-cargo vet init                     # once per repository
-cargo vet
 ```
 
 `cargo machete` is a heuristic: a renamed or macro-only dependency is a false positive.
 Confirm each finding.
+
+Run `cargo vet` only when the repository already has a `supply-chain/` directory.
+`cargo vet init` exempts every current dependency, so a `cargo vet` right after it proves
+nothing about them.
 
 - Commit `Cargo.lock` for every package, libraries included. It does not constrain the
   consumers of a library. The `cargo-workflows` skill owns the lockfile policy.
