@@ -247,7 +247,7 @@ fn owns(data: String) -> impl Future<Output = usize> + use<> {
 `error[E0700]: hidden type for ... captures lifetime that does not appear in bounds`. The
 lifetime is a property of what the body holds. The capture list only declares it.
 
-The `impl_trait_overcaptures` lint (in the `rust-2024-compatibility` group) flags affected sites
+The `impl_trait_overcaptures` lint (in the `rust_2024_compatibility` group) flags affected sites
 before the migration. The `cargo-workflows` skill, when it is installed, owns the
 `cargo fix --edition` workflow; inspect every RPIT diff it makes.
 
