@@ -2,12 +2,13 @@
 
 How the constructs of each source language map to Rust in a port. Read the section of the
 language you port from. The traps that change output are in `SKILL.md`; this file holds the
-structural mapping.
+structural mapping and an executed probe of the traps.
 
 - [C and C++](#c-and-c)
 - [Python](#python)
 - [Go](#go)
 - [JavaScript and TypeScript](#javascript-and-typescript)
+- [Trap probe](#trap-probe)
 
 ## C and C++
 
@@ -83,3 +84,64 @@ structural mapping.
 | `string.length`, `charAt`, `substring` | UTF-16 units: `encode_utf16()` for lengths; never slice a `&str` at a JavaScript index |
 | `JSON.stringify` | `serde_json`, with two differences: it writes the `f64` 1.0 as `1.0` where JavaScript writes `1`, and its map key order is sorted unless `preserve_order` is on, where JavaScript puts integer-like keys first and then insertion order |
 | Bitwise operators (`x \| 0`, `>>`) | They convert to a 32-bit integer first: port them on `i32`, and mask a shift count to 5 bits as JavaScript does |
+
+## Trap probe
+
+The Rust-side claims of the trap table in `SKILL.md`, executed (Rust 1.99.1). `floor_div` and
+`floor_mod` are the floor helpers that the first row names:
+
+```rust,run
+/// Floor division as Python's `//` defines it. `i64::MIN / -1` overflows in Rust, where Python
+/// returns 2^63: check that pair when the input can reach it.
+fn floor_div(a: i64, b: i64) -> i64 {
+    let q = a / b;
+    if a % b != 0 && ((a < 0) != (b < 0)) { q - 1 } else { q }
+}
+
+/// The remainder that pairs with `floor_div`: it takes the sign of the divisor. It corrects
+/// `a % b` instead of computing `a - b * q`, which overflows near the limits.
+fn floor_mod(a: i64, b: i64) -> i64 {
+    let r = a % b;
+    if r != 0 && ((r < 0) != (b < 0)) { r + b } else { r }
+}
+
+fn main() {
+    assert_eq!((-7 / 2, -7 % 2), (-3, -1));
+    assert_eq!((floor_div(-7, 2), floor_mod(-7, 2)), (-4, 1));
+    assert_eq!(((-7i64).div_euclid(2), 7i64.div_euclid(-2)), (-4, -3));
+    assert_eq!((floor_div(7, -2), floor_mod(7, -2)), (-4, -1));
+    assert_eq!((floor_div(i64::MIN, 3), floor_mod(i64::MIN, 3)), (-3074457345618258603, 1));
+    assert!(i64::MIN.checked_div(-1).is_none());
+
+    assert_eq!((2.5f64.round(), (-2.5f64).round()), (3.0, -3.0));
+    assert_eq!((2.5f64.round_ties_even(), 3.5f64.round_ties_even()), (2.0, 4.0));
+    // JavaScript Math.round: half toward positive infinity, exact for every f64.
+    let js_round = |x: f64| if x.fract() == -0.5 { x.ceil() } else { x.round() };
+    assert_eq!((js_round(-2.5), js_round(2.5), js_round(0.49999999999999994)), (-2.0, 3.0, 0.0));
+    assert_eq!(js_round(4503599627370497.0), 4503599627370497.0);
+    assert_eq!((0.49999999999999994f64 + 0.5).floor(), 1.0); // the polyfill fails here
+
+    let s = "héllo😀";
+    assert_eq!((s.len(), s.chars().count(), s.encode_utf16().count()), (10, 6, 7));
+
+    assert!("  42 ".parse::<i32>().is_err());
+    assert!("1_000".parse::<i32>().is_err());
+    assert_eq!("+5".parse::<i32>(), Ok(5));
+
+    assert_eq!("a\u{2028}b\x0cc".lines().count(), 1);
+    assert_eq!(" a  b ".split_whitespace().collect::<Vec<_>>(), ["a", "b"]);
+    assert_eq!(" a  b ".split(' ').collect::<Vec<_>>(), ["", "a", "", "b", ""]);
+
+    assert_eq!(i32::MAX.wrapping_add(1), i32::MIN);
+    assert_eq!(i32::MAX.checked_add(1), None);
+
+    let mut v = [(1, 'b'), (0, 'x'), (1, 'a')];
+    v.sort_by_key(|&(k, _)| k);
+    assert_eq!(v, [(0, 'x'), (1, 'b'), (1, 'a')]);
+    let mut f = [2.0, f64::NAN, 1.0];
+    f.sort_by(f64::total_cmp);
+    assert_eq!(&f[..2], &[1.0, 2.0]);
+    assert!(f[2].is_nan());
+}
+```
+
