@@ -295,7 +295,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 Current versions: `tikv-jemallocator` 0.7.0 (over `tikv-jemalloc-sys` 0.7.1, jemalloc 5.3.1) and
 `mimalloc` 0.1.52 (over mimalloc 3.3.2). The older `jemallocator` crate is stale at 0.5.4; do not start
-there. jemalloc covers Linux and macOS. mimalloc is portable.
+there. jemalloc builds from C source for each target and runs on Linux, macOS, and Android (the
+prefix notes below); the `jemalloc-sys` build script on the tikv master branch (read 2026-11-12)
+panics on `wasm32`, `emscripten`, `fuchsia`, `redox`, `rumprun`, and `bitrig` targets. Build and
+run it on Windows before you rely on it there. mimalloc is portable.
 
 The speed effect is platform-dependent, because it is a comparison against whatever system allocator
 the platform ships. Measure it on each target. The cost is fixed and measurable up front.
@@ -370,7 +373,7 @@ Each row costs more than the one above it. Stop when the metric is met.
 | Confirm the settings reach rustc | Minutes | None | `cargo build --release -v`, read the rustc command line |
 | `opt-level`, `lto`, `codegen-units` | Build time only | None | `cargo bloat`, Criterion baseline |
 | `target-cpu` baseline (`x86-64-v3` and similar) | None at run time | Drops old CPUs | `diff` of `rustc --print cfg` |
-| Swap the allocator | Binary size, build time | jemalloc: Linux and macOS only; mimalloc: none | `MIMALLOC_VERBOSE=1`, or jemalloc `stats_print` |
+| Swap the allocator | Binary size, build time | jemalloc: a C build per target, no `wasm32`, Windows unverified; mimalloc: none | `MIMALLOC_VERBOSE=1`, or jemalloc `stats_print` |
 | PGO | A representative workload, plus CI plumbing | None | No `bad magic` warning; `llvm-profdata show` counts functions; hot functions draw no missing-profile warning |
 | `target-cpu=native` | None | Binary runs on one machine class | `diff` of `rustc --print cfg` |
 

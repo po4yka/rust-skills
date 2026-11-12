@@ -23,7 +23,7 @@ Contents:
 | Hyperfine 2.0.0 | Wall clock of a whole process | The unit of work is one CLI invocation, not one function |
 | Gungraun 0.20.0 | Valgrind instruction counts, or Linux perf counters | You need a number that does not move with machine noise, or a CI gate. Linux only (Valgrind, perf); not macOS or Windows |
 
-Two traps:
+Four traps:
 
 - Gungraun is the rename of `iai-callgrind`. `iai-callgrind` is still published separately at
   0.16.1, so name the crate you mean. Gungraun also needs a `gungraun-runner` binary of the same

@@ -23,9 +23,16 @@ cargo install --locked sccache   # or: brew install sccache
 # Enable for Rust builds, in .cargo/config.toml or in the environment
 export RUSTC_WRAPPER=sccache
 
-# Check the hit rate. Expect over 80% on a rebuild.
+# Check the hit rate. Expect over 80% on a rebuild of cacheable crates only.
 sccache --show-stats
 ```
+
+Two kinds of crate never hit, per sccache's `docs/Rust.md` (read 2026-11-12 on its main
+branch). An incrementally compiled crate is not cached: in the `dev` profile that is every
+workspace member and path dependency, so set `CARGO_INCREMENTAL=0` where the cache must work.
+A crate that invokes the linker is not cached: `bin`, `cdylib`, `dylib`, and `proc-macro`. A
+workspace of binaries and a mobile `cdylib` therefore always rebuilds its final crates, and the
+hit rate counts only the libraries under them.
 
 In GitHub Actions, the cache persists between runs only with the GitHub Actions backend. Set both
 variables through `GITHUB_ENV`; an `env` block on the setup step applies only to that step. The
@@ -38,6 +45,7 @@ action's README enables the cache only on non-release runs, so a release build c
   run: |
     echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
     echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+    echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
 ```
 
 Without `SCCACHE_GHA_ENABLED=true`, sccache writes a local disk cache that the next job never sees.

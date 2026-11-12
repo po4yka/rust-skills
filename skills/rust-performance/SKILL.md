@@ -1,6 +1,6 @@
 ---
 name: rust-performance
-description: Use when a Rust workload is slow, a benchmark regressed, a binary or app bundle grew, or a build is slow, and the next step is to measure it with a flamegraph, samply, perf, simpleperf, Perfetto, Instruments, DHAT, Criterion, Gungraun, cargo-bloat, cargo-llvm-lines, or cargo --timings, or to tune LTO, codegen-units, opt-level, PGO, or a rayon thread pool. Not for choosing the code change after a profile names the hotspot; use `rust-hot-path`.
+description: Use when a Rust workload is slow, a benchmark regressed, a binary or app bundle grew, or a build is slow, and the next step is to measure with a flamegraph, samply, perf, simpleperf, Perfetto, Instruments, DHAT, Criterion, Gungraun, cargo-bloat, cargo-llvm-lines, or cargo --timings, or to tune LTO, codegen-units, opt-level, PGO, or a rayon thread pool. Not for choosing the code change after a profile names the hotspot; use `rust-hot-path`.
 license: BSD-3-Clause
 ---
 
@@ -59,9 +59,8 @@ Before you claim a performance change, have evidence for each line that applies:
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Flamegraph shows hex addresses | The profiled build has no symbols | Build and profile with `--profile profiling`; check it with `readelf -S` |
-| Linux stacks wrong, or no function names, under `cargo flamegraph` or `perf` | `rust-lld` without `--no-rosegment`, or a build without debug info | Profile the `profiling` profile; pass `-Wl,--no-rosegment` through `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` |
-| Stacks stop at the same depth in deep call chains | DWARF mode copies only 64000 bytes of stack per sample | Add `-Cforce-frame-pointers=yes` to `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`, rebuild, and run `cargo flamegraph --profile profiling --cmd "record -F 997 --call-graph fp" --bin myapp` |
-| Stacks cut off only in `--call-graph fp` mode | No frame pointers in your code | Add `-C force-frame-pointers=yes` through `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` or the config file, not `RUSTFLAGS` |
+| Linux stacks wrong, or no function names, under `cargo flamegraph` or `perf` | `rust-lld` without `--no-rosegment`, or a build without debug info | Profile the `profiling` profile; pass `-Clink-arg=-Wl,--no-rosegment` through `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` |
+| Stacks stop at the same depth in deep call chains, or are cut off in `--call-graph fp` mode | DWARF mode copies only 64000 bytes of stack per sample; or no frame pointers in your code | Add `-Cforce-frame-pointers=yes` to `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` (not `RUSTFLAGS`), rebuild, and run `cargo flamegraph --profile profiling --cmd "record -F 997 --call-graph fp" --bin myapp` |
 | A flag from `.cargo/config.toml` has no effect | `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` is set and replaces it, or a `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` value hides a `[build] rustflags` entry | Unset it, or move every flag to one config level; check the `rustc` line of `cargo build -v` |
 | Frames or reports show raw `_R...` names | The tool predates v0 mangling, the default since Rust 1.97 | Upgrade the tool, or pipe text output through `rustfilt`; see `rust-debugging` |
 | Symbolication shows `<unknown>` | Stripped library | Use the unstripped `.so` from `target/<triple>/<profile>/`, not the packaged copy |
@@ -101,12 +100,12 @@ cargo build --locked --profile profiling --bin myapp
 cargo flamegraph --profile profiling --bin myapp -- --workers 4
 ```
 
-Set `--no-rosegment` only for the profiling build and the `cargo flamegraph` run, as above. In the repository config it also reaches shipped builds and puts read-only data in an executable segment. `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` joins the config-file `[target]` rustflags, and it makes Cargo drop every `[build] rustflags` entry without a warning, because Cargo reads `build.rustflags` only when no target rustflags match. Copy the `[build] rustflags` entries, such as `--cfg tokio_unstable` or `-C target-cpu`, into the same variable, or the profiled binary is not the one you ship. A plain `RUSTFLAGS` replaces every config-file entry. Read [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) when a first `cargo flamegraph` run fails or shows broken stacks, when you profile a test, example, or benchmark, or when you interpret a flamegraph pattern. Width is the share of samples; the left-to-right order is alphabetical, not time.
+Set `--no-rosegment` only for the profiling build and the `cargo flamegraph` run, as above; in the repository config it reaches shipped builds and puts read-only data in an executable segment. A `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` value makes Cargo drop every `[build] rustflags` entry, so copy those entries (such as `--cfg tokio_unstable`) into it; [references/build-configuration.md](references/build-configuration.md) section 1 owns the precedence rules. Read [references/cargo-flamegraph-setup.md](references/cargo-flamegraph-setup.md) when a first `cargo flamegraph` run fails or shows broken stacks, when you profile a test, example, or benchmark, or when you interpret a flamegraph pattern. Width is the share of samples; the left-to-right order is alphabetical, not time.
 
 Heap profiles:
 
 - Linux: `heaptrack ./target/profiling/myapp`, or `valgrind --tool=dhat ./target/profiling/myapp`.
-- Any host, on stable: the `dhat` crate 0.3.3. Put both the `#[global_allocator] static ALLOC: dhat::Alloc = dhat::Alloc;` item and the `dhat::Profiler::new_heap()` call behind a `dhat-heap` feature, so neither reaches the shipped binary. Run `cargo run --locked --profile profiling --features dhat-heap -- <args>`, then open `dhat-heap.json` in the [DHAT viewer](https://nnethercote.github.io/dh_view/dh_view.html).
+- Any host, on stable: the `dhat` crate 0.3.3. Put both the `#[global_allocator] static ALLOC: dhat::Alloc = dhat::Alloc;` item and `let _profiler = dhat::Profiler::new_heap();`, the first statement of `main`, behind a `dhat-heap` feature, so neither reaches the shipped binary. A bare call or `let _ =` drops the profiler at once and records nothing. Run `cargo run --locked --profile profiling --features dhat-heap -- <args>`, then open `dhat-heap.json` in the [DHAT viewer](https://nnethercote.github.io/dh_view/dh_view.html).
 - A `dhat::assert_eq!` allocation-count test pins a win. The `rust-hot-path` skill has the test and its one-test-per-file isolation rule.
 
 ## 2. Android on-device profiling

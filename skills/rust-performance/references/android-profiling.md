@@ -49,10 +49,8 @@ with `could not load Cargo configuration`. Otherwise add this table:
 rustflags = ["-C", "force-frame-pointers=yes"]
 ```
 
-Cargo joins it with every other matching `[target.<triple>]` and `[target.'cfg(...)']` table.
-
-A `RUSTFLAGS` environment variable replaces this table and every other config-file rustflags
-entry. Keep the flag in the config file.
+Keep the flag in the config file: a `RUSTFLAGS` environment variable replaces it (the
+precedence rules are in [build-configuration.md](build-configuration.md) section 1).
 
 ## 3. Record a CPU profile with simpleperf
 
