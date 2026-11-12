@@ -346,6 +346,7 @@ load bearing across a module boundary, not on one a single `assert!` already cov
 
 ## Related
 
-- [type-and-trait-traps.md](type-and-trait-traps.md) — blanket impls, lifetime laundering, and
-  reference cycles
+- [type-and-trait-traps.md](type-and-trait-traps.md) — blanket impls and lifetime laundering
+- [ownership-and-concurrency-traps.md](ownership-and-concurrency-traps.md) — reference cycles,
+  mutex poisoning, and builder receivers
 - [SKILL.md](../SKILL.md) — the API design rules these techniques implement

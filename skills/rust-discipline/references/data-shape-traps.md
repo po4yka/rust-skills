@@ -152,15 +152,20 @@ let heap_array: Box<[u8; 1024 * 1024]> = vec![0u8; 1024 * 1024]
     .expect("the length is exactly 1 MiB");
 ```
 
-Rule: build any array larger than 16 KiB for heap residence with `vec![x; n].into_boxed_slice()`,
-or collect an exact-length iterator into `Box<[T]>`. Use `Box::new_uninit_slice` only when you
-write every element yourself. Never write `Box::new([T; N])` for a large `N`, and never return
+Rule: build any array that a stack-size lint flags for heap residence with
+`vec![x; n].into_boxed_slice()`, or collect an exact-length iterator into `Box<[T]>`. Use
+`Box::new_uninit_slice` only when you write every element yourself. Never write `Box::new([T; N])` for a large `N`, and never return
 `[T; N]` by value for a large `N`. Hot-path code also falls under the allocation rules of the
 `rust-hot-path` skill.
 
-Enable `clippy::large_stack_arrays` (pedantic) as the mechanical check. Its default
-`array-size-threshold` is 16384 bytes, the same limit. Measured on clippy 1.98.1, it flags
+Two lints are the mechanical check, and the `rust-lints` skill owns both thresholds in
+`clippy.toml`. `clippy::large_stack_arrays` (pedantic) flags one array over
+`array-size-threshold`, default 16384 bytes: measured on clippy 1.98.1, it flags
 `Box::new([0u8; 20000])` with `allocating a local array larger than 16384 bytes`.
+`clippy::large_stack_frames` flags a whole frame over `stack-size-threshold`, which the
+`rust-lints` template lowers to 4096 bytes. That limit is stricter because a frame sums every
+local: measured on clippy 1.99.1, an 8000-byte local array gives `this function may allocate
+8026 bytes on the stack`, and `large_stack_arrays` stays silent.
 
 `Vec::into_boxed_slice` is not free when capacity exceeds length. The `rust-hot-path` skill, when
 it is installed, owns the measured pointer and capacity table and its allocator caveat. When the
