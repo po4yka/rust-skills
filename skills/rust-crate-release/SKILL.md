@@ -350,11 +350,10 @@ Use these skills when they are installed:
 
 - `cargo-workflows` for workspace layout, lockfile policy, profiles, CI caching, and edition
   migration.
-- `rust-discipline` to design or review the public Rust API.
+- `rust-discipline` to design the public API; mark a public enum that downstream code matches
+  `#[non_exhaustive]` in its first release.
 - `rust-security` for dependency advisories, `deny.toml`, vetting a new or updated dependency,
   and the response to a vulnerable or malicious dependency.
-- `rust-test-tools` and `rust-tdd` for the test strategy behind the release gates.
-- `uniffi-packaging-versioning` for mobile FFI artifacts and bindings.
 
 ## Official references
 
