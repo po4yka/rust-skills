@@ -66,8 +66,8 @@ Use the smallest paired lanes that prove the declared contract:
 2. Run Android at the declared floor and current API levels. Select ABI lanes
    from the shipping policy instead of creating a second ABI list. Give every
    shipping ABI family that CI can execute at least one runtime lane. A host
-   JVM test is not a runtime lane: the Kotlin checksum defects in `SKILL.md`
-   appeared only on ARM devices. For each remaining shipping ABI family, retain
+   JVM test is not a runtime lane: the Kotlin checksum defects in
+   `binding-compat.md` appeared only on ARM devices. For each remaining shipping ABI family, retain
    package and device-spec inspection and record runtime proof as blocked or
    unverified. Do not report inspection as runtime proof.
 3. Compile the Apple wrapper with the floor Swift/Xcode tuple and the current
