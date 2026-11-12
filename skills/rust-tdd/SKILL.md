@@ -56,9 +56,11 @@ and `cargo test --locked --workspace --doc`.
 
 - Add `--all-features` to the clippy and test commands only when the workspace features are
   additive. Otherwise check each supported feature set. The `cargo-workflows` skill, when it
-  is installed, has the feature-matrix commands.
+  is installed, owns the feature matrix; with cargo-hack,
+  `cargo hack check --locked -p <crate> --each-feature --exclude-all-features` runs one
+  feature at a time.
 - `--all-targets` lints test code too. The `rust-lints` skill, when it is installed, owns the
-  lint set.
+  lint set; each member inherits it through `[lints] workspace = true`.
 - For a crate that has only doctests, cargo-nextest finds no test and exits 4. Run
   `cargo test --locked --doc -p <crate>` for that crate.
 
@@ -186,8 +188,7 @@ fn new_rejects_zero_capacity() {
 
 Enable `clippy::should_panic_without_expect` and `clippy::ignore_without_reason` in the
 workspace lint table. Both lints are pedantic, so they are off by default. With them on, the
-`-D warnings` gate rejects a bare `#[should_panic]` and a bare `#[ignore]`. The `rust-lints`
-skill, when it is installed, owns the lint table.
+`-D warnings` gate rejects a bare `#[should_panic]` and a bare `#[ignore]`.
 
 ## Test doubles: hand-written fakes
 
@@ -245,7 +246,8 @@ fn start_maps_transport_failure_to_service_error() {
 `std::assert_matches!` (Rust 1.96) prints the value that did not match. It is not in the
 prelude, so import it. Below MSRV 1.96, use `assert!(matches!(..))`, which prints only the
 expression text. For cancellation and progress faults across an FFI boundary, use the
-`ffi-error-progress-cancel` skill, when it is installed.
+`ffi-error-progress-cancel` skill, when it is installed; at minimum, assert that a cancel maps to
+`Cancelled`, not to a failure.
 
 ## Async tests with tokio
 
@@ -279,9 +281,7 @@ switch, the rules to review a bless, and the scrubbing of volatile fields.
 Each of these applies when it is installed.
 
 - `rust-test-tools` — proptest, loom, cargo-mutants, cargo-fuzz, and golden-test mechanics.
-- `rust-lints` — the lint set behind the clippy gate.
-- `cargo-workflows` — the cargo command set, the lockfile policy, and feature matrices.
 - `rust-panic-safety` — what may panic, and how to contain a panic at a boundary.
-- `rust-debugging` — what to do when a test fails and you cannot see why.
+- `rust-debugging` — a test that fails with no visible cause; start with
+  `RUST_BACKTRACE=1 cargo test --locked -p <crate> <test_name> -- --no-capture`.
 - `rust-sanitizers-miri` — undefined behavior that a passing test suite does not report.
-- `ffi-error-progress-cancel` — error, progress, and cancellation contracts across FFI.
