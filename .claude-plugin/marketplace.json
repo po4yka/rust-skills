@@ -147,7 +147,7 @@
     {
       "name": "rust-skills-ffi",
       "source": "./",
-      "description": "FFI and platform boundaries: 6 Rust agent skills.",
+      "description": "FFI and platform boundaries: 7 Rust agent skills.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -161,7 +161,8 @@
         "./skills/uniffi-boundary",
         "./skills/uniffi-packaging-versioning",
         "./skills/ffi-error-progress-cancel",
-        "./skills/rust-cxx"
+        "./skills/rust-cxx",
+        "./skills/rust-pyo3"
       ]
     }
   ]

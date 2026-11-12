@@ -55,3 +55,4 @@ design, build, testing, concurrency, production, ffi. Delete the rows of a bundl
 | UniFFI checksum mismatch, `RustBuffer` error, binding version skew | uniffi-packaging-versioning |
 | `Activity` lifecycle, `ViewModel.onCleared`, callback release race | ffi-error-progress-cancel |
 | `cxx::bridge`: `error[cxxbridge]`, an undefined `cxxbridge1` symbol, `std::terminate` after a C++ throw | rust-cxx |
+| A PyO3 extension fails to import (`PyInit_`), link in `cargo test`, or install as a maturin wheel | rust-pyo3 |

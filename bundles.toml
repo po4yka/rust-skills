@@ -91,4 +91,5 @@ skills = [
     "uniffi-packaging-versioning",
     "ffi-error-progress-cancel",
     "rust-cxx",
+    "rust-pyo3",
 ]

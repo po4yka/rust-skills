@@ -363,4 +363,7 @@ claiming a phrase the other owns.
 | cxx::bridge | rust-cxx |
 | CxxString | rust-cxx |
 | cxxbridge1 symbol | rust-cxx |
+| PyO3 | rust-pyo3 |
+| maturin | rust-pyo3 |
+| PanicException | rust-pyo3 |
 | panic policy | rust-panic-safety | rust-discipline |
