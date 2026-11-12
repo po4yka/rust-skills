@@ -338,8 +338,11 @@ call.
 
 ### Backpressure
 
-`SKILL.md` section 2 holds the `callbackFlow`, `awaitClose`, and conflation
-rules. Treat a failed `trySend` as a closed-consumer signal, not as normal
+Use `callbackFlow`, not `flow {}`: the engine pushes events from its own worker
+thread, and `flow {}` cannot emit from another thread. Without
+`Channel.CONFLATED`, a full buffer rejects the current event and keeps stale
+progress. `callbackFlow` throws `IllegalStateException` if the block returns
+while the channel is still open, so `awaitClose` must end it. Treat a failed `trySend` as a closed-consumer signal, not as normal
 overflow. Never block the engine worker to deliver a progress tick.
 
 If you need every event delivered, the event carries data it should not. Move
@@ -479,8 +482,14 @@ Putting `cancelJob` in `onTermination` means:
   is idempotent and tolerates a finished id.
 
 That last point is why the "unknown or finished id is a no-op success" rule in
-`SKILL.md` is not optional: this bridge depends on it. `SKILL.md` section 2
-holds the assignment-order and non-blocking rules for the handler.
+`SKILL.md` is not optional: this bridge depends on it.
+
+Assign `onTermination` before the worker starts. The stream calls the handler
+once, on the first of `finish()`, `finish(throwing:)`, consumer cancellation,
+or deallocation. A handler assigned after the stream already finished runs only
+when the storage deallocates, and with `.cancelled` (Swift 6.4 probe;
+`AsyncStreamBuffer.swift` storage `deinit`). The handler can run during task
+cancellation, so it must not block.
 
 The handler does not stop the worker thread. Nothing in Swift interrupts a
 synchronous FFI call; the Rust flag does.
@@ -489,7 +498,8 @@ synchronous FFI call; the Rust flag does.
 
 - The generated foreign-trait protocol inherits `Sendable` (UniFFI Swift
   overview). The implementation is a `final class` with only `let` properties of
-  `Sendable` type, and its closure is `@Sendable`.
+  `Sendable` type, and its closure is `@Sendable`. Rust calls it on its own
+  worker thread, so keep captured values such as `ExportRequest` `Sendable`.
 - In a module built with `-default-isolation MainActor`, mark `nonisolated`
   the conversion helpers that the listener and the worker call (`toDomain`,
   `toFfi`, a free error `map`), or the bridge does not compile. The

@@ -12,16 +12,11 @@ give an error enum that cannot say "the user pressed Cancel", a progress stream
 that leaks a worker when the consumer goes away, and a cancel call that blocks
 the UI thread.
 
-Related skills, when they are installed:
-
-- `uniffi-boundary`: binding mechanics, derives, and the full `ProgressListener`
-  foreign-trait declaration.
-- `memory-model`: the reasoning behind the cancel-flag `Ordering`.
-- `rust-panic-safety`: the panic policy at a C ABI boundary.
-- `rust-jni` and `rust-swift-ffi`: the raw binding mechanics (thread
-  attachment, callbacks, handle and context lifetime). Apply this skill's error,
-  progress, and cancel protocol on top of them.
-- `rust-observability`: the `tracing` subscriber that receives redacted events.
+Related skills, when they are installed: `uniffi-boundary` (derives and the
+full `ProgressListener` declaration), `rust-jni` and `rust-swift-ffi` (raw
+binding mechanics under this protocol), `memory-model` (cancel-flag
+`Ordering`), `rust-panic-safety` (panic policy at a C ABI boundary), and
+`rust-observability` (the subscriber for redacted events).
 
 ## Pipeline
 
@@ -37,9 +32,8 @@ The core crate defines the kinds. The FFI crate translates them to the wire
 enum, exposes the progress listener as a foreign trait
 (`#[uniffi::export(foreign)]`), and hosts `reserve_job(job_id)` and
 `cancel_job(job_id)` on the engine object. The host never releases a
-reservation. The worker guard releases it on every exit path, and a short TTL
-reaps a reservation whose engine call never starts, for example a Kotlin
-`launch` that is cancelled before its body runs.
+reservation: the worker guard releases it on every exit path, and a short TTL
+(section 3) reaps one whose engine call never starts.
 
 **Exactly one layer touches generated types.** The platform engine wrapper (one
 Kotlin module, one Swift package) is the only code that sees UniFFI-generated
@@ -136,10 +130,8 @@ enum `#[non_exhaustive]`.
 
 Read [`references/error-taxonomy.md`](references/error-taxonomy.md) when you
 add, split, rename, or remove a kind, or wire a host log sink across the
-boundary. It holds the `CoreErrorKind` enum with its `code()` table, the rule
-for each split, and the redacting-sink contract. The sink admits only
-allowlisted fields (enum cases, counts, booleans), never a message or a source
-chain.
+boundary. A host log sink admits only allowlisted fields (enum cases, counts,
+booleans), never a message or a source chain.
 
 ### The boundary enum is flat
 
@@ -193,14 +185,12 @@ stops "show the raw error string" from becoming the default.
 
 Assign a bucket to a new kind in the change that adds it.
 
-UniFFI turns `EngineError` into a sealed Kotlin `EngineException` hierarchy and
-a Swift `enum EngineError: Error` with one `case InvalidRequest(message: String)`
-per variant. End every Kotlin wrapper `try` with a `catch (e: Exception)` that
+End every Kotlin wrapper `try` with a `catch (e: Exception)` that
 maps to the engine-bug bucket; around a `suspend` call, rethrow
 `CancellationException` first. Read
 [`references/platform-bridges.md`](references/platform-bridges.md) ("Error
-translation") when you write a mapper. It holds both mappers and explains why
-`omit_localized_error_conformance` does not make `localizedDescription` safe.
+translation") when you write a mapper for the generated Kotlin
+`EngineException` or Swift `EngineError`.
 
 ---
 
@@ -263,39 +253,22 @@ pub struct ProgressEvent {
 ### Platform bridges
 
 Read [`references/platform-bridges.md`](references/platform-bridges.md) when you
-write or review the Kotlin or Swift wrapper. It holds the complete
-`callbackFlow` and `AsyncThrowingStream` bridges, the error mappers, the Swift
-isolation rules, listener lifetime, and the test matrix. Each bridge keeps these
-rules:
+write or review the Kotlin or Swift wrapper: it holds both complete bridges and
+the test matrix. Each bridge keeps these rules:
 
-- Kotlin: use `callbackFlow`, not `flow {}`, because the engine pushes events
-  from its own worker thread. Fuse it with `buffer(Channel.CONFLATED)`, so
-  `trySend` replaces an older pending event and never blocks the worker. Without
-  conflation, a full buffer rejects the current event and keeps stale progress.
-- Kotlin: end the block with `awaitClose { engine.cancelJob(jobId) }`.
-  `callbackFlow` throws `IllegalStateException` if the block returns while the
-  channel is still open.
-- Kotlin: call `reserveJob` synchronously in the `callbackFlow` block, before
-  `launch` and before `awaitClose`, so a pre-cancel finds the reservation. Run
-  the engine call on `Dispatchers.Default` or `Dispatchers.IO`, never on
-  `Dispatchers.Main`, because engine calls block.
-- Swift: pass `bufferingPolicy: .bufferingNewest(1)`. The default policy is
-  `.unbounded`, so a slow consumer grows memory without limit.
-- Swift: call `reserveJob` in the build closure, then assign `onTermination`
-  before the task starts. The stream calls the handler once, on the first of
-  `finish()`, `finish(throwing:)`, consumer cancellation, or deallocation. A
-  handler assigned after the stream already finished runs only when the storage
-  deallocates, and with `.cancelled` (Swift 6.4 probe; `AsyncStreamBuffer.swift`
-  storage `deinit`). The handler can run during task cancellation, so it must
-  not block.
-- Swift: run the blocking engine call on a dedicated `Thread`. `Task.detached`
-  and `@concurrent` hold a thread of the fixed-size cooperative pool for the
-  whole job, and a `nonisolated async` helper can run on the main actor. Mark
-  the helpers that the closures call (`toDomain`, `toFfi`, `map`) `nonisolated`;
-  the `rust-swift-ffi` skill owns isolation.
-- Swift: make `ProgressListenerImpl` a `final class` that holds a `@Sendable`
-  closure, and keep captured values such as `ExportRequest` `Sendable`. Rust
-  calls the listener on its own worker thread.
+- Kotlin: use `callbackFlow` fused with `buffer(Channel.CONFLATED)`, so
+  `trySend` replaces an older pending event and never blocks the worker. End
+  the block with `awaitClose { engine.cancelJob(jobId) }`.
+- Kotlin: call `reserveJob` synchronously in the block, before `launch` and
+  `awaitClose`. Run the engine call on `Dispatchers.Default` or
+  `Dispatchers.IO`, never on `Dispatchers.Main`: engine calls block.
+- Swift: pass `bufferingPolicy: .bufferingNewest(1)`; the default `.unbounded`
+  grows memory without limit. Call `reserveJob` in the build closure and assign
+  `onTermination` before the worker starts. The handler must not block.
+- Swift: run the blocking engine call on a dedicated `Thread`, not in
+  `Task.detached` or a `@concurrent` method, which hold a cooperative-pool
+  thread for the whole job. Make `ProgressListenerImpl` a `final class` that
+  holds a `@Sendable` closure.
 
 ---
 
@@ -315,13 +288,10 @@ inner loops.
   an error.
 - Support **pre-cancel** through an explicit bounded reservation. Reserve the
   caller-supplied `job_id` synchronously before you expose cancellation or
-  launch the worker. A cancel between reservation and worker start sets that
-  reserved flag. A cancel for an unreserved id stays a no-op and must not add a
-  map entry. Reject empty or oversized ids, duplicate ids, and reservations
-  above the active-job limit. When Rust launches the worker, release the
-  reservation if the launch fails (the `LaunchReservation` guard). A
-  host-launched call that never starts waits for the TTL. Reap reservations
-  that do not start within a short TTL; never expire running jobs.
+  launch the worker. A cancel for an unreserved id stays a no-op and adds no
+  map entry. Reject empty, oversized, and duplicate ids, and reservations above
+  the active-job limit. Reap a reservation that does not start within a short
+  TTL; never expire a running job.
 - **Latency budget.** A cancel must be observed within one stage or a bounded
   number of inner iterations. If one stage is long, add interior checkpoints.
   Write the budget down and test against it.
@@ -333,8 +303,8 @@ inner loops.
 
 Read [`references/platform-bridges.md`](references/platform-bridges.md)
 (section 1) when you implement the job registry, the checkpoint helper, or an
-`async fn` export. It holds a runnable registry model with the TTL, the launch
-guard, and poison recovery.
+`async fn` export. It holds a runnable registry model with the TTL, the
+`LaunchReservation` guard for a failed launch, and poison recovery.
 
 ---
 
@@ -343,9 +313,9 @@ guard, and poison recovery.
 Treat a screen owner as a consumer of process-scoped Rust work, not as the
 owner of a Rust thread or runtime.
 
+Choose no Rust runtime or one process-scoped runtime. Keep teardown
+non-blocking, deliver UI state on `Dispatchers.Main` or `@MainActor`, make
+restart initialization idempotent, and write a callback release-race policy.
 Read [`references/mobile-lifecycle.md`](references/mobile-lifecycle.md) when a
-job or callback follows an Android or iOS owner lifecycle. Choose no Rust
-runtime or one process-scoped runtime. Keep teardown non-blocking, deliver UI
-state on `Dispatchers.Main` or `@MainActor`, make restart initialization
-idempotent, and write a callback release-race policy. The reference contains
-the complete contract, the required lifecycle tests, and a failure triage table.
+job or callback follows an Android or iOS owner lifecycle; it holds the
+required lifecycle tests and a failure triage table.
