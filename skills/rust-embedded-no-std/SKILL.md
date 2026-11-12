@@ -10,11 +10,12 @@ Keep the firmware bootable, bounded, observable, and testable on a host. Do not
 add an executor, allocator, or hardware abstraction until the product needs it.
 A synchronous static program is the smallest reliable firmware.
 
-Use these skills, when they are installed, for adjacent work:
+Use these skills, when installed:
 
 - `cargo-workflows` for workspace features, profiles, and CI gates;
 - `rust-native-linking` when firmware links a C library or vendor SDK;
-- `rust-unsafe` for raw pointers, SAFETY comments, and soundness review;
+- `rust-unsafe` for raw-pointer soundness: put a `// SAFETY:` comment above every `unsafe`
+  block;
 - `memory-model` for atomic orderings and general `static mut` rules;
 - `rust-wasm` for `wasm32v1-none` and other WebAssembly targets.
 
