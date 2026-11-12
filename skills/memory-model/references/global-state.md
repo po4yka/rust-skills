@@ -34,8 +34,9 @@ Do not rewrite a `static mut` to an atomic without reading its type. An atomic
 replaces a `static mut` that holds an integer or a `bool`. A `static mut` that
 holds a `Vec` or a `String` needs `OnceLock` or `LazyLock` plus a `Mutex`. On
 edition 2024 the `static_mut_refs` lint is deny-by-default, so every reference
-to the static stops the build. The `cargo-workflows` skill, when it is
-installed, has the two exact messages and the edition-2024 migration steps.
+to the static stops the build. Do not silence it with
+`#[allow(static_mut_refs)]`; the `cargo-workflows` skill, when it is installed, has the
+two exact messages and the edition-2024 migration steps.
 
 `LazyLock` is stable since 1.80.0 and `OnceLock` since 1.70.0. A workspace on a
 newer toolchain needs no `lazy_static` or `static_init` dependency. Keep
