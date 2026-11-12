@@ -14,6 +14,7 @@ Reference material for `SKILL.md`. Read the section that matches the code you wr
 - [block_in_place starves join! branches](#block_in_place-starves-join-branches)
 - [broadcast receivers and Lagged](#broadcast-receivers-and-lagged)
 - [Async-Drop contracts of pooled resource libraries](#async-drop-contracts-of-pooled-resource-libraries)
+- [Completion checklist](#completion-checklist)
 
 ## Cancel safety is an untyped invariant
 
@@ -175,9 +176,20 @@ does not abort a task on drop, so the token is the only stop signal.
 ## Task sets and supervision
 
 tokio has no scoped-task API. Build structured shutdown from a `CancellationToken` plus a
-`JoinSet` or a `TaskTracker`. `SKILL.md`, section "Task ownership and concurrency", gives the
-`JoinSet`, `TaskTracker`, and `FuturesUnordered` rules. This accept loop is the extended
-`TaskTracker` example:
+`JoinSet` or a `TaskTracker`:
+
+- `JoinSet` owns a set of spawned tasks. `join_next().await` yields the next completed result.
+  Dropping the `JoinSet` aborts the tasks but does not wait for them. It keeps each result until
+  you call `join_next`, so an undrained `JoinSet` in an accept loop grows without limit.
+- `TaskTracker` counts tasks and keeps no results. Call `close()`, then `wait().await`, on
+  shutdown. Dropping it does not abort the tasks, so pair it with a `CancellationToken`.
+- `FuturesUnordered` polls a set of futures in place, without spawning, and drops a future that
+  you remove from it.
+- `buffer_unordered(K)` bounds concurrency to K. Its in-flight futures make progress only while
+  the stream is polled. A slow `.await` in the consuming loop body stalls them and can fire
+  their timeouts. Keep the loop body short, or spawn the work.
+
+This accept loop is the extended `TaskTracker` example:
 
 ```rust
 use std::time::Duration;
@@ -369,3 +381,21 @@ For every `Drop` on an async resource type:
    under runtime shutdown.
 4. Document the choice in a comment on the variable binding, for example
    `// drop here: deferred rollback acceptable in error path`.
+
+## Completion checklist
+
+Check these before you call async work done, and when you review async code or approve a merge.
+
+- [ ] By default, every future in a `select!`, `timeout`, or `FuturesUnordered` arm is
+      annotated `cancel-safe:` or `NOT cancel-safe:` with a reason.
+- [ ] Every long-lived `select!` loop has a `cancelled()` arm, and uses `biased;` when shutdown
+      must win.
+- [ ] A disabled `select!` branch has no synchronous side effect in its async expression.
+- [ ] Every spawned task has an owner that cancels or aborts it and then joins it.
+- [ ] No blocking syscall or CPU-heavy loop runs on a runtime worker thread.
+- [ ] `spawn_blocking` holds only bounded work; indefinite work uses `std::thread::spawn`.
+- [ ] Every `broadcast` receive loop handles `RecvError::Lagged`.
+- [ ] Every received file descriptor is an `OwnedFd`, and every received socket is nonblocking.
+- [ ] No `for .. { tokio::spawn(..) }` loop lacks a `JoinSet`, a `TaskTracker`, or a concurrency
+      bound.
+- [ ] No async wrapper exists around a no-op-waker poll helper.

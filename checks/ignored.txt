@@ -45,3 +45,6 @@ rust-type-erasure/references/gat-anymap.md :: Shipping it as a library :: 118844
 
 # A probe template whose `C` and `S` the reader replaces with real types.
 rust-variance/SKILL.md :: Settle it with a probe :: 10882a48
+
+# cxx-build: a build-dependency that the harness does not hold; verified end to end in a probe crate.
+rust-cxx/SKILL.md :: Build with cxx-build :: 2a60b8a9

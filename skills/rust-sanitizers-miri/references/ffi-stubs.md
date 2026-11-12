@@ -4,6 +4,17 @@ Extended reference for the `rust-sanitizers-miri` skill. Read this when a Miri r
 foreign call, when you write a `#[cfg(miri)]` stub, or when foreign code keeps a pointer into a
 `Box`. The worked `Box` stubs and their test are in `references/miri-ub-patterns.md`.
 
+## What Miri can execute
+
+Miri cannot execute a foreign function that has no Miri shim. This includes
+every C or C++ entry point behind a `-sys` crate, JNI calls, generated UniFFI
+scaffolding, and inline assembly. Miri shims a subset of the platform API,
+including files (with `-Zmiri-disable-isolation`), threads, and `epoll` and
+`eventfd` on Linux targets. System API support varies between targets. If a shim
+is missing, try `--target x86_64-unknown-linux-gnu` before you stub.
+`-Zmiri-native-lib` calls real native code, but it is experimental and unsound.
+A run through it is not evidence for the FFI path.
+
 ## Pick a strategy
 
 Run Miri over the Rust logic while the foreign call is replaced or skipped.

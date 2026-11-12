@@ -12,8 +12,7 @@ rule here only when a measurement points at it: optimized code is harder to read
 must pay for the readability it spends.
 
 Figures were measured on rustc 1.97.0, aarch64 and x86_64, unless a line names another version.
-Std growth policy and layout are unspecified implementation details. Re-measure them on your
-toolchain before you depend on an exact figure.
+Std growth policy and layout are unspecified: re-measure before you depend on a figure.
 
 ## Route the profile to a section
 
@@ -29,8 +28,7 @@ toolchain before you depend on an exact figure.
 | Function entry and exit costs, many small calls | Inlining | [inlining-and-codegen.md](references/inlining-and-codegen.md#inlining) |
 | Nothing stands out, the work itself is the cost | Algorithm or data structure. Stop here | — |
 
-The last row is the common one. A better algorithm beats every rule below. Reach for this
-skill after you accept the algorithm.
+The last row is the common one: a better algorithm beats every rule below.
 
 ## Done when
 
@@ -67,17 +65,13 @@ cargo build --release -p dep && nm -g --demangle target/release/libdep.rlib 2>/d
 ```
 
 - Mark every probe function `#[inline(never)]`. Without it a small `pub fn` with no caller is
-  not emitted at all: the file comes out 54 bytes long, `grep -c` prints 0, and that reads
-  exactly like a removed check.
-- Keep the `touch`. The dump is a compile-time side effect, so a second run of an unchanged
-  crate prints nothing, which reads like a clean result.
+  not emitted, and `grep -c` prints 0 exactly like a removed check.
+- Keep the `touch`: a second run of an unchanged crate prints nothing.
 - Run the `nm` probe in a non-incremental release build. Incremental and `dev` builds skip the
   inference, so every helper reads as "not inlinable".
 
 An optimization that nothing guards is removed by the next refactor. Pin a type size at compile
-time: a mismatch fails the build with E0080. Gate it on one architecture, because sizes differ
-per target. `size_of` is in the prelude since Rust 1.80; write `std::mem::size_of` for an older
-MSRV.
+time (a mismatch fails with E0080), gated on one architecture because sizes differ per target.
 
 ```rust
 pub struct Header { id: u64, flags: u32 }
@@ -87,11 +81,10 @@ const _: () = assert!(std::mem::size_of::<Header>() == 16);
 ```
 
 Pin an allocation count with a `dhat` test: one heap test per integration test file, each with
-its own `#[global_allocator]`, because dhat panics when two profilers run at once and libtest
-runs tests in parallel. Read [references/allocation-reduction.md](references/allocation-reduction.md)
-when you write the `dhat` test: it holds the test file, the `--test-threads=1` fallback, and
-the testing-mode rule. Keep that allocator out of a library's `src/`, because there it
-replaces the allocator of every binary that links the library. Pin a time with a Criterion baseline
+its own `#[global_allocator]`, because dhat panics when two profilers run at once. Keep that
+allocator out of a library's `src/`, where it replaces the allocator of every binary that links
+the library. Read [references/allocation-reduction.md](references/allocation-reduction.md) when
+you write the test. Pin a time with a Criterion baseline
 through the `rust-performance` skill.
 
 ## Lookups
@@ -108,8 +101,7 @@ removes a security property.
 | Internal keys: interned symbols, node indices, enum tags | `rustc_hash::FxHashMap` | Fastest measured, unseeded |
 | Counters and dense integer ids | `nohash_hasher::IntMap` | Identity hash. Wrong for ids with constant low bits |
 
-On 1M inserts plus lookups, `FxHasher` was 4.7-5.0x faster than SipHash on `u64` keys and
-2.2-2.4x on 18-byte string keys. Do not pick `fnv`: it was slower than `FxHasher` on both.
+`FxHasher` was 2.2x to 5.0x faster than SipHash on 1M inserts. Do not pick `fnv`.
 
 `FxHashMap` is a type alias for `HashMap` with a different hasher, and std supplies `new` and
 `with_capacity` only for `RandomState`, so both fail with E0599. Write `FxHashMap::default()`
@@ -125,83 +117,38 @@ key rules, or the byte-wise `ByteHash` derives.
 
 ## I/O
 
-**File writes are unbuffered.** A `writeln!` to a `File` costs at least one `write` syscall,
-and more when the template interpolates. A `BufWriter` took 300,000 lines from about a second
-to under ten milliseconds on one local filesystem. The absolute times move with the
-filesystem, so re-measure them on yours.
-
-**Locking stdout does not help on its own.** `Stdout` is a `LineWriter`, so it issues one
-syscall per newline, lock or no lock. Over 300,000 `println!` calls a `BufWriter` around the
-lock cut the time 25x to a terminal and about 50x redirected to a file.
-
-```rust
-use std::io::{BufWriter, Write};
-
-fn dump(lines: &[&str]) -> std::io::Result<()> {
-    let mut out = BufWriter::new(std::io::stdout().lock());
-    for line in lines {
-        writeln!(out, "{line}")?;
-    }
-    out.flush()          // dropping a BufWriter discards this error
-}
-```
+**File writes are unbuffered.** A `writeln!` to a `File` costs at least one `write` syscall.
+**Locking stdout does not help on its own:** `Stdout` is a `LineWriter`, one syscall per
+newline, lock or no lock. Wrap the file or the lock in a `BufWriter` (`BufWriter::new(stdout().lock())`).
 
 Always end a `BufWriter` with an explicit `flush()?`, because a dropped one loses its final
 write error and the file ends truncated with nothing in the log. `into_inner()` is not a
-substitute: it drains the buffer without flushing the inner writer.
-
-The default buffer is 8 KiB. Use `with_capacity` when one logical record is larger, or a
-single record costs several syscalls.
+substitute: it drains the buffer without flushing the inner writer. The default buffer is 8 KiB;
+use `with_capacity` when one logical record is larger.
 
 **`BufRead::lines` allocates one `String` per line.** Read with `read_line` into one `String`
-that you `clear` each iteration: 201 allocations became 2 on a 200-line file. `read_line` keeps
-the line terminator. Remove it with `strip_suffix`, never with `trim_end()`, which also deletes
-the trailing spaces and tabs that `lines()` keeps; the loss surfaces later as a parser fault.
-Read [references/hashing-and-io.md](references/hashing-and-io.md) when you rewrite a reader: it
-holds the byte-exact `strip_eol` helper and the `read_until` trade.
+that you `clear` each iteration. `read_line` keeps the line terminator. Remove it with
+`strip_suffix`, never with `trim_end()`, which also deletes the trailing spaces and tabs that
+`lines()` keeps. Read [references/hashing-and-io.md](references/hashing-and-io.md) when you
+rewrite a writer or a reader: it holds the measurements, the `strip_eol` helper, and the
+`read_until` trade.
 
 ## Allocation rate
 
-**`Vec` does not double from 4.** The first non-zero capacity depends on the element size,
-and each growth then doubles. Measured on rustc 1.99.1, it is 8 for 1-byte elements (`Vec<u8>`,
-`String`), 4 for 2 to 1024 bytes (`Vec<u32>`, `Vec<u64>`), and 1 above 1024 bytes. Twenty
-`push` calls on a `Vec<u32>` therefore cost four allocations and end at capacity 32, with
-twelve slots of waste. One `Vec::with_capacity(20)` costs one allocation and no waste.
+**`Vec` does not double from 4.** The first non-zero capacity depends on the element size (8,
+4, or 1), and each growth then doubles: twenty `push` calls on a `Vec<u32>` cost four
+allocations. One `Vec::with_capacity(20)` costs one. **`reserve` applies the amortized policy on
+top of your request; `reserve_exact` does not.** Use `reserve_exact` when you know the final
+length and you are memory-bound. Use `try_reserve` when the size comes from untrusted input; the
+`rust-panic-safety` skill covers it.
 
-**`reserve` and `reserve_exact` differ mainly on a non-empty vector.** `reserve` applies the
-amortized policy on top of your request. `reserve_exact` does not.
+**`clone_from` reuses the destination buffer.** `a = b.clone()` allocates every time;
+`a.clone_from(&b)` writes into the buffer `a` already holds. The two look identical in review, so
+enable `clippy::assigning_clones` (`pedantic`, off under a plain `cargo clippy`). `Vec::clone()`
+also drops the reserve, so a clone never hands a pre-warmed buffer to another owner.
 
-```rust
-let mut a: Vec<u32> = vec![1, 2, 3];
-a.reserve(1);
-assert_eq!(a.capacity(), 6);        // max(requested, 2 * capacity)
-
-let mut b: Vec<u32> = vec![1, 2, 3];
-b.reserve_exact(1);
-assert_eq!(b.capacity(), 4);        // exactly len + additional
-```
-
-Use `reserve_exact` when you know the final length and you are memory-bound. Use `try_reserve`
-when the size comes from untrusted input; the `rust-panic-safety` skill covers it. Read
-[references/allocation-reduction.md](references/allocation-reduction.md) when a test compares
-the two from `Vec::new()`: it shows them identical and hides the overshoot.
-
-**`clone_from` reuses the destination buffer.** `a = b.clone()` allocates every time.
-`a.clone_from(&b)` writes into the buffer `a` already holds.
-
-```rust
-let mut dst: Vec<u32> = Vec::with_capacity(99);
-let src: Vec<u32> = vec![1, 2, 3];
-dst.clone_from(&src);
-assert_eq!(dst.capacity(), 99);     // the 99-element buffer survives
-```
-
-Copying a three-element `Vec<u32>` onto a reused destination 1000 times cost 1001
-allocations through `clone()` and 2 through `clone_from`. The two forms look identical in
-review, so the lint is the practical defence: `assigning_clones` is in clippy's `pedantic`
-group and is off under a plain `cargo clippy`. `Vec::clone()` also drops the reserve: a
-vector of capacity 100 and length 3 clones to capacity 3, so a clone never hands a pre-warmed
-buffer to another owner.
+Read [references/allocation-reduction.md](references/allocation-reduction.md) for the growth ladder, the `reserve` and `clone_from`
+probes, and the measured counts.
 
 **Keep one workhorse buffer.** Declare the buffer outside the loop and `clear` it at the top of
 each iteration. `clear` keeps the allocation; assigning a fresh collection throws it away. Do
@@ -209,12 +156,10 @@ not call `shrink_to_fit` in such a loop: it reallocates every time, which turns 
 zero-allocation loop back into one allocation per iteration. It is a footprint tool, never a
 speed tool.
 
-**Make `collect` exact.** A hand-written iterator's default `size_hint` is `(0, None)`, so every
-downstream `collect` and `extend` runs the growth ladder: 10,000 items cost 13 allocations
-without a hint and 1 with an exact one. The `rust-iterator-impl` skill holds the impl and the
-`ExactSizeIterator` contract. An inexact adaptor has the same effect: `(0..1000)` collects at
-capacity 1000, and after a `filter` its 500 survivors land at capacity 512 through the whole
-ladder. When you know the output length, use `with_capacity` plus `extend`.
+**Make `collect` exact.** A hand-written iterator's default `size_hint` is `(0, None)`, and an
+inexact adaptor such as `filter` loses the length, so `collect` runs the growth ladder (13
+allocations for 10,000 items, against 1). When you know the output length, use `with_capacity`
+plus `extend`. The `rust-iterator-impl` skill holds the `ExactSizeIterator` contract.
 
 **Format into one reused buffer.** `format!` allocates a `String` per call. `write!` into one
 cleared buffer, or, for one integer, use `format_into` (Rust 1.98).
@@ -242,11 +187,5 @@ Read [inlining-and-codegen.md](references/inlining-and-codegen.md#inlining) when
 or review `#[inline]`, `#[inline(always)]`, `#[inline(never)]`, `#[cold]`, or
 `core::hint::cold_path()`.
 
-## Related skills
-
-Load these by name when they are installed.
-
-| Skill | For |
-| --- | --- |
-| `rust-lints` | These rules as lints, and the `clippy.toml` thresholds |
-| `rust-discipline` | Signature shape: `&str` and `&[T]` against `&String` and `&Vec<T>`, SemVer hazards |
+The `rust-lints` skill, when it is installed, holds these rules as lints and the `clippy.toml`
+thresholds; the `rust-discipline` skill holds signature shape (`&str` against `&String`).

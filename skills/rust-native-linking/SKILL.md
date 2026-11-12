@@ -6,16 +6,10 @@ license: BSD-3-Clause
 
 # Rust Native Linking
 
-Hand these topics to sibling skills, when they are installed:
-
-- The `rust-unsafe` skill owns FFI soundness, layout, ownership, and safety
-  contracts; keep the `improper_ctypes` and `improper_ctypes_definitions` lints on.
-- The `cargo-workflows` skill owns workspace layout, profiles, features, and
-  general cross-target orchestration.
-- The `rust-android-build` skill owns NDK selection, Android ABI policy, page
-  size, `jniLibs`, APK or AAB checks, and the Android export gate.
-- The `rust-wasm` skill owns WebAssembly link errors, including
-  `undefined symbol` on `wasm32` targets.
+The `rust-unsafe` skill, when it is installed, owns FFI soundness; keep the
+`improper_ctypes` and `improper_ctypes_definitions` lints on. General
+cross-target setup, Android packaging, and `wasm32` link errors belong to the
+`rust-cross-compilation`, `rust-android-build`, and `rust-wasm` skills.
 
 Do not add a native build step when an existing Rust crate already owns the
 same library. Reuse its `*-sys` crate and its `links` contract.
@@ -40,15 +34,13 @@ loader paths, or exported symbols. Prove each level that applies:
 ## Diagnose the first failing layer
 
 Since Rust 1.97, the warn-by-default `linker_messages` lint prints linker
-output as `warning: linker stderr: ...`. `-D warnings` does not deny it. Read
-it before you change flags: it often names the missing library, the order
-defect, or the unknown option. Output that rustc classes as informational goes
-to the allow-by-default `linker_info` lint instead. On macOS with Rust 1.98.1
-it hid the ld64 line `object file (...) was built for newer 'macOS' version
-(X) than being linked (Y)`. That line marks `cc` objects built for another
-deployment target than rustc. Pass `-W linker-info` while you diagnose a link,
-for example `cargo rustc --bin <app> -- -W linker-info`. The `rust-lints` skill
-owns the gate level; to fail CI on linker output, build with `CARGO_BUILD_WARNINGS=deny`.
+output as `warning: linker stderr: ...`; `-D warnings` does not deny it. Read
+it before you change flags. Informational output goes to the allow-by-default
+`linker_info` lint, which hid an ld64 `built for newer 'macOS' version` line
+(Rust 1.98.1), the mark of `cc` objects built for another deployment target:
+pass `cargo rustc --bin <app> -- -W linker-info` while you
+diagnose. To fail CI on linker output, build with `CARGO_BUILD_WARNINGS=deny`
+(the `rust-lints` skill owns the gate level).
 
 | Symptom | Likely layer | First evidence | Fix |
 |---|---|---|---|
@@ -66,110 +58,34 @@ owns the gate level; to fail CI on linker output, build with `CARGO_BUILD_WARNIN
 | Rebuilds on every edit | Change detection | `cargo build -vv` build-script reason | Add precise `rerun-if-changed` and `rerun-if-env-changed` rules |
 | Header changed but bindings did not | Generation inputs | Regeneration diff and build-script output | Track included headers or make checked-in generation a CI gate |
 
-Do not add more linker flags until you can name the missing file, symbol,
-architecture, ABI, or loader path.
+Add no linker flag until you can name the missing file, symbol, or path.
 
 ## Inspect final artifacts
 
-Use the platform tools on the exact shipped file:
-
-```bash
-# Linux
-file <artifact>
-readelf -h -d --dyn-syms --wide <artifact>
-nm -D --defined-only <shared-library>
-
-# macOS
-file <artifact>
-lipo -info <artifact>
-otool -L <artifact>
-otool -l <artifact>
-nm -gU <shared-library>
-```
-
-```text
-rem Windows Developer Command Prompt
-dumpbin /HEADERS <artifact>
-dumpbin /DEPENDENTS <artifact>
-dumpbin /IMPORTS <artifact>
-dumpbin /EXPORTS <dll>
-```
-
-For a static archive, inspect its members and defined symbols with `ar t` and
-`nm`. For a shared library, recurse through every dynamic dependency. A direct
-dependency can load and still fail because one of its dependencies is absent.
-
-Rust symbols use v0 mangling (`_R` prefix) by default since Rust 1.97, so a
-`_ZN` grep finds nothing. `#[no_mangle]` and `#[export_name]` symbols keep
-their literal names. For a tool that predates v0, pipe its output through `rustfilt`.
-
-Do not use `-Wl,--version-script` to hide exports of a Rust `cdylib`. rustc
-passes its own version script, and an extra map did not remove a
-`#[no_mangle]` export (lld, Rust 1.99.1). Compare the defined dynamic symbols
-with an allowlist instead.
+Inspect the exact shipped file with `readelf`, `nm`, `otool`, `lipo`, or
+`dumpbin`. Recurse through every dynamic dependency. Read
+[references/artifact-inspection.md](references/artifact-inspection.md) when you
+inspect an artifact: it has the commands, the v0 symbol mangling rule (since
+Rust 1.97 a `_ZN` grep finds nothing), and why `-Wl,--version-script` does not
+hide `cdylib` exports.
 
 ## Emit linker instructions in dependency order
 
-Prefer structured instructions over raw linker arguments:
+- Prefer structured `cargo::rustc-link-lib` and `cargo::rustc-link-search`
+  instructions over raw linker arguments.
+- Emit a consumer archive before the libraries that satisfy its undefined
+  symbols. Fix the order before adding `--start-group` or `+whole-archive`;
+  both can hide a dependency cycle.
+- `rust-lld`, the default for `x86_64-unknown-linux-gnu` since Rust 1.90,
+  tolerates a backward archive reference that GNU ld rejects. Catch it with a
+  `-Wl,--warn-backrefs -D linker-messages` CI lane.
+- Do not duplicate instructions that `cc`, `pkg-config`, or `vcpkg` already
+  emits.
+- A `cargo::rustc-link-arg-*` instruction affects only the package that emits
+  it: a `foo-sys` script cannot add a run path to a dependent `cdylib`.
 
-```text
-cargo::rustc-link-search=native=/absolute/target/lib
-cargo::rustc-link-lib=static=foo
-cargo::rustc-link-lib=dylib=bar
-cargo::rustc-link-search=framework=/absolute/Frameworks
-cargo::rustc-link-lib=framework=CoreFoundation
-```
-
-The complete library syntax is
-`[KIND[:MODIFIERS]=]NAME[:RENAME]`. Use `static`, `dylib`, or `framework` as
-the kind. Add a modifier such as `+whole-archive` only when inspection proves
-that normal archive extraction omits required registration objects.
-
-The order of printed instructions can become linker argument order. Emit a
-consumer object or archive before the libraries that satisfy its undefined
-symbols. If native archive `foo` calls `bar`, emit `foo` before `bar` on a
-one-pass linker. Fix the order before adding `--start-group` or
-`+whole-archive`; both can hide a dependency cycle and increase the artifact.
-
-`lld` resolves a backward archive reference that GNU ld rejects. Since Rust
-1.90, the rustup toolchain on an x86_64 Linux host links
-`x86_64-unknown-linux-gnu` with `rust-lld` by default. An order defect passes
-there and fails on a GNU ld target. Expose it in a dedicated CI lane on an
-x86_64 Linux runner with the rustup toolchain:
-
-```bash
-RUSTFLAGS="-C link-arg=-Wl,--warn-backrefs -D linker-messages" \
-  cargo test --locked --no-run --all-targets --target x86_64-unknown-linux-gnu
-```
-
-A defect prints `backward reference detected: <symbol> in <consumer archive>
-refers to <provider archive>`. `--warn-backrefs` only warns through the
-`linker_messages` lint, so `-D linker-messages` makes the lane fail. The lane
-must link an artifact that uses the native archives. `cargo build` of a
-`*-sys` library makes an rlib and runs no linker; a test that calls one native
-function supplies the link. `RUSTFLAGS` replaces the rustflags from config
-files, so keep it out of the normal build.
-
-To get a hard GNU ld failure instead, pass `-C linker-features=-lld` on the
-same runner, or build on an `aarch64-unknown-linux-gnu` runner. Both link with
-the system linker.
-
-Do not duplicate instructions that `cc`, `pkg-config`, `vcpkg`, or another
-helper already emits. Configure the helper not to emit metadata only when the
-script must control the final order itself.
-
-Use `cargo::rustc-link-arg-*` only when Cargo has no structured instruction.
-Select the narrow target type:
-
-```text
-cargo::rustc-link-arg-cdylib=-Wl,<platform-option>
-cargo::rustc-link-arg-bin=app=-Wl,<platform-option>
-```
-
-These instructions affect only targets in the package whose `build.rs` emits
-them. A `foo-sys` build script cannot add a run path to a dependent
-application or `cdylib`. Put final-artifact linker arguments in the package
-that builds that artifact, or in its host build system.
+Read [references/link-order.md](references/link-order.md) when you write link
+instructions, fix an order defect, or set up the `--warn-backrefs` lane.
 
 ## Select one integration path
 
@@ -183,9 +99,7 @@ that builds that artifact, or in its host build system.
 | C or C++ headers must become Rust declarations | `bindgen` | Hand-copied declarations that drift |
 | A Rust ABI must expose a C or C++ header | `cbindgen` | Running `bindgen` in the wrong direction |
 
-Use the upstream build system when it carries feature probes, generated files,
-or platform rules. Use `cc` when the native build is only a short source list
-and fixed flags. Read
+Use the upstream build system when it carries probes or platform rules. Read
 [references/build-helpers.md](references/build-helpers.md) when `build.rs`
 configures one of these helpers or generates bindings. It holds each helper's
 tracking, cross-compilation, and CI regeneration rules.
@@ -197,43 +111,12 @@ put the choice behind one documented feature in the single `*-sys` crate.
 
 ## Put native ownership in one `*-sys` crate
 
-Use a small `foo-sys` package for these tasks:
-
-- Declare `links = "foo"`.
-- Discover or build `libfoo` in `build.rs`.
-- Emit the link instructions once.
-- Hold the raw declarations or generated bindings.
-- Publish include paths or other facts as `cargo::metadata` when an immediate
-  dependent build script needs them.
-
-Keep the safe API in a separate crate. Do not put business logic in `foo-sys`.
-
-```toml
-[package]
-name = "foo-sys"
-version = "0.1.0"
-edition = "2024"
-links = "foo"
-build = "build.rs"
-
-[build-dependencies]
-# Add only the helper selected by the integration path.
-```
-
-Cargo permits only one package for each `links` value in a dependency graph.
-Use this rule to prevent duplicate copies and duplicate symbols. Do not make
-system and bundled providers separate packages with the same `links` value.
-
-Publish metadata after discovery:
-
-```text
-cargo::metadata=include=/absolute/target/include
-cargo::metadata=version=1.2.3
-```
-
-An immediate dependent reads these values as `DEP_FOO_INCLUDE` and
-`DEP_FOO_VERSION`. Cargo does not pass `DEP_*` metadata through transitive
-dependencies. Forward a value deliberately if another native layer needs it.
+A small `foo-sys` package declares `links = "foo"`, builds or discovers the
+library, emits the link instructions once, and holds the raw declarations.
+Keep the safe API in a separate crate. Cargo permits only one package for each
+`links` value in a graph, which prevents duplicate symbols. Do not make system
+and bundled providers separate packages with the same `links` value. `DEP_*`
+metadata reaches only immediate dependents.
 
 ## Keep `build.rs` deterministic
 
@@ -250,41 +133,11 @@ Treat `build.rs` as a host executable that produces target artifacts.
 - Print diagnostics to stderr. Reserve stdout for `cargo::` instructions.
 - Run `cargo build -vv` to see the command stream and saved script output.
 
-Emit one change rule for every direct file and external environment variable
-that the script reads. A directory rule scans the full directory. Prefer file
-rules when the input set is known.
-
-```rust
-use std::env;
-use std::path::PathBuf;
-
-fn required(name: &str) -> String {
-    env::var(name).unwrap_or_else(|_| panic!("Cargo did not set {name}"))
-}
-
-fn main() {
-    println!("cargo::rerun-if-changed=native/wrapper.h");
-    println!("cargo::rerun-if-changed=native/source.c");
-    println!("cargo::rerun-if-env-changed=FOO_ROOT");
-
-    let target = required("TARGET");
-    let target_os = required("CARGO_CFG_TARGET_OS");
-    let out_dir = PathBuf::from(required("OUT_DIR"));
-
-    eprintln!("native target={target} os={target_os} out={}", out_dir.display());
-}
-```
-
-Do not emit `rerun-if-env-changed` for `TARGET` or another variable that Cargo
-sets for the build script. Emit it for external inputs such as `FOO_ROOT`,
-`CC`, or a custom SDK path when a selected helper does not already track it.
-
-If the script has no external input, emit
-`cargo::rerun-if-changed=build.rs`. Without any `rerun-if` instruction, Cargo
-scans the package and can run the script after any package file changes.
-
-Use `cargo::KEY=VALUE` on Rust 1.77 or newer. Use the legacy
-`cargo:KEY=VALUE` spelling only when the declared MSRV is older than 1.77.
+Emit one `rerun-if-changed` or `rerun-if-env-changed` rule for every direct
+file and external environment variable that the script reads, never for a
+variable Cargo sets. Read [references/sys-crate.md](references/sys-crate.md)
+when you write a `foo-sys` package, its `cargo::metadata`, or the change rules;
+it has a complete `build.rs`.
 
 Pass flags to each compiler through its own channel: a nested `rustc` reads
 `CARGO_ENCODED_RUSTFLAGS` (never split it on spaces), and `cc` 1.2.2
@@ -307,7 +160,7 @@ A build script compiles and runs on `HOST`. It produces native code for
 - Pass the resolved target linker or toolchain file to the native builder.
 - Keep host tools out of target link search paths.
 
-A native host success is not cross-target evidence.
+A host success is not cross-target evidence.
 
 ## Choose static, dynamic, or framework linking
 
@@ -318,40 +171,20 @@ A native host success is not cross-target evidence.
 | Apple framework | The dependency ships as a framework | Framework search path, architecture slices, embedding, signing |
 
 Use `rustc-link-lib=static=foo`, `dylib=foo`, or `framework=Foo`. Do not infer
-the mode from a file that happens to exist first in a search directory. On
+the mode from the first file in a search directory. On
 Windows, a `.lib` can be an import library; `references/windows.md` covers the
 difference.
 
 ## Make runtime loading a packaging property
 
-`cargo::rustc-link-search` solves link-time discovery. It does not install a
-shared library beside the final program. Cargo adds link-search paths under
-`OUT_DIR` to the loader environment for commands such as `cargo run` and
-`cargo test`. It does not guarantee this behavior for external system paths.
-A Cargo-run smoke test can therefore pass while the packaged program fails.
-
-For an application package, run the installed artifact outside Cargo. For a
-published Rust package, also run `cargo package --list`, create the `.crate`,
-extract it into a temporary directory, and build it there. This proves that
-headers, native sources, and generated inputs enter the published archive.
-The `rust-crate-release` skill owns the complete package and publish gate.
+`cargo::rustc-link-search` solves link-time discovery only. A `cargo run` or
+`cargo test` smoke test can pass while the packaged program fails. Run the
+installed artifact outside Cargo. The `rust-crate-release` skill owns the
+package and publish gate.
 
 Do not run `ldd` on an untrusted executable: it can run the program. Inspect
-`DT_NEEDED`, `RUNPATH`, and symbols with `readelf` first. On macOS since Rust
-1.91, rustc passes the SDK root to the linker, so a library in `/usr/local/lib`
-can fail with `ld: library 'foo' not found`; find the prefix with `pkg-config`
-and emit `cargo::rustc-link-search=native=<prefix>/lib`.
+`DT_NEEDED`, `RUNPATH`, and symbols with `readelf` first.
 
 Read [references/runtime-loading.md](references/runtime-loading.md) when you set
-an ELF `RUNPATH` or a Mach-O install name and `LC_RPATH`, or embed frameworks
-in a bundle.
-
-## Authoritative references
-
-- [Cargo build scripts](https://doc.rust-lang.org/cargo/reference/build-scripts.html)
-- [Cargo build-script environment](https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-sets-for-build-scripts)
-- [Rust native link attribute](https://doc.rust-lang.org/reference/items/external-blocks.html#the-link-attribute)
-- [Linux dynamic loader](https://man7.org/linux/man-pages/man8/ld.so.8.html)
-- [Apple run-path dependent libraries](https://developer.apple.com/library/archive/documentation/DeveloperTools/Conceptual/DynamicLibraries/100-Articles/RunpathDependentLibraries.html)
-- [rust-lld default on x86_64 Linux](https://blog.rust-lang.org/2025/09/01/rust-lld-on-1.90.0-stable/)
-- [lld `--warn-backrefs`](https://lld.llvm.org/ELF/warn_backrefs.html)
+an ELF `RUNPATH` or a Mach-O install name and `LC_RPATH`, embed frameworks in a
+bundle, or see `ld: library 'foo' not found` on macOS.

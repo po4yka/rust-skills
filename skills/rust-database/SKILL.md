@@ -6,18 +6,17 @@ license: BSD-3-Clause
 
 # Rust Database
 
-Keep the database, driver, and migration tool that the workspace already uses.
-Use their native pool and transaction types before you add wrappers. Adapt
-error codes and DDL behavior to the selected engine.
+Keep the database, driver, and migration tool that the workspace already uses,
+with their native pool and transaction types.
 
-When installed, `rust-networking` owns HTTP deadlines and retries, and
-`rust-observability` owns telemetry. `rust-async-internals` owns task ownership;
+When installed, `rust-networking` owns HTTP retries and `rust-observability`
+owns telemetry. `rust-async-internals` owns task ownership;
 to keep a commit sequence atomic, run it in `tokio::spawn` and join the handle.
 
 Read the section of
 [references/engine-and-driver-notes.md](references/engine-and-driver-notes.md)
-for the engine and crates that `Cargo.lock` names when you set a pool option,
-a timeout, a retry code, or a migration command.
+for the locked engine and crates when you set a pool option, a timeout, a retry
+code, or a migration command.
 
 ## Inspect the existing contract
 
@@ -32,50 +31,47 @@ rg -U -i 'AssertSqlSafe|sql_query\(|format!\(\s*r?#*"\s*(select|insert|update|de
 ```
 
 Record these facts before you change pool, transaction, retry, or migration
-policy:
+policy.
 
 | Fact | Required answer |
 |---|---|
 | Database | Engine and production major version |
 | Driver | Crate, version, runtime, and TLS backend |
 | Pool owner | Process object that creates and closes the pool |
-| Connection budget | Server limit, reserved capacity, instance count, and pool maximum |
-| Acquisition policy | Queue bound, acquisition timeout, and overload result |
-| Query policy | Operation deadline and server-side statement limit |
-| Transaction policy | Isolation, retryable errors, and maximum attempts |
+| Connection budget | Server limit, reserved capacity, instance count, pool maximum |
+| Acquisition policy | Queue bound, acquisition timeout, overload result |
+| Query policy | Operation deadline, server-side statement limit |
+| Transaction policy | Isolation, retryable errors, maximum attempts |
 | Migration owner | One job or process that serializes migrations |
-| Deployment policy | Expand, migrate data, switch code, and contract order |
-| Test engine | Exact engine major version used in production |
+| Deployment policy | Expand, migrate data, switch code, contract |
+| Test engine | The production engine major version |
 
-Do not infer a safe pool size or wait from a library default. A deadpool
-default pool grows with the host CPU count, and it has no wait timeout, so
-`Pool::get()` can wait forever: set `timeouts.wait` below the caller deadline.
-Do not infer transaction semantics from an ORM method name. Confirm pool and
-transaction behavior in the driver and database documentation for the locked
-versions.
+Do not infer a safe pool size or wait from a library default: a deadpool pool
+has no wait timeout, so `Pool::get()` can wait forever; set `timeouts.wait`
+below the caller deadline. Do not infer transaction semantics from an ORM
+method name.
 
 ## Triage failures
 
 | Symptom | Likely cause | First proof | Fix |
 |---|---|---|---|
-| Pool acquisition timeout rises | Connections are held too long or total budget is too small | Compare checked-out count, wait duration, and query duration | Shorten hold scope, bound admission, then recalculate pool budget |
-| Database rejects new sessions during deploy | Rolling instances exceed the deployment budget | Count pools across old and new instances | Lower per-instance maximum or server instance overlap |
-| Pool stays smaller after cancellation | Cancelled query or rollback still owns a connection | Cancel at each phase and observe pool capacity | Await cleanup or discard the dirty connection |
-| Writes succeed but later vanish, with no error | An open transaction returned to the pool (sqlx before 0.9.0, drop during `BEGIN`) | `cargo tree --locked -i sqlx-core --depth 0` shows a version below 0.9.0; `pg_stat_activity` shows `idle in transaction` sessions | Upgrade to sqlx 0.9.0 or later, or stop cancelling `begin()` |
-| Rows changed although caller saw an error | Commit outcome is unknown | Query by stable operation ID | Reconcile; do not repeat the transaction blindly |
-| Deadlocks repeat on every attempt | Lock order differs or retry repeats immediately | Capture bounded operation names and lock order | Use stable lock order and jittered bounded retry |
-| Serialization failures surge | Contention or transaction scope grew | Compare conflict rate, duration, and touched rows | Shorten scope, reduce hot rows, keep bounded retry |
+| Pool acquisition timeout rises | Connections held too long, or budget too small | Compare checked-out count, wait, and query duration | Shorten hold scope, bound admission, recalculate the budget |
+| Database rejects new sessions during deploy | Rolling instances exceed the budget | Count pools across old and new instances | Lower the per-instance maximum or the overlap |
+| Pool stays smaller after cancellation | A cancelled query or rollback still owns a connection | Cancel at each phase; watch capacity | Await cleanup or discard the connection |
+| Writes succeed but later vanish, with no error | An open transaction returned to the pool (sqlx before 0.9.0, drop during `BEGIN`) | `cargo tree` shows sqlx-core below 0.9.0; `pg_stat_activity` shows `idle in transaction` | Upgrade to sqlx 0.9.0, or stop cancelling `begin()` |
+| Rows changed although caller saw an error | Unknown commit outcome | Query by stable operation ID | Reconcile; do not repeat blindly |
+| Deadlocks repeat on every attempt | Lock order differs, or retry is immediate | Capture operation names and lock order | Stable lock order, jittered bounded retry |
+| Serialization failures surge | Contention or transaction scope grew | Compare conflict rate, duration, touched rows | Shorten scope, reduce hot rows |
 | SQLite returns `SQLITE_BUSY` at once despite `busy_timeout` | A deferred transaction tried to upgrade from read to write | Check how the transaction begins | Begin write transactions with `BEGIN IMMEDIATE` |
-| Migration blocks application traffic | DDL takes a strong lock or rewrites data | Measure on production-shaped data | Split the change and use online or batched operations |
+| Migration blocks application traffic | DDL takes a strong lock or rewrites data | Measure on production-shaped data | Split the change; use online or batched operations |
 | `CREATE INDEX CONCURRENTLY cannot run inside a transaction block` | The migration tool wraps the file in a transaction | Read the migration tool's transaction rule | Move the statement to its own non-transactional migration |
-| New binary fails before migration completes | Deploy order is incompatible | Reproduce old and new binaries on expand schema | Restore expand-switch-contract compatibility |
-| Migration passes locally but fails in CI | Test engine or extension differs | Compare engine version and enabled extensions | Match production engine and provision extensions |
-| Tests fail only in parallel | Workers share schema or exceed connection budget | Run with one worker, then inspect names and pools | Isolate schemas and bound parallelism |
+| New binary fails before migration completes | Incompatible deploy order | Run old and new binaries on the expand schema | Restore expand-switch-contract order |
+| Migration passes locally but fails in CI | Test engine or extension differs | Compare engine version and extensions | Match the production engine |
+| Tests fail only in parallel | Workers share a schema or exceed the budget | Run with one worker | Isolate schemas, bound parallelism |
 
 ## Verify and finish
 
-Run the database test target while you iterate, and the other commands once
-before merge. Skip the two sqlx commands when `Cargo.lock` has no sqlx.
+Run the test target while you iterate, and the rest once before merge.
 
 ```bash
 cargo test --locked --test <db-test-target> -- --test-threads=4
@@ -85,61 +81,47 @@ cargo deny --config deny.toml --locked check advisories
 ```
 
 - The worker count is a connection-budget input. A green run does not prove
-  lock duration or rewrite cost on production data volumes.
-- `prepare --check` needs `sqlx-cli` and a `DATABASE_URL` with every
-  migration applied. It exits 1 when `.sqlx` is stale; a connection error means
-  the database is not ready.
-- `cargo tree` prints the locked sqlx version for the 0.9.0 floor in "Make
-  cancellation safe".
-- `cargo deny` with `unsound = "all"` (or `cargo audit --deny warnings`) gates
-  the driver crates against known advisories (the `rust-security` skill owns
-  that policy).
+  lock duration or rewrite cost on production volumes.
+- `prepare --check` needs `sqlx-cli` and a `DATABASE_URL` with every migration
+  applied. It exits 1 when `.sqlx` is stale.
+- `cargo tree` checks the sqlx 0.9.0 floor of "Make cancellation safe".
+- `cargo deny` needs `unsound = "all"`; without it, run `cargo audit --deny
+  warnings`.
 
 Run a mutating migration command (`sqlx migrate run`, a down migration, or a
 DDL script) only against a disposable test database or an environment the user
 has authorized, because a migration can destroy data. Do not print
-`DATABASE_URL` or pass it as a command-line argument, where process listings
-expose it.
+`DATABASE_URL` or pass it as a command-line argument.
 
 Before merge, confirm each item:
 
-- [ ] The budget includes rolling overlap. Admission, acquisition, query, lock, and shutdown waits are finite.
-- [ ] One async scope owns each transaction. External effects use an idempotent outbox or follow commit.
-- [ ] Cancellation restores a clean protocol and pool capacity. Unknown commit outcomes reconcile by operation ID.
-- [ ] Isolation follows a written invariant. Retry matches exact codes, reruns the whole transaction, and is bounded.
-- [ ] Every value is bound. Every `AssertSqlSafe` or raw SQL string names its trusted source.
+- [ ] The budget includes rolling overlap, and every wait is finite.
+- [ ] Each section below holds: transaction scope, cancellation, retry, static SQL.
+- [ ] Isolation follows a written invariant.
 - [ ] Migrations are serialized and rolling-compatible. Destructive or non-transactional DDL has a recovery plan.
-- [ ] CI on the production engine covers empty and previous-release schemas, conflicts, cancellation, and pool recovery.
-- [ ] The advisory gate passes.
+- [ ] CI on the production engine covers empty and previous-release schemas, conflicts, cancellation, pool recovery.
 
-Report the database and driver versions, pool calculation, transaction and
-retry policy, migration phases, test topology, commands run, and what stays
-unverified.
+Report the versions, pool calculation, transaction and retry policy, migration
+phases, commands run, and what stays unverified.
 
 ## Keep SQL text static
 
 Bind every value. Do not build SQL text from untrusted input with `format!`.
 
-sqlx 0.9 `query*()` functions take `impl SqlSafeStr`. A `&'static str`
-implements it; a runtime `String` does not, so `query(&sql)` stops compiling
-after the upgrade. Do not wrap the string in `AssertSqlSafe` only to make it
-compile, because the wrapper asserts that the text is safe without proof. Build
-dynamic SQL with `QueryBuilder`. `QueryBuilder::new` and `push` accept any
-string and do not escape. Start from a static string, use `push_bind` for every
-value, and use `push` only for a fragment from a fixed allowlist, such as a
-column name.
-Give every remaining `AssertSqlSafe(` and diesel `sql_query(` a comment that
-names where its text comes from.
+sqlx 0.9 `query*()` functions take `impl SqlSafeStr`, which a runtime `String`
+does not implement, so `query(&sql)` stops compiling after the upgrade. Do not
+wrap the string in `AssertSqlSafe` only to make it compile: the wrapper asserts
+safety without proof. Build dynamic SQL with `QueryBuilder`, which does not
+escape: start from a static string, `push_bind` every value, and `push` only a
+fragment from a fixed allowlist, such as a column name. Give every remaining
+`AssertSqlSafe(` and diesel `sql_query(` a comment that names its text source.
 
 ## Keep one transaction in one async scope
 
-The function that starts a transaction owns it until commit or rollback. Pass
-`&mut Transaction` or the driver equivalent to helpers. Do not put a live
-transaction in shared state. Do not move it into a detached task. Do not return
-it across an API boundary unless that boundary exists only to compose database
-operations in the same task.
-
-Use this shape:
+The function that starts a transaction owns it until commit or rollback; pass
+`&mut Transaction` to helpers. Do not put a live transaction in shared state,
+move it into a detached task, or return it across an API boundary that does not
+only compose database operations in the same task.
 
 ```text
 begin
@@ -151,129 +133,72 @@ commit
 publish or perform the external effect from the committed outbox
 ```
 
-Use an explicit commit on the success path. Return the commit error. Do not
-report success before commit succeeds. Roll back explicitly when the driver
-provides useful rollback errors and the error path still has time. Do not
-assume that `Drop` performs a synchronous rollback: many async drivers queue
-it. sqlx runs the queued rollback on the next use of the connection, including
-its return to the pool. Test the drop behavior of the selected driver.
+Commit explicitly on the success path, return the commit error, and do not
+report success before commit succeeds. Do not assume that `Drop` performs a
+synchronous rollback: many async drivers queue it, and sqlx runs it on the next
+use of the connection. Test the drop behavior of the selected driver.
 
-Keep every domain invariant in one transaction or in a database constraint.
+Keep every domain invariant in one transaction or in a database constraint. Do
+not perform an irreversible external effect inside a transaction: the database
+can roll back after the effect succeeds. Use a transactional outbox with an
+idempotent consumer.
 
-Do not perform an irreversible external effect inside a database transaction.
-The database can roll back after the effect succeeds. Use a transactional
-outbox for messages and callbacks. Make the outbox consumer idempotent.
-
-Treat a lost connection during `COMMIT` as an unknown outcome. The server might
-have committed. Do not retry the transaction blindly. Reconcile by a stable
-operation ID, an idempotency row, or a domain read that can prove the outcome.
+Treat a lost connection during `COMMIT` as an unknown outcome: the server might
+have committed. Do not retry blindly. Reconcile by a stable operation ID, an
+idempotency row, or a domain read that can prove the outcome.
 
 ## Make cancellation safe
 
-A dropped Rust query future does not prove that the database stopped the
-statement. The driver can cancel the server statement, close the session, wait
-for the result, or leave cleanup to a connection worker. Confirm the actual
-behavior for the locked driver and database versions.
+A dropped query future does not prove that the database stopped the statement.
+Confirm what the locked driver does.
 
 Require sqlx 0.9.0 or later when a timeout, `select!`, or an aborted request
-can cancel `begin()`. Before 0.9.0, a transaction dropped during `BEGIN` could
-return to the pool still open, and later writes on that connection could stay
-uncommitted and be lost without an error.
+can cancel `begin()`: before it, a transaction dropped during `BEGIN` could
+return to the pool open, and later writes on it were silently lost.
 
-Apply all of these controls:
+Carry one caller deadline into pool acquisition and database work, and set a
+server-side statement timeout below it. Do not let a connection serve another
+caller while a cancelled statement or a queued rollback can still produce
+protocol messages: discard it when the driver does not drain, roll back, or
+close it. Read [references/cancellation-controls.md](references/cancellation-controls.md)
+for lock-wait and transaction timeouts, the server-side cancel, and session
+settings that leak into the next pool user.
 
-1. Carry one caller deadline into pool acquisition and database work.
-2. Set a server-side statement timeout below the caller deadline when the
-   database supports it.
-3. Set a lock-wait timeout below the statement timeout when lock waits must
-   fail separately.
-4. Keep the transaction lifetime inside the deadline. PostgreSQL 17 adds
-   `transaction_timeout`; it terminates the session, so expect a dead pooled
-   connection after it fires.
-5. Do not let a connection serve another caller while a cancelled statement or
-   a queued rollback can still produce protocol messages. Confirm that the
-   driver drains, rolls back, or closes it. Discard the connection yourself when
-   the driver does not.
-
-Send a server-side cancel explicitly (tokio-postgres `Client::cancel_token()`)
-when a long statement must stop, unless the driver documents that a drop sends
-one. Keep the statement timeout as the real bound: the server does not report
-whether a cancel worked.
-
-Set transaction-local timeouts where possible. A session-wide timeout can leak
-into the next pool user when reset fails. If the driver requires a session
-setting, set it on checkout and reset or discard the session before check-in.
-
-Cancellation before commit must leave no partial database state. Cancellation
-during commit has the same unknown-outcome rule as a lost connection. Keep the
-stable operation ID available after the future is dropped so a caller or
-reconciler can query the outcome.
-
-Test cancellation at every phase, from the pool wait to a commit in flight.
-Read [references/schema-tests.md](references/schema-tests.md) when you write
-these tests; it lists the cancel points and what to prove after each one.
+Cancellation before commit must leave no partial state; during commit it is an
+unknown outcome, so keep the operation ID after the future drops. Test every
+phase, from the pool wait to a commit in flight
+([references/schema-tests.md](references/schema-tests.md) lists the points).
 
 ## Retry the complete transaction
 
 Retry only an error that proves the current transaction did not commit and that
-the database defines as transient. The common classes are serialization
-failure and deadlock victim. Match structured database error codes. Do not
-match error message text.
+the database defines as transient: serialization failure and deadlock victim.
+Match exact structured codes, not message text and not a class prefix
+(PostgreSQL `40003` means statement completion unknown). Report a lock-wait
+timeout by default. Read [references/isolation-and-retry.md](references/isolation-and-retry.md) for the codes of each
+engine and a runnable classifier.
 
-Retryable examples: PostgreSQL SQLSTATE `40001` and `40P01`, MySQL error `1213`
-(SQLSTATE `40001`), and SQLite `SQLITE_BUSY`. Match exact codes, not a class
-prefix: PostgreSQL `40003` means statement completion unknown.
+Retry the complete transaction closure with a new transaction, never only the
+failed statement. Keep the same operation ID and input, and re-read database
+state on every attempt.
 
-Report a lock-wait timeout (PostgreSQL `55P03`, MySQL `1205`) by default. Retry
-it only after a full rollback, inside the remaining caller deadline and attempt
-limit. MySQL `1205` rolls back only the statement by default
-(`innodb_rollback_on_timeout=OFF`), so roll back the transaction before you act
-on it. PostgreSQL documents that `23505` or `23P01` can be a serialization
-failure when the transaction derived the key from its own reads. Let only that
-call site opt into a retry.
+Never retry automatically, because the outcome is permanent, the caller gave
+up, or a repeat can apply the effect twice: a domain constraint violation;
+invalid SQL, data, permission, or schema; cancellation, a statement timeout
+(PostgreSQL `57014`), or an exhausted deadline; an unknown commit outcome; a
+transaction that performed a non-idempotent external effect.
 
-Retry the complete transaction closure with a new transaction. Do not retry
-only the failed statement. Preserve the same logical operation ID and stable
-input across attempts. Re-read database state on every attempt.
+Count the first execution as attempt one. Use a small attempt maximum, the
+operation deadline, and jittered exponential backoff. Release the transaction
+and its connection before the delay, and bound retries across the process. Keep
+the classifier pure. A lost connection has no SQLSTATE: classify it at the call
+site, where you know whether `COMMIT` was in flight.
 
-Never retry these cases automatically, because the outcome is known to be
-permanent, the caller has given up, or a repeat can apply the effect twice:
+## Conditional references
 
-- a constraint violation that reports a domain conflict;
-- invalid SQL, invalid data, permission failure, or missing schema;
-- cancellation, a statement timeout (PostgreSQL `57014`), or an exhausted
-  caller deadline;
-- a lost connection during commit or any other unknown commit outcome;
-- a transaction that performed a non-idempotent external side effect.
-
-Count the first execution as attempt one. Use a small finite attempt maximum,
-an absolute operation deadline, exponential backoff, and jitter. Release the
-failed transaction and its connection before the delay. Bound retries across
-the process so an outage does not create a retry storm.
-
-Keep classification and retry policy pure and test them separately from the
-driver. Get the code with `err.as_database_error().and_then(|e| e.code())` in
-sqlx, or `err.code()` in tokio-postgres. A lost connection has no SQLSTATE;
-classify it at the call site, where you know whether `COMMIT` was in flight.
-Read [references/isolation-and-retry.md](references/isolation-and-retry.md)
-when you write the classifier; it has a runnable PostgreSQL example.
-
-## Deploy migrations in compatible phases
-
-Read `references/migrations.md` when you write, order, or run a schema
-migration.
-
-## Budget database connections
-
-Read `references/pool-operations.md` when you size a pool or set its timeouts,
-lifetime, health checks, startup behavior, or metrics.
-
-## Choose isolation from the invariant
-
-Read `references/isolation-and-retry.md` when you choose an isolation level,
-a constraint, or a lock order for an invariant.
-
-## Test the real schema
-
-Read `references/schema-tests.md` when you write a database integration test,
-set up test databases, or build the CI matrix.
+| Read | When |
+|---|---|
+| `references/migrations.md` | You write, order, or run a schema migration |
+| `references/pool-operations.md` | You size a pool or set its timeouts, lifetime, health checks, startup, or metrics |
+| `references/isolation-and-retry.md` | You choose an isolation level, a constraint, or a lock order for an invariant |
+| `references/schema-tests.md` | You write a database integration test, set up test databases, or build the CI matrix |

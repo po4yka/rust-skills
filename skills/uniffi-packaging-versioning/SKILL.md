@@ -6,17 +6,16 @@ license: BSD-3-Clause
 
 # UniFFI Packaging and Versioning
 
-Turn one UniFFI crate into Android and Apple artifacts. Keep the checked-in
-generated bindings and the compiled library at the same revision, so that a
-bindings/library mismatch never reaches a device.
+Turn one UniFFI crate into Android and Apple artifacts. Keep the checked-in bindings and the
+compiled library at the same revision, so that a mismatch never reaches a device.
 
 ## Verify with these checks
 
 | Claim | Check | Run it when | A pass does not prove |
 |-------|-------|-------------|-----------------------|
-| Checked-in bindings match the Rust source | Regeneration script in `--check` mode, in the Rust CI lane | Every change to the FFI crate or to the `uniffi` version | That a prebuilt artifact on a machine is current |
-| The exported API is the same on every target | Generate from each shipping target library and diff against the checked-in files | Packaging, and after a `cfg` change in the FFI crate | Run-time behavior |
-| The packaged library loads and passes its checksums | Kotlin: `uniffiEnsureInitialized()`, then one generated-binding call; Swift: one generated-binding call. Run it from a consumer on each shipping Android ABI family and on an iOS simulator | Before release, and after every `uniffi` bump | Another ABI, OS version, or artifact |
+| Checked-in bindings match the Rust source | Regeneration script in `--check` mode, in the Rust CI lane | Every change to the FFI crate or `uniffi` version | That a prebuilt artifact is current |
+| The exported API is the same on every target | `--check` with each shipping target library as input | Packaging, and after a `cfg` change | Run-time behavior |
+| The packaged library loads and passes its checksums | Kotlin: `uniffiEnsureInitialized()`, then one binding call; Swift: one binding call. Run it from a consumer on each Android ABI family and an iOS simulator | Before release, and after every `uniffi` bump | Another ABI, OS version, or artifact |
 | The release candidate works as shipped | Final-artifact proof and release closure in `references/release-proof.md` | Once per release candidate | Anything about a rebuilt artifact |
 
 A host `cargo test` proves none of these claims.
@@ -25,252 +24,146 @@ A host `cargo test` proves none of these claims.
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `UniFFI API checksum mismatch`; on Kotlin, `ExceptionInInitializerError` with that cause, or a later `NoClassDefFoundError` for `UniffiLib` or `IntegrityCheckingUniffiLib` | Bindings and library from different revisions or `uniffi` versions | Regenerate with the in-crate generator from the library built at this revision; rebuild the artifact |
-| Kotlin checksum mismatch only on an ARM32 or `arm64-v8a` device, with matching bindings and library | UniFFI device defect ("Pin the generator to the runtime") | Upgrade to 0.32.1 or later. Never set `omit_checksums = true` as the fix |
-| `UniFFI contract version mismatch` | Bindings and scaffolding from `uniffi` versions with different FFI contracts | Same fix as the first row |
-| Kotlin `junk remaining in buffer after lifting` or `java.nio.BufferUnderflowException`; Swift `UniffiInternalError.incompleteData`, `.bufferOverflow`, or `.unexpectedEnumCase` (a variant from a newer library) | A record field or enum variant changed without a regenerate and rebuild | Regenerate and rebuild together; add the `--check` gate if it is missing |
-| Native library not found at run time | Wrong ABI directory name, an ABI missing from the release set, or a renamed `.so` | Compare directory names with the Android ABI names; check every release ABI; derive the library name from the package name |
-| Works on one machine, fails on another | A global `uniffi-bindgen`, or a formatter installed on one machine only | Use the in-crate binary everywhere; pass `--no-format` |
-| `--check` fails on whitespace or line endings only | Editor or Git line-ending settings changed the checked-in files | Normalize trailing whitespace, line endings, and the final newline in the script |
-| Hundreds of `cannot find type 'RustBuffer' in scope` in the generated Swift | The FFI Clang module did not build; `#if canImport(<crate_name>FFI)` hides the cause | Build the FFI module alone and read its first error; check the staged header, `module.modulemap`, and module name |
-| Actor-isolation errors in the generated Swift | The file compiles in a module with `MainActor` default isolation (uniffi-rs #2818) | Move it to a SwiftPM target with the default `nonisolated` isolation |
-| Swift cannot find the FFI module in an XCFramework | Modulemap not named `module.modulemap` in a slice, or it declares `framework module` | Rename it in the script; see `references/platform-artifacts.md` |
+| `UniFFI API checksum mismatch`; on Kotlin, `ExceptionInInitializerError` with that cause, or a later `NoClassDefFoundError` for `UniffiLib` | Bindings and library from different revisions or `uniffi` versions | Regenerate with the in-crate generator from this revision's library; rebuild the artifact |
+| Kotlin checksum mismatch only on an ARM32 or `arm64-v8a` device, with matching bindings and library | UniFFI device defect | Upgrade to 0.32.1 or later. Never set `omit_checksums = true` as the fix |
+| `UniFFI contract version mismatch` | Bindings and scaffolding from different `uniffi` versions | Same fix as the first row |
+| Kotlin `junk remaining in buffer after lifting` or `BufferUnderflowException`; Swift `UniffiInternalError.incompleteData`, `.bufferOverflow`, or `.unexpectedEnumCase` | A record field or enum variant changed without a regenerate and rebuild | Regenerate and rebuild together; add the `--check` gate |
+| Native library not found at run time | Wrong ABI directory name, a missing ABI, or a renamed `.so` | Check ABI directory names and every release ABI; derive the library name from the package name |
+| Works on one machine, fails on another | A global `uniffi-bindgen`, or a local formatter | Use the in-crate binary; pass `--no-format` |
+| `--check` fails on whitespace or line endings only | Editor or Git settings changed the checked-in files | Normalize whitespace, line endings, and the final newline in the script |
+| Hundreds of `cannot find type 'RustBuffer' in scope` in the generated Swift | The FFI Clang module did not build; `#if canImport(<crate_name>FFI)` hides the cause | Build the FFI module alone and read its first error |
+| Actor-isolation errors in the generated Swift | A module with `MainActor` default isolation (uniffi-rs #2818) | Move it to a SwiftPM target with `nonisolated` isolation |
+| Swift cannot find the FFI module in an XCFramework | Modulemap not named `module.modulemap`, or it declares `framework module` | Rename it in the script |
 
 ## Checksums and the record-field gap
 
-Generated Kotlin and Swift embed one API checksum per exported function,
-constructor, and method, plus a contract version. When the comparison with the
-loaded library runs depends on the language:
+Generated Kotlin and Swift embed one API checksum per exported function, constructor, and
+method, plus a contract version. Swift checks at the first call and calls `fatalError` on a
+mismatch. Kotlin on UniFFI 0.30.0 to 0.32.2 checks only inside `uniffiEnsureInitialized()`,
+which a single-crate binding never calls, so a stale binding runs without an error. Call
+`uniffiEnsureInitialized()` from the generated package once at startup, from the adapter
+module, before the first binding call. On a mismatch, read the cause of the first
+`ExceptionInInitializerError`; the later `NoClassDefFoundError` is a follow-on, not R8 and not
+a missing JNA.
 
-- **Swift** checks at the first call and calls `fatalError` on a mismatch.
-- **Kotlin on UniFFI 0.30.0–0.32.2** checks only inside
-  `uniffiEnsureInitialized()`. A single-crate binding never calls it, so a
-  stale binding runs without an error, and `omit_checksums = false` proves
-  nothing. Call `uniffiEnsureInitialized()` from the generated package
-  (default `uniffi.<namespace>`) once at startup, from the adapter module,
-  before the first binding call. UniFFI 0.32.2, the latest release on
-  2026-11-12, still checks only there.
-- **Kotlin failure shape.** The check throws in a static initializer. Read the
-  cause of the first `ExceptionInInitializerError`; the later
-  `NoClassDefFoundError` (triage table) is a follow-on, not R8 stripping and
-  not a missing JNA.
+A record or enum enters a checksum only by its name, so a field or variant change leaves
+every checksum unchanged (uniffi-rs #1789): a reorder of two fields of the same type puts
+values in the wrong fields with no error. Read `references/binding-compat.md` when you
+diagnose skew.
 
-A hard failure is the good case.
-
-A record or enum enters a checksum only by its name, so a field or variant
-change leaves every checksum unchanged (uniffi-rs #1789). The worst case is a
-reorder of two fields of the same type: values go to the wrong fields with no
-error. Read `references/binding-compat.md` when you diagnose skew; it has the
-failure for each skew direction.
-
-Rule: a structural change to a record, enum, or error that crosses the boundary
-needs regenerated bindings and a rebuilt library in the same change. The
-`--check` gate enforces the bindings half. Ship the bindings and the library
-together for the other half.
+Rule: a structural change to a record, enum, or error that crosses the boundary needs
+regenerated bindings (the `--check` gate) and a rebuilt library, shipped together.
 
 ## Pin the generator to the runtime
 
-`uniffi-bindgen` must come from the same `uniffi` version as the runtime that
-the FFI crate links. Checksums can change between versions even when the
-exported API does not. UniFFI 0.31.0 removed the self type from method
-checksums, so 0.30.x bindings fail against a 0.31.x library, and the reverse.
+`uniffi-bindgen` must come from the same `uniffi` version as the runtime that the FFI crate
+links: checksums can change between versions even when the exported API does not.
 
-Build the generator from the FFI crate, behind a feature:
+Build the generator from the FFI crate as a `uniffi-bindgen` binary behind a `cli` feature
+(`cli = ["uniffi/cli"]`), and pin `uniffi` once at the workspace root with a committed
+`Cargo.lock`. Do not install `uniffi-bindgen` with `cargo install`: a global binary drifts from
+the lock file.
 
-```toml
-# Cargo.toml of the FFI crate
-[dependencies]
-uniffi = { workspace = true }   # workspace root: uniffi = "0.32.1"
-
-[features]
-# The default `cargo build/clippy/test --workspace` never compiles the CLI.
-cli = ["uniffi/cli"]
-
-[[bin]]
-name = "uniffi-bindgen"         # src/bin/uniffi-bindgen.rs calls uniffi::uniffi_bindgen_main()
-required-features = ["cli"]
-```
-
-Pin `uniffi` once at the workspace root and commit `Cargo.lock`. The generator
-links the same locked crate, so parity holds without an `=` requirement. Do not
-install `uniffi-bindgen` with `cargo install`: a global binary drifts from the
-lock file.
-
-Use UniFFI 0.32.1 or later. On 0.30.0–0.32.0, generated Kotlin can fail its
-checksum check on an ARM32 or `arm64-v8a` device even when bindings and library
-match. No 0.30.x or 0.31.x release is safe on both, so do not pin one as a
-workaround. Read the CHANGELOG for every version you skip, patch releases
-included. Read `references/binding-compat.md` when you bump `uniffi` or triage
-a device-only checksum mismatch; it has the version ranges.
+Use UniFFI 0.32.1 or later (older Kotlin can fail its checksum check on an ARM32 or
+`arm64-v8a` device), and read the CHANGELOG of every version you skip. Read
+`references/binding-compat.md` when you bump `uniffi`.
 
 ## Generate the bindings
 
-Pass the built library, not a UDL file, as the generator source. The generator
-reads the metadata that the UniFFI macros put into the binary, which `cfg` can
-change. Reject
-`cfg` and `cfg_attr` on exported functions, methods, records, enums, errors,
-and objects with a source gate. If target-dependent exports are unavoidable,
-generate and version separate bindings for each API.
+Pass the built library, not a UDL file, as the generator source. The generator reads the
+macro metadata in the binary, which `cfg` can change: reject `cfg` and `cfg_attr` on exported
+items with a source gate, or generate and version separate bindings for each API.
 
 ```bash
-# 1. Build the host library (no --target: the build machine).
 cargo rustc --locked --profile release --crate-type cdylib -p <ffi-crate> --lib
-
-# 2. Generate Kotlin and Swift. --no-format makes the output independent of
-#    the ktlint and swift-format installs on this machine.
 cargo run --locked -p <ffi-crate> --features cli --bin uniffi-bindgen -- \
-  generate <host library> --language kotlin --language swift \
-  --no-format --out-dir <tmp>
+  generate <host library> --language kotlin --language swift --no-format --out-dir <tmp>
 ```
 
-Wrap generation in one checked-in script with an optional library-path
-argument (default: the host library) and two modes:
+Wrap generation in one checked-in script with a `--check` mode (the default: generate into a
+temporary directory, `diff`, exit non-zero on a difference) and a `--write` mode. To prove
+target independence, run `--check` with each unstripped shipping library
+(`target/<triple>/<profile>/lib<crate_name>.so` or `.a`) as input: a stripped `.so`, such as
+the one inside an APK, gives no metadata.
 
-- `--check` (the default): generate into a temporary directory and `diff`
-  against the checked-in files. Exit non-zero on any difference.
-- `--write`: overwrite the checked-in files.
-
-The generator reads ELF, Mach-O, and PE libraries and static archives on any
-host. To prove target independence, run the script in `--check` mode with each
-shipping library as its input; the raw generator output always differs from
-the checked-in files. Pass the unstripped
-`target/<triple>/<profile>/lib<crate_name>.so` or `.a`. The generator reads ELF
-metadata from the symbol table only, so a stripped `.so`, such as the one
-inside an APK or AAB, gives no metadata.
-
-Check in the generated Kotlin file, Swift file, C header, and modulemap: they
-are the contract that consumers compile against, and their diff is the review
-signal. Do not hand-edit them; the next regeneration discards the edit. Put a
-fix in the Rust crate or in the consumer adapter.
-Read `references/binding-compat.md` when you write or fix the script, review an
-FFI diff, or coordinate a breaking change.
-
-Commit the regenerated files with the Rust change; a split commit gives
-`git bisect` a broken state. A `--check` diff in CI blocks the merge.
+Check in the generated Kotlin file, Swift file, C header, and modulemap, never hand-edit them,
+and commit them with the Rust change. Read
+[references/binding-compat.md](references/binding-compat.md) for the manifest, the script
+contract, FFI diff review, and breaking-change coordination.
 
 ## Classify an FFI change
 
 | Change | Class | Required action |
 |--------|-------|-----------------|
 | Add a function or constructor | Additive | Regenerate bindings |
-| Add a method to an object | Additive unless consumers implement the generated Swift protocol or Kotlin interface, for example in fakes | Regenerate bindings; update consumer implementations |
-| Add a method to a foreign-implementable trait or callback interface | Source-breaking for every Kotlin and Swift implementation | Major bump |
-| Add a record field with a generated default | Source-additive, checksum-blind | Confirm that an old constructor call still compiles in Kotlin and Swift; ship bindings and library together |
+| Add a method to an object | Additive unless consumers implement the generated protocol or interface (fakes) | Regenerate; update consumer implementations |
+| Add a method to a foreign-implementable trait | Source-breaking for every implementation | Major bump |
+| Add a record field with a generated default | Source-additive, checksum-blind | Confirm an old constructor call still compiles; ship bindings and library together |
 | Add a record field without a default | Source-breaking, checksum-blind | Major bump; update every constructor call; ship together |
-| Add an enum or error variant | Source-breaking for exhaustive `when` and `switch`, checksum-blind | Treat as breaking; update consumer arms; ship together |
-| Remove or rename a function, method, field, or variant | Breaking | Major bump; coordinate every consumer |
+| Add an enum or error variant | Source-breaking for exhaustive `when` and `switch`, checksum-blind | Breaking; update consumer arms; ship together |
+| Remove or rename a function, method, field, or variant | Breaking | Major bump |
 | Change an argument or return type | Breaking | Major bump |
 | Change a record field type or the fields of a variant | Breaking, checksum-blind | Major bump; ship together |
 | Rename the package or the library file | Breaking | Major bump; the loader looks up the old name |
 
-When in doubt, classify a change as breaking and ship bindings and library
-together. A record field is additive only when UniFFI generates a default for it in
-every target language. The `uniffi-boundary` skill has the
-default-value attribute forms.
+When in doubt, classify a change as breaking and ship bindings and library together. A
+record field is additive only when UniFFI generates a default for it in every target
+language.
 
 ## The artifact contract
 
 | Consumer | Rust crate type | Artifact | Generated glue |
 |----------|-----------------|----------|----------------|
-| Android | `cdylib` | `lib<crate_name>.so`, one per ABI, under `jniLibs/<abi>/` | Kotlin file; JNA 5.12.0 or later in its `@aar` form at run time |
+| Android | `cdylib` | `lib<crate_name>.so` per ABI, under `jniLibs/<abi>/` | Kotlin file; JNA 5.12.0+ `@aar` at run time |
 | Apple | `staticlib` | `<Name>.xcframework` with one slice per platform | Swift file, C header, and modulemap |
-| Host (bindgen only) | `cdylib` | `lib<crate_name>.{dylib,so}` or `<crate_name>.dll` | None; this is the generator input |
+| Host (bindgen only) | `cdylib` | `lib<crate_name>.{dylib,so}` or `<crate_name>.dll` | None; generator input |
 
-Commit the generated glue. Do not commit the `.so`, `.a`, or `.xcframework`;
-the release job rebuilds them from the tagged revision. A committed artifact
-goes stale, and `--check` does not catch it.
+Do not commit the `.so`, `.a`, or `.xcframework`: the release job rebuilds them from the
+tagged revision, and a committed artifact goes stale where `--check` does not see it.
 
-Keep one FFI crate with every platform-facing export: one checksum set, one
-artifact name, one version. The `rust-ios-build` skill,
-when it is installed, owns the one-staticlib-per-app rule: link one Rust `staticlib` into an app. Two UniFFI libraries
-in one iOS app also define the same C types (uniffi-rs #2802).
+Keep one FFI crate with every platform-facing export: one checksum set, one artifact name,
+one version. Link one Rust `staticlib` into an iOS app: two UniFFI libraries in one app also
+define the same C types (uniffi-rs #2802).
 
-The `rust-panic-safety` skill, when it is installed, owns the `panic` profile
-setting. Under `panic = "abort"`, a panic in an export ends the process instead
-of reaching Kotlin or Swift as an internal error.
-
-Select the crate type on the packaging command, not in the manifest:
-
-```toml
-# Cargo.toml of the FFI crate
-[lib]
-crate-type = ["lib"]   # the default. Do not add "cdylib" or "staticlib" here.
-# Set no `name` key. The artifact name then follows the package name, with
-# hyphens replaced by underscores.
-```
-
-```bash
-# Android slice
-cargo rustc --locked --profile android-jni --target aarch64-linux-android \
-  --crate-type cdylib -p <ffi-crate> --lib
-```
-
-Reason: `crate-type = ["cdylib", "staticlib", "lib"]` in the manifest makes
-every `cargo build`, `clippy`, and `test` link all three artifacts, in every
-lane.
-
-Export `IPHONEOS_DEPLOYMENT_TARGET` once, as the "Set one deployment target"
-section of the `rust-ios-build` skill shows. Then build each Apple slice with
-the `--crate-type staticlib` command of that skill, which sets `SDKROOT`. If
-the deployment target is not set, the C objects and the Rust objects of one
-slice get different minimum iOS versions.
-
-Declare the `android-jni` and `ios-release` profiles in the workspace
-`Cargo.toml`, as the `rust-android-build` and `rust-ios-build` skills show. Each
-one inherits `release`, keeps `panic = "unwind"`, sets `strip = "none"`, and
-adds line tables; without them, native symbols and dSYMs get no Rust file or
-line data. Keep `--profile release` only for the host library that feeds the
-generator.
+Under `panic = "abort"`, a panic in an export ends the process. Select the crate type on the packaging command
+(`cargo rustc --crate-type cdylib` or `staticlib`), never in `[lib] crate-type`: there it makes
+every `cargo build`, `clippy`, and `test` link all three artifacts. Build each slice with a
+ship profile (`android-jni`, `ios-release`) that keeps `panic = "unwind"`, `strip = "none"`,
+and line tables. Read [references/platform-artifacts.md](references/platform-artifacts.md)
+for the manifest, the slice commands, and the iOS deployment target.
 
 ## Android: one cdylib per ABI
 
-Build each ABI with the Android slice command above, and copy
-`target/<triple>/android-jni/lib<crate_name>.so` into
-`<generated>/jniLibs/<abi>/`. Name each ABI directory with the Android ABI name
-exactly: `arm64-v8a`, not `aarch64`. The packager ignores a wrong directory
-name without an error, and the library is then missing at run time. The
-`rust-android-build` skill owns the ABI matrix, the NDK, and the Gradle task.
-Read
-`references/platform-artifacts.md` when you set up the `jniLibs` layout, the
-host library for the generator, or the consumer modules.
+Copy each `target/<triple>/android-jni/lib<crate_name>.so` into
+`<generated>/jniLibs/<abi>/`. Name each ABI directory with the Android ABI name exactly:
+`arm64-v8a`, not `aarch64`. The packager ignores a wrong name without an error, and the
+library is then missing at run time. Read `references/platform-artifacts.md` when you set up
+the `jniLibs` layout, the host library for the generator, or the consumer modules.
 
 ## Apple: staticlib slices and the generated C module
 
-Build one `staticlib` per Apple target in the support matrix. The
-`rust-ios-build` skill owns the slices, `lipo`, `xcodebuild
--create-xcframework`, and SwiftPM. This skill adds the UniFFI parts:
-
-- Stage the generated `<crate_name>FFI.h` and the modulemap into the headers
-  directory of every slice. Rename the generated `<crate_name>FFI.modulemap` to
-  `module.modulemap` in the regeneration script, not by hand. Read `references/platform-artifacts.md`
-  when you stage these files or need `uniffi-bindgen-swift`.
-- A compile-only CI lane may build `aarch64-apple-ios-sim` alone. Put that
-  behind an explicit mode flag, and make the release path fail when the flag is
-  set. A one-slice release fails on every device.
+Build one `staticlib` per Apple target in the support matrix, and assemble them with
+`xcodebuild -create-xcframework`. Stage the generated `<crate_name>FFI.h` and the modulemap
+into the headers directory of every slice, renamed to `module.modulemap` by the regeneration
+script. Read `references/platform-artifacts.md` when you stage these files or need
+`uniffi-bindgen-swift`. A compile-only CI lane may build `aarch64-apple-ios-sim` alone behind
+an explicit mode flag; make the release path fail when the flag is set.
 
 ## Keep the generated layer internal
 
-Put the generated bindings in their own module. Only an adapter module depends
-on it, and the adapter maps the generated types onto a port type that feature
-modules use. Make every `when` and `switch` over generated types exhaustive,
-with no wildcard arm: a drifted binding is then a compile error, not silent
-behavior. Read the consumer-layering section of
-`references/platform-artifacts.md` when you set up the generated Gradle module,
-the JNA dependency, or the SwiftPM targets.
+Put the generated bindings in their own module. Only an adapter module depends on it, and it
+maps the generated types onto port types. Make every `when` and `switch` over generated types
+exhaustive, with no wildcard arm, so a drifted binding is a compile error. Read the
+consumer-layering section of `references/platform-artifacts.md` for the Gradle module, JNA,
+and SwiftPM targets.
 
 ## Prove a release
 
-Read `references/release-proof.md` when you define the mobile support matrix,
-prove a release candidate on its final APK, AAB, AAR, or XCFramework, or record
-the release closure. Do not replace those lanes with tests against intermediate
-`.so`, `.a`, or generated source files.
+Read `references/release-proof.md` when you define the support matrix, prove a release
+candidate on its final APK, AAB, AAR, or XCFramework, or record the release closure. Do not
+replace those lanes with tests against an intermediate `.so`, `.a`, or generated source.
 
 ## Related skills
 
-Use these skills when they are installed: `uniffi-boundary` (exported API shape,
-type mapping, errors, default values), `ffi-error-progress-cancel` (callbacks,
-progress, cancellation), `rust-android-build` (APK and AAB contents, NDK, ELF
-alignment, stripping), `rust-ios-build` (Apple targets, `lipo`, XCFramework,
-SwiftPM checksums, signing, dSYMs), and `cargo-workflows` (profiles, toolchain
-pin, cross-compilation). Read `references/binding-compat.md` ("Sources") for the
-UniFFI changelog and issue links.
+When installed, the `uniffi-boundary` skill owns the exported API shape, and the
+`ffi-error-progress-cancel` skill owns callbacks, progress, and cancellation.

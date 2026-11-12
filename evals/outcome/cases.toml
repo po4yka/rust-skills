@@ -17,6 +17,10 @@
 skill = "rust-borrow-semantics"
 fixture = "hang" # the second lock() in the match deadlocks the test
 
+[cases.design-error-source-chain]
+skill = "rust-error-handling"
+fixture = "pass" # the tests never reach the io cause; the probe does
+
 [cases.build-release-bump]
 skill = "rust-crate-release"
 fixture = "pass" # the defect is the version decision, not the code

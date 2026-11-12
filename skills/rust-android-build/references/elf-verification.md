@@ -8,7 +8,8 @@ Contents: check order; file and ELF header; LOAD alignment and page-size assumpt
 `DT_NEEDED` and prebuilt `GNU_RELRO`; exported symbols, the allowed set, and the allowlist diff;
 build ID; size gate and size audit; CI wiring; triage.
 
-All commands use the NDK LLVM tools. Resolve them once:
+All commands use the NDK LLVM tools. Resolve them once (the macOS NDK uses `darwin-x86_64` on
+Apple silicon too):
 
 ```bash
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$(uname | tr '[:upper:]' '[:lower:]')-x86_64/bin"
@@ -183,8 +184,10 @@ produces it; that file says why a plain `--build-id` fails.
 
 ## 7. Size gate
 
-Keep a checked-in baseline file that maps library name and ABI to a byte count. Apply the two
-thresholds from the release-gates section of [SKILL.md](../SKILL.md). The per-library limit catches
+Keep a checked-in baseline file that maps library name and ABI to a byte count. The default
+thresholds are at most 128 KiB growth for one tracked library, and total growth across all
+tracked libraries of at most the tighter of 2% or 256 KiB; tune them per product. The per-library
+limit catches
 one crate that ballooned, and the total limit catches many small increases that each pass the
 per-library limit.
 

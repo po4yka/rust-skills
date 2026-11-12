@@ -3,6 +3,20 @@
 Extended reference for the `rust-tdd` skill. Read this when a test waits on time, or when a
 test must assert a state while an operation is in flight.
 
+## Runtime mistakes
+
+Use `#[tokio::test]` for code that runs on tokio. It builds a fresh current-thread runtime
+for each test. Three runtime mistakes fail or hang the test for a reason that is not the
+behavior:
+
+- A tokio timer or I/O type used outside a runtime, for example in a plain `#[test]` through
+  `futures::executor::block_on`, panics with `there is no reactor running`.
+- A `Runtime::block_on` inside `#[tokio::test]` panics with `Cannot start a runtime from
+  within a runtime`. Use `.await` instead.
+- Inside `#[tokio::test]`, a blocking wait such as `futures::executor::block_on` or
+  `std::sync::mpsc::Receiver::recv` blocks the only runtime thread. Spawned tasks and timers
+  then cannot run, so a wait on one of them hangs the test. Use `.await` instead.
+
 ## Paused time
 
 For code that waits on time, start the test with paused time:

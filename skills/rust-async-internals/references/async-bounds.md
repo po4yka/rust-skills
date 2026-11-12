@@ -4,6 +4,7 @@ Reference material for `SKILL.md`. Read the section that matches the bound or ty
 
 ## Contents
 
+- [Pick the callback or trait shape](#pick-the-callback-or-trait-shape)
 - [Async closures and the AsyncFn family](#async-closures-and-the-asyncfn-family)
 - [A single Fut parameter rejects every borrowing async fn](#a-single-fut-parameter-rejects-every-borrowing-async-fn)
 - [AsyncFn carries no Send bound to the future](#asyncfn-carries-no-send-bound-to-the-future)
@@ -11,6 +12,17 @@ Reference material for `SKILL.md`. Read the section that matches the bound or ty
 - [impl Trait (RPIT) captures in edition 2024](#impl-trait-rpit-captures-in-edition-2024)
 - [Two futures over one state](#two-futures-over-one-state)
 - [Why a future or an FFI type needs Pin](#why-a-future-or-an-ffi-type-needs-pin)
+
+## Pick the callback or trait shape
+
+Pick the shape from where the future goes:
+
+| Need | Shape | Reason |
+|---|---|---|
+| Callback over `&T`; the future stays on the caller's task (Rust 1.85+) | `F: AsyncFn(&T) -> R` | no box; the borrow works |
+| Callback whose future crosses `tokio::spawn` or a `dyn` boundary | `F: for<'a> Fn(&'a T) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>` | no stable bound names the `AsyncFn` future, so `F: AsyncFn(..) + Send` does not make it `Send` |
+| Trait method that callers spawn through a generic `T: Trait` | `fn m(&self) -> impl Future<Output = R> + Send`, or `#[trait_variant::make(TraitSend: Send)]` | a native `async fn` in a trait adds no `Send` bound |
+| Trait used as `dyn Trait` | `#[async_trait]`, a method that returns `Pin<Box<dyn Future<Output = R> + Send + '_>>`, or the `dynosaur` crate | `async fn` and `-> impl Future` methods are not dyn compatible (E0038); `trait_variant` does not change that |
 
 ## Async closures and the AsyncFn family
 

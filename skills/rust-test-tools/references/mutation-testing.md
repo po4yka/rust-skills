@@ -208,7 +208,29 @@ Gate CI on the exit code, not on a parsed report.
 Exit code 4 means your diagnosis stops here. Fix the normal test suite first. Treat any code
 outside this table as a tool failure, not as a test result.
 
-The triage steps for `missed.txt` are in `SKILL.md`. Record the reason for every exclude: an
+### Triage
+
+- A diff that only adds or changes tests gives no mutants, because `--in-diff` matches only the
+  code under test. For new tests of existing code, run
+  `cargo mutants --test-tool nextest --cargo-arg=--locked --file <source-file>` (or
+  `--package <crate>`).
+- cargo-mutants runs cargo without `--locked`. Pass `--cargo-arg=--locked`, or set
+  `additional_cargo_args = ["--locked"]` in `.cargo/mutants.toml`, not both: cargo rejects a
+  repeated `--locked`.
+- Results go to `<output>/mutants.out/`. Exit code 2 means some mutants survived. Exit code 4
+  means the tests fail before any mutation, so fix the suite first.
+
+Triage `mutants.out/missed.txt`. It is the gate, not a score: cargo-mutants defines no
+threshold.
+
+1. For each missed mutant, read the function and the change. `mutants.out/diff/` holds each
+   change as a diff.
+2. If a test must catch the change, write a test that asserts the exact value or side effect.
+3. If the code cannot be tested in a useful way (`Display` or `Debug` output, logging, FFI
+   glue), exclude it with `exclude_re` in `.cargo/mutants.toml` or with `#[mutants::skip]`.
+   Record the reason next to the exclusion. Do not write a meaningless test to raise the count.
+
+Record the reason for every exclude: an
 undocumented exclude hides that code from every later run.
 
 ## Writing mutation-resistant tests

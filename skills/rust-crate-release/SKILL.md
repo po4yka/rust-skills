@@ -6,9 +6,8 @@ license: BSD-3-Clause
 
 # Rust Crate Release
 
-A release has two independent modes. The registry mode publishes a source `.crate`. The binary
-mode distributes built assets. They fail in different ways and need different permissions.
-An authorization for one mode does not authorize the other.
+A release has two independent modes: the registry mode publishes a source `.crate`, and the
+binary mode distributes built assets. An authorization for one mode does not authorize the other.
 
 ## Safety rules
 
@@ -21,119 +20,80 @@ Published versions and uploaded assets are permanent, so these rules have no exc
   trusted publisher.
 - Never add `--allow-dirty` or `--no-verify` to make a release pass. Both publish bytes that no
   check saw.
-- Never put a registry token on the command line or in a log. Shell history and CI logs keep it.
-  If a token leaks, revoke it at once (crates.io: https://crates.io/settings/tokens), then create
-  a new scoped token.
+- Never put a registry token on the command line or in a log: history and CI logs keep it. If a
+  token leaks, revoke it at once and create a new scoped token (crates.io:
+  https://crates.io/settings/tokens).
 - Never reuse a version after a partial or timed-out publish. The upload can have completed.
 - Never release a different commit under an existing version, and never replace a named asset
   with different bytes. Users and caches already trust the first bytes.
 
-Local inspection, tests, `cargo package`, and `cargo publish --dry-run` write nothing external.
-Run them before you ask for authorization.
+Local checks, `cargo package`, and `cargo publish --dry-run` write nothing external. Run them
+before you ask for authorization.
 
 ## Failure triage
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `cargo info` output says `(from ./...)` | No `--registry`, so Cargo describes the local member | Pass `--registry <registry>` and read the result again |
-| `cargo package --list` misses a file | `include`, `exclude`, or a VCS ignore rule removes it | Fix the manifest and list again |
-| Archive tests fail with E0432 or E0433 on a test helper crate | A path-only dev-dependency is removed from the published manifest | Give it a published `version`, or keep those tests out of the archive and document it |
-| Package verifies in the workspace but not from the archive | Hidden path, generated file, or undeclared build input | Include the input or generate it in `OUT_DIR` |
+| A file is missing from the archive, or archive tests fail with E0432 or E0433 | `include`/`exclude`, an ignore rule, a path-only dev-dependency, or an undeclared build input | Follow the triage table in the package-inspection reference |
 | Dry run selects the wrong package | Workspace defaults or the current directory select another member | Pass `-p <package>` and `--registry` |
-| `--all-features` fails | Features conflict or one combination lacks coverage | Test the documented valid sets and fix accidental conflicts |
 | docs.rs build fails or lacks a platform API | Feature, target, native dependency, or sandbox difference | Fix `[package.metadata.docs.rs]` or the build behavior, then release a new version if required |
-| Two clean binary builds have different digests | Path, timestamp, linker, toolchain component, or archive metadata differs | Find the variation or remove the reproducibility claim |
-| Binary upload times out | The host can have accepted the asset | Download and hash the remote bytes; follow the retry table in the binary reference |
-| Signature verifies for an unexpected identity | The signature is valid but the trust policy is wrong | Stop and pin the expected identity and issuer |
+| A binary digest, upload, or signature check fails | See the binary reference | Stop; follow its triage table |
 
 ## Completion report
 
-Report these facts:
+Report: the published or prepared status of each mode; package, version, registry, commit, and
+tag; the SemVer and MSRV decision with evidence; the exact checks and observed results; package
+contents and archive size; for binaries, the target matrix, asset names, checksums, SBOM,
+provenance, signature status, and the consumer verification of every downloaded asset; the
+registry and docs.rs result; every external action; remaining risks and blocked checks.
 
-- published or prepared status for each mode;
-- package, version, registry, commit, and tag;
-- SemVer and MSRV decision with evidence;
-- exact checks and observed results;
-- package contents and archive size;
-- binary target matrix, asset names, checksums, SBOM, provenance, and signature status, and the
-  consumer verification of every downloaded asset;
-- registry and docs.rs result;
-- every external action performed;
-- remaining risks and blocked checks.
-
-Do not report a release as complete when only a dry run passed. Do not report a publish as failed
-only because the client timed out.
+Do not report a release as complete when only a dry run passed, or as failed only because the
+client timed out.
 
 ## Release inputs
 
-Collect the inputs first: package, registry, base, candidate commit, version, MSRV, features,
-targets, mode, channel, and authority. Read
-[references/release-inputs-and-metadata.md](references/release-inputs-and-metadata.md) when you
-collect them; it has the evidence each input needs and the read-only checks, which end with
+Read [references/release-inputs-and-metadata.md](references/release-inputs-and-metadata.md)
+first: it lists the inputs, the evidence each needs, and the read-only checks, which end with
 `cargo metadata --locked --no-deps --format-version 1`.
 
 Stop if the candidate worktree is dirty. Use a clean worktree at the candidate commit when other
-work must stay in place.
-`--locked` needs a committed `Cargo.lock`. Libraries commit it too; the `cargo-workflows` skill,
-when it is installed, owns that rule.
-Read `target_directory` from the `cargo metadata` output. `cargo package` writes the archive to
-`<target_directory>/package/`, which is not `./target` when `CARGO_TARGET_DIR` or
-`build.target-dir` is set.
+work must stay in place. `--locked` needs a committed `Cargo.lock`, libraries included.
 
-Read the repository release policy, CI config, `Cargo.toml`, README, changelog, and recent tags.
-Do not invent a tag prefix or changelog format.
+Read the repository release policy, CI config, README, changelog, and recent tags. Do not invent
+a tag prefix or changelog format.
 
 ## 1. Compare the published base with the candidate
 
-Use the previous release tag as the fixed base, not the previous commit:
+Use the previous release tag as the base:
 
 ```bash
 git diff --stat <previous-release-tag>..HEAD
 git log --oneline <previous-release-tag>..HEAD
 ```
 
-For a first release, confirm that the name has no published version in the target registry
-(section 5). Review the complete public surface as the initial contract.
+For a first release, review the complete public surface as the initial contract.
 
-Inspect every change that can alter the user contract: public items and re-exports, trait
-implementations and auto traits, macros, features and optional dependencies, `rust-version`,
-edition, dependency requirements, targets and native requirements, documented errors, panics,
-and safety requirements, and the files in the archive.
-A dependency is public when its type appears in a public signature or a macro expansion.
-Review the expanded user-facing surface, not only lines that contain `pub`.
+Inspect every change to the user contract, not only lines with `pub`: the checklist is in [references/compatibility.md](references/compatibility.md). Mark a public enum
+that downstream code matches `#[non_exhaustive]` in its first release.
 
 ## 2. Classify the version change
 
-Apply the repository policy first. Use the Cargo SemVer guide when the policy is silent.
-Read [references/compatibility.md](references/compatibility.md) when the diff changes a public
-item, trait impl, macro, feature, MSRV, or platform requirement. It holds the classification
-table and the review checklist.
+Apply the repository policy first, then the Cargo SemVer guide and the classification table in
+[references/compatibility.md](references/compatibility.md).
 
-For `1.0.0` and later, use patch for compatible fixes, minor for compatible additions, and major
-for incompatible changes. For `0.y.z`, `y` is the breaking position. Each `0.0.z` release is
-incompatible with every other `0.0` release.
-Choose the larger bump for a possibly breaking change unless policy and downstream evidence
-support a smaller one. Record the classification and its evidence in the release notes.
+For `0.y.z`, `y` is the breaking position. Choose the larger bump for a possibly breaking change
+unless policy and downstream evidence support a smaller one. Record the classification and its
+evidence in the release notes.
 
-Run an API diff with `cargo-semver-checks`. Install it with
-`cargo install --locked cargo-semver-checks` when it is missing. If it cannot be installed, report
-the API diff as not run.
-
-```bash
-cargo semver-checks -p <package> --baseline-version <previous-version>
-```
-
-It is a CLI, not a manifest dependency. Treat a reported break as real. A clean result does not
-prove compatibility: it does not check behavior, documented panics, or every macro change.
-`--baseline-version` looks up only crates.io. For another registry, pass
-`--baseline-rev <previous-release-tag>`.
-Each release of the tool reads the rustdoc JSON of at least the stable and beta Rust of its
-release date. Update the tool when you update the stable toolchain.
+Run `cargo semver-checks -p <package> --baseline-version <previous-version>`; the reference has
+the install, the other-registry form, and the limits. Treat a reported break as real. A clean
+result does not prove compatibility: it does not check behavior, documented panics, or every
+macro change. If the tool cannot run, report the API diff as not run.
 
 ## 3. Verify MSRV, features, and targets
 
-Read `rust-version` from the package or its inherited workspace value. Keep the documented MSRV
-equal to the value that CI verifies.
+Keep the documented MSRV equal to the `rust-version` that CI verifies.
 
 ```bash
 rustup toolchain install <msrv> --profile minimal
@@ -141,49 +101,32 @@ cargo +<msrv> test --locked -p <package> --all-targets
 cargo +<msrv> test --locked -p <package> --doc
 ```
 
-Run each `--doc` line only when the package has a library target. On a bin-only package it fails
-with `no library targets found in package`.
-
-Below MSRV 1.96.1, vendor a third-party registry or SSH git source with a newer Cargo and add
-`--offline` to each MSRV command (the `rust-security` skill owns the rule).
+Run each `--doc` line only when the package has a library target. Below MSRV 1.96.1, vendor a
+third-party registry or SSH git source with a newer Cargo and add `--offline` to each MSRV
+command (the `rust-security` skill owns the rule).
 
 When the MSRV build fails, find the cause before you raise the MSRV. Never run a full
-`cargo update` as the fix: it moves every dependency just before publish. Re-resolve only the one
-dependency, vet each new package name, and commit the lockfile before you build or test again.
-Read [references/compatibility.md](references/compatibility.md) when the MSRV build fails or a
-workspace has several MSRVs; it has the cause and fix table.
+`cargo update` as the fix: it moves every dependency just before publish. Read the cause and fix
+table in [references/compatibility.md](references/compatibility.md) when the MSRV build fails or
+a workspace has several MSRVs.
 
-Run the smallest feature matrix that covers each supported state:
-
-```bash
-cargo test --locked -p <package> --all-targets
-cargo test --locked -p <package> --all-targets --no-default-features
-cargo test --locked -p <package> --all-targets --no-default-features --features <feature-set>
-```
-
-Add `--all-features` only when the features are additive. Otherwise test each documented set, or
-run `cargo hack test --each-feature` when `cargo-hack` is installed.
-Test every supported target in CI or with the repository's target command. A host-only build does
-not prove target support.
+Test the smallest feature matrix that covers each supported state (the commands are in the
+reference), and every supported target in CI. A host-only build does not prove target support.
 
 ## 4. Check manifest and documentation metadata
 
-Verify `name`, `version`, `rust-version`, `description`, `license`, `repository`, and `readme`
-in the `[package]` table of the package that ships. Do not set `homepage` to the `repository` or
-documentation URL. Since 2026-05-01, docs.rs builds only the default target unless
-`[package.metadata.docs.rs]` lists `targets`, so list them when the public API differs by target.
-Read [references/release-inputs-and-metadata.md](references/release-inputs-and-metadata.md) when
-you write or review these tables; it has both, with the `license-file` and `all-features` rules.
+Read the `[package]` and docs.rs sections of the inputs reference when you write or review these
+tables. Since 2026-05-01, docs.rs builds only the default target unless
+`[package.metadata.docs.rs]` lists `targets`; list them when the public API differs by target.
 
 ## 5. Prepare the version and changelog
 
-Update only the authoritative version field and respect workspace inheritance.
-Write the changelog from the release diff: additions, fixes, deprecations, breaking changes, MSRV,
-feature, and platform changes, and migration steps. Do not call a possibly breaking change
-compatible without evidence.
+Update only the authoritative version field and respect workspace inheritance. Write the
+changelog from the release diff, with breaking, MSRV, feature, and platform changes and migration
+steps.
 
-The archive must come from a clean release commit. Stage only the version, lockfile, changelog,
-and other required release files. Land that commit on the remote default branch, with its own
+The archive must come from a clean release commit that holds only the version, lockfile,
+changelog, and other release files. Land that commit on the remote default branch, with its own
 authorization, before any publish: `.cargo_vcs_info.json` records its SHA in the registry forever.
 
 ```bash
@@ -191,19 +134,9 @@ git diff --cached --check
 git diff --cached
 ```
 
-Confirm that the version is free in the registry. Always pass `--registry`, also for crates.io:
-
-```bash
-cargo info <package>@<version> --registry <registry>
-```
-
-A free version gives (a `(from ./...)` line is the local member; see the triage table):
-
-```text
-error: could not find `<package>@<version>` in registry `<index-url>`
-```
-
-A timeout or an authentication error does not prove that the version is free.
+Confirm that the version is free with `cargo info <package>@<version> --registry <registry>`
+(always pass `--registry`, also for crates.io). Only `error: could not find` proves it is free; a
+timeout or an authentication error does not.
 
 ## 6. Run repository gates
 
@@ -217,150 +150,76 @@ cargo test --locked -p <package> --doc --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --locked -p <package> --all-features --no-deps
 ```
 
-Replace `--all-features` with the supported sets when features conflict. `--all-targets` does not
-run doctests, so keep the `--doc` line when the package has a library target. The `rust-lints` skill, when it is installed, owns the
-`cargo doc` gate. This per-package form leaves out `--document-private-items`: it checks the
-public docs that docs.rs renders.
-Run the repository's advisory gate
-(`cargo deny --config deny.toml --locked check advisories`), or else `cargo audit`
-(`cargo install --locked cargo-audit`). If neither can run, report the advisory check as not run.
-Every `.crate` contains `Cargo.lock` unless `--exclude-lockfile` is passed, and
-`cargo install --locked` builds with it, so a vulnerable locked dependency reaches the users of a
-binary crate. The `rust-security` skill, when it is installed, owns the advisory policy.
+Replace `--all-features` with the documented valid sets when features conflict. Keep the `--doc` line
+for a library target: `--all-targets` does not run doctests.
+Run the advisory gate (`cargo deny --config deny.toml --locked check advisories`, or else
+`cargo audit`), or report it as not run. A `.crate` carries `Cargo.lock`, and
+`cargo install --locked` builds with it, so a vulnerable locked dependency reaches binary users.
 Run the MSRV and target checks after the final version change. A green CI run for a different
 commit is not release evidence.
 
 ## 7. Inspect the exact package
 
-List the files before you create the archive:
+List the files, review the list for missing inputs and for secrets and private keys, then create
+and verify the archive:
 
 ```bash
 cargo package --locked -p <package> --registry <registry> --list
-```
-
-Review the complete list. Look for missing source, generated files, README, license, and build
-inputs. Look for secrets, credentials, private keys, internal notes, large fixtures, and
-repository-only files. Use `include` or `exclude` only when the default set is wrong; `include`
-overrides `exclude`.
-
-Create and verify the archive:
-
-```bash
 cargo package --locked -p <package> --registry <registry>
 cargo publish --locked -p <package> --registry <registry> --dry-run
 ```
 
-Both must pass as written (see Safety rules). Inspect the `.crate` under
-`<target_directory>/package/`; `cargo publish` does not keep one since Cargo 1.93.
-crates.io rejects a compressed `.crate` over 10 MB.
-
-`cargo package` verifies only that the library and binaries build. Test the packaged source when
-tests, examples, build scripts, or generated files can differ from the workspace:
-
-```bash
-release_tmp="$(mktemp -d)"
-tar -xzf "<target_directory>/package/<package>-<version>.crate" -C "$release_tmp"
-(
-  cd "$release_tmp/<package>-<version>"
-  cargo test --locked --all-targets
-  RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
-)
-```
-
-Cargo removes a path dev-dependency that has no `version` from the published manifest. Tests that
-use it pass in the workspace and fail from the archive with E0432 (a `use` import) or E0433 (a
-path such as `helper::f()`). Keep the directory until diagnosis ends.
+Both must pass as written (see Safety rules). `cargo package` verifies only that the library and
+binaries build. Read [references/package-inspection.md](references/package-inspection.md) when
+you review the file list, inspect the `.crate`, or test the packaged source.
 
 ## 8. Distribute binary artifacts
 
-Use this mode only when users download prebuilt executables, libraries, installers, or firmware.
-Read [references/binary-distribution.md](references/binary-distribution.md) when you build,
-sign, or upload these artifacts.
-A registry publish does not prove a binary release, and the reverse is also true. Report each
-mode separately.
+Read [references/binary-distribution.md](references/binary-distribution.md) when users download
+prebuilt executables, libraries, installers, or firmware. Report each mode separately.
 
 ## 9. Handle workspace release order
 
 Read [references/workspace-publish.md](references/workspace-publish.md) when the release
-publishes more than one workspace package. Publish dependencies before dependents, and verify the
-whole ordered set in one dry run before the first upload. Multi-package `cargo publish` is not
-atomic: request authorization with the complete ordered list, and stop after the first failed or
-uncertain publish.
+publishes more than one workspace package: multi-package `cargo publish` is not atomic.
 
 ## 10. Request authorization and publish
 
-Choose exactly one release channel for each version:
+Choose one channel per version: a direct local `cargo publish`, tagged only after the registry
+shows the version, or a CI workflow that a tag push or dispatch starts, with no local publish.
 
-- **Direct:** run the approved local `cargo publish`. Tag the commit only after the registry
-  shows the version.
-- **CI:** a tag push or manual dispatch starts the repository workflow. Do not run a local
-  `cargo publish` for that version.
-
-Read the workflow to learn which event uploads the crate. For crates.io from GitHub Actions or
-GitLab.com, prefer Trusted Publishing to a stored token. Read
+For crates.io from GitHub Actions or GitLab.com, prefer Trusted Publishing to a stored token. Read
 [references/trusted-publishing.md](references/trusted-publishing.md) when you write or review a
 publish workflow or change the crate's publisher settings.
 
-With the authorization request, present the completion-report facts that exist so far, the
-changelog summary, and the exact command. For a direct release that is
-`cargo publish --locked -p <package> --registry <registry>`; for a CI release it is the exact tag
-push that starts the workflow.
+With the authorization request, present the completion-report facts so far, the changelog
+summary, and the exact command: `cargo publish --locked -p <package> --registry <registry>`, or
+the exact tag push that starts the workflow.
 
 After approval, run `git status --short` and `git rev-parse HEAD` again. Stop if either differs
 from the approved candidate, or if `git fetch origin && git merge-base --is-ancestor HEAD
-origin/<default-branch>` fails. Run the approved command once.
-If it times out, never publish that version again. Check the registry until the result is known,
-then stop the release chain. An immediate negative `cargo info` does not prove that the upload
-failed.
+origin/<default-branch>` fails. Run the approved command once. If it times out, check the
+registry until the result is known, then stop the release chain; an immediate negative
+`cargo info` does not prove a failure.
 
 ## 11. Verify the registry and tag the source
 
-```bash
-cargo info <package>@<version> --registry <registry>
-```
-
-Confirm that the version line names no local `(from ./...)` path. Check the registry page and the
-docs.rs build. A docs.rs failure is a release defect even when the archive is available.
-
-For a direct release, tag the exact published commit. For a CI release, confirm that the pushed
-tag points to the approved candidate, and create no second tag. Use the repository's prefix and
-annotated-tag convention:
+Run the same `cargo info` command. Confirm that the version line names no local `(from ./...)` path, and that docs.rs built: a
+docs.rs failure is a release defect. For a direct release, tag the exact published commit. For a
+CI release, confirm that the pushed tag points to the approved candidate, and create no second
+tag. Use the repository's prefix and annotated-tag convention:
 
 ```bash
 git tag -a <tag> -m "Release <package> <version>"
 git show --no-patch --decorate <tag>
 ```
 
-Get authorization before you push the tag. Never move an existing tag. If the remote
-tag exists at another commit, stop and report the conflict.
-The release is complete only when the registry version and the remote tag both match the
-approved source.
+Get authorization before you push the tag. Never move an existing tag; if the remote tag exists
+at another commit, stop. The release is complete only when the registry version and the remote
+tag both match the approved source.
 
 ## 12. Recover from a bad release or change owners
 
-When possible, publish a compatible fixed version before any yank; a yank is not the normal fix.
 If a secret entered the archive, revoke the secret first: a yank or a deletion does not remove it.
-Each yank, `--undo`, crate deletion, owner change, and advisory filing needs its own authorization.
 Read [references/recovery.md](references/recovery.md) when you consider a yank, a crate deletion,
-an owner change, or a RustSec advisory for your own release.
-
-## Related skills
-
-Use these skills when they are installed:
-
-- `cargo-workflows` for workspace layout, lockfile policy, profiles, CI caching, and edition
-  migration.
-- `rust-discipline` to design the public API; mark a public enum that downstream code matches
-  `#[non_exhaustive]` in its first release.
-- `rust-security` for dependency advisories, `deny.toml`, vetting a new or updated dependency,
-  and the response to a vulnerable or malicious dependency.
-
-## Official references
-
-- [Cargo publishing](https://doc.rust-lang.org/cargo/reference/publishing.html)
-- [cargo-semver-checks](https://github.com/obi1kenobi/cargo-semver-checks)
-- [`cargo package`](https://doc.rust-lang.org/cargo/commands/cargo-package.html)
-- [`cargo info`](https://doc.rust-lang.org/cargo/commands/cargo-info.html)
-- [Cargo changelog](https://doc.rust-lang.org/nightly/cargo/CHANGELOG.html)
-- [docs.rs build metadata](https://docs.rs/about/metadata)
-- [docs.rs default target change](https://blog.rust-lang.org/2026/04/04/docsrs-only-default-targets/)
+an owner change, or a RustSec advisory for your own release; each needs its own authorization.

@@ -37,6 +37,8 @@ hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["full"] }
 # 7.0.2 drops bitmaps and moves to imbl-sized-chunks 0.2 (RUSTSEC-2026-0292).
 imbl = "7.0.2"
+# rust-cxx examples: the #[cxx::bridge] macro type-checks with no C++ compiler.
+cxx = "1"
 jni = "0.22"
 # The jni skill also documents the 0.21 API. A prelude brings it into scope for one
 # block with `use jni021 as jni;`, which shadows 0.22 there.
@@ -56,6 +58,8 @@ pin-project = "1"
 pin-project-lite = "0.2"
 proc-macro2 = "1"
 proptest = "1"
+# rust-pyo3 examples. The build script finds python3 on PATH; cargo check links nothing.
+pyo3 = "0.30"
 quote = "1"
 rayon = "1"
 # No default features: the default TLS stack pulls aws-lc-rs, whose C build

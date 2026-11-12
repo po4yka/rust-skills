@@ -8,7 +8,9 @@ license: BSD-3-Clause
 
 Every error text below comes from rustc 1.99.1, edition 2024, on x86_64-unknown-linux-gnu. The
 quotes are excerpts. Read [references/rustc-transcripts.md](references/rustc-transcripts.md) when
-an error does not match a short quote here: it holds the full transcript of each case.
+an error does not match a short quote here, and
+[references/auto-trait-proofs.md](references/auto-trait-proofs.md) for a program that proves a
+rule below.
 
 ## Route the symptom to a section
 
@@ -29,43 +31,11 @@ an error does not match a short quote here: it holds the full transcript of each
 ## The one rule: `&T` is `Send` exactly when `T` is `Sync`
 
 `Sync` states that one fact at the type level. A `Send` error whose `help:` line names `Sync`
-therefore does not ask for a `Send` impl. It reports a shared reference to a value that is not
-shareable.
-
-Both auto traits are derived field-wise. Fix a bound error in the fields, not with an impl. Two
-helper functions turn any question into a compile error you can read:
-
-```rust
-fn assert_send<T: Send>() {}
-fn assert_sync<T: Sync>() {}
-
-fn main() {
-    assert_send::<&i32>();                  // i32 is Sync, so &i32 is Send
-    assert_sync::<&i32>();                  // &T is Sync exactly when T is Sync
-    assert_send::<std::cell::Cell<i32>>();  // Cell is Send: a single owner moves it
-}
-```
-
-`Cell<i32>` is `Send`. A shared reference to it is not:
-
-```rust,compile_fail,E0277
-use std::cell::Cell;
-fn assert_send<T: Send>() {}
-fn main() { assert_send::<&Cell<i32>>(); }
-```
-
-```text
-error[E0277]: `&Cell<i32>` cannot be sent between threads safely
-3 | fn main() { assert_send::<&Cell<i32>>(); }
-  |                           ^^^^^^^^^^ `&Cell<i32>` cannot be sent between threads safely
-  |
-  = help: the trait `Sync` is not implemented for `Cell<i32>`
-  = note: required for `&Cell<i32>` to implement `Send`
-```
-
-Read the two lines together. The head trait is `Send`, because that is the bound that failed. The
-unmet obligation is `Sync`, on the pointee. The failing impl is `impl<T: Sync + ?Sized> Send for
-&T`, and you cannot write a different one (see [E0321](#unsafe-impl-send-cannot-target-a-reference-e0321)).
+(``the trait `Sync` is not implemented for `Cell<i32>` `` under ``note: required for `&Cell<i32>`
+to implement `Send` ``) therefore does not ask for a `Send` impl. It reports a shared reference
+to a value that is not shareable. Both auto traits are derived field-wise. Fix a bound error in
+the fields, not with an impl. Probe a question with `fn assert_send<T: Send>() {}` and
+`assert_send::<&Cell<i32>>();`.
 
 Repair in this order. Delete the sharing and move the value instead of the reference. Or give the
 pointee interior mutability that is `Sync`: an atomic, a `Mutex`, or an `RwLock`. Only then read
@@ -75,9 +45,8 @@ Never add `unsafe impl Send` or `unsafe impl Sync` only to make an error in this
 including on a wrapper struct around an `Rc`, a `Cell`, or a guard. The compiler accepts the impl
 whether or not it is sound. Fix the field, the lock, or the signature instead.
 
-The two message texts are not interchangeable. `cannot be sent` is a failed `Send` bound;
-`cannot be shared` is a failed `Sync` bound. The second appears under an `Arc`, because
-`Arc<T>: Send` itself requires `T: Sync`.
+`cannot be sent` is a failed `Send` bound; `cannot be shared` is a failed `Sync` bound. The second
+appears under an `Arc`, because `Arc<T>: Send` itself requires `T: Sync`.
 
 ## Verify the auto traits
 
@@ -88,19 +57,14 @@ impl.
 | Claim | Check |
 | --- | --- |
 | A public type stays `Send` or `Sync` | A `const` assertion next to the type (below). A field edit then fails at the definition, not at a distant caller. Across releases, `cargo semver-checks` reports `auto_trait_impl_removed` |
-| A public `-> impl Trait` return stays `Send` | Write `+ Send` (and `+ Sync` when callers share it) in the signature. The body then fails at the definition. See [Auto traits leak](#auto-traits-leak-out-of-impl-trait-and-async-fn) |
-| A type is deliberately not `Send` | A `compile_fail` doctest that defines `assert_send` and calls `assert_send::<my_crate::Type>()`. A doctest is a separate crate, so `crate::Type` fails for the wrong reason. The doctest passes on any error, so keep only that call in it. Stable rustdoc does not check an error code after `compile_fail` |
+| A public `-> impl Trait` return stays `Send` | Write `+ Send` (and `+ Sync` when callers share it) in the signature. See [Auto traits leak](#auto-traits-leak-out-of-impl-trait-and-async-fn) |
+| A type is deliberately not `Send` | A `compile_fail` doctest that defines `assert_send` and calls `assert_send::<my_crate::Type>()`, and nothing else: it passes on any error, and stable rustdoc does not check an error code. A doctest is a separate crate, so `crate::Type` fails for the wrong reason |
 | An `Arc` payload is shareable | `clippy::arc_with_non_send_sync`, warn by default |
 | No `std::sync` guard lives across an `.await` | `clippy::await_holding_lock`, warn by default |
-| Every `async fn` future is `Send` | `clippy::future_not_send` (nursery, allow by default). Enable it in a library whose futures cross `spawn`. It reports at the definition |
+| Every `async fn` future is `Send` | `clippy::future_not_send` (nursery). Set `future_not_send = "warn"` under `[lints.clippy]` in a library whose futures cross `spawn`, and put `#[expect(clippy::future_not_send, reason = "...")]` on each future that is local by design. It proves nothing about a generic `async fn` |
 
-`cargo clippy --locked --all-targets -- -D warnings` runs both warn-by-default lints above (group
-`suspicious`). Run it before a commit that touches a type or a future that crosses threads. To
-enable `future_not_send`, set `future_not_send = "warn"` under `[lints.clippy]` in `Cargo.toml`.
-The lint reports every future-returning function in the crate, private functions and trait-impl
-`async fn` included. Put `#[expect(clippy::future_not_send, reason = "...")]` on each future that
-is local by design. The lint ignores a future that is `Send` only for some type parameters, so it proves nothing about a
-generic `async fn`.
+Run `cargo clippy --locked --all-targets -- -D warnings` before a commit that touches a type or a
+future that crosses threads.
 
 ```rust
 pub struct Session { pub id: u32, pub buf: Vec<u8> }
@@ -126,128 +90,49 @@ const _: () = {
 | `Mutex<T>`, `RwLock<T>` | `T: Send` | see [lock bounds](#lock-payload-bounds-mutex-and-rwlock-are-not-interchangeable) |
 | `MutexGuard<'_, T>`, `RwLockReadGuard`, `RwLockWriteGuard` | never | `T: Sync` |
 
-Two rows carry the surprise. **`Arc<T>` needs both traits on the payload, not only `Send`.** An
-`Arc` clone hands a second owner shared access to one value, so the payload must be shareable as
-well as movable:
+Two rows carry the surprise:
 
-```rust,compile_fail,E0277
-use std::cell::Cell;
-use std::sync::Arc;
-fn assert_send<T: Send>() {}
-fn main() {
-    assert_send::<Cell<i32>>();        // ok on its own
-    assert_send::<Arc<Cell<i32>>>();   // E0277: Arc<T>: Send needs T: Send + Sync
-}
-```
-
-The error says `` `Cell<i32>` cannot be shared between threads safely ``, with a `note:` that suggests `RwLock` or
-`AtomicI32`. Put the lock inside the `Arc`. `Arc<Mutex<Cell<i32>>>` is
-both `Send` and `Sync`, because `Mutex<T>: Sync` needs only `T: Send`. The `note:` means
-"replace the `Cell`": `Arc<AtomicI32>` and `Arc<RwLock<i32>>` both work. Do not wrap the `Cell`
-in the suggested `RwLock`: `RwLock<Cell<i32>>` fails again (see
-[lock bounds](#lock-payload-bounds-mutex-and-rwlock-are-not-interchangeable)).
-
-`clippy::arc_with_non_send_sync` (warn by default) reports `Arc::new` of a payload that is not
-`Send + Sync` at the construction site, before any thread boundary. If that `Arc` never crosses a
-thread, use `Rc`.
-
-**`&mut T` is not the mirror of `&T`.** `&mut T: Send` requires `T: Send`, not `T: Sync`:
-
-```rust,compile_fail,E0277
-use std::cell::Cell;
-use std::rc::Rc;
-fn assert_send<T: Send>() {}
-fn main() {
-    assert_send::<&mut Cell<i32>>();  // ok: Cell<i32> is Send, although it is not Sync
-    assert_send::<&mut Rc<i32>>();    // E0277: &mut T: Send needs T: Send
-}
-```
-
-A `&mut T` is a move channel, not a view. `std::mem::replace(x, T::default())` takes the value out
-through the reference, so the receiving thread owns and drops it. That is the `Send` obligation.
+- **`Arc<T>` needs both traits on the payload.** An `Arc` clone hands a second owner shared
+  access, so `Arc<Cell<i32>>` fails with `` `Cell<i32>` cannot be shared between threads safely ``
+  and a `note:` that suggests `RwLock` or `AtomicI32`. Replace the `Cell`: `Arc<AtomicI32>`,
+  `Arc<RwLock<i32>>`, and `Arc<Mutex<Cell<i32>>>` all work. Do not wrap the `Cell` in the
+  suggested `RwLock`: `RwLock<Cell<i32>>` fails again. `clippy::arc_with_non_send_sync` reports
+  such an `Arc::new` at the construction site; if that `Arc` never crosses a thread, use `Rc`.
+- **`&mut T` is not the mirror of `&T`.** `&mut T: Send` requires `T: Send`, not `T: Sync`, because
+  `std::mem::replace` moves the value out through it. `&mut Cell<i32>` is `Send`;
+  `&mut Rc<i32>` is not.
 
 ## `unsafe impl Send` cannot target a reference (E0321)
 
 `unsafe impl Send for &Handle {}` fails with `error[E0321]: cross-crate traits with a default impl,
-like Send, can only be implemented for a struct/enum type`. You cannot decide per reference type
-whether it is `Send`. `unsafe impl Send for Handle {}` compiles, because `Handle` is a struct in
-this crate. `Sync` is the only lever that reaches `&Handle`: write `unsafe impl Sync for Handle {}`,
-and `&Handle` becomes `Send` through the blanket impl. That is a stronger promise. The
-`rust-unsafe` skill holds the audit it needs.
+like Send, can only be implemented for a struct/enum type`. `Sync` is the only lever that reaches
+`&Handle`: `unsafe impl Sync for Handle {}` makes `&Handle` `Send` through the blanket impl. That
+is a stronger promise, and the `rust-unsafe` skill holds the audit it needs.
 
 ## Lock payload bounds: `Mutex` and `RwLock` are not interchangeable
 
 - `Mutex<T>: Sync` requires only `T: Send`.
 - `RwLock<T>: Sync` requires `T: Send + Sync`.
 
-A `Mutex` hands out one `&mut T` at a time, so the payload never has to be shareable. An `RwLock`
-hands out many concurrent `&T`, so the payload must be `Sync` on its own.
-
-```rust
-use std::cell::Cell;
-use std::sync::Mutex;
-fn assert_sync<T: Sync>() {}
-fn main() { assert_sync::<Mutex<Cell<i32>>>(); }   // compiles
-```
-
-```rust,compile_fail,E0277
-use std::cell::Cell;
-use std::sync::RwLock;
-fn assert_sync<T: Sync>() {}
-fn main() { assert_sync::<RwLock<Cell<i32>>>(); }
-```
-
 Changing a read-heavy `Mutex<T>` to an `RwLock<T>` is therefore **not** a drop-in change. It stops
 compiling as soon as the payload holds a `Cell` or a `RefCell`, and the error lands on the
 `Arc<RwLock<...>>` at a call site far from the edit. Check the payload first. An `Rc` payload is
-not a symptom of the swap. `Mutex<T>: Sync` also requires `T: Send`, so `Mutex<Rc<T>>` is neither
-`Send` nor `Sync` before the edit. `Mutex<T>: Send` and `RwLock<T>: Send` both need only
-`T: Send`, so the `Send` direction gives no warning.
+not a symptom of the swap: `Mutex<Rc<T>>` is neither `Send` nor `Sync` before the edit. The
+`Send` direction gives no warning, because both locks are `Send` when `T: Send`.
 
 ## Guards: `MutexGuard` is not `Send`, and it is `Sync`
 
-`std::sync::MutexGuard<'_, T>` is `!Send` for every `T`. POSIX requires the unlocking thread to be
-the locking thread, so the guard's `Drop` must run where the guard was created.
+`std::sync::MutexGuard<'_, T>` is `!Send` for every `T`, because the unlock must run on the
+locking thread. The guard is `Sync` whenever `T: Sync`, so `&MutexGuard<'_, T>` **is** `Send`.
 
-```rust,compile_fail,E0277
-use std::sync::MutexGuard;
-fn assert_send<T: Send>() {}
-fn main() { assert_send::<MutexGuard<'static, i32>>(); }
-```
-
-Do not read that as "nothing derived from the guard leaves the thread". The guard is `Sync`
-whenever `T: Sync`, so `&MutexGuard<'_, T>` **is** `Send`. Reading through the guard is reading
-`&T`, and that is safe to share. This runs and prints `total=6`:
-
-```rust,run
-use std::sync::Mutex;
-use std::thread;
-
-fn main() {
-    let lock = Mutex::new(vec![1u32, 2, 3]);
-    let guard = lock.lock().expect("lock poisoned");
-    let total: u32 = thread::scope(|s| {
-        // &MutexGuard is Send, because MutexGuard is Sync.
-        s.spawn(|| guard.iter().sum::<u32>()).join().unwrap()
-    });
-    assert_eq!(total, 6);
-    println!("total={total}");
-    drop(guard);   // the unlock runs on the locking thread
-}
-```
-
-Consequences to hold:
-
-- Give a worker `&guard` only when the payload is `Sync`. `&MutexGuard<'_, T>` is `Send` exactly
-  when `T: Sync`, so `&MutexGuard<'_, Cell<T>>` and `&MutexGuard<'_, RefCell<T>>` do not cross.
-  Clone the value out of the guard instead. Never give a worker the guard itself.
+- Give a worker `&guard` only when the payload is `Sync`: `&MutexGuard<'_, Cell<T>>` does not
+  cross. Clone the value out of the guard instead. Never give a worker the guard itself.
 - Pass `&guard` through `thread::scope`. `thread::spawn` requires `'static`, so it rejects the
   borrow with ``error[E0597]: `lock` does not live long enough``, plus `error[E0373]` when the
   closure borrows `guard` directly. Do not apply the E0373 `move` suggestion: it moves the guard
   itself, and that fails with E0277.
 - Do not hold a `std::sync` guard across an `.await`. The task can resume on another thread, so
-  the future stops being `Send`. `clippy::await_holding_lock` (warn by default) catches it. The
-  `rust-async-internals` skill covers the async lock choice.
+  the future stops being `Send`. `clippy::await_holding_lock` catches it.
 
 ## `PhantomData` surgery
 
@@ -261,47 +146,28 @@ it has the auto-trait marker table, and the marker that removes only `Send`.
 ## Auto traits leak out of `impl Trait` and `async fn`
 
 A public `-> impl Trait` with no explicit `+ Send` publishes whatever auto traits the **body**
-happens to have. Adding one `Rc` inside the function is then a breaking change. The compiler
-reports it at every distant call site, with a `note: required because it appears within the type
-impl Iterator<Item = u32>` that points into your private body.
+happens to have. Adding one `Rc` inside the function is then a breaking change, reported at every
+distant call site with a `note: required because it appears within the type impl Iterator<Item =
+u32>` that points into your private body. Spell the bound in the signature
+(`fn ids() -> impl Iterator<Item = u32> + Send`): the guarantee is frozen, and the same body
+fails at the definition. Write `+ Send` only when you intend it, and add `+ Sync` when callers
+share the value. Record a single-threaded-by-design decision in the doc comment.
 
-Spell the bound in the signature. The guarantee is then frozen, and the same offending body fails
-at the definition:
-
-```rust
-pub fn ids() -> impl Iterator<Item = u32> + Send {
-    (0..3).map(|i| i * 2)
-}
-fn main() { assert_eq!(ids().sum::<u32>(), 6); }
-```
-
-Write `+ Send` only when you intend it, and add `+ Sync` when callers share the returned value. An
-API that is single-threaded by design cannot carry the bound, because it then fails at the
-definition. Record that decision in the doc comment.
-
-This is not async-specific. `async fn f() -> T` desugars to `fn f() -> impl Future<Output = T>`
-and has the same leak. On stable Rust 1.99.1, no syntax puts a bound on an `async fn` return type.
-Write the desugared form:
-`fn load(id: u32) -> impl Future<Output = u32> + Send { async move { id + 1 } }`. Do not silence the `async_fn_in_trait` warning when callers spawn the future. For
-`async fn` in a trait that callers spawn, and for return type notation, use the
-`rust-async-internals` skill, when it is installed.
+`async fn f() -> T` desugars to `fn f() -> impl Future<Output = T>` and has the same leak. On
+stable Rust 1.99.1, no syntax bounds an `async fn` return type, so write the desugared form:
+`fn load(id: u32) -> impl Future<Output = u32> + Send { async move { id + 1 } }`. Do not silence
+the `async_fn_in_trait` warning when callers spawn the future; the `rust-async-internals` skill,
+when it is installed, covers `async fn` in a trait.
 
 The async diagnostic, `error: future cannot be sent between threads safely`, has **no error
 code**, so a search for E0277 finds nothing. Its `note: future is not Send as this value is used
-across an await` names the value and the exact `.await` that traps it. The
-`rust-compiler-errors` skill covers the message shape; the fix here is the signature. Read
-[references/rustc-transcripts.md](references/rustc-transcripts.md) for both transcripts and the
-failing `+ Send` body.
+across an await` names the value and the `.await` that traps it. Read
+[references/rustc-transcripts.md](references/rustc-transcripts.md) for both transcripts.
 
 ## Related skills
 
-Use these skills by name when they are installed.
-
-| Skill | Boundary |
-| --- | --- |
-| `rust-unsafe` | The proof obligation of a manual `unsafe impl Send` or `Sync`: the field audit, the compile-time field assertions, and the `SAFETY` comment |
-| `rust-variance` | The other half of a `PhantomData` marker: which substitutions the marker still allows, and the invariance a `Cell` or `*mut` marker introduces |
-| `rust-compiler-errors` | Reading E0277 in general (`rustc --explain E0277`), and the async block message that carries no error code |
-| `rust-async-internals` | Holding a guard across an `.await`, the async lock choice, `Send` trait variants, and cancel safety |
-| `memory-model` | Atomics, orderings, `loom`, and shared statics once the bounds are satisfied |
-| `rust-crate-release` | Semver review of a public auto trait change with `cargo semver-checks` |
+When installed: `rust-unsafe` (the audit behind a manual `unsafe impl Send` or `Sync`),
+`rust-variance` (the variance a `PhantomData` marker adds), `rust-compiler-errors` (reading E0277
+with `rustc --explain E0277`), `rust-async-internals` (async locks and `Send` trait variants),
+`memory-model` (atomics and orderings), and `rust-crate-release` (semver review of an auto trait
+change with `cargo semver-checks`).

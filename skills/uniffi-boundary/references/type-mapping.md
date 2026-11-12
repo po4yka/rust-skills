@@ -7,7 +7,8 @@ documentation for the version in `Cargo.lock`; the generated foreign types chang
 minor versions.
 
 Contents: Scalars; Collections and containers; Time types; Compound types you declare;
-Default values; Custom types; Types that never cross; Naming.
+Default values; Custom types; Types that never cross; Naming; `&[u8]` and the Kotlin direct
+buffer.
 
 ## Scalars
 
@@ -213,3 +214,20 @@ the Rust crate read badly on its own.
 Avoid a Rust name that collides with a keyword or a standard type on either target. `Error`,
 `Result`, `Data`, `Type`, and `Object` are all worth avoiding as bare exported type names.
 Prefix them with the domain instead.
+
+## `&[u8]` and the Kotlin direct buffer
+
+- **`&[u8]` changes the Kotlin type.** In 0.32, a `&[u8]` argument becomes a direct
+  `java.nio.ByteBuffer`. Rust reads `remaining()` bytes from the buffer's base address, so
+  Kotlin must call `flip()` after `put()`, or pass `buf.slice()`; otherwise Rust silently reads
+  the wrong bytes. `&[u8]` flows only into Rust, and not in an async export or a foreign-trait
+  method. The triage table has the failure messages.
+
+For a `&[u8]` export, the Kotlin smoke test fills a direct buffer with `put()`, sends it
+through the app's own call path, and asserts the length and the bytes Rust received.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Kotlin runtime: `IllegalArgumentException` about a direct `ByteBuffer` | A heap buffer passed to a `&[u8]` argument | Use `ByteBuffer.allocateDirect` on the caller side |
+| Rust gets an empty, zeroed, or short `&[u8]` from Kotlin | `put()` without `flip()`: Rust reads from the base, `remaining()` bytes | Call `flip()` after `put()`; for data at `position..limit`, pass `buf.slice()` |
+| `E0277` ``the trait bound `ForeignBytes: uniffi::Lower<UniFfiTag>` is not satisfied`` with `E0053` at `#[uniffi::export(foreign)]` | `&[u8]` in a foreign-trait method | Take `Vec<u8>` |

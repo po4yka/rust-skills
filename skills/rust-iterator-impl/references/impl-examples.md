@@ -13,6 +13,8 @@ Contents:
 
 A wrapper iterator that forwards `size_hint` and re-implements each trait of the inner iterator,
 the inherent `iter` and `iter_mut`, and the three `IntoIterator` impls that delegate to them.
+The `&mut` impl names `std::slice::IterMut` to keep the block short; wrap it like the shared
+iterator in a published crate.
 
 ```rust,run
 pub struct Bag { items: Vec<u32> }

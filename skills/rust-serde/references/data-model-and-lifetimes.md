@@ -3,6 +3,14 @@
 Use this reference when a type derives successfully but a generic parser, a map key, or a large
 number fails. Behavior was measured with serde 1.0.229 and serde_json 1.0.154 on Rust 1.99.1.
 
+Contents:
+
+- Choose the deserialization bound from input ownership
+- A derive does not prove format compatibility
+- Define the large-integer policy
+- Feature unification changes output between test and binary
+- Authoritative references
+
 ## Choose the deserialization bound from input ownership
 
 Use `Deserialize<'de>` when the result can borrow from the input:
@@ -84,6 +92,14 @@ Choose and document one policy:
 | Integer is a decimal string | Validate the canonical string and its sign or width |
 | Arbitrary-precision JSON number | Enable the feature deliberately and test every consumer |
 | Binary integer | Select a format and schema with an explicit 128-bit representation |
+
+## Feature unification changes output between test and binary
+
+Normal-dependency features unify across every package that one command builds. A dev-dependency
+turns a feature on only in builds that compile tests, examples, or benches. Measured: a
+dev-dependency with `preserve_order` made `cargo test` print `{"b":1,"a":2}`, and the binary
+printed `{"a":2,"b":1}`. The `cargo-workflows` skill, when it is installed, has the resolver
+rules.
 
 ## Authoritative references
 

@@ -2,7 +2,7 @@
 
 Read this file when you write a name-based export, keep a hand-typed 0.21 name,
 or debug `UnsatisfiedLinkError: No implementation found`. The default binding,
-`RegisterNatives` from `JNI_OnLoad`, is in [../SKILL.md](../SKILL.md).
+`RegisterNatives` from `JNI_OnLoad`, is in [register-natives.md](register-natives.md).
 
 ## Write the export
 

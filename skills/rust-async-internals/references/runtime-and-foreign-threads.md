@@ -13,6 +13,7 @@ that tokio does not own start or wait for async work.
 - [Enter the runtime from a foreign thread](#enter-the-runtime-from-a-foreign-thread)
 - [Rules for both shapes](#rules-for-both-shapes)
 - [Adopt a received socket](#adopt-a-received-socket)
+- [Tokio advisories](#tokio-advisories)
 
 ## Blocking work
 
@@ -150,3 +151,14 @@ unsafe fn adopt_socket(raw: RawFd) -> std::io::Result<tokio::net::TcpStream> {
     tokio::net::TcpStream::from_std(stream)
 }
 ```
+
+## Tokio advisories
+
+Plain `cargo audit` exits 0 on an `unsound` advisory, and the cargo-deny default
+`unsound = "workspace"` misses a transitive tokio. Show the resolved version with
+`cargo tree --locked -i tokio`. Do not keep a hand-written minimum-version table: one floor
+misses backport lines. For example, the unsound advisory RUSTSEC-2025-0023 (the broadcast channel
+calls `clone` on a `Send + !Sync` value from several threads) is patched in `>=1.38.2,<1.39`,
+`>=1.42.1,<1.43`, `>=1.43.1,<1.44`, and `>=1.44.2`. A floor of 1.42.1 accepts the affected
+1.43.0, 1.44.0, and 1.44.1. Set `unsound = "all"` under `[advisories]` in `deny.toml`; the
+`rust-security` skill, when it is installed, owns that policy.

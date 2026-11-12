@@ -1,10 +1,10 @@
 # Allocation reduction
 
 Allocation patterns that [SKILL.md](../SKILL.md) names but does not develop. SKILL.md holds the
-`Vec` growth ladder, `reserve_exact`, `clone_from`, and the workhorse-buffer rule. Read those
-first; this file does not repeat them.
+rules for `reserve_exact`, `clone_from`, and the workhorse buffer; this file holds the evidence.
 
-Sections: symptom routing; `reserve` on an empty `Vec`; `HashMap` capacity; `collect` exactness; zero-filled buffers;
+Sections: symptom routing; the `Vec` growth ladder; `reserve` against `reserve_exact`;
+`clone_from` keeps the buffer; `reserve` on an empty `Vec`; `HashMap` capacity; `collect` exactness; zero-filled buffers;
 inline capacity (`SmallVec`, `ArrayVec`); inline strings; measuring the length distribution;
 `Rc` and `Arc`; `format!` and `format_into` in a loop; eager arguments; `shrink_to_fit`; pinning
 an allocation count with `dhat`; lints.
@@ -25,10 +25,55 @@ text names another version.
 | An allocation happens on the path that discards the value | `ok_or`, `unwrap_or`, `map_or` | [Eager arguments](#eager-arguments-allocate-on-the-path-that-discards-them) |
 | A raw pointer taken before a `Vec` call dangles after it | `shrink_to_fit` reallocated the buffer | [shrink_to_fit](#shrink_to_fit-reallocates) |
 
+## The `Vec` growth ladder
+
+**`Vec` does not double from 4.** The first non-zero capacity depends on the element size,
+and each growth then doubles. Measured on rustc 1.99.1, it is 8 for 1-byte elements (`Vec<u8>`,
+`String`), 4 for 2 to 1024 bytes (`Vec<u32>`, `Vec<u64>`), and 1 above 1024 bytes. Twenty
+`push` calls on a `Vec<u32>` therefore cost four allocations and end at capacity 32, with
+twelve slots of waste. One `Vec::with_capacity(20)` costs one allocation and no waste.
+
+## `reserve` against `reserve_exact` on a non-empty `Vec`
+
+**`reserve` and `reserve_exact` differ mainly on a non-empty vector.** `reserve` applies the
+amortized policy on top of your request. `reserve_exact` does not.
+
+```rust
+let mut a: Vec<u32> = vec![1, 2, 3];
+a.reserve(1);
+assert_eq!(a.capacity(), 6);        // max(requested, 2 * capacity)
+
+let mut b: Vec<u32> = vec![1, 2, 3];
+b.reserve_exact(1);
+assert_eq!(b.capacity(), 4);        // exactly len + additional
+```
+
+A test that compares the two from `Vec::new()` shows them identical and hides the overshoot; the
+next section says why.
+
+## `clone_from` keeps the buffer
+
+**`clone_from` reuses the destination buffer.** `a = b.clone()` allocates every time.
+`a.clone_from(&b)` writes into the buffer `a` already holds.
+
+```rust
+let mut dst: Vec<u32> = Vec::with_capacity(99);
+let src: Vec<u32> = vec![1, 2, 3];
+dst.clone_from(&src);
+assert_eq!(dst.capacity(), 99);     // the 99-element buffer survives
+```
+
+Copying a three-element `Vec<u32>` onto a reused destination 1000 times cost 1001
+allocations through `clone()` and 2 through `clone_from`. The two forms look identical in
+review, so the lint is the practical defence: `assigning_clones` is in clippy's `pedantic`
+group and is off under a plain `cargo clippy`. `Vec::clone()` also drops the reserve: a
+vector of capacity 100 and length 3 clones to capacity 3, so a clone never hands a pre-warmed
+buffer to another owner.
+
 ## `reserve` and `reserve_exact` on an empty `Vec`
 
 On an empty vector both give the exact request when it is at least the minimum non-zero capacity
-in SKILL.md. Below that minimum, `reserve` rounds up and `reserve_exact` does not: on rustc
+of the growth ladder above. Below that minimum, `reserve` rounds up and `reserve_exact` does not: on rustc
 1.99.1, `reserve(1)` gives 4 on a `Vec<u32>`, `reserve_exact(1)` gives 1, and `reserve(5)` gives 8
 on a `Vec<u8>`. A test that starts from `Vec::new()` with a large request shows them as identical
 and hides a 50% overshoot in the real path, where the vector is already non-empty.

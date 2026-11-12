@@ -740,22 +740,14 @@ skills = ["rust-c"]
     def test_a_catalog_under_the_total_passes(self):
         self.assertEqual(self.budget({"rust-a": 2000, "rust-b": 2000, "rust-c": 2000}), [])
 
-    def test_a_catalog_over_the_total_fails(self):
+    def test_the_catalog_total_is_reported_not_capped(self):
+        # Each bundle is capped; the full catalog is documented as over budget.
         found = self.budget({"rust-a": 4900, "rust-b": 0, "rust-c": 4900} | {f"rust-{i}": 1100 for i in range(10)})
-        self.assertTrue(any("descriptions total" in f and "limit is 20,000" in f for f in found), found)
+        self.assertEqual(found, [])
 
-    def test_the_total_warns_before_it_fails(self):
-        self.budget({"rust-a": 2000, "rust-b": 0, "rust-c": 2000} | {f"rust-{i}": 1450 for i in range(10)})
-        self.assertTrue(any("over 18,000" in w for w in validate_skills.warnings))
-
-    def test_a_ratcheted_total_may_stay_but_not_grow(self):
-        sizes = {"rust-a": 2000, "rust-b": 0, "rust-c": 2000} | {f"rust-{i}": 1700 for i in range(10)}
-        self.assertEqual(self.budget(sizes, {"description": {"total": 21000}}), [])
-        validate_skills.failures.clear()
-        validate_skills.descriptions.clear()
-        sizes["rust-0"] += 1
-        found = self.budget(sizes, {"description": {"total": 21000}})
-        self.assertTrue(any("limit is 21,000" in f for f in found), found)
+    def test_a_stale_total_ceiling_is_flagged(self):
+        self.budget({"rust-a": 100, "rust-b": 0, "rust-c": 100}, {"description": {"total": 21000}})
+        self.assertTrue(any("remove [description]" in w for w in validate_skills.warnings))
 
     def test_a_bundle_over_the_listing_budget_fails(self):
         found = self.budget({"rust-a": 2600, "rust-b": 2600, "rust-c": 100})

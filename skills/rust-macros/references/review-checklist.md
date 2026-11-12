@@ -16,3 +16,15 @@ Each line restates a rule from `SKILL.md`. Use it to review a finished macro cha
 - Every helper attribute appears in `attributes(...)`, and none shares a built-in attribute name.
 - The author reads the expansion once with `-Zunpretty=expanded` or `cargo expand`.
 - Each claim in the verification table of `SKILL.md` has a passing check.
+
+## Set up trybuild
+
+Add `trybuild = "1"` under `[dev-dependencies]` and a `#[test]` that calls
+`trybuild::TestCases::new().compile_fail("tests/ui/*.rs")`. Run
+`TRYBUILD=overwrite cargo test --locked` to write the `.stderr` files, and review each one before
+you commit it. They hold rustc's rendered diagnostics, which change between releases. Run the
+`trybuild` test on one pinned toolchain only, and rerun `TRYBUILD=overwrite` on each bump.
+
+A proc-macro test build that invokes the macro from `src/lib.rs` adds
+``help: you can define integration tests in a directory named `tests` ``. A derive panic shows
+`help: message: ...` with a span on the whole derive.

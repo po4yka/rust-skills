@@ -1,8 +1,11 @@
 # Isolation and retry classification
 
 Isolation choice, controls for common invariants, and a runnable retry
-classifier, behind "Choose isolation from the invariant" and "Retry the
-complete transaction" in `SKILL.md`.
+classifier, behind "Retry the complete transaction" and the "Conditional
+references" table in `SKILL.md`.
+
+Contents: choose isolation from the invariant; controls for common invariants; retry codes
+by engine; PostgreSQL retry classifier.
 
 ## Choose isolation from the invariant
 
@@ -31,6 +34,22 @@ deadlock-victim error.
 | Protect a missing row or range | Serializable isolation or engine-specific range lock |
 | Maintain a cross-row predicate | Serializable isolation or a matching constraint |
 | Claim queued jobs once | Atomic update or locking read with explicit skip policy |
+
+## Retry codes by engine
+
+Retryable examples: PostgreSQL SQLSTATE `40001` and `40P01`, MySQL error `1213`
+(SQLSTATE `40001`), and SQLite `SQLITE_BUSY`.
+
+Report a lock-wait timeout (PostgreSQL `55P03`, MySQL `1205`) by default. Retry
+it only after a full rollback, inside the remaining caller deadline and attempt
+limit. MySQL `1205` rolls back only the statement by default
+(`innodb_rollback_on_timeout=OFF`), so roll back the transaction before you act
+on it. PostgreSQL documents that `23505` or `23P01` can be a serialization
+failure when the transaction derived the key from its own reads. Let only that
+call site opt into a retry.
+
+Get the code with `err.as_database_error().and_then(|e| e.code())` in sqlx, or `err.code()` in
+tokio-postgres.
 
 ## PostgreSQL retry classifier
 

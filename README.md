@@ -48,20 +48,21 @@ method, the per-grader tables, and the caveats are in
 ## Install
 
 Install one bundle, not the whole catalog. A bundle is one subject group of the catalog below.
-The full catalog costs about 9,300 tokens of always-on skill listing (as `claude plugin details`
-projects it), and a client with a 200K-token window keeps about 2,000: Claude Code then drops
-whole descriptions, and those skills stop loading. Five bundles fit that budget. `language`
-(about 2,700 tokens) does not; on a 200K window, add the router snippet below with it. The
-bundles are defined in [bundles.toml](bundles.toml).
+The full catalog costs about 9,700 tokens of always-on skill listing (50 skills, by the
+validator's estimate), and a client with a 200K-token window keeps about 2,000: Claude Code then drops
+whole descriptions, and those skills stop loading. Every bundle fits that budget: the validator
+caps each bundle at 5,000 description characters (about 2,000 tokens). The bundles are defined
+in [bundles.toml](bundles.toml).
 
 | Bundle | Subject | Skills | Plugin |
 | --- | --- | ---: | --- |
-| `language` | Language, interfaces, and code discipline | 13 | `rust-skills-language` |
-| `build` | Build, dependencies, and supply chain | 9 | `rust-skills-build` |
+| `language` | Language semantics and compiler errors | 8 | `rust-skills-language` |
+| `design` | API design, code discipline, and tooling | 6 | `rust-skills-design` |
+| `build` | Build, dependencies, and supply chain | 10 | `rust-skills-build` |
 | `testing` | Correctness and testing | 6 | `rust-skills-testing` |
 | `concurrency` | Concurrency and unsafe code | 6 | `rust-skills-concurrency` |
 | `production` | Networking, database, performance, debugging, and observability | 7 | `rust-skills-production` |
-| `ffi` | FFI and platform boundaries | 5 | `rust-skills-ffi` |
+| `ffi` | FFI and platform boundaries | 7 | `rust-skills-ffi` |
 
 Each path below pins something different. Pick the first one your client supports.
 
@@ -79,11 +80,15 @@ gh skill install po4yka/rust-skills rust-unsafe --pin v0.3.0
 
 ```bash
 # language
-for s in rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-discipline rust-code-style rust-crate-architecture rust-lints rust-macros rust-iterator-impl rust-variance rust-callback-bounds rust-type-erasure rust-cli; do
+for s in rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-variance rust-callback-bounds rust-iterator-impl rust-type-erasure rust-macros; do
+  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+done
+# design
+for s in rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli rust-error-handling; do
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # build
-for s in cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std; do
+for s in cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std rust-cross-compilation; do
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # testing
@@ -99,7 +104,7 @@ for s in rust-performance rust-hot-path rust-copy-on-write rust-debugging rust-o
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # ffi
-for s in rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel; do
+for s in rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel rust-cxx rust-pyo3; do
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 ```
@@ -199,9 +204,11 @@ it.
 
 ```bash
 # language
-npx skills add po4yka/rust-skills --skill rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-discipline rust-code-style rust-crate-architecture rust-lints rust-macros rust-iterator-impl rust-variance rust-callback-bounds rust-type-erasure rust-cli
+npx skills add po4yka/rust-skills --skill rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-variance rust-callback-bounds rust-iterator-impl rust-type-erasure rust-macros
+# design
+npx skills add po4yka/rust-skills --skill rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli rust-error-handling
 # build
-npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std
+npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std rust-cross-compilation
 # testing
 npx skills add po4yka/rust-skills --skill rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port rust-review
 # concurrency
@@ -209,7 +216,7 @@ npx skills add po4yka/rust-skills --skill memory-model rust-async-internals rust
 # production
 npx skills add po4yka/rust-skills --skill rust-performance rust-hot-path rust-copy-on-write rust-debugging rust-observability rust-networking rust-database
 # ffi
-npx skills add po4yka/rust-skills --skill rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel
+npx skills add po4yka/rust-skills --skill rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel rust-cxx rust-pyo3
 ```
 
 `--skill` takes space-separated names; a comma-separated list matches no skill (checked on
@@ -285,12 +292,15 @@ Enter by the symptom, not by the skill name.
 | `SetLoggerError`, or a `tracing` subscriber in a cdylib that emits nothing | [rust-observability](skills/rust-observability/SKILL.md) |
 | `UnsatisfiedLinkError`, `AttachCurrentThread`, `FindClass`, or an Android ClassLoader failure | [rust-jni](skills/rust-jni/SKILL.md) |
 | Swift calls Rust through a C ABI, an opaque handle, or an `@MainActor` callback | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) |
+| A `cxx::bridge` error, a link error on a `cxxbridge1` symbol, or a C++ exception that terminates | [rust-cxx](skills/rust-cxx/SKILL.md) |
+| A PyO3 module that fails to import, link in `cargo test`, or build a maturin wheel | [rust-pyo3](skills/rust-pyo3/SKILL.md) |
 | A `uniffi::export` macro error, `UnexpectedUniFFICallbackError`, or a Record-versus-Object choice | [uniffi-boundary](skills/uniffi-boundary/SKILL.md) |
 | A UniFFI checksum mismatch, a `RustBuffer` error, binding version skew, a mobile support matrix, or a release proof from the shipped artifacts | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
 | `Activity` lifecycle, `ViewModel.onCleared`, process death, or a callback release race | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) |
 | A `RUSTSEC` advisory, or a new dependency nobody vetted | [rust-security](skills/rust-security/SKILL.md) |
 | `DeserializeOwned`, a JSON map key, a large integer, or `rename_all` broke the wire format | [rust-serde](skills/rust-serde/SKILL.md) |
 | Method ambiguity, autoderef, UFCS, E0034, or blanket-impl overlap | [rust-discipline](skills/rust-discipline/SKILL.md) |
+| "`?` couldn't convert the error", a thiserror or anyhow error type, or an error chain to print | [rust-error-handling](skills/rust-error-handling/SKILL.md) |
 | A caught panic aborts while its payload is dropped | [rust-panic-safety](skills/rust-panic-safety/SKILL.md) |
 | A bug to reproduce as a failing test, or a refactor that must keep its behavior | [rust-tdd](skills/rust-tdd/SKILL.md) |
 | Hand-rolled atomics for loom, a parser for proptest or cargo-fuzz, or a survived mutant | [rust-test-tools](skills/rust-test-tools/SKILL.md) |
@@ -307,6 +317,7 @@ Enter by the symptom, not by the skill name.
 | `because --locked was passed to prevent this`, or a feature that another crate turned on | [cargo-workflows](skills/cargo-workflows/SKILL.md) |
 | A SemVer bump, `cargo package`, `cargo publish`, crates.io trusted publishing, or a yank | [rust-crate-release](skills/rust-crate-release/SKILL.md) |
 | `build.rs`, `pkg-config`, an undefined symbol, or a packaged DLL failure | [rust-native-linking](skills/rust-native-linking/SKILL.md) |
+| Cross-compiling to another Linux target, a static musl binary, or ``version `GLIBC_2.xx' not found`` | [rust-cross-compilation](skills/rust-cross-compilation/SKILL.md) |
 | A new workspace crate, a layering violation, or a dependency cycle between crates | [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) |
 | HTTP timeout, safe retries, TLS verification, body limits, or graceful shutdown | [rust-networking](skills/rust-networking/SKILL.md) |
 | Pool exhaustion, transaction rollback, migration ordering, or serialization failure | [rust-database](skills/rust-database/SKILL.md) |
@@ -342,6 +353,7 @@ flowchart LR
     A --> A11[rust-event-loop-state]
     A --> A12[rust-borrow-semantics]
     A --> A13[rust-pattern-semantics]
+    A --> A14[rust-error-handling]
 
     B --> B1[memory-model]
     B --> B2[rust-unsafe]
@@ -366,6 +378,8 @@ flowchart LR
 
     E --> E1[rust-jni]
     E --> E2[rust-swift-ffi]
+    E --> E6[rust-cxx]
+    E --> E7[rust-pyo3]
     E --> E3[uniffi-boundary]
     E --> E4[ffi-error-progress-cancel]
     E --> E5[rust-port]
@@ -379,17 +393,18 @@ flowchart LR
     F --> F7[rust-native-linking]
     F --> F8[rust-wasm]
     F --> F9[rust-embedded-no-std]
+    F --> F10[rust-cross-compilation]
 
     G --> G1[rust-cli]
 ```
 
 ## Catalog
 
-Forty-four skills in six groups. Deep material sits in `references/*.md` next to the skill that
+Fifty skills in seven groups. Deep material sits in `references/*.md` next to the skill that
 owns it.
 
 <details open>
-<summary><b>Language, interfaces, and code discipline</b> — thirteen skills</summary>
+<summary><b>Language semantics and compiler errors</b> — eight skills</summary>
 
 <br>
 
@@ -398,21 +413,32 @@ owns it.
 | [rust-compiler-errors](skills/rust-compiler-errors/SKILL.md) | Diagnostic triage, fixes that compile and hide the bug, E0432/E0433 unresolved imports, E0282/E0283/E0284 and never-type anchors, borrow and `Drop` fixes, E0716 routing, and E0038. |
 | [rust-borrow-semantics](skills/rust-borrow-semantics/SKILL.md) | Syntax-sensitive temporary lifetimes, drop scopes, place and value expressions, method autoref, reservation versus activation in two-phase borrows, and edition 2024 temporary-scope changes. |
 | [rust-pattern-semantics](skills/rust-pattern-semantics/SKILL.md) | Binding modes, partial moves, match-guard repetition, `if let` guards and let chains with their version gates, scrutinee ownership, or-patterns, exhaustiveness policy, and edition 2024 match ergonomics. |
-| [rust-discipline](skills/rust-discipline/SKILL.md) | API shape review: pub signatures, trait bounds, blanket and sealed impls, newtypes, `Drop` guards, and SemVer hazards; method lookup, autoderef, UFCS, and coherence (E0034, E0119, E0117). |
-| [rust-code-style](skills/rust-code-style/SKILL.md) | Module file layout, `lib.rs` re-export policy, visibility levels, item order, import groups, the `thiserror` versus `anyhow` choice, and rustdoc `# Errors` and `# Panics` sections. |
-| [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) | Workspace layering, dependency direction rules, the crate-versus-module decision, and crate split, merge, and delete procedures. |
-| [rust-lints](skills/rust-lints/SKILL.md) | `workspace.lints`, `clippy.toml`, and `rustfmt.toml` policy, rustc, clippy, and rustdoc lint levels, safe lint tightening, suppression justification, and red-gate triage. |
-| [rust-macros](skills/rust-macros/SKILL.md) | `macro_rules!` textual scope and hygiene, fragment follow sets, the recursion limit, proc-macro crate rules, and the facade-and-derive crate split. |
-| [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) | The producing side of iteration: a hand-written `Iterator`, the three `IntoIterator` impls, `FromIterator` and `Extend`, `size_hint`, and the `unconditional_recursion` stack overflow. |
 | [rust-variance](skills/rust-variance/SKILL.md) | Variance, subtyping, and lifetime coercion: the two probe functions that settle any case in one `rustc` run, the table for every constructor and `PhantomData` form, why a trait bound matches by equality, and why adding interior mutability is a breaking change. |
 | [rust-callback-bounds](skills/rust-callback-bounds/SKILL.md) | Callable bounds, HRTB reference projections, positional inference, `move` call traits, capture precision and drop timing, plus generic fields against `Box<dyn Fn>`. |
+| [rust-iterator-impl](skills/rust-iterator-impl/SKILL.md) | The producing side of iteration: a hand-written `Iterator`, the three `IntoIterator` impls, `FromIterator` and `Extend`, `size_hint`, and the `unconditional_recursion` stack overflow. |
 | [rust-type-erasure](skills/rust-type-erasure/SKILL.md) | Type-keyed storage when the values are not `'static`: why `Any` is bound to `'static`, the ladder from a lifetime-parameterized enum to a `Box<dyn Any>` map to the GAT owner/element bijection, and where the pattern turns unsound. |
-| [rust-cli](skills/rust-cli/SKILL.md) | Stable command-line contracts for arguments, stdout and stderr, exit status, configuration precedence, signals, terminal behavior, atomic file output, and packaged shell completions. |
+| [rust-macros](skills/rust-macros/SKILL.md) | `macro_rules!` textual scope and hygiene, fragment follow sets, the recursion limit, proc-macro crate rules, and the facade-and-derive crate split. |
 
 </details>
 
 <details>
-<summary><b>Build, dependencies, and supply chain</b> — nine skills</summary>
+<summary><b>API design, code discipline, and tooling</b> — six skills</summary>
+
+<br>
+
+| Skill | What it covers |
+| --- | --- |
+| [rust-discipline](skills/rust-discipline/SKILL.md) | API shape review: pub signatures, trait bounds, blanket and sealed impls, newtypes, `Drop` guards, and SemVer hazards; method lookup, autoderef, UFCS, and coherence (E0034, E0119, E0117). |
+| [rust-code-style](skills/rust-code-style/SKILL.md) | Module file layout, `lib.rs` re-export policy, visibility levels, item order, import groups, the `thiserror` versus `anyhow` choice, and rustdoc `# Errors` and `# Panics` sections. |
+| [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) | Workspace layering, dependency direction rules, the crate-versus-module decision, and crate split, merge, and delete procedures. |
+| [rust-lints](skills/rust-lints/SKILL.md) | `workspace.lints`, `clippy.toml`, and `rustfmt.toml` policy, rustc, clippy, and rustdoc lint levels, safe lint tightening, suppression justification, and red-gate triage. |
+| [rust-cli](skills/rust-cli/SKILL.md) | Stable command-line contracts for arguments, stdout and stderr, exit status, configuration precedence, signals, terminal behavior, atomic file output, and packaged shell completions. |
+| [rust-error-handling](skills/rust-error-handling/SKILL.md) | Error types and propagation in a library and an application: thiserror enums with `#[from]` and `#[source]`, the `Error::source` chain, `anyhow::Context`, `Box<dyn Error + Send + Sync>`, dependency errors as SemVer, chain printing, stable error codes, `ExitCode` in `main`, and the E0277 "`?` couldn't convert the error" family. |
+
+</details>
+
+<details>
+<summary><b>Build, dependencies, and supply chain</b> — ten skills</summary>
 
 <br>
 
@@ -427,6 +453,7 @@ owns it.
 | [rust-ios-build](skills/rust-ios-build/SKILL.md) | iOS device and simulator static libraries, C headers and modulemaps, XCFramework and SwiftPM packaging (UniFFI builds included), deployment-target and symbol verification, signing, and simulator and device release smoke tests. |
 | [rust-wasm](skills/rust-wasm/SKILL.md) | Exact WebAssembly host and target selection, JavaScript boundary ownership, panic and async behavior, WASI capabilities, runtime tests, feature compatibility, and packaged size gates. |
 | [rust-embedded-no-std](skills/rust-embedded-no-std/SKILL.md) | Bare-metal and `no_std` policy for runtime and memory layout, panic and allocation, interrupts and critical sections, task frameworks, finite resource budgets, and real-device diagnostics. |
+| [rust-cross-compilation](skills/rust-cross-compilation/SKILL.md) | Cross-compiling for other Linux targets: rustup targets, per-target linker and `CC_<target>`, static musl and `crt-static` binaries, `cross`, cargo-zigbuild glibc floors, Docker multi-stage builds, qemu-user test runs, and artifact checks. |
 
 </details>
 
@@ -480,7 +507,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>FFI and platform boundaries</b> — five skills</summary>
+<summary><b>FFI and platform boundaries</b> — seven skills</summary>
 
 <br>
 
@@ -491,6 +518,8 @@ owns it.
 | [uniffi-boundary](skills/uniffi-boundary/SKILL.md) | Record-versus-Object shape, `Arc` ownership, foreign callbacks, custom types, async exports, macro and bindgen error triage, and mobile engine ownership across Kotlin and Swift. |
 | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) | jniLibs packaging, the UniFFI header and modulemap for an XCFramework, binding/runtime pinning, additive-versus-breaking FFI changes, checksum-mismatch triage, mobile support matrices, and release proof from the shipped artifacts. |
 | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) | Versioned errors, progress and cooperative cancellation, plus mobile owner teardown, UI delivery, process restart, memory pressure, and callback-release races. |
+| [rust-cxx](skills/rust-cxx/SKILL.md) | Safe Rust and C++ interop with cxx: `cxx::bridge` modules, shared types, `UniquePtr`/`SharedPtr`/`CxxString`/`CxxVector`, `Pin<&mut T>` methods, `Result` mapped to C++ exceptions, cxx-build setup, the choice of cxx, bindgen, or autocxx, and build and link failure triage. |
+| [rust-pyo3](skills/rust-pyo3/SKILL.md) | PyO3 modules, functions, and classes on the `Bound` API, attach and detach, `PyErr` mapping and `PanicException`, abi3 and free-threaded wheels, maturin builds, and import, link, and wheel-tag triage. |
 
 </details>
 
@@ -575,7 +604,7 @@ invocations, and failure triage that a codebase learns the hard way.
   issue when Rust stable or a crate in `checks/Cargo.toml` moves past the pin.
 - The always-on skill listing is small. Claude Code keeps it within 1% of the context window
   (about 2,000 tokens on a 200K window) and drops whole descriptions when it overflows; Codex
-  keeps only a prefix of each. In October 2026, all 44 descriptions cost about 9,300 tokens, so on a 200K window
+  keeps only a prefix of each. In November 2026, all 50 descriptions cost about 9,700 estimated tokens, so on a 200K window
   install one bundle, and paste [AGENTS.snippet.md](AGENTS.snippet.md) into the consuming
   repository so the agent can still name the skill it needs.
 - Codex shortens every description to share one skill-list budget among all listed skills. In a

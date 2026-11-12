@@ -7,6 +7,7 @@ Apply the repository's published compatibility policy before this default table.
 Contents:
 
 - Version classification
+- API diff with cargo-semver-checks
 - Public API checklist
 - Feature compatibility
 - MSRV and platform compatibility
@@ -33,8 +34,25 @@ Contents:
 | Remove a supported platform | Possibly breaking; follow the published policy |
 | Add a defaulted trait item or an inherent method | Possibly breaking; inspect downstream overlap |
 
-Cargo uses the left-most non-zero version component as its compatibility boundary.
-Do not hide a breaking change in a patch release because the crate is below `1.0.0`.
+For `1.0.0` and later, use patch for compatible fixes, minor for compatible additions, and major
+for incompatible changes. Cargo uses the left-most non-zero version component as its
+compatibility boundary: for `0.y.z`, `y` is the breaking position, and each `0.0.z` release is
+incompatible with every other `0.0` release. Do not hide a breaking change in a patch release
+because the crate is below `1.0.0`.
+
+## API diff with cargo-semver-checks
+
+Install the tool with `cargo install --locked cargo-semver-checks` when it is missing. It is a
+CLI, not a manifest dependency.
+
+```bash
+cargo semver-checks -p <package> --baseline-version <previous-version>
+```
+
+`--baseline-version` looks up only crates.io. For another registry, pass
+`--baseline-rev <previous-release-tag>`. Each release of the tool reads the rustdoc JSON of at
+least the stable and beta Rust of its release date. Update the tool when you update the stable
+toolchain.
 
 ## Public API checklist
 
@@ -58,6 +76,17 @@ Review whether new inherent methods can collide with downstream trait methods.
 Review whether a new impl changes method or type inference.
 
 ## Feature compatibility
+
+Run the smallest feature matrix that covers each supported state:
+
+```bash
+cargo test --locked -p <package> --all-targets
+cargo test --locked -p <package> --all-targets --no-default-features
+cargo test --locked -p <package> --all-targets --no-default-features --features <feature-set>
+```
+
+Add `--all-features` only when the features are additive. Otherwise test each documented set, or
+run `cargo hack test --each-feature` when `cargo-hack` is installed.
 
 Treat feature names as public API.
 A compatible release can usually add an opt-in feature.
@@ -95,6 +124,7 @@ command of the `cargo-workflows` skill, when it is installed, when `cargo-hack` 
 ## Official references
 
 - [Cargo SemVer Compatibility](https://doc.rust-lang.org/cargo/reference/semver.html)
+- [cargo-semver-checks](https://github.com/obi1kenobi/cargo-semver-checks)
 - [Cargo Rust Version](https://doc.rust-lang.org/cargo/reference/rust-version.html)
 - [Cargo Features](https://doc.rust-lang.org/cargo/reference/features.html)
 - [Cargo resolver, Rust version](https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version)

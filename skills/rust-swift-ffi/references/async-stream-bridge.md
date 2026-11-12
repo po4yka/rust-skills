@@ -4,7 +4,7 @@ This bridge turns the `rs_engine_start` progress callback from
 `callbacks-and-cancellation.md` into
 an `AsyncStream`. It assumes the `Engine` class, a `nonisolated` `Sendable`
 `JobProgress` struct, and the `EngineError(taking:)` initializer that the
-`SKILL.md` snippets use. It also assumes two exports that `SKILL.md` does not
+`handle-ownership.md` snippets use. It also assumes two exports that `SKILL.md` does not
 declare: `void rs_job_cancel(rs_job_t * _Nonnull job)`, which is idempotent and
 thread-safe, and `void rs_job_release(rs_job_t * _Nullable job)`, which never
 blocks. Put the extension in the file that declares `Engine`, so that it can

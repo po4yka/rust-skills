@@ -1,7 +1,7 @@
 # Rolling-compatible migrations
 
 Migration history, serialization, and the rolling deployment order behind
-"Deploy migrations in compatible phases" in `SKILL.md`. "Verify and finish"
+the "Conditional references" table in `SKILL.md`. "Verify and finish"
 is also a `SKILL.md` section.
 
 ## Deploy migrations in compatible phases

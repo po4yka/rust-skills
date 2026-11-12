@@ -308,7 +308,7 @@ lands. It is warn-by-default, and this is the bug it exists for.
 With a forwarding impl in scope, do not take the same trait by value (`impl Handler`) in a
 recursive method: each level adds one `&mut`, and `cargo build` fails with `reached the recursion
 limit while instantiating` after `cargo check` and `cargo clippy` pass. Take `&mut W` with
-`W: Handler + ?Sized`. The `rust-callback-bounds` skill, when it is installed, has the failing
+`W: Handler + ?Sized`; the `rust-callback-bounds` skill, when it is installed, has the failing
 example.
 
 ---

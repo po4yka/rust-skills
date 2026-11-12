@@ -9,7 +9,7 @@
     {
       "name": "rust-skills",
       "source": "./",
-      "description": "All 46 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
+      "description": "All 50 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -21,7 +21,7 @@
     {
       "name": "rust-skills-language",
       "source": "./",
-      "description": "Language, interfaces, and code discipline: 13 Rust agent skills.",
+      "description": "Language semantics and compiler errors: 8 Rust agent skills.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -33,22 +33,37 @@
         "./skills/rust-compiler-errors",
         "./skills/rust-borrow-semantics",
         "./skills/rust-pattern-semantics",
+        "./skills/rust-variance",
+        "./skills/rust-callback-bounds",
+        "./skills/rust-iterator-impl",
+        "./skills/rust-type-erasure",
+        "./skills/rust-macros"
+      ]
+    },
+    {
+      "name": "rust-skills-design",
+      "source": "./",
+      "description": "API design, code discipline, and tooling: 6 Rust agent skills.",
+      "license": "BSD-3-Clause",
+      "author": {
+        "name": "po4yka",
+        "url": "https://github.com/po4yka"
+      },
+      "homepage": "https://github.com/po4yka/rust-skills",
+      "repository": "https://github.com/po4yka/rust-skills",
+      "skills": [
         "./skills/rust-discipline",
         "./skills/rust-code-style",
         "./skills/rust-crate-architecture",
         "./skills/rust-lints",
-        "./skills/rust-macros",
-        "./skills/rust-iterator-impl",
-        "./skills/rust-variance",
-        "./skills/rust-callback-bounds",
-        "./skills/rust-type-erasure",
-        "./skills/rust-cli"
+        "./skills/rust-cli",
+        "./skills/rust-error-handling"
       ]
     },
     {
       "name": "rust-skills-build",
       "source": "./",
-      "description": "Build, dependencies, and supply chain: 9 Rust agent skills.",
+      "description": "Build, dependencies, and supply chain: 10 Rust agent skills.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -65,7 +80,8 @@
         "./skills/rust-android-build",
         "./skills/rust-ios-build",
         "./skills/rust-wasm",
-        "./skills/rust-embedded-no-std"
+        "./skills/rust-embedded-no-std",
+        "./skills/rust-cross-compilation"
       ]
     },
     {
@@ -132,7 +148,7 @@
     {
       "name": "rust-skills-ffi",
       "source": "./",
-      "description": "FFI and platform boundaries: 5 Rust agent skills.",
+      "description": "FFI and platform boundaries: 7 Rust agent skills.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -145,7 +161,9 @@
         "./skills/rust-swift-ffi",
         "./skills/uniffi-boundary",
         "./skills/uniffi-packaging-versioning",
-        "./skills/ffi-error-progress-cancel"
+        "./skills/ffi-error-progress-cancel",
+        "./skills/rust-cxx",
+        "./skills/rust-pyo3"
       ]
     }
   ]

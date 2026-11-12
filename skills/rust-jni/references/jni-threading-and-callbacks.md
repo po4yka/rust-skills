@@ -82,7 +82,7 @@ fn publish_cache(vm: &JavaVM) -> jni::errors::Result<()> {
 }
 ```
 
-Use the `JNI_OnLoad` template in [../SKILL.md](../SKILL.md). Replace the
+Use the `JNI_OnLoad` template in [register-natives.md](register-natives.md). Replace the
 `vm.with_local_frame(..)` expression in its closure with `publish_cache(&vm)`.
 The template then logs a failed lookup, returns `JNI_ERR` for any error or
 panic, and returns `JNI_VERSION_1_6` only after the cache is published.

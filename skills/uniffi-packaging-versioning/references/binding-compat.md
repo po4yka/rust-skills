@@ -6,6 +6,9 @@ Contents:
 
 - What the checksum protects, and what it does not
 - Regeneration script contract
+- Checksum timing and version parity facts
+- In-crate generator manifest
+- Generator command and script inputs
 - CI gate
 - Reviewing an FFI change
 - Kotlin device checksum defects (0.30.0–0.32.0)
@@ -119,6 +122,77 @@ each XCFramework slice. A directory under `Sources/` invites a second SwiftPM C
 target with the same module name.
 
 ---
+
+## Checksum timing and version parity facts
+
+- Kotlin on UniFFI 0.30.0 to 0.32.2 checks checksums only inside `uniffiEnsureInitialized()`,
+  so `omit_checksums = false` proves nothing on its own. The generated package defaults to
+  `uniffi.<namespace>`. UniFFI 0.32.2, the latest release on 2026-11-12, still checks only
+  there.
+- A hard checksum failure is the good case; the record-field gap fails silently.
+- UniFFI 0.31.0 removed the self type from method checksums, so 0.30.x bindings fail against a
+  0.31.x library, and the reverse.
+
+## In-crate generator manifest
+
+Build the generator from the FFI crate, behind a feature:
+
+```toml
+# Cargo.toml of the FFI crate
+[dependencies]
+uniffi = { workspace = true }   # workspace root: uniffi = "0.32.1"
+
+[features]
+# The default `cargo build/clippy/test --workspace` never compiles the CLI.
+cli = ["uniffi/cli"]
+
+[[bin]]
+name = "uniffi-bindgen"         # src/bin/uniffi-bindgen.rs calls uniffi::uniffi_bindgen_main()
+required-features = ["cli"]
+```
+
+Pin `uniffi` once at the workspace root and commit `Cargo.lock`. The generator
+links the same locked crate, so parity holds without an `=` requirement. Do not
+install `uniffi-bindgen` with `cargo install`: a global binary drifts from the
+lock file.
+
+## Generator command and script inputs
+
+```bash
+# 1. Build the host library (no --target: the build machine).
+cargo rustc --locked --profile release --crate-type cdylib -p <ffi-crate> --lib
+
+# 2. Generate Kotlin and Swift. --no-format makes the output independent of
+#    the ktlint and swift-format installs on this machine.
+cargo run --locked -p <ffi-crate> --features cli --bin uniffi-bindgen -- \
+  generate <host library> --language kotlin --language swift \
+  --no-format --out-dir <tmp>
+```
+
+Wrap generation in one checked-in script with an optional library-path
+argument (default: the host library) and two modes:
+
+- `--check` (the default): generate into a temporary directory and `diff`
+  against the checked-in files. Exit non-zero on any difference.
+- `--write`: overwrite the checked-in files.
+
+The generator reads ELF, Mach-O, and PE libraries and static archives on any
+host. To prove target independence, run the script in `--check` mode with each
+shipping library as its input; the raw generator output always differs from
+the checked-in files. Pass the unstripped
+`target/<triple>/<profile>/lib<crate_name>.so` or `.a`. The generator reads ELF
+metadata from the symbol table only, so a stripped `.so`, such as the one
+inside an APK or AAB, gives no metadata.
+
+Check in the generated Kotlin file, Swift file, C header, and modulemap: they
+are the contract that consumers compile against, and their diff is the review
+signal. Do not hand-edit them; the next regeneration discards the edit. Put a
+fix in the Rust crate or in the consumer adapter.
+Read `references/binding-compat.md` when you write or fix the script, review an
+FFI diff, or coordinate a breaking change.
+
+Commit the regenerated files with the Rust change; a split commit gives
+`git bisect` a broken state. A `--check` diff in CI blocks the merge.
 
 ## CI gate
 

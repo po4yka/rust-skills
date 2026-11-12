@@ -14,6 +14,7 @@ Contents:
 - Selective build commands
 - Reviewing a `Cargo.lock` diff
 - Scheduled latest-dependencies job
+- MSRV job variants
 - MSRV job without a download by an old Cargo
 
 ## Workspace layout
@@ -146,6 +147,13 @@ cargo build --locked --workspace --exclude <bench-crate>
 # builds and links build scripts and proc macros, but only for the host.
 cargo check --locked --target aarch64-linux-android -p <crate>
 cargo check --locked --target aarch64-apple-ios     -p <crate>
+
+# Inspect the graph
+cargo tree --locked --duplicates                  # Find duplicate versions
+cargo tree --locked -i <dep>                      # Who depends on <dep>?
+cargo tree --locked -e features -i <dep>          # Which features are active, and who enables them
+cargo metadata --locked --no-deps --format-version 1   # Member list, JSON
+cargo bench --locked -p <bench-crate>             # Host only
 ```
 
 `cargo check --target <triple>` is the cheapest guard against a cross-compilation break. Run it
@@ -173,7 +181,17 @@ Build scripts still run under `cargo check`. A dependency whose build script com
 
 ## Scheduled latest-dependencies job
 
-SKILL.md has the runner, secret, and cache rules for this job. The job body:
+This job builds and runs packages that nobody vetted, build scripts and proc macros included.
+
+- Run it on a GitHub-hosted runner, not on a self-hosted runner. On a self-hosted runner, a build
+  script can read the credentials of that machine, reach the internal network, and stay on the
+  machine after the job.
+- Give it no secrets and `permissions: { contents: read }`.
+- Do not let it save a cache (`save-if: false` on `Swatinem/rust-cache`).
+- Let it report, not block merges. Vet each new package name in its lock diff before you adopt
+  the update.
+
+The job body:
 
 ```bash
 export CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=allow   # Ignore rust-version when choosing
@@ -187,9 +205,19 @@ dependency whose `rust-version` is newer than the pin, and the job then fails on
 version instead of on the breakage it exists to find. A `+stable` override beats
 `rust-toolchain.toml`; `rustup default stable` does not.
 
+## MSRV job variants
+
+`cargo +<msrv> test --locked --workspace` proves the MSRV; run `rustup toolchain install <msrv>`
+first. The `+<msrv>` override beats `rust-toolchain.toml`. When a dev-dependency needs a newer
+Rust than the MSRV, run `cargo +<msrv> check --locked --workspace --lib --bins` instead. When
+cargo-hack is installed, `cargo hack check --rust-version --workspace --ignore-private` does the
+same per package, at each package's own `rust-version`. Do not add `--all-targets`: it builds the
+dev-dependencies.
+
 ## MSRV job without a download by an old Cargo
 
-Use this procedure when SKILL.md says that the MSRV Cargo must not download:
+Use this procedure when the MSRV Cargo is older than 1.96.1 and the workspace uses a third-party
+registry or an SSH git source:
 
 1. Run `cargo vendor --locked vendor` with the pinned toolchain, which must be 1.96.1 or later.
 2. Put the `[source]` tables that it prints in `.cargo/config.toml` for the MSRV job.

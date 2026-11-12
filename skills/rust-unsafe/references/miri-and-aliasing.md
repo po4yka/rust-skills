@@ -329,6 +329,36 @@ error: Undefined Behavior: reborrow through <535> at alloc261[0x0] is forbidden
 
 ## Miri invocations
 
+Steps 2 to 4 of "Verify an unsafe change" in `SKILL.md`, in full:
+
+2. Every change: `cargo test --locked -p <crate>` in the debug profile. On the executed path,
+   debug assertions check many std unsafe preconditions (1.78), a misaligned `*p` (1.70), and a
+   null `*p` (1.86). A violation aborts with `unsafe precondition(s) violated: ...`,
+   `misaligned pointer dereference`, or `null pointer dereference occurred`: a non-unwinding
+   panic that `catch_unwind` cannot catch. Treat it as undefined behavior. `--release` removes
+   these checks. With the prebuilt std, no profile checks a misaligned `ptr::read` (rustc
+   1.99.1); `cargo +nightly careful test`, when cargo-careful is installed, does.
+3. Code that Miri can execute, when nightly with the `miri` component is installed:
+   `cargo +nightly miri test --locked -p <crate>` with the default Stacked Borrows model first,
+   then `MIRIFLAGS="-Zmiri-tree-borrows"` as a second opinion. Tree Borrows is more permissive
+   and more experimental, so never use it to excuse a default-model failure. Add
+   `-Zmiri-symbolic-alignment-check` for reads through a cast byte pointer,
+   `-Zmiri-strict-provenance` for code that does not deliberately expose provenance, and
+   `-Zmiri-many-seeds` for threads or a manual `Send` or `Sync` impl (one seed explores one
+   schedule).
+4. FFI code that Miri cannot execute: mark the test `#[cfg_attr(miri, ignore)]` and cover the
+   path with ASan on the host, or HWASan or MTE on a device. cargo-careful is not a substitute.
+   A `#[cfg(miri)]` stub for the foreign function must dereference every pointer that the
+   foreign side stores; otherwise Miri sees no use of the pointer and reports nothing.
+
+A clean Miri run is evidence about aliasing, provenance, initialization, and alignment (with
+`-Zmiri-symbolic-alignment-check`) on the paths that the tests execute. It is not evidence about
+unexecuted paths, foreign code, or a library contract that the abstract machine never evaluates,
+such as UTF-8 validity or the allocator rule of `String::from_raw_parts`. The
+`rust-sanitizers-miri` skill, when it is installed, owns the Miri flag policy and the sanitizers;
+add a Tree Borrows lane with `MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked`.
+
+
 ```bash
 cargo +nightly miri test --locked
 ```

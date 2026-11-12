@@ -4,10 +4,25 @@ Deep reference for the loom section of `SKILL.md`, for loom 0.7.
 
 Contents:
 
+- Limits
 - Dependency and lint setup
 - Statics and `UnsafeCell` under `cfg(loom)`
 - Worked example: a publish flag
 - Commands and search bounds
+
+## Limits
+
+- loom checks only the operations on its own types. Gate the atomics and a shared `UnsafeCell`
+  to `loom::sync::atomic` and `loom::cell::UnsafeCell` under `cfg(loom)`, and spawn threads with
+  `loom::thread::spawn`. A data race on a `std` type is invisible to loom, so the run can pass.
+- loom treats `SeqCst` loads and stores as `AcqRel`. Code that needs `SeqCst` accesses can
+  fail under loom and still be correct. loom models `fence(SeqCst)` correctly.
+- loom does not explore load-buffering executions. A green loom run can hide such a bug.
+- The cost grows exponentially with the number of atomic operations and the preemption bound.
+  Test one primitive per test, with two or three threads.
+- loom's scheduler is not fair. Under `cfg(loom)`, every spin or retry loop must call
+  `loom::thread::yield_now()` (or `loom::hint::spin_loop()`). Otherwise the model fails with
+  "Model exceeded maximum number of branches" (`LOOM_MAX_BRANCHES`, default 1000).
 
 ## Dependency and lint setup
 

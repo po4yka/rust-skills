@@ -1,0 +1,37 @@
+schema_version: "1.1"
+name: design-error-source-chain
+description: >-
+  The design bundle, outcome case. A library error type folds its io::Error into the message and
+  returns no source, so callers cannot match the io error kind and a chain printer prints the
+  cause twice once it is fixed carelessly. The rust-error-handling skill owns the source-chain rule.
+tags: [outcome, design, rust-error-handling]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
+  env:
+    CARGO_NET_OFFLINE: "true"
+  prompt: >-
+    Callers of config_loader::load want to treat a missing config file as "use the defaults", so
+    they need the io::ErrorKind of a read failure, and our log reporter walks Error::source to
+    print causes. Today neither works with ConfigError. Fix the error type so both work. Keep the
+    public variants and their fields, and do not add a dependency.
+expected_outcome: >-
+  ConfigError implements Error::source and returns the io::Error of the Read variant, the Read
+  Display text names the path without repeating the io error, the public variants and fields
+  stay, no dependency is added, and cargo test passes with a test that reaches the io error
+  through Error::source.
+graders:
+  # An indicator, not part of the score: the no-plugin arm cannot load the skill.
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?rust-error-handling"'
+  - name: no-new-dependency
+    type: regex
+    target: {source: file, path: Cargo.toml}
+    pattern: '\[dependencies\]\s*\n\s*[A-Za-z_-]'
+    match: not_contains

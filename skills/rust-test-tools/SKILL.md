@@ -15,7 +15,7 @@ on the crate that the change touches while you iterate. Run the full lane once b
 | The change adds | Run | A green run does not prove |
 |---|---|---|
 | Pure-Rust `unsafe`: raw pointers, `transmute`, `MaybeUninit`, `from_raw_parts` | Miri. The `rust-sanitizers-miri` skill owns the flags and the aliasing-model policy | UB freedom on paths that the tests do not reach |
-| `unsafe` next to foreign code: FFI, JNI, libc, syscalls | ASan on the host, or HWASan or MTE on a device; TSan when the code shares state across threads. cargo-careful is a cheap extra lane, not a substitute. Also Miri on the pure-Rust helpers, with the foreign calls stubbed under `#[cfg(miri)]`; the stub dereferences every pointer that the foreign side stores | UB freedom: a sanitizer does not know the Rust aliasing rules, and careful checks only a few UB classes |
+| `unsafe` next to foreign code: FFI, JNI, libc, syscalls | ASan on the host, or HWASan or MTE on a device; TSan when the code shares state across threads. Also Miri on the pure-Rust helpers, with the foreign calls stubbed under `#[cfg(miri)]` | UB freedom: a sanitizer does not know the Rust aliasing rules |
 | Hand-rolled atomics, a spinlock, a lock-free structure, a publish flag | loom | freedom from bugs that need load buffering or more preemptions than the bound |
 | A parser, a decoder, or any function that reads untrusted bytes | proptest, then cargo-fuzz | freedom from bugs that the strategy or the corpus never reaches |
 | A port whose reference a test can call in-process | a differential fuzz target | equivalence outside the inputs that the fuzzer reached |
@@ -28,9 +28,8 @@ with no hand-rolled atomics, does not need loom.
 
 ## Lanes and cadence
 
-If cargo-nextest is installed, use it as the runner. It runs each test in its own process, so
-one abort or segfault does not hide the rest of the suite. Nextest does not run doctests, so run
-them separately. Keep `--locked` so that a test run cannot rewrite `Cargo.lock`.
+If cargo-nextest is installed, use it as the runner, and run doctests separately. Keep
+`--locked` so that a test run cannot rewrite `Cargo.lock`.
 
 ```bash
 cargo nextest run --locked -p <crate> --no-fail-fast
@@ -40,9 +39,8 @@ cargo test --locked -p <crate> --doc
 cargo test --locked -p <crate> --no-fail-fast
 ```
 
-Run the tests for `unsafe` code in a debug build at least once. Since Rust 1.78, std checks unsafe
-preconditions (for example the null and alignment rules of `slice::from_raw_parts`) when debug
-assertions are on. A `--release` build removes these checks.
+Run the tests for `unsafe` code in a debug build at least once: since Rust 1.78, std checks
+unsafe preconditions only when debug assertions are on.
 
 | Lane | Command | When |
 |---|---|---|
@@ -60,11 +58,9 @@ The `cargo-workflows` skill owns nextest profiles (`.config/nextest.toml`, run w
 
 Before you approve a change, confirm each item that applies:
 
-- [ ] New pure-Rust `unsafe` has a Miri run when a nightly toolchain with the `miri` component is
-      installed; otherwise the report names it as not checked by Miri. This includes `unsafe` helpers inside an FFI
-      crate, with the foreign calls stubbed under `#[cfg(miri)]`, and the stub dereferences
-      every pointer that the foreign side stores (the `rust-sanitizers-miri` skill has the
-      stub rules). A careful run alone is not UB evidence.
+- [ ] New pure-Rust `unsafe`, FFI helpers included (foreign calls stubbed under `#[cfg(miri)]`),
+      has a Miri run when nightly `miri` is installed; otherwise the report names it as not
+      checked by Miri. A careful run alone is not UB evidence.
 - [ ] New `unsafe` across FFI has an ASan run on the host, or a HWASan or MTE run on a device,
       and a TSan run when it shares state across threads.
 - [ ] Every new hand-rolled atomic or lock-free primitive has a loom test that calls the crate's
@@ -80,10 +76,9 @@ Before you approve a change, confirm each item that applies:
 
 ## cargo-careful
 
-cargo-careful rebuilds the standard library with debug assertions and runs code that Miri cannot
-run (foreign calls, system calls). It is a cheap extra lane, not a UB proof: it does not check
-aliasing, general reads of uninitialized memory, use-after-free, or data races. Miri and the
-sanitizers from "Pick the tool" still apply.
+cargo-careful rebuilds std with debug assertions and runs code that Miri cannot run. It is a
+cheap extra lane, not a UB proof: it does not check aliasing, uninitialized reads,
+use-after-free, or data races.
 
 Read [references/cargo-careful.md](references/cargo-careful.md) when you set up the lane (nightly
 and `rust-src`), need the list of checks, or a flag from `target.<triple>.rustflags` is missing
@@ -91,73 +86,33 @@ in the careful run.
 
 ## loom
 
-loom runs a test body under every thread interleaving that the preemption bound allows, and
-it models the C11 memory orderings. A stress test samples a few schedules. loom enumerates
-them. Know its limits before you trust a result:
+loom runs a test body under every interleaving that the preemption bound allows, and models
+the C11 orderings. Know its limits:
 
-- loom checks only the operations on its own types. Gate the atomics and a shared `UnsafeCell`
-  to `loom::sync::atomic` and `loom::cell::UnsafeCell` under `cfg(loom)`, and spawn threads with
-  `loom::thread::spawn`. A data race on a `std` type is invisible to loom, so the run can pass.
-- loom treats `SeqCst` loads and stores as `AcqRel`. Code that needs `SeqCst` accesses can
-  fail under loom and still be correct. loom models `fence(SeqCst)` correctly.
-- loom does not explore load-buffering executions. A green loom run can hide such a bug.
-- The cost grows exponentially with the number of atomic operations and the preemption bound.
-  Test one primitive per test, with two or three threads.
-- loom's scheduler is not fair. Under `cfg(loom)`, every spin or retry loop must call
-  `loom::thread::yield_now()` (or `loom::hint::spin_loop()`). Otherwise the model fails with
-  "Model exceeded maximum number of branches" (`LOOM_MAX_BRANCHES`, default 1000).
+- loom checks only the operations on its own types (`loom::sync::atomic`,
+  `loom::cell::UnsafeCell`, `loom::thread::spawn` under `cfg(loom)`). A race on a `std` type is
+  invisible to it.
+- loom treats `SeqCst` loads and stores as `AcqRel`, and does not explore load buffering.
+- Under `cfg(loom)`, every spin or retry loop must call `loom::thread::yield_now()`, or the
+  model fails with "Model exceeded maximum number of branches".
 
 Declare loom under `[target.'cfg(loom)'.dependencies]`, because the library itself imports it,
 and add a `check-cfg` entry for `cfg(loom)`. Do not use a `loom` Cargo feature: `--all-features`
-turns it on, and every ordinary test that touches the primitive then panics. Make the loom test call the crate's own type, not a
-copy of the algorithm. Select only the loom targets (`--test 'loom_*'`). With `--tests` or a bare
-`cargo test`, every other test that touches the primitive runs outside `loom::model` and panics
-with "cannot access Loom execution state from outside a Loom model". Gate such tests with
-`#[cfg(not(loom))]` if they must share a run.
+turns it on, and every ordinary test that touches the primitive then panics. Make the loom test
+call the crate's own type. Select only the loom targets (`--test 'loom_*'`); other tests that
+touch the primitive panic outside `loom::model`, so gate them with `#[cfg(not(loom))]`.
 
-Read [references/loom.md](references/loom.md) when you set up loom in a crate, gate a `static`
-atomic or an `UnsafeCell`, need a worked example with its failure output, or must bound a slow
-run.
+Read [references/loom.md](references/loom.md) before you trust a loom result (its limits), when
+you set up loom in a crate, gate a `static` atomic or an `UnsafeCell`, or must bound a slow run.
 
 ## proptest
 
 Write properties for any function that takes bytes, text, or a configuration value and
 produces a parsed or validated result. Assert invariants, not single examples.
 
-```rust
-use proptest::prelude::*;
+Read [references/proptest.md](references/proptest.md) for the four property shapes:
+never-panics, roundtrip, structured roundtrip, and text.
 
-proptest! {
-    // Total function: no panic for any byte string.
-    #[test]
-    fn parse_never_panics(buf in prop::collection::vec(any::<u8>(), 0..1024)) {
-        let _ = Header::parse(&buf);
-    }
-
-    // Roundtrip: serialize a parsed header and get the consumed prefix back.
-    #[test]
-    fn parse_then_serialize_roundtrips(buf in prop::collection::vec(any::<u8>(), 0..4096)) {
-        if let Ok(hdr) = Header::parse(&buf) {
-            let mut out = Vec::new();
-            hdr.write_to(&mut out);
-            prop_assert_eq!(&out, &buf[..hdr.len()]);
-        }
-    }
-
-    // Structured roundtrip: generate a valid value, encode it, and decode it back.
-    #[test]
-    fn decode_roundtrips_valid_input(value in arb_valid_message()) {
-        let decoded = decode(&value.encode()).expect("valid input must decode");
-        prop_assert_eq!(decoded, value);
-    }
-
-    // Text: "(?s).*" also generates '\n'. ".*" and any::<String>() never do.
-    #[test]
-    fn text_parser_never_panics(s in "(?s).*") {
-        let _ = parse_document(&s);
-    }
-}
-```
 
 - Random bytes seldom get past a magic number or a checksum. The structured strategy reaches
   the deeper code, so write one for every format with such a check.
@@ -194,10 +149,8 @@ kind when callers depend on it. Seed the corpus with non-ASCII text and invalid 
 
 ## cargo-mutants
 
-cargo-mutants changes the code (it replaces a function body with a default value, flips a
-comparison, or deletes a call) and reruns the tests for each change. A mutant that survives
-marks code that the tests run but do not check. It also exposes a new test that never calls the
-changed function; the `rust-tdd` skill owns that rule.
+cargo-mutants changes the code (a default body, a flipped comparison, a deleted call) and reruns
+the tests for each change. A mutant that survives marks code that the tests run but do not check.
 
 ```bash
 cargo install --locked cargo-mutants
@@ -212,25 +165,12 @@ cargo mutants --test-tool nextest --cargo-arg=--locked --package <crate> -j2 --o
 
 Without cargo-nextest, drop `--test-tool nextest`; cargo-mutants then runs `cargo test`.
 
-- A diff that only adds or changes tests gives no mutants, because `--in-diff` matches only the
-  code under test. For new tests of existing code, run
-  `cargo mutants --test-tool nextest --cargo-arg=--locked --file <source-file>` (or
-  `--package <crate>`).
-- cargo-mutants runs cargo without `--locked`. Pass `--cargo-arg=--locked`, or set
-  `additional_cargo_args = ["--locked"]` in `.cargo/mutants.toml`, not both: cargo rejects a
-  repeated `--locked`.
-- Results go to `<output>/mutants.out/`. Exit code 2 means some mutants survived. Exit code 4
-  means the tests fail before any mutation, so fix the suite first.
-
-Triage `mutants.out/missed.txt`. It is the gate, not a score: cargo-mutants defines no
-threshold.
-
-1. For each missed mutant, read the function and the change. `mutants.out/diff/` holds each
-   change as a diff.
-2. If a test must catch the change, write a test that asserts the exact value or side effect.
-3. If the code cannot be tested in a useful way (`Display` or `Debug` output, logging, FFI
-   glue), exclude it with `exclude_re` in `.cargo/mutants.toml` or with `#[mutants::skip]`.
-   Record the reason next to the exclusion. Do not write a meaningless test to raise the count.
+A diff that only adds tests gives no mutants; run `--file <source-file>` instead. Exit code 2
+means mutants survived; exit code 4 means the suite fails before any mutation. Triage
+`mutants.out/missed.txt`: it is the gate, not a score. For each missed mutant, write a test that
+asserts the exact value or side effect, or exclude untestable code (`Display`, logging, FFI glue)
+with `exclude_re` or `#[mutants::skip]` and a recorded reason. Never write a meaningless test to
+raise the count.
 
 Do not block every pull request on a full run: it takes minutes to hours, and some mutants are
 equivalent to the original code.
@@ -242,8 +182,7 @@ workflow.
 
 ## Golden files
 
-A golden test compares output with a committed file. Use it for output that another party
-reads: serialized records, exported reports, generated code, protocol frames, rendered images.
+A golden test compares output that another party reads with a committed file.
 
 - Never set the bless variable in CI. A missing fixture must fail the run.
 - Bless only an intended output change, and explain the contract change in the commit message.
@@ -258,11 +197,7 @@ Read [references/golden-files.md](references/golden-files.md) when you write the
 
 ## Related skills
 
-These skills own the adjacent topics, when they are installed:
-
-- `rust-sanitizers-miri`: Miri flags and model policy; `#[cfg(miri)]` stubs for foreign calls;
-  ASan, TSan, MSan, and HWASan.
-- `memory-model`: the choice of atomic orderings that a loom test checks; it pairs loom with
-  `MIRIFLAGS="-Zmiri-many-seeds=0..16" cargo +nightly miri test --locked`.
-- `rust-unsafe`: SAFETY contracts and the `unsafe` audit surface.
-- `rust-tdd`: the test-first cycle, and tests that call the changed code.
+When installed: `rust-sanitizers-miri` (Miri flags, `#[cfg(miri)]` stubs, sanitizers),
+`memory-model` (atomic orderings; it pairs loom with
+`MIRIFLAGS="-Zmiri-many-seeds=0..16" cargo +nightly miri test --locked`), `rust-unsafe` (SAFETY
+contracts), and `rust-tdd` (the test-first cycle).

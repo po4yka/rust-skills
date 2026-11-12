@@ -21,28 +21,24 @@ license: BSD-3-Clause
 | Race work against shutdown and keep the value | `token.run_until_cancelled(fut)` | a hand-written `select!` |
 | Do bounded blocking or CPU work | `spawn_blocking` | `block_in_place` |
 | Run an indefinite blocking loop | `std::thread::spawn` | `spawn_blocking` |
-| Hold a lock across `.await` | `tokio::sync::Mutex` | `std::sync::Mutex` |
 | Deliver every message without loss | `mpsc` | `broadcast` |
-| Bound how long a caller waits for CPU work | `timeout(d, spawn_blocking(..))` | `timeout(d, cpu_work())` |
 | Keep a critical `.await` sequence atomic | `tokio::spawn` + join the handle | `select!` around it |
 
 ## Stall and hang triage
 
 | Symptom | Likely cause | Check or fix |
 |---|---|---|
-| Every task is slow, one task looks stuck | a blocking call inside async context | grep for `std::thread::sleep`, `std::fs`, `std::net`, synchronous HTTP or DB calls; move them as the [blocking table](#blocking-work) says |
+| Every task is slow, one looks stuck | a blocking call in async context | grep for `std::thread::sleep`, `std::fs`, `std::net`, synchronous HTTP or DB calls; move them as [Blocking work](#blocking-work) says |
 | Shutdown never completes | a `select!` loop without a `cancelled()` arm | add `biased;` + `_ = cancel.cancelled() => break` |
-| Async tasks abort, but the process does not exit | a started `spawn_blocking` closure; `abort`, `JoinSet` drop, and runtime shutdown cannot stop it | pass a `CancellationToken` into the closure and check it; `Runtime::shutdown_timeout` stops only the wait |
-| Latency spikes with no obvious cause | long-lived tasks saturate the blocking pool | move indefinite work to `std::thread::spawn` |
+| Tasks abort, but the process does not exit | a started `spawn_blocking` closure; nothing can abort it | pass a `CancellationToken` into the closure and check it; `Runtime::shutdown_timeout` stops only the wait |
+| Latency spikes, no clear cause | long-lived tasks fill the blocking pool | move indefinite work to `std::thread::spawn` |
 | `spawn_blocking` work hangs on tokio 1.52.0 | a regression in exactly 1.52.0 (tokio issue #8056) | `cargo update -p tokio` to 1.52.1 or later |
-| A timeout is exceeded but returns `Ok`, or never returns | one poll of the wrapped future does not yield | wrap `spawn_blocking` inside the `timeout`; add cooperative cancellation if the work itself must stop |
+| A timeout is exceeded but returns `Ok`, or never returns | one poll does not yield | see [Timeouts](#timeouts) |
 | Panic: "can call blocking only when running on the multi-threaded runtime" | `block_in_place` on a `current_thread` runtime, including a default `#[tokio::test]` | use `spawn_blocking` |
-| Panic: "Cannot start a runtime from within a runtime" | `block_on` on a thread that already drives async tasks | `.await` the future; run synchronous code that must block on a `std::thread` or in `spawn_blocking` with a `Handle` |
-| Events are missing, no error is logged | a `broadcast` receiver lagged; `while let Ok(..)` ends the loop at the first `Lagged` | match `RecvError::Lagged(n)` explicitly, or switch to `mpsc` |
-| Deadlock only under concurrent load | a `std::sync::Mutex` guard held across `.await` | run `clippy::await_holding_lock`; drop the guard before the `.await`, or use `tokio::sync::Mutex` |
-| A stream stalls forever after one `Pending` | a no-op-waker poll helper was called from async code | move the call into the synchronous loop tick |
-| Writes succeed, the peer sees nothing | the synchronous engine did not run a step after the write | check that the loop does not skip ticks under load |
-| io_uring operations hang or corrupt memory after cancellation | an SQE was dropped without `IORING_OP_ASYNC_CANCEL`, or its buffer was reused before the target CQE | submit the cancel, and keep the buffer and fd alive until the target's CQE arrives |
+| Panic: "Cannot start a runtime from within a runtime" | `block_on` on a thread that drives async tasks | `.await` the future; block only on a `std::thread` or in `spawn_blocking` with a `Handle` |
+| Events are missing, no error is logged | `while let Ok(..)` on a `broadcast` receiver ends at the first `Lagged` | match `RecvError::Lagged(n)`, or switch to `mpsc` |
+| Deadlock only under concurrent load | a `std::sync::Mutex` guard held across `.await` | run `clippy::await_holding_lock`; drop the guard before the `.await` |
+| A stream stalls after one `Pending`, a peer sees no write, or io_uring hangs after a cancel | a synchronous-loop bridge defect | read [references/manual-poll-bridge.md](references/manual-poll-bridge.md#triage) |
 | File descriptors accumulate | a raw fd without an owner on an error path | hold every fd as `OwnedFd` so each early return closes it |
 
 ## Verify
@@ -50,56 +46,33 @@ license: BSD-3-Clause
 | Claim | Check | A green result does not prove |
 |---|---|---|
 | No lock guard or `RefCell` borrow crosses `.await` | `cargo clippy --locked --all-targets -- -D clippy::await_holding_lock -D clippy::await_holding_refcell_ref` | cancel safety, or lock order between tasks |
-| Shutdown is bounded | a test that keeps one task busy, cancels the token, and asserts `tokio::time::timeout(deadline, handle).await.is_ok()`; run it with `flavor = "multi_thread"` too | shutdown under production load |
+| Shutdown is bounded | keep one task busy, cancel the token, assert `tokio::time::timeout(deadline, handle).await.is_ok()`; also under `flavor = "multi_thread"` | shutdown under production load |
 | Timeout and retry logic | `#[tokio::test(start_paused = true)]` (tokio `test-util` feature) with `tokio::time::advance` | a blocking poll; paused time does not bound CPU work |
 | Code that calls `block_in_place` works | `#[tokio::test(flavor = "multi_thread")]` | the default `#[tokio::test]` flavor, which panics |
-| No known advisory (vulnerability or unsound) for tokio or tokio-util | `cargo deny --config deny.toml --locked check advisories` with `unsound = "all"`, or `cargo audit --deny warnings` | behavior regressions that have no advisory |
+| No known tokio or tokio-util advisory | `cargo deny --config deny.toml --locked check advisories` with `unsound = "all"`, or `cargo audit --deny warnings` | regressions that have no advisory |
 
-No compiler, lint, or test tool checks cancel safety. Review the `cancel-safe:` annotations, and
-test a cancel-sensitive future by dropping it at each `.await` (for example, race it in `select!`
-against a `oneshot` that fires at a chosen step). Then assert the state invariant.
+No tool checks cancel safety. Review the `cancel-safe:` annotations, and test a cancel-sensitive
+future by dropping it at each `.await` (race it in `select!` against a `oneshot` that fires at a
+chosen step), then assert the state invariant.
 
-Plain `cargo audit` exits 0 on an `unsound` advisory, and the cargo-deny default
-`unsound = "workspace"` misses a transitive tokio. Show the resolved version with
-`cargo tree --locked -i tokio`. Do not keep a hand-written minimum-version table: one floor
-misses backport lines. For example, the unsound advisory RUSTSEC-2025-0023 (the broadcast channel
-calls `clone` on a `Send + !Sync` value from several threads) is patched in `>=1.38.2,<1.39`,
-`>=1.42.1,<1.43`, `>=1.43.1,<1.44`, and `>=1.44.2`. A floor of 1.42.1 accepts the affected
-1.43.0, 1.44.0, and 1.44.1. Set `unsound = "all"` under `[advisories]` in `deny.toml`; the
-`rust-security` skill, when it is installed, owns that policy.
+Plain `cargo audit` exits 0 on an `unsound` advisory. Read
+`references/runtime-and-foreign-threads.md` (section "Tokio advisories") before you set a tokio
+version floor.
 
 ## Completion criteria
 
-Check these before you call async work done, and when you review async code or approve a merge.
-
-- [ ] By default, every future in a `select!`, `timeout`, or `FuturesUnordered` arm is
-      annotated `cancel-safe:` or `NOT cancel-safe:` with a reason.
-- [ ] Every long-lived `select!` loop has a `cancelled()` arm, and uses `biased;` when shutdown
-      must win.
-- [ ] A disabled `select!` branch has no synchronous side effect in its async expression.
-- [ ] Every spawned task has an owner that cancels or aborts it and then joins it.
-- [ ] No blocking syscall or CPU-heavy loop runs on a runtime worker thread.
-- [ ] `spawn_blocking` holds only bounded work; indefinite work uses `std::thread::spawn`.
-- [ ] Every `broadcast` receive loop handles `RecvError::Lagged`.
-- [ ] Every received file descriptor is an `OwnedFd`, and every received socket is nonblocking.
-- [ ] No `for .. { tokio::spawn(..) }` loop lacks a `JoinSet`, a `TaskTracker`, or a concurrency
-      bound.
-- [ ] No async wrapper exists around a no-op-waker poll helper.
+Before you call async work done or approve a merge, walk the checklist in
+[references/cancellation-and-shutdown.md](references/cancellation-and-shutdown.md#completion-checklist).
 
 ## Cancellation
 
-`select!` completes when the first branch finishes. It drops every other branch future at that
-instant, and the work in progress inside a dropped branch is lost. `join!` waits for all
-branches and has no cancellation surprise.
-
-Every future in a `select!` arm, in `timeout`, or in `FuturesUnordered` must therefore be cancel
-safe. Read [references/cancellation-and-shutdown.md](references/cancellation-and-shutdown.md)
-when you annotate cancel safety, pick a library method for a `select!` arm, or protect a
-sequence of `.await`s that must not be split.
-
-A disabled branch still evaluates its async expression. Tokio does not poll the resulting future,
-but synchronous setup in the expression can allocate, lock, mutate state, or panic. Move side
-effects into the async body, or compute the branch only after its precondition.
+`select!` drops every other branch future when the first branch finishes, and the work in
+progress inside a dropped branch is lost. `join!` waits for all branches. Every future in a
+`select!` arm, in `timeout`, or in `FuturesUnordered` must therefore be cancel safe. A disabled
+branch still evaluates its async expression, so keep side effects inside the async body. Read
+[references/cancellation-and-shutdown.md](references/cancellation-and-shutdown.md) when you
+annotate cancel safety, pick a library method for a `select!` arm, or protect a sequence of
+`.await`s that must not be split.
 
 ### Put shutdown first with `biased`
 
@@ -113,143 +86,86 @@ loop {
 }
 ```
 
-Without `biased`, `select!` polls the arms in random order, so the loop can process a few more
-messages after cancellation. `biased;` with the `cancelled()` arm first makes shutdown
-win on the next iteration. Under `biased;`, never put an always-ready data arm above the shutdown
-arm: that order starves it. Give every long-lived `select!` loop a `cancelled()` arm unless
-another arm ends the loop on shutdown. Otherwise shutdown hangs.
+Without `biased`, the arms poll in random order, and the loop can run after cancellation. Under `biased;`, never put an always-ready data arm above the shutdown arm:
+that order starves it. Give every long-lived `select!` loop a `cancelled()` arm unless another
+arm ends the loop on shutdown. Otherwise shutdown hangs.
 
 ### CancellationToken tree
 
-Use `tokio_util::sync::CancellationToken` for structured shutdown, not `tokio::sync::Notify`.
-Give each task `master.child_token()`, spawn it on a `TaskTracker`, and on shutdown call
-`master.cancel()`, `tracker.close()`, and `tracker.wait().await`. A child's `cancel()` stops only
-that child. `run_until_cancelled(fut)` never polls `fut` when the token is already cancelled, and
-drops the losing `fut`, so `fut` must be cancel safe. Read
+Use `tokio_util::sync::CancellationToken`, not `tokio::sync::Notify`. Give each task
+`master.child_token()`, spawn it on a `TaskTracker`, and on shutdown call `master.cancel()`,
+`tracker.close()`, and `tracker.wait().await`. `run_until_cancelled(fut)` drops the losing `fut`,
+so `fut` must be cancel safe. Read
 [references/cancellation-and-shutdown.md](references/cancellation-and-shutdown.md#cancellationtoken-idioms)
 when you write the tree, a `drop_guard`, or a `run_until_cancelled` call.
 
 ## Task ownership and concurrency
 
-- `JoinSet` owns a set of spawned tasks. `join_next().await` yields the next completed result.
-  Dropping the `JoinSet` aborts the tasks but does not wait for them. It keeps each result until
-  you call `join_next`, so an undrained `JoinSet` in an accept loop grows without limit.
-- `TaskTracker` counts tasks and keeps no results. Call `close()`, then `wait().await`, on
-  shutdown. Dropping it does not abort the tasks, so pair it with a `CancellationToken`.
-- `FuturesUnordered` polls a set of futures in place, without spawning, and drops a future that
-  you remove from it.
-- `buffer_unordered(K)` bounds concurrency to K. Its in-flight futures make progress only while
-  the stream is polled. A slow `.await` in the consuming loop body stalls them and can fire
-  their timeouts. Keep the loop body short, or spawn the work.
-
-Dropping a bare `JoinHandle` detaches its task. It does not cancel the task, and the result or
-panic is lost. Keep the handle, signal cooperative cancellation, and await it. Use `abort()` only
-when abrupt cancellation is part of the task contract, and still await the handle to observe
-the exit.
-
-A `for x in xs { tokio::spawn(work(x)); }` loop with N > 1 is a refactor candidate. Replace it
-with `JoinSet::spawn` + `join_next`, with `futures::future::join_all` for a small fixed N, with
-`buffer_unordered(K)` for a stream, or with `TaskTracker` for an unbounded set.
-
-Give every long-lived task its own `tracing` span, so that a stalled task is visible in the log
-by name.
+Give every spawned task an owner: a `JoinSet` (keeps results; drain it with `join_next`), a
+`TaskTracker` (keeps none; pair it with a `CancellationToken`), or a `FuturesUnordered` (no
+spawn). Dropping a bare `JoinHandle` detaches its task: it is not cancelled, and its result or
+panic is lost. Keep the handle, signal cancellation, and await it, also after `abort()`. Replace
+a `for x in xs { tokio::spawn(work(x)); }` loop with one of those owners or with
+`buffer_unordered(K)`. Give every long-lived task its own `tracing` span. Read
+[references/cancellation-and-shutdown.md](references/cancellation-and-shutdown.md#task-sets-and-supervision)
+when you choose an owner or bound a `buffer_unordered(K)` stream.
 
 ## Blocking work
 
 Put bounded blocking or CPU work (target < 100 ms) in `spawn_blocking`, and an indefinite loop
 on `std::thread::spawn`. Do not call `block_in_place` on a `current_thread` runtime: it panics.
 Read [references/runtime-and-foreign-threads.md](references/runtime-and-foreign-threads.md#blocking-work)
-when you choose a mechanism for many CPU-bound jobs, data-parallel `rayon` work, or a
-synchronous client.
+when you choose a mechanism for many CPU-bound jobs, `rayon` work, or a synchronous client.
 
 ## Send, 'static, and async bounds
 
 `tokio::spawn` requires `Send + 'static`. A value that lives across an `.await` becomes part of
-the future, so one `!Send` value makes the whole future `!Send`.
+the future, so one `!Send` value makes the whole future `!Send`. A `std::sync::MutexGuard` or a
+`RefCell` borrow held across `.await` still compiles where the future need not be `Send` (the
+root of `block_on` or `#[tokio::main]`, `spawn_local`), and deadlocks or panics under load. Copy
+what you need, drop the guard, then `.await`; use `tokio::sync::Mutex` only when the lock must
+span the `.await`. Move owned values or `Arc<T>` into a spawned task.
 
-- A `std::sync::MutexGuard` or a `RefCell` borrow held across `.await` compiles wherever the
-  future need not be `Send`: the root future of `block_on` or `#[tokio::main]`, and
-  `spawn_local` tasks. Under concurrent load it deadlocks or panics.
-  `clippy::await_holding_lock` and `clippy::await_holding_refcell_ref` find both; they warn by
-  default.
-- Fix by shortening the scope. Copy what you need, drop the guard, then `.await`. Use
-  `tokio::sync::Mutex` only when the lock must be held across the `.await`.
-- Move owned values or `Arc<T>` handles into a spawned task. A captured `&T` fails the
-  `'static` bound.
-
-Pick the callback or trait shape from where the future goes:
-
-| Need | Shape | Reason |
-|---|---|---|
-| Callback over `&T`; the future stays on the caller's task (Rust 1.85+) | `F: AsyncFn(&T) -> R` | no box; the borrow works |
-| Callback whose future crosses `tokio::spawn` or a `dyn` boundary | `F: for<'a> Fn(&'a T) -> Pin<Box<dyn Future<Output = R> + Send + 'a>>` | no stable bound names the `AsyncFn` future, so `F: AsyncFn(..) + Send` does not make it `Send` |
-| Trait method that callers spawn through a generic `T: Trait` | `fn m(&self) -> impl Future<Output = R> + Send`, or `#[trait_variant::make(TraitSend: Send)]` | a native `async fn` in a trait adds no `Send` bound |
-| Trait used as `dyn Trait` | `#[async_trait]`, a method that returns `Pin<Box<dyn Future<Output = R> + Send + '_>>`, or the `dynosaur` crate | `async fn` and `-> impl Future` methods are not dyn compatible (E0038); `trait_variant` does not change that |
-
-A native `async fn` call on a concrete type still spawns, because the opaque type leaks its auto
-traits. The same call through a generic `T: Trait` bound fails with
-`error: future cannot be sent between threads safely`, which has no error code. Do not emit
-return type notation (`T::m(..): Send`): it is nightly-only on Rust 1.99.1 and fails with E0658
-on stable. Read [references/async-bounds.md](references/async-bounds.md) when a bound fails to
-compile, before you migrate off `#[async_trait]`, when edition 2024 changes what an
-`impl Future` return captures, or when concurrent futures need one `&mut State`.
+A native `async fn` in a trait spawns on a concrete type but fails through a generic
+`T: Trait` bound with `error: future cannot be sent between threads safely` (no error code). Do
+not emit return type notation (`T::m(..): Send`): it is nightly-only on Rust 1.99.1 (E0658 on
+stable). Read [references/async-bounds.md](references/async-bounds.md) when you pick a callback
+or trait shape for a future that crosses `tokio::spawn` or `dyn`, when a bound fails to compile,
+before you migrate off `#[async_trait]`, when edition 2024 changes what an `impl Future` return
+captures, or when concurrent futures need one `&mut State`.
 
 ## Timeouts
 
-`tokio::time::timeout` polls the wrapped future before it checks the deadline. It cannot preempt
-one call to `Future::poll`. If that poll runs past the deadline and returns `Ready`, `timeout`
-returns `Ok`. If the poll never returns, the timeout never fires. So
-`timeout(d, async { cpu_work() })` does not bound `cpu_work`.
-
-Wrap the work as `timeout(d, spawn_blocking(work))` so the runtime can observe the deadline. This
-bounds only how long the caller waits; the closure keeps running. When the work itself must stop,
-pass a `CancellationToken` into it, check it between bounded work units, and cancel it on
-`Elapsed`. Read the full example in
+`tokio::time::timeout` cannot preempt one call to `Future::poll`, so
+`timeout(d, async { cpu_work() })` does not bound `cpu_work`. Write
+`timeout(d, spawn_blocking(work))`; it bounds only the wait, and the closure keeps running. When
+the work must stop, pass a `CancellationToken` into it and cancel it on `Elapsed`. Read
 [references/cancellation-and-shutdown.md](references/cancellation-and-shutdown.md#cooperative-cancellation-of-cpu-work)
 when you write such a loop.
 
 ## Runtime setup and foreign threads
 
-Build one runtime and share it from a `static OnceLock<Runtime>`; each build creates a new
-thread pool. A foreign thread (a JNI call, a C callback) enters through `block_on`, which polls
-the root future on the calling thread, so `thread_stack_size` does not size that stack. Under an
-`extern "C"` entry, wrap the `block_on` body in `catch_unwind`: since Rust 1.81 a panic there
-aborts the process. Read
+Build one runtime and share it from a `static OnceLock<Runtime>`. A foreign thread (JNI, a C
+callback) enters through `block_on`, which polls on the calling thread, so `thread_stack_size`
+does not size that stack. Under an `extern "C"` entry, wrap the `block_on` body in
+`catch_unwind`: since Rust 1.81 a panic there aborts the process. A UniFFI async export that uses
+Tokio resources needs `#[uniffi::export(async_runtime = "tokio")]`. Read
 [references/runtime-and-foreign-threads.md](references/runtime-and-foreign-threads.md) when you
-write the shared-runtime initializer, pick a runtime flavor, set a thread stack size, or make a
-foreign thread start or wait for async work. The
-`rust-jni` and `ffi-error-progress-cancel` skills own the boundary contract, and
-`uniffi-boundary` owns a generated boundary, each when it is installed. A UniFFI async
-export that uses Tokio resources needs `#[uniffi::export(async_runtime = "tokio")]`.
+write the runtime initializer, pick a flavor, size a stack, or make a foreign thread wait for
+async work.
 
 ## Manual polling from a synchronous loop
 
-Some designs pair a synchronous, step-driven engine (a userspace protocol stack, a simulation
-tick loop, a hardware poll loop) with waker-driven tokio tasks. The two schedulers do not share
-a waker. The bridge is a `poll_read` / `poll_write` call with `Context::from_waker(Waker::noop())`
-(Rust 1.85), made from the loop tick. Never call such a helper from async code or wrap it in an
-`async fn`: under a no-op waker, `Poll::Pending` means that no wake ever arrives, so the task
-stalls for ever. Read [references/manual-poll-bridge.md](references/manual-poll-bridge.md) when
-you write or extend the helper, map its EOF and write results, or drive an io_uring backend
-from the loop.
+A synchronous, step-driven engine and waker-driven tokio tasks share no waker. The bridge is a
+`poll_read` / `poll_write` call with `Context::from_waker(Waker::noop())` (Rust 1.85), made from
+the loop tick. Never call such a helper from async code or wrap it in an `async fn`: under a
+no-op waker, `Poll::Pending` gets no wake, and the task stalls for ever. Read
+[references/manual-poll-bridge.md](references/manual-poll-bridge.md) when you write or extend the
+helper or drive an io_uring backend from the loop.
 
 ## Related skills
 
-Each applies when it is installed.
-
-- `rust-callback-bounds`: `for<'a>` bounds on non-async `Fn` callbacks. This skill covers only
-  the async half.
-- `rust-event-loop-state`: sharing `&mut State` in a synchronous loop. This skill covers two
-  futures over one state under a runtime.
-- `rust-pin-projection`: what `Pin` enforces, `Unpin`, `PhantomPinned`, and structural
-  projection. This skill covers polling and cancel safety.
-- `rust-send-sync`: auto traits and why a type is or is not `Send`. `rust-unsafe` owns a manual
-  `unsafe impl Send`.
-- `rust-networking` and `rust-database`: cancellation at a network or transaction boundary.
-  Require sqlx 0.9.0 or later when a timeout or `select!` can cancel `begin()`.
-- `rust-unsafe`: the `SAFETY:` comment convention, for example on SQE construction.
-- `rust-debugging`: tokio-console, the `RuntimeMetrics` fallback for targets that cannot carry
-  it, and async stack frames.
-- `rust-observability`: the `tracing` subscriber setup.
-- `rust-performance`: flamegraphs with `samply` or `cargo flamegraph`.
-- `rust-test-tools`: loom for hand-rolled atomics, run with `RUSTFLAGS="--cfg loom"`.
+Each applies when it is installed: `rust-pin-projection` (`Pin`, `Unpin`, projection),
+`rust-send-sync` (why a type is `Send`), `rust-event-loop-state` (`&mut State` in a synchronous
+loop), `rust-networking` and `rust-database` (cancellation at a network or transaction boundary),
+`rust-debugging` (tokio-console), and `rust-test-tools` (loom, run with `RUSTFLAGS="--cfg loom"`).

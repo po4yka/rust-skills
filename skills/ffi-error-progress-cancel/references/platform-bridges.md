@@ -5,6 +5,7 @@ bridges that do not fit in the main flow.
 
 Contents:
 
+- Pipeline
 1. Rust side: job registry (runnable model), checkpoint helper, partial output
    cleanup, panic and listener-failure policy, async exports
 2. Kotlin bridge: the `callbackFlow` bridge, backpressure, error translation,
@@ -22,6 +23,16 @@ Terminology is the same as in `SKILL.md`:
   trait and its payload.
 - `reserve_job(job_id)` and `cancel_job(job_id)`: the bounded reservation and
   the idempotent, non-blocking cancel entry point.
+
+## Pipeline
+
+```text
+core error crate  ──>  FFI crate (UniFFI)                ──>  Kotlin engine wrapper  ──> Flow
+  CoreError              EngineError (flat_error)              (callbackFlow)
+  CoreErrorKind          ProgressEvent / ProgressStage
+                         ProgressListener (foreign trait)  ──>  Swift engine client    ──> AsyncThrowingStream
+                         Engine::reserve_job / cancel_job       (actor, worker Thread)
+```
 
 ---
 

@@ -1,7 +1,7 @@
 # Schema integration tests
 
 Test database setup, the minimum CI matrix, and cancellation test points behind
-"Test the real schema" and "Make cancellation safe" in `SKILL.md`.
+the "Conditional references" table and "Make cancellation safe" in `SKILL.md`.
 
 ## Test the real schema
 

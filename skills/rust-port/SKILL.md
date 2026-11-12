@@ -74,8 +74,8 @@ Each row is a difference that a test written from the Rust side does not catch.
 
 | Symptom in the port | Cause | Fix |
 | --- | --- | --- |
-| A negative result is off by one against Python | Rust `/` and `%` truncate toward zero; Python `//` and `%` floor | A floor helper (below). `div_euclid` matches Python only for a positive divisor |
-| A `.5` value rounds the other way | `f64::round` rounds half away from zero; Python `round()` rounds half to even; JavaScript `Math.round` rounds half up | `round_ties_even` for Python (Rust 1.77+); for JavaScript, `ceil` at an exact negative half and `round` otherwise (the probe below). `(x + 0.5).floor()` is wrong near 0.5 and above 2^52 |
+| A negative result is off by one against Python | Rust `/` and `%` truncate toward zero; Python `//` and `%` floor | A floor helper (`floor_div`, `floor_mod` in the reference probe). `div_euclid` matches Python only for a positive divisor |
+| A `.5` value rounds the other way | `f64::round` rounds half away from zero; Python `round()` rounds half to even; JavaScript `Math.round` rounds half up | `round_ties_even` for Python (Rust 1.77+); for JavaScript, `ceil` at an exact negative half and `round` otherwise. `(x + 0.5).floor()` is wrong near 0.5 and above 2^52 |
 | A count or a column differs on non-ASCII text | `len()` counts UTF-8 bytes in Rust and Go, code points in Python, UTF-16 units in JavaScript | `chars().count()` for Python, `encode_utf16().count()` for JavaScript; never slice a `&str` at a Python or JavaScript index |
 | Output lines come in a different order | Python `dict` and JavaScript `Map` keep insertion order; `HashMap` does not | A `Vec` of pairs or `indexmap::IndexMap` when order is observable; `BTreeMap` only when the original sorts |
 | Input that the original accepts is rejected | `str::parse` rejects surrounding whitespace and `_`; Python `int()` accepts both, C `strtol` skips leading space and stops at the first bad character | Trim, or write the original's rule out in one function and test it |
@@ -87,64 +87,11 @@ Each row is a difference that a test written from the Rust side does not catch.
 | A large JavaScript integer loses digits | JavaScript numbers are `f64`, exact only up to 2^53 | `f64` when the original depends on it, `i64` when it was always meant as an integer; record which |
 | A sort of floats does not compile, or NaN lands in a new place | `f64` is not `Ord` | `sort_by(f64::total_cmp)`, and record the NaN position |
 
-The Rust-side claims that a probe can show, executed (Rust 1.99.1):
+Read [references/source-languages.md](references/source-languages.md) ("Trap probe") for an
+executed probe of each Rust-side claim and the `floor_div` and `floor_mod` helpers.
 
-```rust,run
-/// Floor division as Python's `//` defines it. `i64::MIN / -1` overflows in Rust, where Python
-/// returns 2^63: check that pair when the input can reach it.
-fn floor_div(a: i64, b: i64) -> i64 {
-    let q = a / b;
-    if a % b != 0 && ((a < 0) != (b < 0)) { q - 1 } else { q }
-}
 
-/// The remainder that pairs with `floor_div`: it takes the sign of the divisor. It corrects
-/// `a % b` instead of computing `a - b * q`, which overflows near the limits.
-fn floor_mod(a: i64, b: i64) -> i64 {
-    let r = a % b;
-    if r != 0 && ((r < 0) != (b < 0)) { r + b } else { r }
-}
-
-fn main() {
-    assert_eq!((-7 / 2, -7 % 2), (-3, -1));
-    assert_eq!((floor_div(-7, 2), floor_mod(-7, 2)), (-4, 1));
-    assert_eq!(((-7i64).div_euclid(2), 7i64.div_euclid(-2)), (-4, -3));
-    assert_eq!((floor_div(7, -2), floor_mod(7, -2)), (-4, -1));
-    assert_eq!((floor_div(i64::MIN, 3), floor_mod(i64::MIN, 3)), (-3074457345618258603, 1));
-    assert!(i64::MIN.checked_div(-1).is_none());
-
-    assert_eq!((2.5f64.round(), (-2.5f64).round()), (3.0, -3.0));
-    assert_eq!((2.5f64.round_ties_even(), 3.5f64.round_ties_even()), (2.0, 4.0));
-    // JavaScript Math.round: half toward positive infinity, exact for every f64.
-    let js_round = |x: f64| if x.fract() == -0.5 { x.ceil() } else { x.round() };
-    assert_eq!((js_round(-2.5), js_round(2.5), js_round(0.49999999999999994)), (-2.0, 3.0, 0.0));
-    assert_eq!(js_round(4503599627370497.0), 4503599627370497.0);
-    assert_eq!((0.49999999999999994f64 + 0.5).floor(), 1.0); // the polyfill fails here
-
-    let s = "héllo😀";
-    assert_eq!((s.len(), s.chars().count(), s.encode_utf16().count()), (10, 6, 7));
-
-    assert!("  42 ".parse::<i32>().is_err());
-    assert!("1_000".parse::<i32>().is_err());
-    assert_eq!("+5".parse::<i32>(), Ok(5));
-
-    assert_eq!("a\u{2028}b\x0cc".lines().count(), 1);
-    assert_eq!(" a  b ".split_whitespace().collect::<Vec<_>>(), ["a", "b"]);
-    assert_eq!(" a  b ".split(' ').collect::<Vec<_>>(), ["", "a", "", "b", ""]);
-
-    assert_eq!(i32::MAX.wrapping_add(1), i32::MIN);
-    assert_eq!(i32::MAX.checked_add(1), None);
-
-    let mut v = [(1, 'b'), (0, 'x'), (1, 'a')];
-    v.sort_by_key(|&(k, _)| k);
-    assert_eq!(v, [(0, 'x'), (1, 'b'), (1, 'a')]);
-    let mut f = [2.0, f64::NAN, 1.0];
-    f.sort_by(f64::total_cmp);
-    assert_eq!(&f[..2], &[1.0, 2.0]);
-    assert!(f[2].is_nan());
-}
-```
-
-Read [references/source-languages.md](references/source-languages.md) when you map the constructs
+Read the same reference when you map the constructs
 of one source language: memory and error handling of C and C++, Python classes and exceptions, Go
 interfaces and goroutines, and JavaScript `null`, `undefined`, and promises.
 
@@ -191,13 +138,8 @@ A difference that is not in `PORTING.md` is a bug in the port.
 
 ## Related skills
 
-Each applies when it is installed.
-
-| Skill | Boundary |
-| --- | --- |
-| `rust-tdd` | Characterization tests for an original that has none, and the red-green cycle |
-| `rust-test-tools` | The differential fuzz target, golden-file mechanics, and property tests |
-| `rust-panic-safety` | A port that must keep a C ABI: no panic may cross it |
-| `rust-native-linking` | Binding a C library that stays, instead of porting it (`build.rs`, `bindgen`, `-sys` crates) |
-| `rust-serde` | Serialized output that must match the original byte for byte (`serde_json` formatting, key order) |
-| `rust-cli` | A ported command line tool: argument parsing, exit codes, and the stdout and stderr contract (`clap`) |
+When installed: `rust-tdd` (characterization tests, the red-green cycle), `rust-test-tools` (the
+differential fuzz target, golden files), `rust-panic-safety` (a C ABI that no panic may cross),
+`rust-native-linking` (binding a C library that stays: `build.rs`, `bindgen`, `-sys` crates),
+`rust-serde` (byte-identical `serde_json` output), and `rust-cli` (a ported command line tool:
+`clap`, exit codes, the stdout and stderr contract).

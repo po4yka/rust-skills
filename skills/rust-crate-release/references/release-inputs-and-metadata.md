@@ -6,6 +6,7 @@ Contents:
 - Read-only checks
 - `[package]` metadata
 - docs.rs metadata
+- Official references
 
 ## Release inputs
 
@@ -68,3 +69,10 @@ targets = ["x86_64-unknown-linux-gnu", "<other-supported-target>"]
 ```
 
 Use `all-features = true` only when the features are additive.
+
+## Official references
+
+- [Cargo publishing](https://doc.rust-lang.org/cargo/reference/publishing.html)
+- [`cargo info`](https://doc.rust-lang.org/cargo/commands/cargo-info.html)
+- [docs.rs build metadata](https://docs.rs/about/metadata)
+- [docs.rs default target change](https://blog.rust-lang.org/2026/04/04/docsrs-only-default-targets/)

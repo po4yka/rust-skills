@@ -20,3 +20,14 @@ names one defect class from `SKILL.md` and the repair.
 10. Does shared state sit behind `Rc<RefCell<_>>` or `Arc<Mutex<_>>` inside one synchronous
     loop, or does dispatch make a `&mut` from a raw pointer? Return to row 1 of the structure
     table.
+
+## Hang test
+
+A re-locked `Mutex` (std may also panic) and an always-enqueuing `while let` drain usually
+fail as a hang. libtest warns after 60 seconds and never ends the test.
+Build the state and run one tick inside `std::thread::spawn`. Send `()` on a
+`std::sync::mpsc` channel when the tick returns. Assert
+`rx.recv_timeout(Duration::from_secs(5)).is_ok()`. A panic in the thread drops the sender, so
+the same assert also catches a `RefCell` panic. If cargo-nextest is installed,
+`slow-timeout = { period = "5s", terminate-after = 1 }` under `[profile.default]` in
+`.config/nextest.toml` also ends a hung test.

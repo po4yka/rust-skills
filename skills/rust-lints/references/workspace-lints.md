@@ -4,6 +4,7 @@
 - [Notes on the strict template](#notes-on-the-strict-template)
 - [Pragmatic baseline](#pragmatic-baseline-for-an-existing-workspace): the start for an
   existing workspace with a backlog.
+- [Escalation ladder](#escalation-ladder): the next step up from the baseline.
 
 Both tables belong in the workspace root manifest. Every member inherits them with
 `[lints] workspace = true`.
@@ -172,3 +173,15 @@ unsafe_op_in_unsafe_fn = "deny"
 
 This baseline is a starting point, not a destination. Record which strict lints
 are still off and why. Then follow [Add or tighten a lint](../SKILL.md#add-or-tighten-a-lint).
+
+## Escalation ladder
+
+Take each step through the SKILL.md loop "Add or tighten a lint".
+
+| Step | Precondition | Move |
+|------|--------------|------|
+| Add `unwrap_used` at `warn` | Existing sites carry a per-site `expect`. `allow-unwrap-in-tests` exempts tests. | Every new call site then needs a reason. The `rust-discipline` skill owns the policy. |
+| `unwrap_used` `warn` to `deny` in one crate | That crate has zero remaining sites | Add `#![deny(clippy::unwrap_used)]` to that crate. Keep the workspace at `warn` until every crate is clean. |
+| Add `expect_used` to one crate | No panic may leave that crate, for example an FFI adapter | Add it per crate, not to the workspace table: a documented `.expect("<invariant>")` is allowed elsewhere. |
+| Lower `type-complexity-threshold` or `too-many-arguments-threshold` | The workspace is clean at the current value | Step down. Do not raise it for a bridge layer; [triage.md](triage.md) has the `extern` and `native_method!` cases. |
+| Unsafe-documentation lints to `deny` | Every `unsafe` block has a `// SAFETY:` comment | Promote `undocumented_unsafe_blocks` and `multiple_unsafe_ops_per_block`. |

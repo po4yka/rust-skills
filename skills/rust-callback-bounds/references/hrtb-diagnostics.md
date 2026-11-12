@@ -4,6 +4,7 @@ Worked examples for the rules in [SKILL.md](../SKILL.md). Every quoted diagnosti
 1.98.1, edition 2024, on aarch64-apple-darwin. Read only the section that matches the task.
 
 - [A free type parameter cannot name 'a](#a-free-type-parameter-cannot-name-a)
+- [A borrow-returning bound in use](#a-borrow-returning-bound-in-use)
 - [A fixed 'a permits the escape](#a-fixed-a-permits-the-escape)
 - [A let binding loses the higher-ranked expectation](#a-let-binding-loses-the-higher-ranked-expectation)
 - [A custom trait supplies no closure-signature expectation](#a-custom-trait-supplies-no-closure-signature-expectation)
@@ -11,7 +12,19 @@ Worked examples for the rules in [SKILL.md](../SKILL.md). Every quoted diagnosti
 
 ## A free type parameter cannot name 'a
 
-The `sort_by_key` example in `SKILL.md`, a generic `K` against `|order| &order.country`, fails with:
+A generic `K` against `|order| &order.country` fails:
+
+```rust,compile_fail
+struct Order { country: String }
+
+fn sort_by_key<T, K: Ord>(_arr: &mut [T], _key: impl FnMut(&T) -> K) {}
+
+fn process(orders: &mut [Order]) {
+    sort_by_key(orders, |order| &order.country);
+}
+```
+
+The diagnostic:
 
 ```text
 error: lifetime may not live long enough
@@ -23,6 +36,40 @@ error: lifetime may not live long enough
 ```
 
 `Vec::sort_by_key` reports the same text, word for word.
+
+## A borrow-returning bound in use
+
+Put the output inside the binder. The bound accepts an unannotated closure:
+
+```rust
+struct Order { country: String, code: u32 }
+
+fn sort_by_key_ref<T, K: Ord + ?Sized>(
+    arr: &mut [T],
+    mut key: impl for<'a> FnMut(&'a T) -> &'a K,
+) {
+    for i in 0..arr.len() {
+        for j in (i + 1)..arr.len() {
+            if key(&arr[j]) < key(&arr[i]) { arr.swap(i, j); }
+        }
+    }
+}
+
+fn main() {
+    let mut v = vec![
+        Order { country: "cz".into(), code: 3 },
+        Order { country: "at".into(), code: 1 },
+    ];
+    sort_by_key_ref(&mut v, |o| &o.country); // bare closure, no annotation
+    assert_eq!(v[0].code, 1);
+}
+```
+
+With a second reference argument, write the binder explicitly; elision refuses it with
+`error[E0106]`. `for<'a> FnMut(&'a A, &'a B) -> &'a K` compiles and ties both arguments to one
+region, so give the second its own `'b` unless you mean to tie them. The shape also works for a
+`T` that carries a lifetime, such as `Order<'s>`; a trait with a lifetime parameter can fail
+there (see [key-projections.md](key-projections.md#generic-outputs-need-rpitit-or-a-gat)).
 
 ## A fixed 'a permits the escape
 
@@ -146,7 +193,10 @@ error: lifetime may not live long enough
    |         -          -      ^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
 ```
 
-Annotating the return type does not help. Wrap the closure in `hrtb_ref(..)` from `SKILL.md`, or
+Annotating the return type does not help. The same holds for `|o| async move { .. }` against an
+`AsyncFn` bound: E0282 when the body uses `o`, else `implementation of AsyncFn is not general
+enough`, and `lifetime may not live long enough` once `|o: &T|` is annotated (Rust 1.99.1). Write
+`async |o| ..` there. Wrap the closure in `hrtb_ref(..)` from `SKILL.md`, or
 pass a named `fn`.
 
 ## The hoisted-lifetime dead end

@@ -4,6 +4,7 @@ Deep material for `SKILL.md`: the full diagnostics and runnable versions of the 
 compresses, generic state for a handler trait reused across states (structure row 2), a context
 that pairs static and dynamic state, and the ECS trade (structure row 3).
 
+- [Two owners](#two-owners)
 - [Migration: the handlers already live in the state](#migration-the-handlers-already-live-in-the-state)
 - [Queue drain diagnostic](#queue-drain-diagnostic)
 - [Key-holding handler](#key-holding-handler), with the `E0499` of a `&mut`-holding handler
@@ -15,6 +16,39 @@ that pairs static and dynamic state, and the ECS trade (structure row 3).
 Every `rust,run` block here compiles and runs on rustc 1.99.1, edition 2024. The two
 `bevy_ecs` blocks are not checked automatically. Their output is as of bevy_ecs 0.19.1, from a
 manual run on rustc 1.98.1; a later bevy_ecs release can change the message and the source line.
+
+## Two owners
+
+The handler collection and the state as two locals in the loop are two independent owners, so
+the two borrows are provably disjoint:
+
+```rust,run
+struct Event(u32);
+struct State { counter: u32 }
+trait Handler { fn handle(&mut self, st: &mut State, ev: &Event); }
+
+struct Add;
+impl Handler for Add {
+    fn handle(&mut self, st: &mut State, ev: &Event) { st.counter += ev.0; }
+}
+struct Double;
+impl Handler for Double {
+    fn handle(&mut self, st: &mut State, _ev: &Event) { st.counter *= 2; }
+}
+
+fn tick(handlers: &mut [Box<dyn Handler>], st: &mut State, ev: Event) {
+    for h in handlers.iter_mut() { h.handle(st, &ev); }
+}
+
+fn main() {
+    let mut handlers: Vec<Box<dyn Handler>> = vec![Box::new(Add), Box::new(Double)];
+    let mut st = State { counter: 0 };
+    tick(&mut handlers, &mut st, Event(3));   // (0 + 3) * 2
+    tick(&mut handlers, &mut st, Event(4));   // (6 + 4) * 2
+    assert_eq!(st.counter, 20);
+    println!("counter={}", st.counter);       // counter=20
+}
+```
 
 ## Migration: the handlers already live in the state
 
@@ -93,6 +127,27 @@ error[E0502]: cannot borrow `*st` as mutable because it is also borrowed as immu
 9 |         handle(st, ev);
   |         ------^^^^^^^^
   |         mutable borrow occurs here / immutable borrow later used by call
+```
+
+The repair pops the event by value, and a handler may enqueue more:
+
+```rust,run
+use std::collections::VecDeque;
+
+struct Event(u32);
+struct State { counter: u32, queue: VecDeque<Event> }
+
+fn handle(st: &mut State, ev: Event) {
+    st.counter += ev.0;
+    if ev.0 > 1 { st.queue.push_back(Event(ev.0 - 1)); }   // handlers may enqueue
+}
+
+fn main() {
+    let mut st = State { counter: 0, queue: VecDeque::from([Event(3)]) };
+    while let Some(ev) = st.queue.pop_front() { handle(&mut st, ev); }
+    assert_eq!(st.counter, 6);
+    println!("counter={}", st.counter);   // counter=6
+}
 ```
 
 ## Key-holding handler

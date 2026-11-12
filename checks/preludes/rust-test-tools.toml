@@ -56,8 +56,8 @@ let input: &str = todo!();
 # The proptest block names a parser, a codec, and a text parser that the prose
 # describes. The stubs have the signatures the properties need.
 [[block]]
-file = "rust-test-tools/SKILL.md"
-section = "proptest"
+file = "rust-test-tools/references/proptest.md"
+section = "Property shapes"
 block = 1
 items = '''
 #[derive(Debug)]

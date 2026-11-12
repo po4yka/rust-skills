@@ -251,13 +251,6 @@ aliasing or provenance.
 
 ## Related skills
 
-Each applies when it is installed.
-
-| Skill | Boundary |
-| --- | --- |
-| `rust-compiler-errors` | General E0499, E0502, E0597, and E0716 triage |
-| `rust-pattern-semantics` | Binding modes, match guards, `if let` guards, partial moves, and scrutinee behavior |
-| `rust-callback-bounds` | Closure inference and higher-ranked callable bounds |
-| `rust-variance` | Lifetime subtyping and coercion through type constructors |
-| `cargo-workflows` | Edition migration (`cargo fix --edition`) and MSRV verification |
-| `rust-unsafe` | Aliasing, invalid values, and provenance after borrow checking; run `cargo +nightly miri test --locked` |
+When installed: `rust-callback-bounds` owns closure inference and higher-ranked callable bounds,
+`rust-variance` owns lifetime subtyping through type constructors, and `rust-unsafe` owns
+aliasing and provenance after borrow checking (`cargo +nightly miri test --locked`).

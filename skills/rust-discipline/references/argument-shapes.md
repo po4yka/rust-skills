@@ -17,6 +17,7 @@ Contents:
 - `impl Trait` in argument position deletes the caller's turbofish
 - A generic bound breaks fn-pointer coercion
 - Callback bounds past the plain borrow
+- Store a callback as `Box<dyn Fn>`, not `Box<dyn FnMut>`
 - Monomorphisation cost, and the firewall
 - When `&String` and `&Vec<T>` are correct
 - The receiver is an argument too
@@ -292,7 +293,31 @@ type that borrows:
 Both give `error[E0597]: ... does not live long enough` with `note: due to a current limitation of
 the type system, this implies a 'static lifetime`. Test the consumer with an element type that
 borrows, because a `'static` element hides the failure. The `rust-callback-bounds` skill, when it
-is installed, has the worked example.
+is installed, has the worked example of the `for<'a> K::Out<'a>: Bound` failure.
+
+---
+
+## Store a callback as `Box<dyn Fn>`, not `Box<dyn FnMut>`
+
+Each closure expression has its own anonymous type, so a `Vec<F>` cannot hold closures from two
+expressions, and `impl Fn` in a field fails with `E0562`. `Box<dyn FnMut(..)>` needs a unique
+borrow at the call, so `publish(&self)` fails with `E0596` and must become `&mut self`, which
+propagates to every caller and blocks sharing the owner behind an `Arc`.
+
+```rust
+pub struct Bus {
+    // `dyn Fn` keeps `publish(&self)`. `dyn FnMut` forces `publish(&mut self)`.
+    subs: Vec<Box<dyn Fn(u32)>>,
+}
+impl Bus {
+    pub fn subscribe(&mut self, f: impl Fn(u32) + 'static) { self.subs.push(Box::new(f)); }
+    pub fn publish(&self, ev: u32) { for s in &self.subs { s(ev); } }
+}
+```
+
+The field carries an implicit `+ 'static` bound. Clone the captured data; do not add a lifetime
+parameter to the owner, and do not store `Weak` callbacks to dodge it: a `Weak` registration dies
+silently when the caller releases its `Arc`.
 
 ---
 

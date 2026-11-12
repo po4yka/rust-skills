@@ -3,7 +3,7 @@
 How to drive a debugger on Rust code. [SKILL.md](../SKILL.md) covers when to reach for one.
 
 Contents: GDB setup, GDB commands, LLDB setup, LLDB commands, VS Code with CodeLLDB, symbol
-demangling.
+demangling, panic breakpoint and formatter check.
 
 ## GDB setup
 
@@ -265,3 +265,14 @@ it. `llvm-addr2line -C` and `llvm-symbolizer` demangle v0 on their own; you do n
 predates v0 support: upgrade it, or pipe its output through `rustfilt`. GNU binutils demangles v0
 from 2.36. Linux perf demangles v0 from 6.16, so the perf in Ubuntu 24.04 (6.8) and Debian 13
 (6.12) prints raw `_R` names. Source: the v0 tracking issue, rust-lang/rust#60705.
+
+## Panic breakpoint and formatter check
+
+- The panic entry is `__rustc::rust_panic` (1.88 and later at least). LLDB also resolves
+  `b rust_panic`; GDB 15.1 does not, so use the full name or `core::panicking::panic_fmt`.
+- Confirm the formatters work before you trust a value: `frame variable` on a known `String`
+  and `Option` must show the text and the variant, with no Python traceback. `type category
+  list` is no proof: LLDB 18.1.3 shows `Rust (enabled)` while the 1.99 providers fail.
+- Rust 1.98 removed `lib/rustlib/etc/lldb_commands`. Inside an IDE, where the wrapper does not
+  run, on Rust 1.98 and later, load the formatters with `command script import` of
+  `lldb_lookup.py` only. Older toolchains also need the `lldb_commands` line (see LLDB setup).

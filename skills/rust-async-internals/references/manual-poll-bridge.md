@@ -3,6 +3,14 @@
 Reference material for `SKILL.md`. Read it when you drive tokio streams from a synchronous,
 step-driven loop, or when you drive an io_uring backend from that loop.
 
+## Triage
+
+| Symptom | Likely cause | Check or fix |
+|---|---|---|
+| A stream stalls forever after one `Pending` | a no-op-waker poll helper was called from async code | move the call into the synchronous loop tick |
+| Writes succeed, the peer sees nothing | the synchronous engine did not run a step after the write | check that the loop does not skip ticks under load |
+| io_uring operations hang or corrupt memory after cancellation | an SQE dropped without `IORING_OP_ASYNC_CANCEL`, or its buffer reused early | submit the cancel; keep the buffer and fd alive until the target's CQE arrives |
+
 ## The pattern
 
 The bridge is a manual poll with the standard no-op waker, `Waker::noop()` (Rust 1.85). It

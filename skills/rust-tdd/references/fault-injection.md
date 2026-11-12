@@ -4,7 +4,7 @@ Extended reference for the `rust-tdd` skill. Read this when you write a fake, or
 test error paths, retry logic, or cancellation.
 
 Contents: why a queue, reference implementation, target enum, a fake that consults the queue,
-outcome selection, scope rules, asserting that the fault fired.
+outcome selection, scope rules, asserting that the fault fired, a service-level fault test.
 
 ## Why a queue
 
@@ -240,3 +240,34 @@ fn send_retries_once_after_a_transient_error() {
 `faults.is_empty()` proves only that every `OneShot` fault fired. A `Persistent` entry stays in
 the queue whether it fired or not. For a `Persistent` fault, assert the call counter instead: a
 retry loop that gives up after 3 attempts must leave `send_calls` at 3.
+
+## A service-level fault test
+
+The test enqueues one fault, drives the service through its public API, and asserts the mapped
+error first, then the interaction:
+
+```rust
+use std::assert_matches;
+
+#[test]
+fn start_maps_transport_failure_to_service_error() {
+    let transport = Arc::new(FakeTransport::default());
+    transport.faults.enqueue(FaultSpec {
+        target: TransportFault::Start,
+        outcome: FaultOutcome::Error,
+        scope: FaultScope::OneShot,
+        message: Some("simulated start failure".to_owned()),
+        payload: None,
+    });
+
+    let service = Service::new(Arc::clone(&transport));
+
+    let error = service.start().expect_err("start must fail when the transport fails");
+    assert_matches!(error, ServiceError::Transport { .. });
+    assert_eq!(transport.start_calls.load(Ordering::Relaxed), 1);
+}
+```
+
+`std::assert_matches!` (Rust 1.96) prints the value that did not match. It is not in the
+prelude, so import it. Below MSRV 1.96, use `assert!(matches!(..))`, which prints only the
+expression text.

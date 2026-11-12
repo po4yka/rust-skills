@@ -357,4 +357,16 @@ claiming a phrase the other owns.
 | --- | --- | --- |
 | cannot be sent between threads safely | rust-send-sync | rust-compiler-errors |
 | unresolved import | rust-compiler-errors |
+| couldn't convert the error | rust-error-handling |
+| anyhow::Context | rust-error-handling |
+| Error::source chain | rust-error-handling |
+| cxx::bridge | rust-cxx |
+| CxxString | rust-cxx |
+| cxxbridge1 symbol | rust-cxx |
+| PyO3 | rust-pyo3 |
+| maturin | rust-pyo3 |
+| PanicException | rust-pyo3 |
+| cross-compiling Rust | rust-cross-compilation |
+| x86_64-unknown-linux-musl | rust-cross-compilation |
+| cargo-zigbuild | rust-cross-compilation |
 | panic policy | rust-panic-safety | rust-discipline |

@@ -171,7 +171,7 @@ signing certificate. Sign both with one key. For an AAB, pass that same key in
 `<test-signing-options>` to `bundletool build-apks`.
 
 On a 16 KB device or emulator image, run the device check in
-[SKILL.md](../SKILL.md) before the install: confirm `getconf PAGE_SIZE` prints
+`references/page-size-checks.md` before the install: confirm `getconf PAGE_SIZE` prints
 `16384`, turn 16 KB backcompat mode off, and read both properties back.
 Otherwise the smoke can pass with a misaligned library.
 

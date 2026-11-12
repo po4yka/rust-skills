@@ -97,7 +97,7 @@ Xcode version, Rust version, app archive, and dSYM under one release identity.
 Do not claim that a `.dSYM` made from the `.a` can symbolize the shipped app.
 The final Xcode link assigns the app image UUID and addresses. Rust frames get
 file and line data only when the Rust profile keeps debug info, as the
-`ios-release` profile in `SKILL.md` does.
+`ios-release` profile in `references/packaging.md` does.
 
 ## Route privacy manifest work
 
