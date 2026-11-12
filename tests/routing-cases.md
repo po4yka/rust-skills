@@ -357,4 +357,7 @@ claiming a phrase the other owns.
 | --- | --- | --- |
 | cannot be sent between threads safely | rust-send-sync | rust-compiler-errors |
 | unresolved import | rust-compiler-errors |
+| couldn't convert the error | rust-error-handling |
+| anyhow::Context | rust-error-handling |
+| Error::source chain | rust-error-handling |
 | panic policy | rust-panic-safety | rust-discipline |

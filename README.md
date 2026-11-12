@@ -57,7 +57,7 @@ in [bundles.toml](bundles.toml).
 | Bundle | Subject | Skills | Plugin |
 | --- | --- | ---: | --- |
 | `language` | Language semantics and compiler errors | 8 | `rust-skills-language` |
-| `design` | API design, code discipline, and tooling | 5 | `rust-skills-design` |
+| `design` | API design, code discipline, and tooling | 6 | `rust-skills-design` |
 | `build` | Build, dependencies, and supply chain | 9 | `rust-skills-build` |
 | `testing` | Correctness and testing | 6 | `rust-skills-testing` |
 | `concurrency` | Concurrency and unsafe code | 6 | `rust-skills-concurrency` |
@@ -84,7 +84,7 @@ for s in rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # design
-for s in rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli; do
+for s in rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli rust-error-handling; do
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # build
@@ -206,7 +206,7 @@ it.
 # language
 npx skills add po4yka/rust-skills --skill rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-variance rust-callback-bounds rust-iterator-impl rust-type-erasure rust-macros
 # design
-npx skills add po4yka/rust-skills --skill rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli
+npx skills add po4yka/rust-skills --skill rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli rust-error-handling
 # build
 npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std
 # testing
@@ -349,6 +349,7 @@ flowchart LR
     A --> A11[rust-event-loop-state]
     A --> A12[rust-borrow-semantics]
     A --> A13[rust-pattern-semantics]
+    A --> A14[rust-error-handling]
 
     B --> B1[memory-model]
     B --> B2[rust-unsafe]
@@ -414,7 +415,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>API design, code discipline, and tooling</b> — five skills</summary>
+<summary><b>API design, code discipline, and tooling</b> — six skills</summary>
 
 <br>
 
@@ -425,6 +426,7 @@ owns it.
 | [rust-crate-architecture](skills/rust-crate-architecture/SKILL.md) | Workspace layering, dependency direction rules, the crate-versus-module decision, and crate split, merge, and delete procedures. |
 | [rust-lints](skills/rust-lints/SKILL.md) | `workspace.lints`, `clippy.toml`, and `rustfmt.toml` policy, rustc, clippy, and rustdoc lint levels, safe lint tightening, suppression justification, and red-gate triage. |
 | [rust-cli](skills/rust-cli/SKILL.md) | Stable command-line contracts for arguments, stdout and stderr, exit status, configuration precedence, signals, terminal behavior, atomic file output, and packaged shell completions. |
+| [rust-error-handling](skills/rust-error-handling/SKILL.md) | Error types and propagation in a library and an application: thiserror enums with `#[from]` and `#[source]`, the `Error::source` chain, `anyhow::Context`, `Box<dyn Error + Send + Sync>`, dependency errors as SemVer, chain printing, stable error codes, `ExitCode` in `main`, and the E0277 "`?` couldn't convert the error" family. |
 
 </details>
 

@@ -9,7 +9,7 @@
     {
       "name": "rust-skills",
       "source": "./",
-      "description": "All 46 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
+      "description": "All 49 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -43,7 +43,7 @@
     {
       "name": "rust-skills-design",
       "source": "./",
-      "description": "API design, code discipline, and tooling: 5 Rust agent skills.",
+      "description": "API design, code discipline, and tooling: 6 Rust agent skills.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -56,7 +56,8 @@
         "./skills/rust-code-style",
         "./skills/rust-crate-architecture",
         "./skills/rust-lints",
-        "./skills/rust-cli"
+        "./skills/rust-cli",
+        "./skills/rust-error-handling"
       ]
     },
     {

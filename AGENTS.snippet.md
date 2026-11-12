@@ -20,6 +20,7 @@ design, build, testing, concurrency, production, ffi. Delete the rows of a bundl
 | New workspace crate, layering violation, crate dependency cycle | rust-crate-architecture |
 | Red clippy, `cargo fmt`, or `cargo doc` gate | rust-lints |
 | `clap`, stdout and exit-code contract, Ctrl-C, shell completions | rust-cli |
+| "`?` couldn't convert the error", `.context` not found, a thiserror or anyhow error type, an error chain or source | rust-error-handling |
 | `--locked` failure, feature unification, `Cargo.lock`, cargo-nextest | cargo-workflows |
 | SemVer bump, `cargo publish`, trusted publishing, a yank | rust-crate-release |
 | `build.rs`, `pkg-config`, undefined symbol, DLL not found | rust-native-linking |
