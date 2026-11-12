@@ -7,6 +7,38 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+### Fixed (audit P2)
+
+About seventy P2 findings across 43 skills, each re-checked before the fix (rustc and clippy
+1.99.1, Miri nightly-2026-11-09, crate sources, or a probe). The larger ones:
+
+- Wrong or contradictory rules: the HRTB rule in `rust-discipline` (elided `Fn(&T)` is already
+  higher-ranked), a sealed blanket impl that implemented the trait for no type, removing `pub`
+  to silence `not_unsafe_ptr_arg_deref` (now `pub unsafe extern fn` with `# Safety`, in
+  `rust-lints`, `rust-jni`, `cargo-workflows`), the unknown-field policy of `rust-security`
+  against `rust-serde`, `buf.slice()` as a substitute for `flip()` in `uniffi-boundary`, and the
+  MSan line in `rust-sanitizers-miri`.
+- Unsafe instructions: publishing from a commit not on the remote (`rust-crate-release`),
+  `Task.detached` for long blocking FFI calls (now a dedicated `Thread`), a predictable temp
+  directory in a `rust-cli` probe, a fake that swallowed unmodelled faults (`rust-tdd`), and a
+  refcount pattern with no overflow guard (`memory-model`).
+- Commands that failed or proved nothing: blocking `adb logcat`, a `cargo tree` provider check
+  that passed without rustls, gates in `rust-observability` that only printed, `sqlx prepare
+  --check` without its preconditions, and greps that missed the `.cast::<T>()` form.
+- Build and platform: `strip = "debuginfo"` keeps the `target_features` section for wasm-opt,
+  the modulemap moves under a module directory, the Android release smoke test sets
+  `testBuildType`, and `rust-embedded-no-std` triages `#[panic_handler]`, E0463, and E0152.
+- One home per rule: golden files, fixtures, proptest, and loom in `rust-test-tools`; Miri in
+  `rust-sanitizers-miri`; temporaries in `rust-borrow-semantics`; Drop and E0509 split between
+  `rust-discipline` and `rust-compiler-errors`; Swift isolation in `rust-swift-ffi`; rustflags
+  precedence in one `rust-performance` reference. `rust-panic-safety` loses
+  `references/hosts-hooks-and-tasks.md`, and `rust-event-loop-state` loses
+  `references/generic-and-dynamic-state.md`; their rules moved to the owners.
+- Routing: `trybuild`, `E0133`, and SQL injection now route to `rust-macros`, `rust-unsafe`, and
+  `rust-database`.
+- Harness: the edit hook reports a validator crash, and a `compile_fail` fence that names a code
+  fails when the block carries another coded error.
+
 ### Fixed
 
 Seventeen factual errors from the catalog audit, each reproduced before the fix:
