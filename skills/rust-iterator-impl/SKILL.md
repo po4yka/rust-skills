@@ -51,7 +51,7 @@ the full lint tables and the workspace gate.
 | A test on `(index, element)` pairs | A swap of `enumerate().rev()` and `rev().enumerate()` |
 | A test that alternates `next` and `next_back` to the end | A `next_back` that yields one element twice or skips one |
 
-A green lint run proves less than it seems. The clippy lints skip every type that is not
+A green lint run proves little. The clippy lints skip every type that is not
 exported, including a `pub` type in a private module. No lint
 sees a missing `IntoIterator for T`, `FromIterator`, or `Extend`, a wrong `size_hint`, or
 recursion through a second function. The tests above and the
@@ -300,12 +300,12 @@ Read `references/lending-iterators.md` for a tested example of each option, the 
 output, and a generic-associated-type lending trait when generic code must accept several
 lending sources.
 
-Reaching for `RefCell::as_ptr` or a raw pointer to escape the lifetime is not a fourth option.
+A raw pointer or `RefCell::as_ptr` that escapes the lifetime is not a fourth option.
 The yielded reference outlives the borrow the compiler tracks. Nothing then stops the caller
-from holding it across a `push` that reallocates the buffer. A clean Miri run is no evidence
-here: Miri reports the defect only when the test interleaves the fabricated reference with a
-write. Change the API. The `rust-unsafe` skill, when it is installed, covers the limits of Miri
-evidence.
+from holding it across a `push` that reallocates the buffer. Change the API. Miri reports the
+defect only when a test interleaves the fabricated reference with a write. The
+`rust-sanitizers-miri` skill, when installed, owns Miri; a clean
+`cargo +nightly miri test --locked` run proves nothing here.
 
 ## size_hint is a contract
 
@@ -341,7 +341,7 @@ impl Iterator for Ids {
         Some(self.lo - 1)
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = (self.hi - self.lo) as usize;
+        let n = self.hi.saturating_sub(self.lo) as usize;
         (n, Some(n))
     }
 }
