@@ -1,6 +1,6 @@
 ---
 name: rust-crate-release
-description: Use when preparing to publish a Rust crate or a Rust binary release, or recovering from a bad one - deciding a SemVer bump or MSRV change, checking cargo package and cargo publish output, ordering a workspace publish, setting up crates.io trusted publishing, deciding whether to yank a crate version, building a release archive with a release checksum, release SBOM, and attestation, or using cosign to sign release artifact files.
+description: Use when preparing to publish a Rust crate or a Rust binary release, or recovering from a bad one - deciding a SemVer bump or MSRV change, checking cargo package and cargo publish output, ordering a workspace publish, setting up crates.io trusted publishing, deciding whether to yank a crate version, building a release archive with a release checksum, release SBOM, and attestation, or using cosign to sign release artifacts.
 license: BSD-3-Clause
 ---
 
@@ -225,9 +225,9 @@ Write the changelog from the release diff: additions, fixes, deprecations, break
 feature, and platform changes, and migration steps. Do not call a possibly breaking change
 compatible without evidence.
 
-The archive must come from a clean release commit. Create that commit locally. Stage only the
-version, lockfile, changelog, and other required release files. Do not push yet; section 11 gates
-the push.
+The archive must come from a clean release commit. Stage only the version, lockfile, changelog,
+and other required release files. Land that commit on the remote default branch, with its own
+authorization, before any publish: `.cargo_vcs_info.json` records its SHA in the registry forever.
 
 ```bash
 git diff --cached --check
@@ -240,14 +240,13 @@ Confirm that the version is free in the registry. Always pass `--registry`, also
 cargo info <package>@<version> --registry <registry>
 ```
 
-Inside a workspace, `cargo info` describes the local member when no registry is explicit. Its version line then says `(from ./<member-path>)`, which is false evidence. A free
-version gives:
+A free version gives (a `(from ./...)` line is the local member; see the triage table):
 
 ```text
 error: could not find `<package>@<version>` in registry `<index-url>`
 ```
 
-A timeout or an authentication error is not evidence that the version is free.
+A timeout or an authentication error does not prove that the version is free.
 
 ## 6. Run repository gates
 
@@ -265,10 +264,9 @@ Replace `--all-features` with the supported sets when features conflict. `--all-
 run doctests, so keep the `--doc` line when the package has a library target. The `rust-lints` skill, when it is installed, owns the
 `cargo doc` gate. This per-package form leaves out `--document-private-items`: it checks the
 public docs that docs.rs renders.
-Run the advisory gate that the repository uses,
-`cargo deny --config deny.toml --locked check advisories` or `cargo audit`. If the repository has
-no advisory gate, run `cargo audit`. Install it with `cargo install --locked cargo-audit` when it
-is missing. If it cannot be installed, report the advisory check as not run.
+Run the repository's advisory gate
+(`cargo deny --config deny.toml --locked check advisories`), or else `cargo audit`
+(`cargo install --locked cargo-audit`). If neither can run, report the advisory check as not run.
 Every `.crate` contains `Cargo.lock` unless `--exclude-lockfile` is passed, and
 `cargo install --locked` builds with it, so a vulnerable locked dependency reaches the users of a
 binary crate. The `rust-security` skill, when it is installed, owns the advisory policy.
@@ -352,7 +350,8 @@ changelog summary, and the exact command. For a direct release that is
 push that starts the workflow.
 
 After approval, run `git status --short` and `git rev-parse HEAD` again. Stop if either differs
-from the approved candidate. Run the approved command once.
+from the approved candidate, or if `git fetch origin && git merge-base --is-ancestor HEAD
+origin/<default-branch>` fails. Run the approved command once.
 If it times out, never publish that version again. Check the registry until the result is known,
 then stop the release chain. An immediate negative `cargo info` does not prove that the upload
 failed.
@@ -375,7 +374,7 @@ git tag -a <tag> -m "Release <package> <version>"
 git show --no-patch --decorate <tag>
 ```
 
-Get authorization before you push the commit or tag. Never move an existing tag. If the remote
+Get authorization before you push the tag. Never move an existing tag. If the remote
 tag exists at another commit, stop and report the conflict.
 The release is complete only when the registry version and the remote tag both match the
 approved source.
