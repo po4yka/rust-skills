@@ -10,6 +10,7 @@ Contents:
 - The sink registry
 - Keep callsite interest valid
 - Bridge `log` once
+- Keep the `WorkerGuard`
 - Test the install
 - Host, bootstrap, and embedded sink (and an Android bootstrap sink)
 
@@ -88,6 +89,11 @@ global subscriber or `log` logger is already set. In an unguarded export, or
 under `panic = "abort"`, the panic aborts the process (Rust 1.81 and later).
 Under a `catch_unwind` guard, the load fails with `JNI_ERR`, and the panic
 message goes to stderr, which an Android app discards.
+
+## Keep the `WorkerGuard`
+
+Bind a `tracing_appender::non_blocking` `WorkerGuard` in `main` for the life of the process:
+when it drops, the writer thread stops and later events are lost.
 
 ## Test the install
 
