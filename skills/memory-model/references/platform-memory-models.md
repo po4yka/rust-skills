@@ -75,8 +75,13 @@ Compare-exchange cost depends on the target baseline. Measured with
 - `aarch64-unknown-linux-gnu` and `aarch64-unknown-linux-musl` have no LSE in
   their baseline, but their target spec enables `+outline-atomics`. Both forms
   compile to the same `bl __aarch64_cas8_acq_rel` call, and the helper selects
-  LSE or LL/SC at run time. `--print cfg` does not show this feature; read
-  `--print target-spec-json`. Measured on `aarch64-linux-android` with
+  LSE or LL/SC at run time. `--print cfg` does not show this feature. The target
+  spec does (`"features": "+v8a,+outline-atomics"`), but printing it needs
+  nightly: `rustc +nightly -Z unstable-options --print target-spec-json --target
+  <target>`. Stable 1.99.1 rejects `--print target-spec-json` without that flag.
+  On stable, emit assembly and look for the helper call:
+  `cargo rustc --release --target <target> -- --emit asm`, then search the `.s`
+  file for `bl __aarch64_cas`. The Android line above was measured with
   `-C target-feature=+outline-atomics`.
 
 ## Fences
