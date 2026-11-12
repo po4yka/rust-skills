@@ -28,8 +28,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use jni::JavaVM;
 use jni::sys::{JNI_ERR, JNI_VERSION_1_6, jint};
 
+/// # Safety
+/// Only the JVM calls this, with a valid `JavaVM` pointer.
 #[unsafe(no_mangle)]
-extern "system" fn JNI_OnLoad(raw_vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
+pub unsafe extern "system" fn JNI_OnLoad(raw_vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
     let init = catch_unwind(AssertUnwindSafe(|| -> jni::errors::Result<()> {
         // Only when this library is the application-owned bootstrap.
         install_bootstrap_panic_hook();

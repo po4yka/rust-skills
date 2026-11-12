@@ -126,8 +126,10 @@ fn create_session(_config: &str) -> jlong {
     todo!()
 }
 
+/// # Safety
+/// Only the JVM calls this, with a valid `JavaVM` pointer.
 #[unsafe(no_mangle)]
-extern "system" fn JNI_OnLoad(raw_vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
+pub unsafe extern "system" fn JNI_OnLoad(raw_vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
     let init = catch_unwind(AssertUnwindSafe(|| -> jni::errors::Result<()> {
         // SAFETY: the JVM passes a valid JavaVM pointer that stays valid for the process.
         let vm = unsafe { JavaVM::from_raw(raw_vm) };
@@ -184,9 +186,9 @@ write a name-based export or debug a `No implementation found` error.
   `#[no_mangle]` in the backticks on 1.98) but
   passes the exports that `native_method!` or `#[jni_mangle]` generate, so the
   lint does not prove that a crate has no exports.
-- Leave `pub` off an export that takes a raw pointer, such as `JNI_OnLoad`.
-  `no_mangle` exports the symbol anyway, and clippy's deny-by-default
-  `not_unsafe_ptr_arg_deref` rejects the `pub` form.
+- Declare an export that takes a raw pointer, such as `JNI_OnLoad`,
+  `unsafe extern "system" fn` with a `# Safety` section. Do not drop `pub` to
+  silence clippy's deny-by-default `not_unsafe_ptr_arg_deref`.
 - `extern "system"` equals `extern "C"` on Android and 64-bit targets but differs
   on 32-bit Windows JVMs. Do not write `extern "C"` for JNI.
 - A Rust panic that reaches an `extern "system"` function aborts the process
