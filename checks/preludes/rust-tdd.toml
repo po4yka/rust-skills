@@ -79,8 +79,8 @@ impl<T: PartialEq> FaultQueue<T> {
 # checks/check.sh. Their types come from references/fault-injection.md; the
 # service stub has the shape the prose describes.
 [[block]]
-file = "rust-tdd/SKILL.md"
-section = "Fault injection for error paths"
+file = "rust-tdd/references/fault-injection.md"
+section = "A service-level fault test"
 block = 1
 items = '''
 use std::collections::VecDeque;
