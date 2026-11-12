@@ -2,7 +2,7 @@
 """Regression tests for the classifier in analyze.py.
 
 The classifier decides which compile failures the catalog is allowed to ignore.
-Every entry in `RESOLUTION_CODES` and `ARTIFACT_CODES` silences a real compiler
+Every entry in `RESOLUTION_CODES` silences a real compiler
 error, so a wrong entry turns a broken example into a passing one. These tests
 pin the boundary: a code that means "the block does not define this name" is
 excused, everything else is a suspect.
@@ -39,18 +39,18 @@ class TestExcuses(unittest.TestCase):
             ("E0432", "unresolved import `crate::db`"),
         ]:
             with self.subTest(code=code):
-                fragment, _, _, suspects = analyze.classify({"ex": [error(code, message)]})
+                fragment, suspects = analyze.classify({"ex": [error(code, message)]})
                 self.assertEqual((fragment, suspects), (1, {}))
 
     def test_uncoded_resolution_message_is_a_fragment(self):
         # A missing macro carries no error code, only the message.
-        fragment, _, _, suspects = analyze.classify(
+        fragment, suspects = analyze.classify(
             {"ex": [error(None, "cannot find macro `criterion_main` in this scope")]}
         )
         self.assertEqual((fragment, suspects), (1, {}))
 
     def test_missing_required_external_crate_is_a_suspect(self):
-        _, _, _, suspects = analyze.classify(
+        _, suspects = analyze.classify(
             {
                 "ex": [
                     error(
@@ -71,7 +71,7 @@ class TestExcuses(unittest.TestCase):
         self.assertFalse(dependency.get("default-features", True))
 
     def test_disabled_feature_on_harness_crate_is_a_suspect(self):
-        _, _, _, suspects = analyze.classify(
+        _, suspects = analyze.classify(
             {"ex": [error("E0432", "unresolved import `nix::sys::socket`")]}
         )
         self.assertIn("ex", suspects)
@@ -79,41 +79,41 @@ class TestExcuses(unittest.TestCase):
     def test_unstable_feature_is_a_suspect(self):
         # E0658 means the example uses nightly-only Rust on a stable pin. That
         # is a defect in the example, not a name the prose defines.
-        _, _, _, suspects = analyze.classify(
+        _, suspects = analyze.classify(
             {"ex": [error("E0658", "use of unstable library feature `portable_simd`")]}
         )
         self.assertIn("ex", suspects)
 
     def test_bad_function_pointer_type_is_a_suspect(self):
-        _, _, _, suspects = analyze.classify(
+        _, suspects = analyze.classify(
             {"ex": [error("E0561", "patterns aren't allowed in function pointer types")]}
         )
         self.assertIn("ex", suspects)
 
     def test_non_type_used_as_type_is_a_suspect(self):
-        _, _, _, suspects = analyze.classify(
+        _, suspects = analyze.classify(
             {"ex": [error("E0573", "expected type, found variant `Status::Ready`")]}
         )
         self.assertIn("ex", suspects)
 
     def test_unknown_code_is_a_suspect(self):
-        _, _, _, suspects = analyze.classify(
+        _, suspects = analyze.classify(
             {"ex": [error("E9999", "a code this file has never seen")]}
         )
         self.assertIn("ex", suspects)
 
     def test_type_mismatch_is_a_suspect(self):
-        _, _, _, suspects = analyze.classify({"ex": [error("E0308", "mismatched types")]})
+        _, suspects = analyze.classify({"ex": [error("E0308", "mismatched types")]})
         self.assertIn("ex", suspects)
 
     def test_one_real_error_beside_undefined_names_is_a_suspect(self):
-        _, _, _, suspects = analyze.classify(
+        _, suspects = analyze.classify(
             {"ex": [error("E0425", "cannot find value `x`"), error("E0308", "mismatched types")]}
         )
         self.assertIn("ex", suspects)
 
     def test_never_type_cascade_beside_an_undefined_name_is_a_fragment(self):
-        fragment, _, _, suspects = analyze.classify(
+        fragment, suspects = analyze.classify(
             {
                 "ex": [
                     error("E0425", "cannot find value `conn` in this scope"),
@@ -124,13 +124,13 @@ class TestExcuses(unittest.TestCase):
         self.assertEqual((fragment, suspects), (1, {}))
 
     def test_never_type_method_error_alone_is_a_suspect(self):
-        _, _, _, suspects = analyze.classify(
+        _, suspects = analyze.classify(
             {"ex": [error("E0599", "no method named `commit` found for type `!` in the current scope")]}
         )
         self.assertIn("ex", suspects)
 
     def test_missing_method_on_a_real_type_beside_an_undefined_name_is_a_suspect(self):
-        _, _, _, suspects = analyze.classify(
+        _, suspects = analyze.classify(
             {
                 "ex": [
                     error("E0425", "cannot find value `conn` in this scope"),
@@ -150,17 +150,41 @@ class TestExcuses(unittest.TestCase):
         )
         self.assertEqual(names, ["frag"])
 
-    def test_wrapper_damage_is_not_a_suspect(self):
-        _, artifact, _, suspects = analyze.classify(
-            {"ex": [error("E0424", "expected value, found module `self`")]}
-        )
-        self.assertEqual((artifact, suspects), (1, {}))
+    def test_no_error_is_excused_without_a_listing(self):
+        # These were once "wrapper artifact" and "low signal" buckets that
+        # passed with no listing, so a block that did not compile passed.
+        for diagnostic in (
+            error("E0424", "expected value, found module `self`"),
+            error("E0282", "type annotations needed"),
+            error("E0585", "found a documentation comment that doesn't document anything"),
+            error("E0586", "inclusive range with no end"),
+            error(None, "missing documentation for a function"),
+        ):
+            with self.subTest(diagnostic=diagnostic["message"]):
+                fragment, suspects = analyze.classify({"ex": [diagnostic]})
+                self.assertEqual((fragment, list(suspects)), (0, ["ex"]))
 
-    def test_missing_type_annotation_is_low_signal(self):
-        _, _, low, suspects = analyze.classify(
-            {"ex": [error("E0282", "type annotations needed")]}
+
+class TestTestPass(unittest.TestCase):
+    """The cfg(test) run adds errors to compile and run blocks, never to compile_fail."""
+
+    def test_test_only_error_joins_a_compile_block(self):
+        manifest = {"a": entry("compile"), "x": entry("compile_fail")}
+        errors = {"x": [error("E0499", "cannot borrow")]}
+        analyze.merge_test_pass(
+            manifest,
+            errors,
+            {"a": [error("E0308", "mismatched types")], "x": [error("E0308", "mismatched types")]},
         )
-        self.assertEqual((low, suspects), (1, {}))
+        self.assertEqual([d["code"]["code"] for d in errors["a"]], ["E0308"])
+        self.assertEqual([d["code"]["code"] for d in errors["x"]], ["E0499"])
+
+    def test_an_error_seen_in_both_runs_counts_once(self):
+        manifest = {"a": entry("compile")}
+        same = error("E0308", "mismatched types")
+        errors = {"a": [same]}
+        analyze.merge_test_pass(manifest, errors, {"a": [dict(same)]})
+        self.assertEqual(len(errors["a"]), 1)
 
 
 class TestCoverage(unittest.TestCase):

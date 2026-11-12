@@ -7,7 +7,8 @@ it as the fence requires, runs portable behavior probes, and fails CI on any
 result the fence did not promise.
 
 There is no heuristic skip. A block is checked, is proved to fail, or carries
-`ignore` on its fence, and the counts are printed on every run.
+`ignore` on its fence and a line with the reason in `ignored.txt`, and the
+counts are printed on every run.
 
 It is a development tool. It is not part of any skill, and `npx skills add`
 never sees it.
@@ -50,8 +51,10 @@ python3 evals/outcome/check.py                # outcome fixtures: build, test, p
 python3 checks/gen.py                         # blocks -> checks/examples/
 cd checks
 cargo check --locked --examples --keep-going --message-format=json > check.json
+cargo check --locked --examples --profile test --keep-going --message-format=json > check-test.json
 python3 analyze.py check.json                 # coverage plus suspect detail
-python3 analyze.py check.json --check-baseline baseline.txt   # the CI gate
+python3 analyze.py check.json --test-pass check-test.json --check-fragments fragments.txt \
+    --check-ignored ignored.txt --check-baseline baseline.txt   # the CI gate
 ```
 
 `--locked` is not optional. `cargo-workflows` requires it of every CI and agent
@@ -69,7 +72,7 @@ tag is enforced:
 | ` ```rust,run ` | Must compile cleanly, then its `fn main()` runs on the native host |
 | ` ```rust,compile_fail ` | Extracted and type-checked. It must **not** compile |
 | ` ```rust,compile_fail,E0499 ` | The same, and that error code must appear |
-| ` ```rust,ignore ` | Not checked. The only way out of the gate |
+| ` ```rust,ignore ` | Not checked. The only way out of the gate, and `ignored.txt` must list it with the reason |
 
 An unknown tag is a failure, not a quiet pass: a typo in a fence would
 otherwise take a block out of the check with nobody the wiser.
@@ -99,10 +102,21 @@ method that the crate does not have — all look like they need a tag and do not
   `fragments.txt` lists it; see [Preludes](#preludes). A missing harness
   dependency or disabled dependency feature is a suspect, because it can hide
   all later type errors in the block.
-- **artifact** — the extraction caused it: a `&self` method body lifted into a
-  free function, a doc comment with nothing after it.
-- **low** — only "type annotations needed", which the real context supplies.
-- **SUSPECT** — anything else. Treat as a real defect until shown otherwise.
+- **SUSPECT** — anything else, including "type annotations needed" and a doc
+  comment with nothing after it. Treat as a real defect until shown otherwise.
+
+There is no third bucket. Earlier versions excused "wrapper artifact" and "low
+signal" errors with no listing, so a block that failed only on E0282 or on a
+`...` placeholder passed. A block that does not compile is fixed, given a
+prelude, or tagged.
+
+`check.sh` compiles the examples twice. The second run uses `--profile test`,
+which sets `cfg(test)` and builds each example as a test harness. The first run
+never type-checks a `#[test]` function, a `#[cfg(test)]` module, or a
+`#[tokio::test]` body. `--test-pass` joins the second run's errors to the first
+for every `compile` and `run` block, and every gate below sees the union. No run
+sets `cfg(miri)`, `cfg(loom)`, or a non-x86_64 `target_arch`, so code under those
+stays unchecked.
 
 ## The gates
 
@@ -117,7 +131,9 @@ These checks run on the buckets, and each one fails the build:
    produce the error codes its fence names. A demonstration that starts
    compiling after a language change is a claim the catalog can no longer make.
 4. **Fragments.** A fragment that `fragments.txt` does not list fails the run.
-5. **Suspects.** Every remaining failure is bucketed, and a bucket outside the
+5. **Ignored blocks.** A `rust,ignore` block that `ignored.txt` does not list
+   fails the run. Each entry carries the reason the block cannot be checked.
+6. **Suspects.** Every remaining failure is a suspect, and a suspect outside the
    baseline fails the run.
 
 After these gates, `check.sh` compiles and executes each run block on the native
@@ -203,11 +219,11 @@ can express, and write down why.
 ## Adding a dependency
 
 When a skill starts using a crate in its examples, add it to `Cargo.toml`.
-Without it every block that imports the crate degrades to a fragment and stops
-being checked. `test_analyze.py` pins this contract: a missing external crate or
-a disabled feature on a required crate is never an allowed fragment. Add each
-dependency-backed import to `REQUIRED_EXTERNAL_CRATES` in `analyze.py` so a
-later manifest edit cannot silently reduce its coverage.
+Without it every block that imports the crate becomes a fragment, and the gate
+fails on a fragment that `fragments.txt` does not list. `REQUIRED_EXTERNAL_CRATES`
+in `analyze.py` turns a missing crate into a suspect instead, which names the
+crate in the failure; add a crate there when its absence would be hard to read
+from the fragment report.
 
 ### `imbl` and the `bitmaps` advisories
 

@@ -60,7 +60,23 @@ if [ "${RUST_SKILLS_CHECK_LOCKED:-}" != "1" ]; then
 fi
 
 echo "==> catalog: frontmatter, references, routing, bundles, budgets, README parity"
-python3 "$ROOT/scripts/validate-skills.py"
+# The ratchet in scripts/catalog-ceilings.toml may only shrink. The validator
+# compares the file with the merge base of this branch and origin/main;
+# CEILINGS_BASE overrides the ref. CI always has the base, so a missing one
+# fails there; a local clone without origin/main skips the comparison and says so.
+CEILINGS_BASE="${CEILINGS_BASE:-}"
+if [ -z "$CEILINGS_BASE" ] && git -C "$ROOT" rev-parse -q --verify origin/main > /dev/null; then
+    CEILINGS_BASE="$(git -C "$ROOT" merge-base HEAD origin/main || true)"
+fi
+if [ -n "$CEILINGS_BASE" ]; then
+    python3 "$ROOT/scripts/validate-skills.py" --ceilings-base "$CEILINGS_BASE"
+elif [ -n "${CI:-}" ]; then
+    echo "FAIL: CI has no origin/main to compare scripts/catalog-ceilings.toml with; fetch it"
+    exit 1
+else
+    python3 "$ROOT/scripts/validate-skills.py"
+    echo "  note: no origin/main, so the ceilings ratchet was not compared; CI compares it"
+fi
 
 echo "==> routing evaluation set: schema, coverage, and blindness (no key, no network)"
 python3 "$ROOT/evals/routing/run.py" --lint
@@ -123,8 +139,17 @@ echo "==> compile-checking examples (target: $TARGET)"
 cargo check --locked --examples --target "$TARGET" --keep-going --message-format=json \
     > check.json 2> check.err || true
 
+# The run above builds the examples without cfg(test), so it never reads a
+# #[test] function, a #[cfg(test)] module, or a #[tokio::test] body. This run
+# sets cfg(test) and builds each example as a test harness; analyze.py joins
+# its errors to those of the first run, so test code meets the same gates.
+echo "==> compile-checking examples again with cfg(test)"
+cargo check --locked --examples --profile test --target "$TARGET" --keep-going \
+    --message-format=json > check-test.json 2> check-test.err || true
+
 echo "==> gating: coverage, compile_fail, fragments, and the suspect baseline"
-python3 analyze.py check.json --check-fragments fragments.txt --check-baseline baseline.txt
+python3 analyze.py check.json --test-pass check-test.json \
+    --check-fragments fragments.txt --check-ignored ignored.txt --check-baseline baseline.txt
 
 echo "==> running behavior probes on the native host"
 run_count=0

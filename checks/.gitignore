@@ -3,3 +3,5 @@ target/
 manifest.json
 check.json
 check.err
+check-test.json
+check-test.err
