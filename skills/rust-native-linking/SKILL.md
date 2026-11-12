@@ -9,7 +9,7 @@ license: BSD-3-Clause
 Hand these topics to sibling skills, when they are installed:
 
 - The `rust-unsafe` skill owns FFI soundness, layout, ownership, and safety
-  contracts.
+  contracts; keep the `improper_ctypes` and `improper_ctypes_definitions` lints on.
 - The `cargo-workflows` skill owns workspace layout, profiles, features, and
   general cross-target orchestration.
 - The `rust-android-build` skill owns NDK selection, Android ABI policy, page
@@ -48,7 +48,7 @@ it hid the ld64 line `object file (...) was built for newer 'macOS' version
 (X) than being linked (Y)`. That line marks `cc` objects built for another
 deployment target than rustc. Pass `-W linker-info` while you diagnose a link,
 for example `cargo rustc --bin <app> -- -W linker-info`. The `rust-lints` skill
-owns the gate level for both lints.
+owns the gate level; to fail CI on linker output, build with `CARGO_BUILD_WARNINGS=deny`.
 
 | Symptom | Likely layer | First evidence | Fix |
 |---|---|---|---|
@@ -101,7 +101,7 @@ dependency can load and still fail because one of its dependencies is absent.
 
 Rust symbols use v0 mangling (`_R` prefix) by default since Rust 1.97, so a
 `_ZN` grep finds nothing. `#[no_mangle]` and `#[export_name]` symbols keep
-their literal names. The `rust-debugging` skill covers demangling.
+their literal names. For a tool that predates v0, pipe its output through `rustfilt`.
 
 Do not use `-Wl,--version-script` to hide exports of a Rust `cdylib`. rustc
 passes its own version script, and an extra map did not remove a
