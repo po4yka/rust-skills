@@ -17,8 +17,35 @@ every read.
 
 ## A `Cow` version history is quadratic
 
-This is the measurement behind the `Log::with` example in `SKILL.md`. Measured at 2000 chained
-`with` calls that start from `Log { lines: Cow::Owned(Vec::new()) }`, against a plain
+This example looks persistent and is not:
+
+```rust,run
+use std::borrow::Cow;
+
+#[derive(Clone)]
+struct Log<'a> {
+    lines: Cow<'a, [String]>,
+}
+
+impl Log<'_> {
+    // Looks persistent. Is not: cloning a Cow::Owned deep-clones every String.
+    fn with(&self, line: &str) -> Self {
+        let mut next = self.clone();
+        next.lines.to_mut().push(line.to_string());
+        next
+    }
+}
+
+fn main() {
+    let base = Log { lines: Cow::Owned(vec![String::from("a")]) };
+    let next = base.with("b");
+    assert_eq!(base.lines.len(), 1);
+    assert_eq!(next.lines.len(), 2);
+}
+```
+
+Measured at 2000 chained `with`
+calls that start from `Log { lines: Cow::Owned(Vec::new()) }`, against a plain
 `Vec::push` loop over the same 2000 eight-byte `String` values. Times are the best and the
 worst of nine passes:
 
