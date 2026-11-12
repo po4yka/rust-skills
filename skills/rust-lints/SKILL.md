@@ -30,7 +30,7 @@ root policy, and it drifts.
 | Root `Cargo.toml` | `[workspace.lints.rust]`, `[workspace.lints.clippy]`, `[workspace.lints.rustdoc]`; `rust-version` in `[workspace.package]`, which clippy reads as the MSRV |
 | `clippy.toml` (beside the root manifest) | Thresholds, disallowed methods and types, ident allow-lists, test exemptions |
 | `rustfmt.toml` | Formatting options |
-| `deny.toml` | `cargo deny` policy. The `rust-security` skill owns it. |
+| `deny.toml` | Policy for `cargo deny --config deny.toml --locked check`, which the `rust-security` skill owns |
 
 A crate attribute overrides the inherited level in both directions. A `#![warn(lint)]` in
 `lib.rs` lowers a workspace `deny` to `warn` for that crate (verified on 1.99.1). Only
@@ -58,7 +58,8 @@ What each check proves, and what it does not:
   features, run clippy once per supported feature set, or run
   `cargo hack clippy --each-feature --workspace --all-targets --locked -- -D warnings` when
   cargo-hack is installed. Give `cargo doc` and the tests the same feature sets as clippy. The
-  `cargo-workflows` skill owns the feature matrix.
+  `cargo-workflows` skill owns the feature matrix: default features, `--no-default-features`, and
+  each supported set.
 - Clippy does not run rustdoc lints. `[workspace.lints.rustdoc]` and
   `#![deny(rustdoc::broken_intra_doc_links)]` act only under `cargo doc`. On 1.98.1 a broken
   intra-doc link passes clippy and `cargo test --doc`, and fails only `cargo doc`. Without
@@ -250,7 +251,8 @@ need the measurement.
 2. `#![forbid(unsafe_code)]` is a soundness gate, and the silence removes the guarantee. A crate
    that carries it builds and runs the `unsafe` that a dependency's proc macro injected, and
    `cargo clippy -- -D unsafe_code -D clippy::undocumented_unsafe_blocks` reports nothing.
-   Audit the proc-macro dependencies of a binding crate with the `rust-unsafe` skill.
+   Audit the proc-macro dependencies of a binding crate: grep the nightly
+   `-Zunpretty=expanded` output for `unsafe` (the `rust-unsafe` skill).
 
 Never suppress `not_unsafe_ptr_arg_deref`: safe code could then pass a bad pointer. Make the
 export `unsafe` with a `# Safety` section; removing `pub` only hides the lint.
@@ -328,10 +330,10 @@ threshold step.
 Each applies when it is installed.
 
 - `rust-security`: `deny.toml` policy and `cargo deny` failures.
-- `rust-unsafe`: SAFETY comments, unsafe audit surface, proc-macro audit.
+- `rust-unsafe`: `// SAFETY:` comments, the unsafe surface, and the `-Zunpretty=expanded` audit.
 - `rust-discipline`: the `unwrap` and `expect` policy behind `unwrap_used`.
 - `rust-panic-safety`: the panic lints for a crate on an FFI path (`expect_used`, `panic`).
 - `rust-code-style`: the style rules that `rustfmt.toml` and `disallowed-methods` enforce.
 - `cargo-workflows`: workspace membership, feature matrix, `Cargo.lock`, CI.
-- `rust-hot-path`: the fixes that the performance lints ask for.
-- `rust-jni`: JNI entry-point signatures and their lints.
+- `rust-hot-path`: the fixes that the performance lints ask for, such as `clone_from`.
+- `rust-jni`: JNI entry-point signatures and their lints; `JNI_OnLoad` takes `*mut jni::sys::JavaVM`.
