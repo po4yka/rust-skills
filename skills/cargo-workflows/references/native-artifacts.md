@@ -79,9 +79,12 @@ crate, and its doc-tests cannot compile.
   crates.
 - A raw JNI or C crate exports `extern "system" fn` or `extern "C" fn` entry points with
   `#[unsafe(no_mangle)]` (required on edition 2024, accepted on every edition since Rust 1.82).
-  Do not put `pub` on an export that takes a raw pointer. The export does not need `pub`, and a
-  `pub` safe entry point that dereferences a raw pointer argument fails the deny-by-default
-  `clippy::not_unsafe_ptr_arg_deref`. On jni 0.22, do not type `Java_*` symbol names by hand:
+  Declare an export that dereferences a raw pointer argument `unsafe extern "C" fn` and give it
+  a `# Safety` section that states the pointer contract. A `pub` safe entry point that
+  dereferences one fails the deny-by-default `clippy::not_unsafe_ptr_arg_deref` (clippy
+  1.99.1). Do not remove `pub` to silence the lint: `#[unsafe(no_mangle)]` exports the symbol
+  either way, so the caller still gets a safe signature over an unchecked pointer. Visibility
+  is a separate decision. On jni 0.22, do not type `Java_*` symbol names by hand:
   use `#[jni_mangle]` or `native_method!` with `RegisterNatives`. The `rust-jni` skill owns the
   entry-point design.
 - Keep the unsafe-documentation lints at the workspace level, and satisfy them: write the
