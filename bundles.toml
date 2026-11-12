@@ -90,4 +90,5 @@ skills = [
     "uniffi-boundary",
     "uniffi-packaging-versioning",
     "ffi-error-progress-cancel",
+    "rust-cxx",
 ]

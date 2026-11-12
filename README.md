@@ -62,7 +62,7 @@ in [bundles.toml](bundles.toml).
 | `testing` | Correctness and testing | 6 | `rust-skills-testing` |
 | `concurrency` | Concurrency and unsafe code | 6 | `rust-skills-concurrency` |
 | `production` | Networking, database, performance, debugging, and observability | 7 | `rust-skills-production` |
-| `ffi` | FFI and platform boundaries | 5 | `rust-skills-ffi` |
+| `ffi` | FFI and platform boundaries | 6 | `rust-skills-ffi` |
 
 Each path below pins something different. Pick the first one your client supports.
 
@@ -104,7 +104,7 @@ for s in rust-performance rust-hot-path rust-copy-on-write rust-debugging rust-o
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # ffi
-for s in rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel; do
+for s in rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel rust-cxx; do
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 ```
@@ -216,7 +216,7 @@ npx skills add po4yka/rust-skills --skill memory-model rust-async-internals rust
 # production
 npx skills add po4yka/rust-skills --skill rust-performance rust-hot-path rust-copy-on-write rust-debugging rust-observability rust-networking rust-database
 # ffi
-npx skills add po4yka/rust-skills --skill rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel
+npx skills add po4yka/rust-skills --skill rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel rust-cxx
 ```
 
 `--skill` takes space-separated names; a comma-separated list matches no skill (checked on
@@ -292,6 +292,7 @@ Enter by the symptom, not by the skill name.
 | `SetLoggerError`, or a `tracing` subscriber in a cdylib that emits nothing | [rust-observability](skills/rust-observability/SKILL.md) |
 | `UnsatisfiedLinkError`, `AttachCurrentThread`, `FindClass`, or an Android ClassLoader failure | [rust-jni](skills/rust-jni/SKILL.md) |
 | Swift calls Rust through a C ABI, an opaque handle, or an `@MainActor` callback | [rust-swift-ffi](skills/rust-swift-ffi/SKILL.md) |
+| A `cxx::bridge` error, a link error on a `cxxbridge1` symbol, or a C++ exception that terminates | [rust-cxx](skills/rust-cxx/SKILL.md) |
 | A `uniffi::export` macro error, `UnexpectedUniFFICallbackError`, or a Record-versus-Object choice | [uniffi-boundary](skills/uniffi-boundary/SKILL.md) |
 | A UniFFI checksum mismatch, a `RustBuffer` error, binding version skew, a mobile support matrix, or a release proof from the shipped artifacts | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) |
 | `Activity` lifecycle, `ViewModel.onCleared`, process death, or a callback release race | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) |
@@ -374,6 +375,7 @@ flowchart LR
 
     E --> E1[rust-jni]
     E --> E2[rust-swift-ffi]
+    E --> E6[rust-cxx]
     E --> E3[uniffi-boundary]
     E --> E4[ffi-error-progress-cancel]
     E --> E5[rust-port]
@@ -499,7 +501,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>FFI and platform boundaries</b> — five skills</summary>
+<summary><b>FFI and platform boundaries</b> — six skills</summary>
 
 <br>
 
@@ -510,6 +512,7 @@ owns it.
 | [uniffi-boundary](skills/uniffi-boundary/SKILL.md) | Record-versus-Object shape, `Arc` ownership, foreign callbacks, custom types, async exports, macro and bindgen error triage, and mobile engine ownership across Kotlin and Swift. |
 | [uniffi-packaging-versioning](skills/uniffi-packaging-versioning/SKILL.md) | jniLibs packaging, the UniFFI header and modulemap for an XCFramework, binding/runtime pinning, additive-versus-breaking FFI changes, checksum-mismatch triage, mobile support matrices, and release proof from the shipped artifacts. |
 | [ffi-error-progress-cancel](skills/ffi-error-progress-cancel/SKILL.md) | Versioned errors, progress and cooperative cancellation, plus mobile owner teardown, UI delivery, process restart, memory pressure, and callback-release races. |
+| [rust-cxx](skills/rust-cxx/SKILL.md) | Safe Rust and C++ interop with cxx: `cxx::bridge` modules, shared types, `UniquePtr`/`SharedPtr`/`CxxString`/`CxxVector`, `Pin<&mut T>` methods, `Result` mapped to C++ exceptions, cxx-build setup, the choice of cxx, bindgen, or autocxx, and build and link failure triage. |
 
 </details>
 

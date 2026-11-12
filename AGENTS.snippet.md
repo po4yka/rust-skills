@@ -54,3 +54,4 @@ design, build, testing, concurrency, production, ffi. Delete the rows of a bundl
 | `uniffi::export` error, `UnexpectedUniFFICallbackError`, Record vs Object | uniffi-boundary |
 | UniFFI checksum mismatch, `RustBuffer` error, binding version skew | uniffi-packaging-versioning |
 | `Activity` lifecycle, `ViewModel.onCleared`, callback release race | ffi-error-progress-cancel |
+| `cxx::bridge`: `error[cxxbridge]`, an undefined `cxxbridge1` symbol, `std::terminate` after a C++ throw | rust-cxx |

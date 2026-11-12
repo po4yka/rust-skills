@@ -360,4 +360,7 @@ claiming a phrase the other owns.
 | couldn't convert the error | rust-error-handling |
 | anyhow::Context | rust-error-handling |
 | Error::source chain | rust-error-handling |
+| cxx::bridge | rust-cxx |
+| CxxString | rust-cxx |
+| cxxbridge1 symbol | rust-cxx |
 | panic policy | rust-panic-safety | rust-discipline |

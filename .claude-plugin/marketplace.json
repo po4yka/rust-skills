@@ -9,7 +9,7 @@
     {
       "name": "rust-skills",
       "source": "./",
-      "description": "All 49 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
+      "description": "All 50 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -147,7 +147,7 @@
     {
       "name": "rust-skills-ffi",
       "source": "./",
-      "description": "FFI and platform boundaries: 5 Rust agent skills.",
+      "description": "FFI and platform boundaries: 6 Rust agent skills.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -160,7 +160,8 @@
         "./skills/rust-swift-ffi",
         "./skills/uniffi-boundary",
         "./skills/uniffi-packaging-versioning",
-        "./skills/ffi-error-progress-cancel"
+        "./skills/ffi-error-progress-cancel",
+        "./skills/rust-cxx"
       ]
     }
   ]
