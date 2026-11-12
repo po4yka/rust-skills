@@ -1,7 +1,7 @@
 schema_version: "1.1"
-name: language-lint-gate
-description: The language bundle. A natural request that the rust-lints skill owns; the answer must cite that skill's verifier.
-tags: [language, trigger]
+name: design-lint-gate
+description: The design bundle. A natural request that the rust-lints skill owns; the answer must cite that skill's verifier.
+tags: [design, trigger]
 runs: 2
 execution:
   max_turns: 10

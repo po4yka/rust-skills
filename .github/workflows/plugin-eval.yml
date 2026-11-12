@@ -37,9 +37,9 @@ jobs:
   eval:
     name: claude plugin eval
     runs-on: ubuntu-latest
-    # 48 agent runs for the outcome suite (8 cases, 3 runs, 2 arms), four at a time: twelve
+    # 54 agent runs for the outcome suite (9 cases, 3 runs, 2 arms), four at a time: fourteen
     # batches of at most 15 minutes, plus the judge, the scaffolds, and the toolchain install.
-    timeout-minutes: ${{ inputs.suite == 'outcome' && 240 || 60 }}
+    timeout-minutes: ${{ inputs.suite == 'outcome' && 270 || 60 }}
     environment: plugin-eval
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
