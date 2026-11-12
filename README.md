@@ -48,8 +48,8 @@ method, the per-grader tables, and the caveats are in
 ## Install
 
 Install one bundle, not the whole catalog. A bundle is one subject group of the catalog below.
-The full catalog costs about 9,300 tokens of always-on skill listing (as `claude plugin details`
-projects it), and a client with a 200K-token window keeps about 2,000: Claude Code then drops
+The full catalog costs about 9,700 tokens of always-on skill listing (50 skills, by the
+validator's estimate), and a client with a 200K-token window keeps about 2,000: Claude Code then drops
 whole descriptions, and those skills stop loading. Every bundle fits that budget: the validator
 caps each bundle at 5,000 description characters (about 2,000 tokens). The bundles are defined
 in [bundles.toml](bundles.toml).
@@ -400,7 +400,7 @@ flowchart LR
 
 ## Catalog
 
-Forty-four skills in six groups. Deep material sits in `references/*.md` next to the skill that
+Fifty skills in seven groups. Deep material sits in `references/*.md` next to the skill that
 owns it.
 
 <details open>
@@ -604,7 +604,7 @@ invocations, and failure triage that a codebase learns the hard way.
   issue when Rust stable or a crate in `checks/Cargo.toml` moves past the pin.
 - The always-on skill listing is small. Claude Code keeps it within 1% of the context window
   (about 2,000 tokens on a 200K window) and drops whole descriptions when it overflows; Codex
-  keeps only a prefix of each. In October 2026, all 44 descriptions cost about 9,300 tokens, so on a 200K window
+  keeps only a prefix of each. In November 2026, all 50 descriptions cost about 9,700 estimated tokens, so on a 200K window
   install one bundle, and paste [AGENTS.snippet.md](AGENTS.snippet.md) into the consuming
   repository so the agent can still name the skill it needs.
 - Codex shortens every description to share one skill-list budget among all listed skills. In a

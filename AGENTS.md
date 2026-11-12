@@ -84,10 +84,9 @@ The body starts at an `# Title` heading directly after the frontmatter.
   `javascript`. Open every fence with exactly three backticks. `checks/gen.py` reads only
   ```` ```rust ````, so the validator rejects an untagged fence, another language, and every other
   spelling of a Rust fence (`rs`, `Rust`, `~~~rust`, four backticks, a space before the tag).
-- Keep `SKILL.md` under 500 lines and 4,800 estimated tokens. The validator enforces both for a
-  new skill. A body that was already over the token limit has a ceiling in
-  `scripts/catalog-ceilings.toml` and may only shrink; 43 of 46 bodies had one on 2026-11-12, so
-  for most skills the limit is a target, not the current state. Put
+- Keep `SKILL.md` under 500 lines and 4,800 estimated tokens; the validator enforces both, and
+  warns above 4,500. As of 2026-11-12 every body is at or under 4,500, and
+  `scripts/catalog-ceilings.toml` holds no entry. Put
   gotchas, triage tables, verifier commands, and escalation rules first. Move conditional
   material, long examples, and background to `references/<topic>.md`. Link each reference from
   `SKILL.md` at the point of need with the condition to read it ("Read `references/x.md` when

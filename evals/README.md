@@ -93,9 +93,9 @@ IDs, and fails when the result names no plugin.
 
 What a green result proves: on that client, model, and catalog commit, a natural request loads
 the skill and the answer carries its verifier. What it does not prove: behavior on Codex, Cursor,
-or another client; behavior with all 46 skills installed when the client truncates its listing
+or another client; behavior with all 50 skills installed when the client truncates its listing
 (the suite loads the whole plugin, so it measures the full listing); or that six cases represent
-46 skills.
+50 skills.
 
 ## `outcome/`: the work itself
 

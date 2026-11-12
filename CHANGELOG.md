@@ -7,6 +7,31 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+### Added
+
+- Four skills for the catalog gaps the audit found:
+  - `rust-error-handling` (design): error types in libraries and applications, thiserror and
+    anyhow, the `Error::source` chain, dependency errors as SemVer, and `ExitCode`.
+  - `rust-pyo3` (ffi): PyO3 0.30 modules on the `Bound` API, maturin wheels, abi3 and
+    free-threaded Python.
+  - `rust-cxx` (ffi): C++ interop with `cxx::bridge` and cxx-build.
+  - `rust-cross-compilation` (build): other Linux targets, static musl binaries, cross,
+    cargo-zigbuild, Docker, and qemu-user test runs.
+
+### Changed
+
+- The `language` bundle splits in two: `language` (8 skills, semantics and compiler errors) and
+  `design` (6 skills, API design, error handling, lints, architecture, CLI), each under the
+  5,000-character listing budget. A consumer of `rust-skills-language` gets the moved skills from
+  the new `rust-skills-design` plugin.
+- Every SKILL.md body is at or under 4,500 estimated tokens; conditional material moved to
+  references. `scripts/catalog-ceilings.toml` holds no entry: no body, bundle, or cross-bundle
+  reference is over its limit.
+- The catalog description total is reported, not capped; each bundle stays capped.
+- rust-code-style hands the thiserror-versus-anyhow choice to rust-error-handling, and
+  cargo-workflows hands the general cross-compile workflow to rust-cross-compilation.
+- The harness holds pyo3 0.30 and cxx 1.
+
 ### Changed (cross-bundle fallbacks)
 
 - The validator checks every code span that names a skill of another bundle, in prose, lists,
