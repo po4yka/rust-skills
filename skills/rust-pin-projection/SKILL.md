@@ -48,7 +48,8 @@ Borrows model.
 A change that pins or projects is complete when the Miri row passes (or the report says that Miri
 did not run), the `Unpin` tests hold, and every item of the review checklist in
 `references/pin-projection-macros.md` holds. The `rust-sanitizers-miri` skill, when it is
-installed, owns the Miri flags and the Stacked Borrows and Tree Borrows policy.
+installed, owns the Miri flags and the Stacked Borrows and Tree Borrows policy; the Tree Borrows
+lane is `MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked`.
 
 ## Pin enforces nothing for an Unpin target
 
@@ -182,7 +183,7 @@ frees memory in an obvious way:
 Unsafe code that manages its own storage must call `ptr::drop_in_place` before it frees or
 reuses that storage. A destructor that can panic part way through, and so skip the remaining
 destructors, must abort the process instead. The `rust-panic-safety` skill, when it is
-installed, covers that abort.
+installed, covers that abort; by default, make each `Drop` infallible.
 
 ### Obligation 4: no move-out operation
 
