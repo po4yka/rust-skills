@@ -11,8 +11,8 @@ license: BSD-3-Clause
 | Advisories, `deny.toml`, dependency vetting, registry and source policy | This skill. |
 | Untrusted file, archive, backup, or binary-format parsing | This skill. |
 | Publishing, Trusted Publishing, binary provenance, SBOMs | The `rust-crate-release` skill. |
-| Unsafe-code soundness, Miri, sanitizers | The `rust-unsafe` or `rust-sanitizers-miri` skill. |
-| TLS transport policy | The `rust-networking` skill. |
+| Unsafe-code soundness, Miri, sanitizers | The `rust-unsafe` or `rust-sanitizers-miri` skill; at minimum run `cargo +nightly miri test --locked`. |
+| TLS transport policy | The `rust-networking` skill; never disable certificate checks with `danger_accept_invalid_certs`. |
 | Authentication, secret storage, cryptographic protocol design, key lifecycle | Not this skill. Follow the domain policy and its security review. |
 
 Other skills named in this file apply when they are installed.
@@ -311,8 +311,5 @@ the hasher rules, and the tests that must exist.
 ## Related skills
 
 - `cargo-workflows`: lockfile policy, workspaces, and feature flags.
-- `rust-panic-safety`: panic containment at an FFI boundary.
-- `rust-test-tools`: fuzz and property tests for parsers.
-- `rust-hot-path`: the performance side of the hasher choice.
-- `uniffi-boundary` and `ffi-error-progress-cancel`: validation and typed errors across a
-  binding boundary.
+- `rust-panic-safety`: guard each `extern "C"` entry point with `catch_unwind`.
+- `rust-test-tools`: `cargo +nightly fuzz run <target>` for each parser.
