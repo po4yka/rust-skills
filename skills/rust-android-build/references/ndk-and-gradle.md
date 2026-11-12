@@ -22,14 +22,21 @@ Compute `<api>` per ABI from the NDK metadata. Fail when the application `minSdk
 floor: do not build native code for devices that the manifest admits and the NDK does not support.
 
 ```bash
+abi=arm64-v8a   # or armeabi-v7a, x86_64, x86
+case "$abi" in
+  arm64-v8a)   driver=aarch64-linux-android ;;
+  armeabi-v7a) driver=armv7a-linux-androideabi ;;   # the NDK driver, not the Rust target
+  x86_64)      driver=x86_64-linux-android ;;
+  x86)         driver=i686-linux-android ;;
+esac
 ndk_min=$(jq -r '.min' "$ANDROID_NDK_HOME/meta/platforms.json")
 ndk_max=$(jq -r '.max' "$ANDROID_NDK_HOME/meta/platforms.json")
-abi_min=$(jq -r '."arm64-v8a".min_os_version' "$ANDROID_NDK_HOME/meta/abis.json")
+abi_min=$(jq -r --arg abi "$abi" '.[$abi].min_os_version' "$ANDROID_NDK_HOME/meta/abis.json")
 test "$MIN_SDK" -ge "$ndk_min" || { echo "minSdk $MIN_SDK < NDK floor $ndk_min" >&2; exit 1; }
 api=$(( MIN_SDK > abi_min ? MIN_SDK : abi_min ))
 api=$(( api > ndk_max ? ndk_max : api ))
-test -x "$NDK_BIN/aarch64-linux-android${api}-clang" \
-  || { echo "no NDK driver for API $api" >&2; exit 1; }
+test -x "$NDK_BIN/${driver}${api}-clang" \
+  || { echo "no NDK driver ${driver}${api}-clang for $abi" >&2; exit 1; }
 ```
 
 In NDK r30 both floors are 21 for the four ABIs, and drivers exist for API 21 to 37. A `minSdk`

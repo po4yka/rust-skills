@@ -39,7 +39,7 @@ in the baseline file, not in prose, and update the baseline in a separate commit
 reason.
 
 Read [references/elf-verification.md](references/elf-verification.md) when you write or change the
-gate script, or when the size gate fails: it has the audit commands and the linker size flags.
+gate script, or when the size gate fails: it has the check commands and the size audit.
 Read [references/release-packaging.md](references/release-packaging.md) when you configure native
 debug symbols, prove a release closure, run the installed smoke, or publish an AAR or Prefab
 package.
