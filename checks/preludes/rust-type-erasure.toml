@@ -1,6 +1,6 @@
 # Preludes for the rust-type-erasure skill. Format: checks/README.md.
 
-# The trait pair and the store come from the rung-three block. The section names
+# The trait pair and the store come from references/gat-anymap.md. The section names
 # no items for `Extractor`, and the block elides the impl body with `/* ... */`,
 # so the stub trait is empty: the prelude checks the impl header and its bound.
 [[block]]
