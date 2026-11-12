@@ -150,7 +150,8 @@ Read [references/containers-and-zig.md](references/containers-and-zig.md) to set
 ## Run foreign-architecture tests
 
 `cargo test --target <triple>` runs each test binary through `runner`. On Rust 1.99.1 doctests go
-through the same runner. With `qemu-user` installed, the runner from "Configure a target" runs an
+through the same runner; mark a doctest that cannot run on a target with an `ignore-<target-substring>`
+fence attribute such as `ignore-aarch64` (Rust 1.88 and later). With `qemu-user` installed, the runner from "Configure a target" runs an
 aarch64 glibc binary; `-L` (or `QEMU_LD_PREFIX`) names the directory that holds the target
 loader. A static musl binary needs no `-L`. With `qemu-user-binfmt`, the kernel starts foreign
 binaries directly, but a glibc binary still needs `QEMU_LD_PREFIX`.
