@@ -72,7 +72,7 @@ skill. It pins the content; it does not pin which skills a bundle contains, so c
 your bundle from [bundles.toml](bundles.toml).
 
 ```bash
-gh skill install po4yka/rust-skills rust-unsafe --pin v0.3.0
+gh skill install po4yka/rust-skills rust-unsafe --pin v0.4.0
 ```
 
 <details>
@@ -81,31 +81,31 @@ gh skill install po4yka/rust-skills rust-unsafe --pin v0.3.0
 ```bash
 # language
 for s in rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-variance rust-callback-bounds rust-iterator-impl rust-type-erasure rust-macros; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
 done
 # design
 for s in rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli rust-error-handling; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
 done
 # build
 for s in cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std rust-cross-compilation; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
 done
 # testing
 for s in rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port rust-review; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
 done
 # concurrency
 for s in memory-model rust-async-internals rust-unsafe rust-pin-projection rust-send-sync rust-event-loop-state; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
 done
 # production
 for s in rust-performance rust-hot-path rust-copy-on-write rust-debugging rust-observability rust-networking rust-database; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
 done
 # ffi
 for s in rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel rust-cxx rust-pyo3; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
 done
 ```
 
@@ -114,10 +114,10 @@ done
 **2. Claude Code plugin marketplace, pinned by the marketplace ref.** Add the marketplace at a
 release tag, then install a bundle plugin. The installed plugin records the commit SHA of that
 tag as its version, and it changes only when you add the marketplace at a newer tag. Without the
-`#v0.3.0` suffix the marketplace tracks `main`.
+`#v0.4.0` suffix the marketplace tracks `main`.
 
 ```text
-/plugin marketplace add po4yka/rust-skills#v0.3.0
+/plugin marketplace add po4yka/rust-skills#v0.4.0
 /plugin install rust-skills-language@rust-skills
 ```
 
@@ -128,7 +128,7 @@ it at a release tag, install a bundle plugin, and start a new session. Without `
 marketplace tracks `main`.
 
 ```bash
-codex plugin marketplace add po4yka/rust-skills --ref v0.3.0
+codex plugin marketplace add po4yka/rust-skills --ref v0.4.0
 codex plugin add rust-skills-language@rust-skills
 ```
 
@@ -181,7 +181,7 @@ commit on `main` passed the required CI gates; the evaluations run only before a
   ```
 
   For Codex, this `.codex/config.toml` registers the marketplace and enables the bundle. The
-  first `codex plugin marketplace upgrade` in that repository installs it. Add `ref = "v0.3.0"`
+  first `codex plugin marketplace upgrade` in that repository installs it. Add `ref = "v0.4.0"`
   under `[marketplaces.rust-skills]` to pin a tag.
 
   ```toml

@@ -220,7 +220,8 @@ Tests: `scripts/test_agent_hook.py`.
   `PLUGIN_COMPONENTS`) exists at the repository root: every plugin's source is `"./"`, so a
   client would install it next to the skills and run it on the consumer's machine;
 - descriptions stay under 5,000 characters per bundle (about 2,000 tokens, the skill listing of
-  a 200K-context client) and 20,000 in total, and each body stays under 4,800 estimated tokens
+  a 200K-context client); the catalog total is reported, not capped; and each body stays under
+  4,800 estimated tokens
   (characters / 2.5; the calibration is in `research/token-calibration-2026-10.md`). The ratio
   was calibrated against the counts `claude plugin details` projects, which is itself a character
   estimate, not a tokenizer; no count from a Claude tokenizer backs it yet;
