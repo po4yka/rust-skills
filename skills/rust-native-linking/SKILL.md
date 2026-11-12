@@ -105,7 +105,7 @@ their literal names. The `rust-debugging` skill covers demangling.
 
 Do not use `-Wl,--version-script` to hide exports of a Rust `cdylib`. rustc
 passes its own version script, and an extra map did not remove a
-`#[no_mangle]` export (lld, Rust 1.98.1). Compare the defined dynamic symbols
+`#[no_mangle]` export (lld, Rust 1.99.1). Compare the defined dynamic symbols
 with an allowlist instead.
 
 ## Emit linker instructions in dependency order
@@ -336,32 +336,15 @@ extract it into a temporary directory, and build it there. This proves that
 headers, native sources, and generated inputs enter the published archive.
 The `rust-crate-release` skill owns the complete package and publish gate.
 
-### Linux ELF
+Do not run `ldd` on an untrusted executable: it can run the program. Inspect
+`DT_NEEDED`, `RUNPATH`, and symbols with `readelf` first. On macOS since Rust
+1.91, rustc passes the SDK root to the linker, so a library in `/usr/local/lib`
+can fail with `ld: library 'foo' not found`; find the prefix with `pkg-config`
+and emit `cargo::rustc-link-search=native=<prefix>/lib`.
 
-Prefer a relocatable `DT_RUNPATH` such as `$ORIGIN/../lib` for an application
-that ships private libraries. Quote `$ORIGIN` in shell commands so the shell
-does not expand it. Remember that `DT_RUNPATH` applies only to direct
-dependencies. Give each shared object a valid path to its own dependencies.
-
-Use `LD_LIBRARY_PATH` for diagnosis, not as the installed product contract.
-Do not run `ldd` on an untrusted executable. Inspect `DT_NEEDED`, `RUNPATH`,
-and symbols with `readelf` first.
-
-### macOS Mach-O
-
-Give a relocatable library an install name such as `@rpath/libfoo.dylib`.
-Give the executable or loading library an `LC_RPATH` such as
-`@loader_path/../Frameworks`. Inspect the result with `otool -L` and
-`otool -l`. Use `install_name_tool` only as an explicit packaging step. Prefer
-correct linker inputs so rebuilt artifacts do not need repair.
-
-Embed and sign frameworks or dylibs in the final bundle. Check every required
-architecture slice with `lipo -info`.
-
-Since Rust 1.91, rustc passes the SDK root to the linker, and a library in
-`/usr/local/lib` may no longer be found implicitly. The link then fails with
-`ld: library 'foo' not found`. Discover the real prefix with `pkg-config` and
-emit `cargo::rustc-link-search=native=<prefix>/lib`.
+Read [references/runtime-loading.md](references/runtime-loading.md) when you set
+an ELF `RUNPATH` or a Mach-O install name and `LC_RPATH`, or embed frameworks
+in a bundle.
 
 ## Authoritative references
 
