@@ -56,7 +56,8 @@ Each check proves one claim, and each has a trap that prints a clean result for 
 # A bounds check is gone: the count of checks left in the probe file.
 rustc -O --emit asm --crate-type=lib probe.rs -o out.s && grep -c 'panic_bounds_check' out.s
 
-# The layout of a type: discriminant, variants largest first, fields, padding. Nightly only.
+# The layout of a type: discriminant, variants largest first, fields, padding. Nightly only;
+# on stable, print size_of, align_of, and core::mem::offset_of! for the suspect types.
 # Scoped to one crate; the RUSTFLAGS form dumps every dependency and invalidates the cache.
 touch src/lib.rs && cargo +nightly rustc --release -q -- -Zprint-type-sizes
 
@@ -67,9 +68,8 @@ cargo build --release -p dep && nm -g target/release/libdep.rlib | grep '_R'
 - Mark every probe function `#[inline(never)]`. Without it a small `pub fn` with no caller is
   not emitted at all: the file comes out 54 bytes long, `grep -c` prints 0, and that reads
   exactly like a removed check.
-- Keep the `touch`. The dump is a compile-time side effect, not an artifact, so a second run of
-  an unchanged crate prints nothing, and that reads exactly like a clean result. Pipe the dump
-  through `top-type-sizes` on a real crate to compact it.
+- Keep the `touch`. The dump is a compile-time side effect, so a second run of an unchanged
+  crate prints nothing, which reads like a clean result.
 - Run the `nm` probe in a non-incremental release build. Incremental and `dev` builds skip the
   inference, so every helper reads as "not inlinable".
 
