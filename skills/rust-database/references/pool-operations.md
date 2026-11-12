@@ -1,7 +1,7 @@
 # Pool operations
 
 The deployment-wide connection budget, pool controls, startup behavior, and
-pool metrics behind "Budget database connections" in `SKILL.md`. Engine and
+pool metrics behind the "Conditional references" table in `SKILL.md`. Engine and
 crate defaults are in `engine-and-driver-notes.md`.
 
 ## Budget database connections
