@@ -38,9 +38,12 @@ decide. A port is not the place for a silent fix.
 Run these when a Rust toolchain is present, and fix every finding before you report:
 
 ```bash
+cargo generate-lockfile   # a new crate only: --locked fails when Cargo.lock is missing
 cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
 ```
+
+Commit the new `Cargo.lock` with the port.
 
 | Claim | Check | A pass does not prove |
 | --- | --- | --- |
