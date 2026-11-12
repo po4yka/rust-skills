@@ -1,6 +1,6 @@
 ---
 name: rust-tdd
-description: Use when writing Rust code test-first (TDD, red-green-refactor), reproducing a bug as a failing test, pinning behavior before a refactor, or reviewing whether tests came first. Also for hand-written fakes with a fault-injection queue, async tokio tests with paused time, and the review of a golden-contract bless. Not for loom, proptest, fuzzing, mutation testing, or golden-file mechanics; use rust-test-tools.
+description: Use when writing Rust code test-first (TDD, red-green-refactor), reproducing a bug as a failing test, pinning behavior before a refactor, or reviewing whether tests came first. Also for hand-written fakes with a fault-injection queue, and async tokio tests with paused time. Not for loom, proptest, fuzzing, mutation testing, or golden files; use rust-test-tools.
 license: BSD-3-Clause
 ---
 
@@ -295,20 +295,9 @@ paused-clock rules and a gated-fake example.
 
 ## Golden contract tests
 
-A golden test compares output that another party parses with a committed fixture:
-serialized records, exported reports, generated code, protocol frames. The `rust-test-tools`
-skill, when it is installed, owns the harness mechanics: fixture layout, update mode, and
-byte-exact or pixel-exact comparison. These blessing rules apply to every golden test:
-
-1. Run golden tests read-only by default, in CI and in every normal run. Put the update path
-   behind one explicit switch, such as `BLESS_GOLDENS=1` or an `--update` flag.
-2. Bless only an intended contract change. An unexpected golden failure means the production
-   code changed behavior. Find out why before you bless.
-3. Read every changed fixture line with `git diff` before you commit. Explain the contract
-   change in the commit message.
-4. Replace volatile fields with deterministic placeholders before comparison: timestamps,
-   generated identifiers, ephemeral ports, temporary paths, host names. An unscrubbed field
-   fails on the second run.
+A golden test compares output that another party parses with a committed fixture. The
+`rust-test-tools` skill, when it is installed, owns golden files: the fixture layout, the bless
+switch, the rules to review a bless, and the scrubbing of volatile fields.
 
 ## Related skills
 

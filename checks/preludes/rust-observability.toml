@@ -54,6 +54,7 @@ file = "rust-observability/references/redaction-and-field-vocabulary.md"
 section = "The redacting visitor"
 block = 1
 items = '''
+pub const ENUM_FIELDS: &[&str] = &["stage"];
 pub const COUNT_FIELDS: &[&str] = &["item_count", "byte_count"];
 pub const FLAG_FIELDS: &[&str] = &["cancelled"];
 /// Maps a value of an ENUM_FIELDS name to its known case; None drops it.

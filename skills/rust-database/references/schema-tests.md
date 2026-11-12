@@ -32,7 +32,8 @@ database or schema after the pool closes.
 - inject one serialization conflict or deadlock and prove bounded retry;
 - cancel a transaction and prove rollback and pool recovery;
 - run a schema or query metadata freshness check when the driver supports it
-  (sqlx: `cargo sqlx prepare --workspace --check`, which exits 1 when `.sqlx`
+  (sqlx: `cargo sqlx prepare --workspace --check` against a migrated
+  `DATABASE_URL`, which exits 1 when `.sqlx`
   is stale).
 
 ## Cancellation test points

@@ -43,11 +43,8 @@ Set the variable for both commands. `cargo flamegraph` runs its own `cargo build
 without the flag replaces the binary. For another Linux target that links with lld or mold, use
 its own variable, for example `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS`.
 
-`CARGO_TARGET_<TRIPLE>_RUSTFLAGS` is the environment form of `[target.<triple>] rustflags`. Cargo
-joins it with the config-file `[target.*]` entries (checked on cargo 1.98.1). Like any target
-entry, it makes Cargo drop `[build] rustflags`. A `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS`
-variable replaces every target entry, this one included, so the stacks break again.
-[build-configuration.md](build-configuration.md) section 1 shows the precedence.
+A `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` variable replaces this one, so the stacks break
+again; [build-configuration.md](build-configuration.md) section 1 owns the precedence rules.
 
 ### Unwinding: DWARF or frame pointers
 

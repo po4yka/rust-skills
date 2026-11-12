@@ -1,6 +1,6 @@
 ---
 name: rust-macros
-description: Use when writing, debugging, or reviewing a Rust macro_rules! declarative macro, a procedural macro (derive, attribute, or function-like) built on syn and quote, or the facade and derive crate pair that ships one. Triggers on "cannot find macro in this scope", "recursion limit reached while expanding", "proc-macro derive panicked", "trailing semicolon in macro used in expression position", "cyclic package dependency", "macro_rules", "write a derive macro", "proc macro", "macro hygiene", "fragment specifier", "syn 3", "cargo expand".
+description: Use when writing, debugging, or reviewing a Rust macro_rules! macro, a procedural macro (derive, attribute, or function-like) built on syn and quote, its $crate paths and trybuild compile-fail tests, or its facade and derive crate pair. Triggers on "cannot find macro in this scope", "recursion limit reached while expanding", "proc-macro derive panicked", "trailing semicolon in macro used in expression position", "cyclic package dependency", "write a derive macro", "proc macro", "macro hygiene", "fragment specifier", "syn 3", "cargo expand".
 license: BSD-3-Clause
 ---
 
@@ -25,10 +25,8 @@ A macro costs compile time, a second crate in the procedural case, diagnostics t
 the invocation instead of the defect, and an IDE that cannot look inside. Take a non-macro row
 when one fits.
 
-Do not copy nightly macro syntax. As of Rust 1.98.1, a `macro_rules!` arm written
-`attr() (...) => ...` fails with ``error[E0658]: `macro_rules!` attributes are unstable``, an arm
-written `derive() (...) => ...` fails with ``error[E0658]: `macro_rules!` derives are unstable``,
-and `${count($x)}` fails with `error[E0658]: meta-variable expressions are unstable`.
+Do not copy nightly macro syntax: `attr()` and `derive()` arms and `${count($x)}` fail with
+E0658 on stable ([messages](references/declarative-macros.md#nightly-macro-syntax)).
 
 ## Route the symptom
 
@@ -85,7 +83,8 @@ crate.
 Set up `trybuild` with `trybuild = "1"` under `[dev-dependencies]` and a `#[test]` that calls
 `trybuild::TestCases::new().compile_fail("tests/ui/*.rs")`. Run
 `TRYBUILD=overwrite cargo test --locked` to write the `.stderr` files, and review each one before
-you commit it.
+you commit it. They hold rustc's rendered diagnostics, which change between releases. Run the
+`trybuild` test on one pinned toolchain only, and rerun `TRYBUILD=overwrite` on each bump.
 
 A green run proves only the input shapes you tested. Add one case per supported shape: a
 generic type, a `PhantomData<T>` field, a unit struct, and each rejected shape. Read

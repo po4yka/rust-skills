@@ -6,10 +6,12 @@ implementation works as a marker. Pick the marker that removes only what you mea
 | Marker field | `Send` | `Sync` |
 | --- | --- | --- |
 | `PhantomData<fn() -> T>` | kept | kept |
-| `PhantomData<Cell<T>>` | kept | removed |
-| `PhantomData<MutexGuard<'static, T>>` | removed | kept |
-| `PhantomData<*const T>` | removed | removed |
-| `PhantomData<*mut T>` | removed | removed |
+| `PhantomData<Cell<()>>` | kept | removed |
+| `PhantomData<MutexGuard<'static, ()>>` | removed | kept |
+| `PhantomData<*const ()>` | removed | removed |
+
+Write `()` in the last three markers. With `T` in its place, "kept" becomes conditional:
+`Cell<T>` is `Send` only when `T: Send`, and `MutexGuard<'_, T>` is `Sync` only when `T: Sync`.
 
 A marker that names your own `T` also sets the variance in `T` and the drop-check ownership. The
 `rust-variance` skill, when it is installed, owns the table for both.

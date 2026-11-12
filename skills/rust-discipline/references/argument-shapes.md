@@ -263,9 +263,10 @@ decision.
 
 ## Callback bounds past the plain borrow
 
-`SKILL.md` gives the two base rules: `for<'a>` when the callback must not keep the reference, and
-`for<'a> Fn(&'a T) -> &'a K` with `K: ?Sized` when it returns a borrow of its argument. This
-section holds the rest. Measured on rustc 1.98.1.
+`SKILL.md` gives the two base rules: `F: Fn(&T) -> R`, which elision already makes higher-ranked,
+when the callback must not keep the reference, never a callback argument tied to a lifetime
+parameter of the function or struct; and `F: Fn(&T) -> &K` with `K: ?Sized` when it returns a
+borrow of its argument. This section holds the rest. Measured on rustc 1.98.1.
 
 **Pick the bound from three separate axes.** `move` decides the capture mode. The body decides
 the trait: a read-only body gives `Fn` even under `move`, and a body that moves a non-`Copy`
@@ -440,7 +441,7 @@ fn main() {
 ```
 
 The receiver-shape table for builders, and the E0382 that a consuming setter gives inside a loop,
-are in [type-and-trait-traps.md](type-and-trait-traps.md).
+are in [ownership-and-concurrency-traps.md](ownership-and-concurrency-traps.md).
 
 ---
 

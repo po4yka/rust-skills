@@ -28,8 +28,16 @@ shipped assets as zero.
 opt-level = "s"
 lto = true
 codegen-units = 1
-strip = "symbols"
+strip = "debuginfo"
 ```
+
+Do not use `strip = "symbols"` on a WebAssembly target. With Rust 1.99.1 on
+`wasm32-unknown-unknown` it removes the `name`, `producers`, and
+`target_features` custom sections; `wasm-tools objdump` lists all three with
+`"debuginfo"` and none with `"symbols"`. `wasm-opt` reads `target_features` to
+learn which features the module uses, so without it the optimizer can reject
+bulk-memory or other default instructions. If you must strip symbols, pass every
+`--enable-*` flag of the next section to `wasm-opt`.
 
 The WebAssembly targets already abort on panic, so the profile needs no `panic`
 key. The release profile applies to every target in the workspace, so a native

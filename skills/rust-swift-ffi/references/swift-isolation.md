@@ -48,10 +48,35 @@ Measured under MainActor default isolation:
 With `SWIFT_APPROACHABLE_CONCURRENCY = YES`, which the Xcode 27 project
 template sets, a plain `nonisolated` async method runs on the caller's actor
 (SE-0461). That can be the main actor, so a blocking Rust call hangs the UI.
-Mark the method `@concurrent` (Swift 6.2+), or make the call in
-`Task.detached`. Swift 6 mode lets a main-actor caller use a `@concurrent`
-method only on a `Sendable` wrapper. Otherwise it reports `sending
-'self.engine' risks causing data races`.
+
+Choose the thread by the length of the call:
+
+- **Short call** (it returns without waiting on I/O, a lock, or a long
+  computation): mark the method `@concurrent` (Swift 6.2+), or make the call in
+  `Task.detached`. Swift 6 mode lets a main-actor caller use a `@concurrent`
+  method only on a `Sendable` wrapper. Otherwise it reports `sending
+  'self.engine' risks causing data races`.
+- **Long call** (it blocks for seconds, waits on I/O, or runs a job with
+  progress): run it on a dedicated `Thread` or on a `DispatchQueue` that the
+  wrapper owns, and bridge the result with `withCheckedThrowingContinuation` or
+  with the `AsyncThrowingStream` continuation. `@concurrent` and
+  `Task.detached` both run on the cooperative pool. That pool is limited to
+  about the CPU core count and does not grow when a thread blocks, so a few long
+  calls stall every `await` in the process.
+
+Bound the dedicated threads: cap the number of concurrent long jobs in Rust or
+in the wrapper, and do not start one thread per call without that cap.
+
+```swift
+nonisolated func render(_ input: RenderInput) async throws -> RenderOutput {
+    let engine = self.engine                     // a Sendable local
+    return try await withCheckedThrowingContinuation { continuation in
+        Thread {
+            continuation.resume(with: Result { try engine.render(input) })
+        }.start()
+    }
+}
+```
 
 ## Autorelease pools on Rust threads
 

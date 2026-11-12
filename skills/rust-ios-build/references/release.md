@@ -3,8 +3,21 @@
 Use these steps after the build checks in `SKILL.md` pass. Each step that signs,
 uploads, or publishes needs the user's authorization for that exact action.
 
-Contents: remote SwiftPM archive, XCFramework signing, symbol preservation,
-privacy manifest.
+Contents: release Xcode, remote SwiftPM archive, XCFramework signing, symbol
+preservation, privacy manifest.
+
+## Choose the release Xcode
+
+As of 2026-09, App Store Connect accepts only uploads built with Xcode 26 or
+later and the iOS 26 SDK or later
+([Apple upcoming requirements](https://developer.apple.com/news/upcoming-requirements/)).
+From April 2027, uploads need the iOS 27 SDK or later
+([Apple news, 2026-09-09](https://developer.apple.com/news/?id=k1mtkt1k)).
+Plan the release Xcode for the date of the upload. Xcode 26 and 27 accept iOS
+deployment targets from iOS 15. Xcode 27 supports only iOS 17 or later devices
+and simulators
+([Xcode system requirements](https://developer.apple.com/xcode/system-requirements/)).
+Choose the declared Xcode from these limits.
 
 ## Publish a remote SwiftPM binary target
 

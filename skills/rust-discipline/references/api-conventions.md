@@ -8,7 +8,11 @@ is listed only with a pointer.
 - [Naming](#naming)
 - [Standard traits](#standard-traits)
 - [Shape of functions and types](#shape-of-functions-and-types)
+- [Crate documentation](#crate-documentation)
 - [Rules owned elsewhere](#rules-owned-elsewhere)
+
+This file is the catalog's home for API method naming. The `rust-code-style` skill owns case
+lints, test names, and crate names.
 
 ## Naming
 
@@ -24,6 +28,7 @@ is listed only with a pointer.
 | C-FEATURE | A Cargo feature has a plain name (`std`, `serde`), not `use-std` or `with-serde`. A feature only adds API; it never removes an item or changes a signature | `cargo tree -e features` shows which crate turns a feature on; `cargo-workflows` owns unification |
 | (no code) | `len` comes with `is_empty` | `clippy::len_without_is_empty` |
 | (no code) | No `Manager`, `Helper`, `Util`, or `Service` name where the type has a real job to name; no module name repeated in the type (`http::Client`, not `http::HttpClient`) | `clippy::module_name_repetitions` (pedantic) for the second half |
+| (no code) | No abbreviation in a public name (`connection`, not `conn`). A local binding may abbreviate when the context is clear | Read the `pub` names |
 
 ## Standard traits
 
@@ -55,14 +60,21 @@ missing impl is a defect that only you can fix.
 | C-DEREF | `Deref` only on a smart pointer or an owning wrapper, never to fake inheritance | `trait-resolution.md` owns the traps |
 | (no code) | A builder-style or pure method that returns `Self` carries `#[must_use]` | `clippy::return_self_not_must_use`, `clippy::must_use_candidate` (both pedantic) |
 
+## Crate documentation
+
+| Code | Rule | Check |
+| --- | --- | --- |
+| C-CRATE-DOC | The crate root opens with `//!` docs that say what the crate does and show one example | `rustdoc::missing_crate_level_docs` under `cargo doc` (the `rust-lints` strict template sets it); read the example |
+| C-EXAMPLE | Every public module, type, trait, function, and macro has a rustdoc example that shows why a caller uses it | Read the docs. Stable rustdoc has no lint for it: `rustdoc::missing_doc_code_examples` is an unknown lint on Rust 1.99.1 |
+
 ## Rules owned elsewhere
 
 | Code | Owner |
 | --- | --- |
 | C-GOOD-ERR (error types implement `Error`, `Send`, `Sync`; meaningful messages) | `rust-code-style`, the error-handling section |
-| C-FAILURE, C-QUESTION-MARK, C-LINK, C-CRATE-DOC, C-EXAMPLE (rustdoc) | `rust-code-style`, the rustdoc contract |
+| C-FAILURE, C-QUESTION-MARK, C-LINK (rustdoc `# Errors`/`# Panics`/`# Safety` sections, `?` in examples, intra-doc links) | `rust-code-style`, the rustdoc contract |
 | C-SEALED, C-STRUCT-PRIVATE, C-NEWTYPE, C-NEWTYPE-HIDE | `type-level-api.md` in this skill |
 | C-STABLE (a stable crate's public dependencies are stable) and the SemVer evolution of a published API | `rust-crate-release`; `cargo semver-checks` is the check |
 | C-SEND-SYNC (public types are `Send` and `Sync` where possible) | `rust-send-sync`; a compile-time `fn assert_send<T: Send>() {}` call is the check |
-| C-DTOR-FAIL, C-DTOR-BLOCK (a destructor never fails or blocks) | `drop-and-raii.md` in this skill |
+| C-DTOR-FAIL, C-DTOR-BLOCK (a destructor never fails or blocks) | `drop-and-raii.md` in this skill, "A destructor must not fail or block" |
 | C-SERDE (serde behind a feature named `serde`) | `rust-serde`; gate each impl with `#[cfg_attr(feature = "serde", derive(serde::Serialize))]` |

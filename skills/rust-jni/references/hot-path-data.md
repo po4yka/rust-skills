@@ -76,8 +76,8 @@ owner. Recreate the slice from the retained buffer only inside a method that
 borrows the owner, and do not let the slice escape that borrow. Drop the slice
 before you drop the global reference.
 
-The `no other thread writes it concurrently` half of that SAFETY comment is a
-contract with the JVM side, not something Rust can check. Write it down in the
+The "no Java or native thread writes the bytes" half of that caller contract is
+a contract with the JVM side, not something Rust can check. Write it down in the
 binding class as well: state which side owns the buffer between calls.
 
 ## JByteArray

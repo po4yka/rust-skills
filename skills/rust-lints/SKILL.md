@@ -1,6 +1,6 @@
 ---
 name: rust-lints
-description: Use when editing workspace.lints, clippy.toml, or rustfmt.toml, choosing a rustc, clippy, or rustdoc lint level, rolling out a stricter lint, reviewing an allow or expect suppression, or triaging a red clippy, cargo fmt, or cargo doc gate. Triggers on [lints] workspace = true, -D warnings, CARGO_BUILD_WARNINGS, unfulfilled_lint_expectations, allow_attributes, disallowed-methods, and the clippy msrv. Not for deny.toml license, advisory, or ban policy; use rust-security.
+description: Use when editing workspace.lints, clippy.toml, or rustfmt.toml, choosing a rustc, clippy, or rustdoc lint level, rolling out a stricter lint, reviewing an allow or expect suppression, or triaging a red clippy, cargo fmt, or cargo doc gate. Triggers on [lints] workspace = true, -D warnings, CARGO_BUILD_WARNINGS, unfulfilled_lint_expectations, disallowed-methods, and clippy msrv. Not for deny.toml license, advisory, or ban policy; use rust-security.
 license: BSD-3-Clause
 ---
 
@@ -100,6 +100,14 @@ rg '#!?\[(allow|expect)\(' --type rust -n
 rg 'cfg_attr\([^)]*(allow|expect)\(' --type rust -n
 ```
 
+Audit [Crate-level attributes](#crate-level-attributes). Each crate root listed must own `unsafe`:
+
+```bash
+rg --files-without-match 'forbid\(unsafe_code\)' -g '**/src/{lib,main}.rs'
+# without rg:
+grep -rL --include=lib.rs --include=main.rs --exclude-dir=target 'forbid(unsafe_code)' .
+```
+
 ## The `[workspace.lints]` table
 
 Read [references/workspace-lints.md](references/workspace-lints.md) when you create or change
@@ -142,7 +150,7 @@ allow-expect-in-tests = true
 # (it already has SQLite, WebAssembly, GitHub, iOS, macOS) and appends yours.
 doc-valid-idents = ["..", "UniFFI"]
 
-stack-size-threshold         = 4096   # large_stack_frames fires above 4 KiB (default 512000)
+stack-size-threshold         = 4096   # large_stack_frames: a whole frame over 4 KiB (default 512000)
 future-size-threshold        = 16384  # default; large_futures fires above 16 KiB
 enum-variant-size-threshold  = 200    # default; large_enum_variant compares the two largest variants
 large-error-threshold        = 128    # default; result_large_err fires when Err reaches it
@@ -195,8 +203,7 @@ use_small_heuristics = "Max"
 workspace steady-state edition, so that `cargo fmt` and a direct `rustfmt` sort imports the same
 way. Without either key, a direct `rustfmt` call uses style edition 2015. It then sorts
 `use a::{u8x, U8}` differently from `cargo fmt` on an edition-2024 crate, and CI fails on files
-that look formatted. `edition` alone also sets the style edition; set both so the intent is
-explicit. During a staged edition migration, keep both keys at the old edition until the last
+that look formatted. During a staged edition migration, keep both keys at the old edition until the last
 crate moves; the `cargo-workflows` skill owns that sequence. Verified on 1.98.1:
 stable rustfmt accepts `style_edition` without the unstable-option warning.
 
@@ -247,12 +254,9 @@ defined in the same crate is not exempt.
    `cargo clippy -- -D unsafe_code -D clippy::undocumented_unsafe_blocks` reports nothing.
    Audit the proc-macro dependencies of a binding crate with the `rust-unsafe` skill.
 
-A raw JNI layer can trip `missing_safety_doc` and `not_unsafe_ptr_arg_deref`. Make a raw entry
-point non-`pub`: the `no_mangle` export does not need `pub`, and neither lint then fires. Never
-suppress `not_unsafe_ptr_arg_deref`: a safe `pub fn` that dereferences a caller's raw pointer lets
-safe code cause undefined behavior. Remove `pub` instead. The binding-layer section of
-[references/lint-catalog.md](references/lint-catalog.md#binding-layer-lints)
-has the details. The `rust-jni` skill owns the entry-point signatures.
+Never suppress `not_unsafe_ptr_arg_deref`: safe code could then pass a bad pointer. Make the
+export `unsafe` with a `# Safety` section; removing `pub` only hides the lint.
+[references/lint-catalog.md](references/lint-catalog.md#binding-layer-lints) has the details.
 
 ## Suppressions
 

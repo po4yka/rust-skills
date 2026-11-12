@@ -1,8 +1,25 @@
 # Privacy-safe panic hook
 
 Read this file when you install or review a panic hook. It holds the catalog's single copy of
-the report block; other skills point here. The rules in the "Report the panic without exposing
-its payload" section of `hosts-hooks-and-tasks.md` apply to every line of it.
+the report block; other skills point here.
+
+A guard that returns the panic code with no other signal turns a bug into a mystery. Install a
+hook that emits one bounded structured record. Do not inspect the panic payload in shipped code:
+it can contain input data, paths, identifiers, or secrets. Rules:
+
+- Let the application-owned outermost Rust FFI bootstrap own `set_hook`. An embedded component
+  exposes a redacted handler and never replaces an unknown process-global hook.
+- Do not chain the default hook in a shipped embedded process. It formats the payload and file
+  path. Keep it only in a local host binary whose stderr is not forwarded to telemetry.
+- Map the file path to a closed site code. Emit only that code plus the bounded numeric line and
+  column. Do not format `PanicHookInfo`, emit a file path, or capture a backtrace into a shipped
+  platform log.
+- The hook must not panic. A panic inside the hook aborts the process with `thread panicked
+  while processing panic. aborting.` (Rust 1.99.1).
+- Install the hook before any task or thread starts. A panic that crosses a task boundary loses
+  its location, and only the hook still has it.
+- `PanicHookInfo` needs Rust 1.81. Below MSRV 1.81, the hook argument is `PanicInfo`, with the
+  same `location()`.
 
 ```rust
 #[derive(Clone, Copy)]
@@ -14,10 +31,11 @@ enum PanicSite {
 
 fn classify_site(file: &str) -> PanicSite {
     // Cargo passes a workspace member as `<member-dir>/src/...` and a registry
-    // dependency as an absolute path, so match a segment, not a prefix.
-    if file.contains("src/boundary/") {
+    // dependency as an absolute path, so match a segment, not a prefix. The path
+    // keeps the separator of the build host: a Windows build gives `src\boundary\`.
+    if file.contains("src/boundary/") || file.contains(r"src\boundary\") {
         PanicSite::Boundary
-    } else if file.contains("src/engine/") {
+    } else if file.contains("src/engine/") || file.contains(r"src\engine\") {
         PanicSite::Engine
     } else {
         PanicSite::Unknown

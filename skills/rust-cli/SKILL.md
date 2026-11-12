@@ -43,7 +43,7 @@ the change classification, the deprecation procedure, and the format rules.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `tool \| head` prints a panic | `println!` hides `BrokenPipe` | Propagate writes and map stdout `BrokenPipe` to success |
+| `tool \| head` prints a panic | `println!` panics on `BrokenPipe` | Propagate writes and map stdout `BrokenPipe` to success |
 | Last rows missing, status 0 | The drop-time flush failed and `BufWriter` ignored the error, or `process::exit` skipped the drop | Call `flush()` and return `ExitCode` from `main` |
 | Error prints as `Error: Os { code: 2, kind: NotFound, message: "No such file or directory" }` with status 1 | `main` returns `Result` and std prints `Debug` | Print a `Display` diagnostic and return `ExitCode` |
 | JSON parser sees a banner | Diagnostics use stdout | Move all non-data output to stderr |
@@ -71,7 +71,7 @@ With `clap`, add one test that calls `debug_assert()` on the command, such as
 duplicate short flag, as a debug assertion only on a path that reaches it. Put
 this test in the crate that defines `Cli`, such as the binary's
 `#[cfg(test)] mod tests`, because an integration test cannot import a binary
-crate's items. clap compiles these asserts only with `debug_assertions`, so the
+crate's items. As of clap 4.6, these asserts compile only with `debug_assertions`, so the
 test proves nothing under `cargo test --release`.
 
 Cover each contract surface that the change touches with a process test. A new
@@ -167,9 +167,7 @@ operation. Create the temporary file with `OpenOptions::create_new(true)` under
 an unpredictable name. On Unix, set the mode that the metadata policy requires,
 such as `OpenOptionsExt::mode(0o600)` for sensitive output, in the same open
 call. Never use `File::create` on a predictable temporary name: it follows a
-planted symbolic link and truncates its target. A rename across filesystems is
-not atomic. Do not implement overwrite as remove-then-rename, because a crash
-between the calls loses the old output.
+planted symbolic link and truncates its target.
 
 `std::fs::rename` replaces an existing destination, so it is never a
 no-clobber commit. An existence check followed by `rename` races with a
@@ -207,7 +205,7 @@ prints the `Debug` form, such as
 `Error: Custom { kind: NotFound, error: "config.toml missing" }`, and exits
 with status 1.
 
-Map parser errors before application work starts. With `clap`, `Error::exit()`
+Map parser errors before application work starts. As of clap 4.6, `Error::exit()`
 prints help and version to stdout with status 0 and a usage error to stderr with
 status 2, then calls `std::process::exit`. `Cli::parse()` calls `Error::exit()`,
 so parse before you create a buffer or guard. For a clap error raised after work
@@ -274,7 +272,7 @@ Apply these rules:
 - Validate numeric ranges in the parser, such as
   `clap::value_parser!(u16).range(1..)`. Do not defer them to runtime.
 - State whether a repeated scalar uses first-wins, last-wins, or an error.
-  clap 4 rejects a second `ArgAction::Set` occurrence unless
+  As of clap 4.6, a second `ArgAction::Set` occurrence is an error unless
   `Command::args_override_self(true)`, or `Arg::overrides_with` that names the
   argument's own id, makes it last-wins.
 - Do not use prefix matching for subcommands or enum values. A later addition
@@ -321,27 +319,27 @@ terminal and non-terminal defaults and the color precedence rules.
 ## Terminate gracefully
 
 Treat Ctrl-C as a cancellation request, not as permission to abandon a write at
-an arbitrary instruction. Install signal handling before long-running work.
-Use the runtime or signal library already present.
-
-A signal callback must do the minimum work allowed by its API. Do not allocate,
-lock arbitrary application mutexes, or write complex diagnostics from a raw
-Unix signal handler. Prefer a safe runtime notification facility.
+an arbitrary instruction. std has no signal API. An unhandled `SIGINT` or
+`SIGTERM` ends the process without destructors, so a temporary-file guard never
+removes its file: give each temporary file a recognizable name, such as
+`.<dest>.<random>.tmp`. Before long-running work, install a handler that only
+sets a flag or wakes a task: `tokio::signal::ctrl_c` when the binary runs tokio,
+otherwise the `ctrlc` or `signal-hook` crate setting an `AtomicBool`.
 
 Do not claim cleanup for `SIGKILL`, power loss, process abort, or forced Windows
 termination. Atomic namespace replacement protects readers from a partially
 written destination. It does not prove post-crash durability.
 
 Read [`references/signals.md`](references/signals.md) when you implement or
-change Ctrl-C, `SIGTERM`, or `SIGHUP` handling. It holds the per-platform
-signal set, the shutdown sequence, and the durability test rule.
+change Ctrl-C, `SIGTERM`, or `SIGHUP` handling. It holds the handler choice,
+the per-platform signal set, the shutdown sequence, and the durability rule.
 
 ## Generate completions from the parser
 
 Generate shell completions from the exact command definition for the released
 binary version. With `clap`, keep
 `clap_complete` on the same major version as `clap` and generate static scripts
-with `clap_complete::aot::generate` or `clap_complete::aot::generate_to`. Do not
+with `clap_complete::aot::generate` or `generate_to` (clap_complete 4.6). Do not
 make completion generation execute network requests, read secrets, or inspect
 user configuration.
 

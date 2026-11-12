@@ -1,6 +1,6 @@
 ---
 name: uniffi-boundary
-description: Use when writing or reviewing the exported Rust surface of a UniFFI crate that generates Kotlin and Swift bindings, or when fixing a UniFFI macro or bindgen error. Includes Record versus Object, callback traits, custom types, and async arguments. Not for packaging or version skew (uniffi-packaging-versioning) or for error, progress, and cancel semantics (ffi-error-progress-cancel). Triggers on uniffi::export, uniffi::Object, uniffi::Record, setup_scaffolding, UniFfiTag, export(foreign), callback_interface, custom_newtype, UnexpectedUniFFICallbackError, or UDL.
+description: Use when writing or reviewing the exported Rust surface of a UniFFI crate for Kotlin and Swift, or fixing a UniFFI macro or bindgen error. Includes Record versus Object, callback traits, custom types, and async exports. Not for packaging or version skew (uniffi-packaging-versioning) or error, progress, and cancel semantics (ffi-error-progress-cancel). Triggers on uniffi::export, uniffi::Object, uniffi::Record, setup_scaffolding, UniFfiTag, export(foreign), callback_interface, custom_newtype, UnexpectedUniFFICallbackError, UDL, async_runtime, or there is no reactor running.
 license: BSD-3-Clause
 ---
 
@@ -35,8 +35,7 @@ upgrade. The `uniffi-packaging-versioning` skill owns the upgrade.
 | `&[u8]` argument without a copy (Kotlin direct `java.nio.ByteBuffer`) | 0.32 |
 | `HashSet<T>`, `Box<T>` (parameters, enum variants, recursive types), `async_runtime` on a trait export | 0.32 |
 
-Kotlin consumers need 0.32.1 or later for the device checksum fixes. The
-`uniffi-packaging-versioning` skill owns version pins.
+Kotlin consumers need 0.32.1 or later; `uniffi-packaging-versioning` owns pins.
 
 ## Scaffolding: proc-macros, no UDL
 
@@ -114,8 +113,8 @@ The error names the field type at the derive, not at a call site. Here it is
 - **`&[u8]` changes the Kotlin type.** In 0.32, a `&[u8]` argument becomes a direct
   `java.nio.ByteBuffer` in Kotlin, and a heap buffer throws `IllegalArgumentException`. The
   generated converter sends the base address of the buffer with `remaining()` bytes, so the
-  position must be 0: call `flip()` after `put()`, or pass `buf.slice()`. Otherwise Rust
-  silently reads the wrong bytes. Swift passes `Data`. `&[u8]` flows only from the foreign
+  position must be 0: after `put()`, call `flip()`. For data at `position..limit`, pass
+  `buf.slice()`. Otherwise Rust silently reads the wrong bytes. Swift passes `Data`. `&[u8]` flows only from the foreign
   side into Rust. It does not work in an async export or in a foreign-trait method.
 - **Records are copied.** Every Record field is converted on every call. A large `Vec<T>`
   field is a per-call cost, not a pointer handoff.
@@ -183,7 +182,7 @@ The Rust messages below are from rustc 1.98.1 with UniFFI 0.32.2.
 | Kotlin bindgen: `Async primary constructors not supported` | `async fn new` under `#[uniffi::constructor]` | Rename it to a named async constructor |
 | Async export panics on first poll: `there is no reactor running` | A Tokio timer, socket, or `spawn` without a Tokio runtime | Add `async_runtime = "tokio"` and the `uniffi` `tokio` feature, or spawn onto the process runtime `Handle` |
 | Kotlin runtime: `IllegalArgumentException` about a direct `ByteBuffer` | A heap buffer passed to a `&[u8]` argument | Use `ByteBuffer.allocateDirect` on the caller side |
-| Rust gets an empty or shifted `&[u8]` from Kotlin | The direct buffer has a non-zero position, often `put()` without `flip()` | Call `flip()` after `put()`, or pass `buf.slice()` |
+| Rust gets an empty, zeroed, or short `&[u8]` from Kotlin | `put()` without `flip()`: Rust reads from the base, `remaining()` bytes | Call `flip()` after `put()`; for data at `position..limit`, pass `buf.slice()` |
 | Swift app ends with a fatal error in a generated non-throwing call | A Rust panic, or a failed custom-type lift, in a non-throwing export | Make the export panic-free; declare an error on any export that takes a fallible custom type |
 | Generated Swift fails to compile with actor-isolation errors | The module uses `SWIFT_DEFAULT_ACTOR_ISOLATION=MainActor` (Swift 6.2+, uniffi-rs#2818) | Compile the generated Swift in a module with `nonisolated` default isolation; see `uniffi-packaging-versioning` |
 | Generated Kotlin and Swift disagree, or one is stale | Two generator runs at different versions, or a leftover `.udl` | Regenerate both from one build; delete the `.udl` |
@@ -203,11 +202,11 @@ The Rust messages below are from rustc 1.98.1 with UniFFI 0.32.2.
 
 A green clippy run does not prove that an export cannot panic: the lints do not see inner
 crates or panicking std APIs. A green Rust run does not prove that the generated Kotlin or
-Swift compiles, that Kotlin callers pass a direct buffer at position 0, or that a Swift
+Swift compiles, that Kotlin passes a flipped direct buffer, or that a Swift
 module's isolation accepts the generated code. Only a platform build and a smoke test on the
 pinned toolchain prove those. For a `&[u8]` export, the Kotlin smoke test fills a direct
 buffer with `put()`, sends it through the app's own call path, and asserts the length and
-the bytes that Rust received.
+the bytes Rust received.
 
 ## Foreign callbacks and listeners
 

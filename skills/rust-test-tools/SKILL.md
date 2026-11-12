@@ -81,10 +81,8 @@ Before you approve a change, confirm each item that applies:
 
 cargo-careful rebuilds the standard library with debug assertions and runs code that Miri cannot
 run (foreign calls, system calls). It is a cheap extra lane, not a UB proof: it does not check
-aliasing, general reads of uninitialized memory, use-after-free, or data races. A pure-Rust
-`unsafe` helper inside an FFI crate still needs a Miri run. The foreign paths still need an ASan
-run on the host, or a HWASan or MTE run on a device; the `rust-sanitizers-miri` skill owns that
-setup.
+aliasing, general reads of uninitialized memory, use-after-free, or data races. Miri and the
+sanitizers from "Pick the tool" still apply.
 
 Read [references/cargo-careful.md](references/cargo-careful.md) when you set up the lane (nightly
 and `rust-src`), need the list of checks, or a flag from `target.<triple>.rustflags` is missing
@@ -320,8 +318,9 @@ git diff -- tests/golden/                                                      #
 
 - Never set the bless variable in CI. A missing fixture must fail the run, and the helper
   panics for that reason.
-- Bless only an intended output change. Read the fixture diff before you commit. Never bless to
-  turn a red run green.
+- Bless only an intended output change. An unexpected failure means the code changed
+  behavior: find out why first. Read the fixture diff, and explain the contract change in the
+  commit message. Never bless to turn a red run green.
 - Make the output deterministic before you compare it. Replace timestamps, generated IDs, ports,
   temporary paths, and host names with placeholders. Iterate a `HashMap` or `HashSet` in sorted
   order, or use a `BTreeMap`: std hash iteration order changes from one process to the next.

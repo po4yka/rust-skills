@@ -21,7 +21,8 @@ cargo tree --locked --target all -i jni --depth 0
 ```
 
 Keep `--target all`: without it, `cargo tree` shows only host dependencies, and
-prints nothing for a `jni` under `[target.'cfg(target_os = "android")'.dependencies]`.
+prints `warning: nothing to print.` for a `jni` under
+`[target.'cfg(target_os = "android")'.dependencies]` (cargo 1.99.1).
 An ambiguous-spec error means that the graph holds two `jni` versions. Find
 them with `cargo tree --locked --target all -d`, and align them when you can.
 The two copies do not share `JavaVM::singleton()` or attach state.
@@ -53,6 +54,21 @@ The snippets use 0.22 unless the text says 0.21. Read
 | `ClassNotFoundException` only on a Rust-created thread, or on `jni` 0.22 `Err(Error::NoClassDefFound { .. })` from `Env::find_class` (the crate clears the exception) | `FindClass` used the system loader | Use the `JNI_OnLoad` class cache, or a `Class` or `ClassLoader` from managed code |
 | Corruption after passing a direct `ByteBuffer` | The Java buffer was collected while Rust held the slice | Hold a global reference to the buffer |
 | `improper_ctypes_definitions` on `JNI_OnLoad` | `JavaVM` taken by value on 0.22 | Take `*mut jni::sys::JavaVM` and call `JavaVM::from_raw` |
+
+## Hard rules
+
+- Attach a Rust-created thread before it calls Java (`vm.attach_current_thread`).
+  A thread that attached through raw `AttachCurrentThread` must detach before it
+  exits, or ART aborts.
+- Never hold an env or a local reference across `.await`, in a spawned task, or
+  between calls. Keep a `JavaVM` clone and a global reference instead.
+- Never expose a `Box::into_raw` pointer as a `jlong` handle: Java can pass any
+  integer. Use a generational registry key.
+- Serialize the calls on one session handle unless Rust documents it as
+  thread-safe. A call that races destroy is a use-after-free.
+- Wrap every loop that creates Java objects in `env.with_local_frame(n, ..)`.
+  JNI guarantees 16 local references per frame; Android before 8.0 aborts on
+  overflow.
 
 ## Verify
 
@@ -110,8 +126,10 @@ fn create_session(_config: &str) -> jlong {
     todo!()
 }
 
+/// # Safety
+/// Only the JVM calls this, with a valid `JavaVM` pointer.
 #[unsafe(no_mangle)]
-extern "system" fn JNI_OnLoad(raw_vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
+pub unsafe extern "system" fn JNI_OnLoad(raw_vm: *mut jni::sys::JavaVM, _reserved: *mut c_void) -> jint {
     let init = catch_unwind(AssertUnwindSafe(|| -> jni::errors::Result<()> {
         // SAFETY: the JVM passes a valid JavaVM pointer that stays valid for the process.
         let vm = unsafe { JavaVM::from_raw(raw_vm) };
@@ -168,9 +186,9 @@ write a name-based export or debug a `No implementation found` error.
   `#[no_mangle]` in the backticks on 1.98) but
   passes the exports that `native_method!` or `#[jni_mangle]` generate, so the
   lint does not prove that a crate has no exports.
-- Leave `pub` off an export that takes a raw pointer, such as `JNI_OnLoad`.
-  `no_mangle` exports the symbol anyway, and clippy's deny-by-default
-  `not_unsafe_ptr_arg_deref` rejects the `pub` form.
+- Declare an export that takes a raw pointer, such as `JNI_OnLoad`,
+  `unsafe extern "system" fn` with a `# Safety` section. Do not drop `pub` to
+  silence clippy's deny-by-default `not_unsafe_ptr_arg_deref`.
 - `extern "system"` equals `extern "C"` on Android and 64-bit targets but differs
   on 32-bit Windows JVMs. Do not write `extern "C"` for JNI.
 - A Rust panic that reaches an `extern "system"` function aborts the process
@@ -208,35 +226,17 @@ only from an export that returns a raw `jstring`. `Ok(std::ptr::null_mut())` in 
 [references/types-and-exceptions.md](references/types-and-exceptions.md) when
 you map any other Kotlin type or throw a specific exception class.
 
-## The JVM side and session handles
+## Detail by task
 
-Read `references/jvm-side.md` when you write the Kotlin binding class, serialize calls on a session handle, change a blocking behaviour or a JSON payload, or design a handle-based `jlong` session surface.
-
-## Add or rename a native method
-
-Read `references/jvm-side.md` when you add, rename, or remove a native method, or change the library file name: all steps go in one patch with the JVM call sites.
-
-## Thread attachment
-
-Read `references/jni-threading-and-callbacks.md` when a thread that Rust created (a tokio worker, a `std::thread`, a raw pthread) calls Java, or when you write an attach call, wire a callback, or build the load-time cache.
-
-## Class lookup from attached threads
-
-Read `references/android-class-loading.md` when a Rust-created thread looks up an application class, or before you cache a method or field ID, enable R8 for a JNI surface, or test a callback from a Rust-created thread.
-
-## Local reference frames
-
-Each call that returns a Java object takes one local-reference slot, and the JNI
-specification guarantees only 16 per frame. Android before 8.0 (API < 26) aborts
-on overflow; later versions only grow memory. Wrap every loop that creates Java
-objects in `env.with_local_frame(capacity, |env| ...)`, sized at the
-per-iteration count plus a margin. A reference created inside the frame dies
-when the frame pops: create a result that outlives the loop in the outer frame,
-and promote an object that you keep between calls with `env.new_global_ref(obj)`.
-
-## The env must not cross an await point
-
-Read `references/jni-threading-and-callbacks.md` when a native method starts async work, or when an env or a local reference is near an `.await`, a `tokio::spawn`, a `Box::leak`, or a `transmute`.
+- Read `references/jvm-side.md` when you write the Kotlin binding class; add,
+  rename, or remove a native method; change the library name, a blocking
+  behaviour, or a JSON payload; or design a `jlong` session surface.
+- Read `references/jni-threading-and-callbacks.md` when a Rust-created thread
+  calls Java, a native method starts async work, an env is near `.await` or
+  `tokio::spawn`, a loop creates Java objects, or you build the load-time cache.
+- Read `references/android-class-loading.md` when a Rust-created thread looks up
+  an application class, or before you cache a method or field ID, enable R8 for
+  a JNI surface, or test a callback from a Rust-created thread.
 
 ## Hot-path data
 

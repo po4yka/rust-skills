@@ -1,7 +1,7 @@
 # Preludes for the rust-discipline skill. Format: checks/README.md.
 
 [[block]]
-file = "rust-discipline/references/type-and-trait-traps.md"
+file = "rust-discipline/references/ownership-and-concurrency-traps.md"
 section = "Integer overflow panics in debug and wraps in release"
 block = 1
 items = '''

@@ -24,9 +24,9 @@ rg -n '#\[derive\([^)]*Deserialize' --type rust
 # Every serde attribute. Each one is a wire-format decision.
 rg -n '#\[serde\(' --type rust
 
-# Files that derive Deserialize and never use deny_unknown_fields. Per file, not per struct.
-# Do not write `rg -L`: in rg it means --follow, not grep's files-without-match.
-rg --files-without-match 'deny_unknown_fields' --type rust $(rg -l 'Deserialize' --type rust)
+# Files that derive Deserialize without deny_unknown_fields, per file, not per struct.
+# Do not write `rg -L`: in rg it means --follow.
+rg -l0 'Deserialize' --type rust . | xargs -0 -r rg --files-without-match 'deny_unknown_fields'
 
 # serde_json features in the shipped build, and which crate turns each on.
 cargo tree --locked -e normal,features -i serde_json -p <shipping-package>
@@ -267,7 +267,7 @@ pub struct Config {
 }
 ```
 
-Both `default`s are needed and they do different jobs. The field-level one handles an absent
+Both `default`s are needed; they do different jobs. The field-level one handles an absent
 section. The struct-level one handles a section that is present but incomplete:
 `{"name":"a","limits":{"max_files":3}}` parses, and `max_bytes` comes from `Default`.
 
@@ -336,8 +336,8 @@ the risks the type carries:
   released type. For a crate published to a registry, add a renamed dev-dependency on the same
   crate: `old = { package = "<crate>", version = "=<last>" }`.
 - **Empty and absent values.** Round-trip empty strings, collections, maps, and `None` for every
-  field that has `skip_serializing_if`. A skipped field without `default` writes a document that
-  the same type cannot read, and serde_json reports `missing field` for it.
+  field that has `skip_serializing_if`. A skipped non-`Option` field without `default` writes a
+  document that the same type cannot read, and serde_json reports `missing field` for it.
 - **Every claimed format.** Round-trip each enum and each flattened type through every format the
   type claims, such as postcard. Tagged enums and `flatten` compile and fail only at runtime.
 - **Numeric edges.** Test zero, signed minimum, unsigned maximum, the largest value inside the

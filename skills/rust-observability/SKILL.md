@@ -1,6 +1,6 @@
 ---
 name: rust-observability
-description: Use when adding or reviewing tracing, logging, or production metrics in Rust, especially in a library or cdylib behind FFI that exposes a telemetry snapshot to its host. Also for metric naming, histogram boundaries, label cardinality, OpenTelemetry context propagation, and exporter shutdown. Triggers on tracing-subscriber, set_global_default, LogTracer, SetLoggerError, EnvFilter, instrument skip_all, android_logger, tracing-opentelemetry, opentelemetry_sdk.
+description: Use when adding or reviewing tracing, logging, or production metrics in Rust, especially in a library or cdylib behind FFI that exposes a telemetry snapshot to its host. Also for metric naming, histogram boundaries, label cardinality, OpenTelemetry context propagation, and exporter shutdown. Triggers on tracing-subscriber, set_global_default, LogTracer, SetLoggerError, EnvFilter, instrument skip_all, opentelemetry_sdk.
 license: BSD-3-Clause
 ---
 
@@ -8,7 +8,9 @@ license: BSD-3-Clause
 
 These rules assume a Rust library that another process, language, or runtime
 embeds: a cdylib behind FFI, a staticlib, or a crate that a host CLI or service
-links. The host owns the process. The library owns only its emissions.
+links. The host owns the process. The library owns only its emissions. For a
+service or CLI binary, *Host and embedded sink see different things* says which
+rules apply.
 
 ## The six rules that are not style
 
@@ -34,31 +36,30 @@ links. The host owns the process. The library owns only its emissions.
 6. **Diagnostics are observational.** No code path reads the outcome of an
    emission. Turning a subscriber on must not change a single output byte.
 
-The gates below enforce rules 1 to 4 and the `max_level_*` rule in *Severity*.
-The hot-path search in *Gates and what they prove* finds rule 5 violations,
-and the determinism test in *Done when* proves rule 6.
+The `cargo tree` gates below prove the dependency half of rule 1 and the
+`max_level_*` rule in *Severity*; the install test proves the rest of rule 1.
+Rules 2 to 4 have a gate only once you write the repository gate described
+below. The hot-path search finds rule 5 candidates, and the determinism test in
+*Done when* proves rule 6.
 
 ## Gates and what they prove
 
-Run these before you push a change to the observability crate or to an
-emission.
+Run these before you push a change to an emission or its crate.
 
 ```bash
 cargo test --locked -p <observability-crate>
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo tree --locked -p <library-crate> -e normal --target all --prefix none > deps.txt
 if grep -q '^tracing-subscriber ' deps.txt; then echo 'FAIL: library links tracing-subscriber'; exit 1; fi
-cargo tree -e features -i tracing --workspace  # no library under a max_level_* feature
-cargo tree -e features -i log --workspace      # the same for log
+cargo tree --locked -p <library-crate> -e features --target all --prefix none > features.txt
+if grep -qE '^(tracing|log) feature "(release_)?max_level_' features.txt; then echo 'FAIL: max_level_* under a library'; exit 1; fi
 ```
 
-Run the `tracing-subscriber` check once for each engine crate and inner FFI
-crate. Gate on the `grep`, not on the exit status of an inverted
-`cargo tree -i tracing-subscriber`. That command exits 101 with "did not match
-any packages" when the library is clean, and it also exits 0 when it prints the
-dependency path of a real failure. Do not write `! grep`: `set -e` ignores a
-negated command. The `cargo tree` line above fails only when
-Cargo itself fails, so a wrong `-p` name stops the gate instead of passing it.
+Run both checks once for each engine crate and inner FFI crate. Gate on the
+`grep`, not on the exit status of an inverted `cargo tree -i`: it exits 101 when
+the library is clean and 0 when it prints a real failure. Do not write `! grep`:
+`set -e` ignores a negated command. Each `cargo tree` line fails only when Cargo
+itself fails, so a wrong `-p` name stops the gate instead of passing it.
 
 Run the hot-path search on each crate that does per-item or per-byte work. It
 finds rule 5 candidates for review. The pattern leaves out `error!` and `warn!`,
@@ -66,13 +67,11 @@ and catches both the qualified and the imported macro forms.
 
 ```bash
 rg -n --type rust \
-  '\b(trace|debug|info|event|span|trace_span|debug_span|info_span)!|#\[(tracing::)?instrument' \
+  '\b(trace|debug|info|event|span|(trace|debug|info|warn|error)_span)!|#\[(tracing::)?instrument' \
   <hot-path-crate>/src
 ```
 
-The test proves the install sequence and the redaction visitor. The `cargo tree`
-checks prove the dependency rules. None of them proves that a field value is
-safe. That stays a review task.
+No gate proves that a field value is safe. That stays a review task.
 
 Add a repository gate that reads the field tables from the observability crate
 rather than repeating them, so the gate and the runtime visitor cannot disagree.
@@ -85,9 +84,8 @@ The gate rejects:
 - a field name that is not declared in the vocabulary,
 - a crate whose declared coverage state disagrees with the coverage record.
 
-Give the gate a `--self-test` mode that runs it against one known-bad fixture per
-rule, and run that mode first. A gate with no self-test rots into a no-op after
-the first refactor of its patterns.
+Give the gate a `--self-test` mode that runs one known-bad fixture per rule,
+and run it first; without it the gate rots into a no-op.
 
 Deny stdio macros in library, FFI, and embedded crates. Stdio bypasses the
 redacting visitor, and on a mobile or embedded target it reaches no reader.
@@ -102,12 +100,8 @@ allow-print-in-tests = true
 #![deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
 ```
 
-Exempt only a host-side tool whose job is to write to a terminal. Put
-`#![expect(clippy::print_stdout, reason = "...")]` after the `#![deny]` line, or
-leave `print_stdout` out of that crate's deny list. An `expect` before the
-`deny` loses: clippy reports the `println!` and an unfulfilled expectation.
-`allow-print-in-tests` covers test code inside `src/`, where a path rule cannot
-see it.
+Read [references/redaction-and-field-vocabulary.md](references/redaction-and-field-vocabulary.md#exempt-a-terminal-tool-from-the-stdio-lints)
+when a host-side tool must print to a terminal.
 
 ## Done when
 
@@ -136,7 +130,7 @@ The gates are green. Then review what they cannot see:
 
 ## "It emits nothing"
 
-Work down this list before you suspect the instrumentation.
+Work down this list first.
 
 | Check | Symptom when it is the cause |
 |-------|------------------------------|
@@ -265,6 +259,8 @@ silent defects. Also:
 - Store the install result in a one-time state. Do not retry a failed install
   from a boundary.
 - Report the `set_global_default` and `LogTracer::init()` results separately.
+- Bind a `tracing_appender::non_blocking` `WorkerGuard` in `main` for the life of
+  the process: when it drops, the writer thread stops and later events are lost.
 - Do not call `android_logger::init_once`. That logger writes dependency
   records to logcat past the redacting visitor.
 - Only a host binary whose filter is fixed at install may use `try_init()`.
@@ -282,7 +278,10 @@ failure messages, and the six install-test steps.
 
 ## Host and embedded sink see different things
 
-- **Host** (a CLI, a service, or a test binary): a `tracing-subscriber`
+- **Host** (a CLI, a service, or a test binary): it owns rule 1's single
+  install and may call `init()`. Rules 5 and 6 apply as written. Rules 2 to 4
+  apply to each emission that leaves the process (an exporter, a log store, a
+  crash reporter). A `tracing-subscriber`
   formatting layer renders the full event, including an error's `Display`
   message. Write to stderr so stdout stays machine-readable. In a CLI, keep the
   layer off unless an environment filter is set. The layer renders untrusted
@@ -343,7 +342,9 @@ error, URL, or trace ID as a label.
 
 Preserve one OpenTelemetry context across each logical operation. Make the
 handoff explicit at async task, HTTP, message, callback, and FFI boundaries.
-Do not keep a thread-local context guard alive across `.await`.
+Do not keep a thread-local context guard alive across `.await`. The same holds
+for a `Span::enter()` guard: the next task polled on that thread inherits the
+span and its events are misattributed. Use `.instrument(span)` or `#[instrument]`.
 
 Keep exporter work outside request and data-plane paths. Bound its queue,
 batch, export time, retry time, and shutdown time. Export failure never changes
@@ -358,13 +359,8 @@ thread-based batch processors, and provider shutdown.
 
 ## Related skills
 
-- `memory-model` — why `Relaxed` is correct for counters.
-- `rust-async-internals` — `broadcast` `Lagged` handling, task shutdown.
-- `rust-security` — `cargo deny` policy and advisory triage.
-- `rust-panic-safety` — the redacted panic report, hook ownership, unwinding.
-- `rust-debugging` — reading logcat, tombstones, and a live process.
-- `rust-serde` — `serde_json` map order and feature unification.
-- `rust-jni` — FFI call cost, thread naming for readable logs.
-- `ffi-error-progress-cancel` — error kinds, progress, cancellation at a boundary.
-- `rust-lints` — enforcing the clippy configuration above.
-- `rust-performance` — measuring the cost an emission adds.
+`memory-model` (relaxed counters), `rust-async-internals` (`broadcast` lag, task
+shutdown), `rust-security` (`cargo deny`), `rust-panic-safety` (panic report),
+`rust-debugging` (logcat, tombstones), `rust-serde` (map order), `rust-jni`
+(FFI call cost), `ffi-error-progress-cancel` (error kinds), `rust-lints`
+(clippy configuration), `rust-performance` (emission cost).

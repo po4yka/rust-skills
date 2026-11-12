@@ -1,6 +1,6 @@
 ---
 name: uniffi-packaging-versioning
-description: Use when packaging a Rust UniFFI crate for Android and iOS (Android .so files, generated Kotlin and Swift, the UniFFI header and modulemap) or versioning its FFI surface, including pinned uniffi and uniffi-bindgen versions, regenerated checked-in bindings, an additive or breaking change, and a load-time checksum mismatch, a RustBuffer error, or a missing native library. Also for a mobile support matrix and a mobile release proof from the shipped artifacts. Not for the exported API shape (use `uniffi-boundary`), Gradle build wiring (use `rust-android-build`), or XCFramework assembly (use `rust-ios-build`).
+description: Use when packaging a Rust UniFFI crate for Android and iOS (Android .so files, generated Kotlin and Swift, the UniFFI header and modulemap) or versioning its FFI surface, including pinned uniffi and uniffi-bindgen versions, regenerated checked-in bindings, an additive or breaking change, and a load-time checksum mismatch, a RustBuffer error, or a missing native library. Also for a mobile support matrix and a mobile release proof. Not for the exported API shape (use `uniffi-boundary`), Gradle build wiring (use `rust-android-build`), or XCFramework assembly (use `rust-ios-build`).
 license: BSD-3-Clause
 ---
 
@@ -26,7 +26,7 @@ A host `cargo check` or `cargo test` proves none of these claims.
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | `UniFFI API checksum mismatch`; on Kotlin, `ExceptionInInitializerError` with that cause, or a later `NoClassDefFoundError` for `UniffiLib` or `IntegrityCheckingUniffiLib` | Bindings and library from different revisions or `uniffi` versions | Regenerate with the in-crate generator from the library built at this revision; rebuild the artifact |
-| Kotlin checksum mismatch only on an ARM32 or `arm64-v8a` device, with matching bindings and library | UniFFI defect in 0.30.0–0.32.0 | Upgrade to 0.32.1 or later. Never set `omit_checksums = true` as the fix |
+| Kotlin checksum mismatch only on an ARM32 or `arm64-v8a` device, with matching bindings and library | UniFFI device defect ("Pin the generator to the runtime") | Upgrade to 0.32.1 or later. Never set `omit_checksums = true` as the fix |
 | `UniFFI contract version mismatch` | Bindings and scaffolding from `uniffi` versions with different FFI contracts | Same fix as the first row |
 | Kotlin `junk remaining in buffer after lifting` or `java.nio.BufferUnderflowException`; Swift `UniffiInternalError.incompleteData`, `.bufferOverflow`, or `.unexpectedEnumCase` (a variant from a newer library) | A record field or enum variant changed without a regenerate and rebuild | Regenerate and rebuild together; add the `--check` gate if it is missing |
 | Native library not found at run time | Wrong ABI directory name, an ABI missing from the release set, or a renamed `.so` | Compare directory names with the Android ABI names; check every release ABI; derive the library name from the package name |
@@ -49,8 +49,8 @@ loaded library runs depends on the language:
   stale binding runs without an error, and `omit_checksums = false` proves
   nothing. Call `uniffiEnsureInitialized()` from the generated package
   (default `uniffi.<namespace>`) once at startup, from the adapter module,
-  before the first binding call. Upstream `main` fixes this, but no release
-  has the fix as of 2026-09.
+  before the first binding call. UniFFI 0.32.2, the latest release on
+  2026-11-12, still checks only there.
 - **Kotlin failure shape.** The check throws in a static initializer. Read the
   cause of the first `ExceptionInInitializerError`; the later
   `NoClassDefFoundError` (triage table) is a follow-on, not R8 stripping and
@@ -268,8 +268,7 @@ Put the generated bindings in their own module. Only an adapter module depends
 on it, and the adapter maps the generated types onto a port type that feature
 modules use. Make every `when` and `switch` over generated types exhaustive,
 with no wildcard arm: a drifted binding is then a compile error, not silent
-behavior. Keep the generated Swift target at the SwiftPM default `nonisolated`
-isolation (uniffi-rs #2818). Read the consumer-layering section of
+behavior. Read the consumer-layering section of
 `references/platform-artifacts.md` when you set up the generated Gradle module,
 the JNA dependency, or the SwiftPM targets.
 

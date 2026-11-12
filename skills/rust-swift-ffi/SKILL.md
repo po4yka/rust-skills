@@ -7,8 +7,7 @@ license: BSD-3-Clause
 # Rust Swift FFI
 
 This skill owns the contract between a hand-written C ABI and its Swift
-wrapper. Keep the exported C surface small. Keep domain behavior in ordinary
-Rust code and idiomatic Swift types outside the boundary.
+wrapper. Keep the exported C surface small, and keep domain behavior out of it.
 
 Route neighboring work to these skills when they are installed:
 
@@ -19,8 +18,7 @@ Route neighboring work to these skills when they are installed:
 - `rust-unsafe` for raw-pointer soundness, layout, and the `unsafe_code` policy.
 - `rust-sanitizers-miri` for Miri and sanitizer flags.
 - `rust-panic-safety` for the unwind audit and the panic hook.
-- `ffi-error-progress-cancel` for a shared mobile error, progress, and
-  cancellation model.
+- `ffi-error-progress-cancel` for mobile errors, progress, and cancellation.
 
 ## First decide whether a hand-written ABI is necessary
 
@@ -89,7 +87,7 @@ tests with the `rust-sanitizers-miri` flags.
 | Crash after several progress events | The callback used `takeRetainedValue()` | Use `takeUnretainedValue()` and release only in the release callback |
 | Crash or corrupt state when an Objective-C API raises in a callback | An `NSException` unwound into an `extern "C"` Rust frame, which is UB | Call the API through an `@try`/`@catch` shim, or keep it out of the callback |
 | `main actor-isolated ... can not be referenced from a nonisolated context`, `main actor-isolated default value in a nonisolated context`, `call to main actor-isolated ... in a synchronous nonisolated context`, or a `deinit` Sendable error | The module uses default MainActor isolation | Mark `nonisolated` every declaration that Rust reaches (`references/swift-isolation.md`) |
-| UI hangs while an async wrapper waits on Rust | A `nonisolated` async method runs on the main actor under `nonisolated(nonsending)` | Mark it `@concurrent` |
+| UI hangs while an async wrapper waits on Rust | A `nonisolated` async method runs on the main actor under `nonisolated(nonsending)` | Mark a short call `@concurrent`; run a long one on a dedicated `Thread` |
 | Thread Sanitizer reports a race in a context box that compiles clean in Swift 6 | `Unmanaged` hides a non-`Sendable` box | Make the box a `final class` marked `Sendable`, with `let` properties and a `let` lock |
 | Trap in `dispatch_assert_queue` on the first callback | `MainActor.assumeIsolated` ran on a Rust thread | Make the box `nonisolated` and hop with `Task { @MainActor in ... }` |
 | UI isolation warning or crash | Rust called a main-actor value directly | Copy the event and hop with `Task { @MainActor in ... }` |

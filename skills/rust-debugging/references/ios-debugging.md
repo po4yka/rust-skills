@@ -53,4 +53,5 @@ Objective-C code that Xcode compiles. They do not instrument a prebuilt Rust `st
 checks no Rust memory access: a Rust out-of-bounds read or use after free goes unreported. ASan
 still intercepts `malloc` and `free` for the whole process. It therefore catches a double free or
 an invalid free on the Rust side when Rust uses the default `System` allocator. Run ASan or TSan
-on a host target for Rust coverage (the `rust-sanitizers-miri` skill).
+on a host target for Rust coverage, with `RUSTFLAGS=-Zsanitizer=address cargo +nightly test
+--target <host-triple>` (the `rust-sanitizers-miri` skill).

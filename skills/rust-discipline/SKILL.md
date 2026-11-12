@@ -1,6 +1,6 @@
 ---
 name: rust-discipline
-description: Use when designing or reviewing Rust API shape (pub signatures, trait bounds, blanket and sealed impls, newtypes, Drop or RAII guards), or when method resolution or trait coherence fails (method ambiguity, autoderef, UFCS, E0034, E0119 blanket impl overlap, E0117 orphan rule). Also use for a pre-merge review of such a diff and its semver hazards.
+description: Use when designing or reviewing Rust API shape (pub signatures, trait bounds, blanket and sealed impls, newtypes, Drop or RAII guards), or when method resolution or trait coherence fails (method ambiguity, autoderef, UFCS, E0034, E0119 blanket impl overlap, E0117 orphan rule). Also covers unwrap and expect, lock poisoning, Condvar::wait_while, wildcard arms, non_exhaustive enums, and a pre-merge semver review of such a diff. Not for panics at an FFI boundary (rust-panic-safety).
 license: BSD-3-Clause
 ---
 
@@ -20,7 +20,7 @@ downstream crate, or a later release. Apply the rules to every changed signature
 | Claim | Check | What a green result does not prove |
 |-------|-------|------------------------------------|
 | No lint regression | `cargo clippy --all-targets --locked -- -D warnings` | Clippy denies `derived_hash_with_manual_eq` by default. It does not see two manual `Hash` and `PartialEq` impls that disagree. |
-| A public API change keeps SemVer | `cargo semver-checks check-release` on a published crate, if it is installed. Pass `--baseline-rev <rev>` for an unpublished one. | Measured with cargo-semver-checks 0.50.0 on rustc 1.98.1: it flags a new variant on an exhaustive enum, a new `#[non_exhaustive]`, a new `pub` field on a literal-constructible struct, and a lost `Send` or `Sync`. It does not flag `&str` changed to `impl AsRef<str>`, a new blanket impl on a public trait, or a new provided trait method whose name can collide (E0034). Review those three by hand. |
+| A public API change keeps SemVer | `cargo semver-checks check-release` on a published crate, if it is installed. Pass `--baseline-rev <rev>` for an unpublished one. | Measured with cargo-semver-checks 0.50.0 on rustc 1.98.1: it does not flag `&str` changed to `impl AsRef<str>`, a new blanket impl on a public trait, or a new provided trait method whose name can collide (E0034). Review those three by hand. |
 | A bound accepts every promised caller | A test that passes each caller shape the API promises. For a `for<'a>` bound, pass the function or method path itself. | Only the shapes the test passes. |
 | A hash key keeps the `Eq`/`Hash` contract | A test that inserts through one form and looks up through the other | Only the forms the test uses. |
 
@@ -31,16 +31,20 @@ Rust 1.93 or later. Update the tool when a new stable rustc arrives. The `rust-c
 
 Open a reference only when the diff matches its row.
 
-| Reference | Read it when the diff |
-|-----------|-----------------------|
-| [`references/type-and-trait-traps.md`](references/type-and-trait-traps.md) | adds a trait impl, a newtype, a lifetime parameter, or a blanket impl on a public trait |
-| [`references/trait-resolution.md`](references/trait-resolution.md) | adds a `Deref` impl, an extension trait, a `downcast_ref` chain, a pointer-forwarding impl, a blanket impl, a second conversion impl on one type pair, or a foreign trait impl on a wrapper type |
-| [`references/data-shape-traps.md`](references/data-shape-traps.md) | adds a hash key or an `Ord` impl, reverses or truncates text, or builds a large array for the heap |
-| [`references/argument-shapes.md`](references/argument-shapes.md) | picks a parameter, callback, or return shape on a `pub` signature, or makes a concrete parameter generic |
-| [`references/drop-and-raii.md`](references/drop-and-raii.md) | adds a `Drop` impl, a guard type, or cleanup that must survive a panic |
-| [`references/type-level-api.md`](references/type-level-api.md) | adds a newtype, a sealed trait, a typestate, a `#[non_exhaustive]` type, or a `const` generic |
-| [`references/api-conventions.md`](references/api-conventions.md) | names a `pub` method, constructor, getter, or conversion, or derives the traits of a `pub` type |
-| [`references/review-checklist.md`](references/review-checklist.md) | is under a review request or a merge gate that asks for a full pass |
+| Reference | Read it when the diff | Or rustc reports |
+|-----------|-----------------------|------------------|
+| [`references/type-and-trait-traps.md`](references/type-and-trait-traps.md) | adds a trait impl, a newtype, a lifetime parameter, or a blanket impl on a public trait | E0038 |
+| [`references/ownership-and-concurrency-traps.md`](references/ownership-and-concurrency-traps.md) | picks a builder receiver, passes a large value by value, clones a handle, shares state through `Arc`, `Weak`, a mutex, or a `Condvar`, or adds arithmetic on input | |
+| [`references/trait-resolution.md`](references/trait-resolution.md) | adds a `Deref` impl, an extension trait, a `downcast_ref` chain, a pointer-forwarding impl, a blanket impl, a second conversion impl on one type pair, or a foreign trait impl on a wrapper type | E0034, E0119, E0117; a call that autoderef sends to the wrong impl |
+| [`references/data-shape-traps.md`](references/data-shape-traps.md) | adds a hash key or an `Ord` impl, reverses or truncates text, or builds a large array for the heap | |
+| [`references/argument-shapes.md`](references/argument-shapes.md) | picks a parameter, callback, or return shape on a `pub` signature, or makes a concrete parameter generic | E0308 or `not general enough` at a callback |
+| [`references/drop-and-raii.md`](references/drop-and-raii.md) | adds a `Drop` impl, a guard type, or cleanup that must survive a panic | E0509, E0507 in `drop` |
+| [`references/type-level-api.md`](references/type-level-api.md) | adds a newtype, a sealed trait, a typestate, a `#[non_exhaustive]` type, or a `const` generic | |
+| [`references/api-conventions.md`](references/api-conventions.md) | names a `pub` method, constructor, getter, or conversion, or derives the traits of a `pub` type | |
+| [`references/review-checklist.md`](references/review-checklist.md) | is under a review request or a merge gate that asks for a full pass | |
+
+E0562 and E0596 at a stored callback, and E0277 `expected an 'FnMut(&&T)' closure`, are in
+[API design](#api-design) below.
 
 ---
 
@@ -77,10 +81,8 @@ Find violations:
 rg ':\s*&(String|Vec<|PathBuf)\b' --type rust -n
 ```
 
-Two exceptions are real. Keep `&String` or `&Vec<T>` when the body calls `capacity()` or another
-allocation-state method that no slice exposes, or when the function compares container identity.
-See
-[`references/argument-shapes.md`](references/argument-shapes.md#when-string-and-vect-are-correct).
+Keep `&String` or `&Vec<T>` only for the
+[two real exceptions](references/argument-shapes.md#when-string-and-vect-are-correct).
 
 Keep an iterator's extra reference out of a public bound. `items.iter().find(pred)` under
 `F: Fn(&T) -> bool` fails with `E0277: expected an 'FnMut(&&T)' closure, found 'F'`, because
@@ -132,27 +134,28 @@ impl Bus {
 ```
 
 The field carries an implicit `+ 'static` bound. Clone the captured data; do not add a lifetime
-parameter to the owner, and do not store `Weak` callbacks to dodge it. A `Weak` registration dies
-when the caller releases its `Arc`: measured at 1 entry held, 0 callbacks fired, no diagnostic.
+parameter to the owner, and do not store `Weak` callbacks to dodge it: a `Weak` registration dies
+silently when the caller releases its `Arc`.
 
 ### Do not store `&'a mut H` in a struct field
 
-**Severity: CRITICAL** on a published type; WARNING inside one crate.
+**Severity: WARNING**
 
-A `&'a mut H` field infects every use site with the lifetime `'a`. You then cannot store the
-struct in another struct, you cannot return it from a function, and `Vec<Processor<'_>>` is
-impossible.
+A `&'a mut H` field puts `'a` on the struct and on everything that holds it. Every struct that
+stores a `Processor<'a>`, every function that returns one, and every `Vec<Processor<'a>>` must
+carry `'a` too. On a published type, removing the lifetime later is a breaking change.
 
 ```rust
 trait Handler {}
 
-// BAD: lifetime infection
+// BAD: every holder and signature must carry 'a.
 struct Processor<'a> {
     handler: &'a mut dyn Handler,
 }
 ```
 
-Take a generic `H` instead, and add one forwarding impl per pointer the caller may pass. Write
+Take a generic `H` instead, so an owning caller (`Box<dyn Handler>`) names no lifetime. Add one
+forwarding impl per pointer the caller may pass. Write
 `+ ?Sized` on every one of them. Without it the impl carries an implicit `H: Sized` and excludes
 `dyn Handler`, which is the only case the pattern exists to serve; the call site then fails with
 `error[E0277]: the trait bound '&mut dyn Handler: Handler' is not satisfied`.
@@ -171,15 +174,13 @@ impl<H: Handler + ?Sized> Handler for Box<H> {
     fn handle(&mut self, r: Request) { H::handle(self, r) }
 }
 
-// Both instantiations exist, and neither carries a lifetime parameter.
+// Only the borrowed form carries a lifetime, inside its type argument.
 fn use_both(_a: Processor<Box<dyn Handler>>, _b: Processor<&mut dyn Handler>) {}
 ```
 
-The method receiver decides which pointers can forward at all, and a bridge blanket impl
-`impl<T: Other> Handler for T` makes every forwarding impl `E0119`. Settle both before the trait
-ships. In a recursive method, take `&mut W` with
-`W: Handler + ?Sized`, not `impl Handler` by value: that form passes `cargo check` and fails
-`cargo build` at the recursion limit.
+The method receiver decides which pointers can forward, a bridge blanket impl makes every
+forwarding impl `E0119`, and a recursive method must take `&mut W` with `W: Handler + ?Sized`.
+Read [`references/trait-resolution.md`](references/trait-resolution.md) before the trait ships.
 
 Find candidates, then check each hit for a `&'_ mut` field:
 
@@ -187,20 +188,19 @@ Find candidates, then check each hit for a `&'_ mut` field:
 rg "struct .+<'.+>\s*\{" --type rust -n
 ```
 
-### Use HRTB for callbacks that must not keep the reference
+### Do not tie a callback argument to a named lifetime
 
 **Severity: WARNING**
 
-`for<'a> Fn(&'a T) -> R`, where `R` does not depend on `'a`, is the correct shape for a
-callback that may keep the return value but not the reference. The `for<'a>` bound stops the
-callback from storing `&'a T`. The callback must extract owned data and return it.
+`F: Fn(&T) -> R` is already higher-ranked: elision makes it `for<'a> Fn(&'a T) -> R`, so the
+callback cannot keep the reference. A closure that stashes it fails with `error[E0521]: borrowed
+data escapes outside of closure`. E0521 shows the bound is correct; do not widen the lifetime.
 
-- When the callback must not keep the argument reference, write `for<'a>` explicitly. A callback
-  that stashes the reference then fails with `error[E0521]: borrowed data escapes outside of
-  closure`. The same closure under a fixed `'a` bound is accepted with no diagnostic at all, so
-  E0521 shows the bound is correct. Do not widen the lifetime to clear it.
-- When the callback returns a borrow of its argument, write `for<'a> Fn(&'a T) -> &'a K` with
-  `K: ?Sized`. Do not add a trait or a GAT for it.
+- The defect is a callback argument tied to a lifetime parameter of the function or the struct:
+  `fn visit<'a, F: Fn(&'a T)>(..)`. That bound accepts a closure that stores the reference, with
+  no diagnostic (Rust 1.99.1). Write `F: Fn(&T)`, or `for<'a>` where the bound must name `'a`.
+- When the callback returns a borrow of its argument, write `F: Fn(&T) -> &K` with `K: ?Sized`;
+  elision ties the output to the argument. Do not add a trait or a GAT for it.
 - A closure's body, not `move`, decides whether it implements `Fn`, `FnMut`, or `FnOnce`. `move`
   changes only the capture mode. Declare a callback method's lifetime on the method, or elide it:
   an `impl<'a>` lifetime fails a `for<'x>` bound when the caller passes the method path.
@@ -224,7 +224,7 @@ This section is the catalog's single home for the `unwrap` and `expect` rule.
   when a panic under the lock must also stop the next user. Write
   `.unwrap_or_else(PoisonError::into_inner)` when the data stays valid after a panic mid-update.
   A bare `.lock().unwrap()` hides the choice. Read
-  [`references/type-and-trait-traps.md`](references/type-and-trait-traps.md#parking_lot-and-tokio-mutexes-do-not-poison-on-panic)
+  [`references/ownership-and-concurrency-traps.md`](references/ownership-and-concurrency-traps.md#parking_lot-and-tokio-mutexes-do-not-poison-on-panic)
   when you pick the policy, or before you migrate to a `parking_lot` or `tokio::sync` mutex,
   which do not poison.
 - Give `panic!`, `unreachable!`, and `todo!` a reason:
@@ -232,16 +232,12 @@ This section is the catalog's single home for the `unwrap` and `expect` rule.
   impossible.
 - Return `Result` from a library path that can fail. Do not build control flow on an expected
   panic.
-- Enforce the `unwrap` half. Set `unwrap_used` in `[lints.clippy]` and
-  `allow-unwrap-in-tests = true` in `clippy.toml`. That key exempts only `#[test]` and
-  `#[cfg(test)]` code, so add `#![expect(clippy::unwrap_used, reason = "example")]` to each
-  `examples/` file that calls `.unwrap()`. The `rust-lints` skill holds the rollout.
+- Enforce the `unwrap` half with `clippy::unwrap_used` and `allow-unwrap-in-tests = true`. The
+  `rust-lints` skill holds the rollout and the `#![expect]` that an `examples/` file needs.
 
 The `rust-code-style` skill, when it is installed, owns the choice of error type (`thiserror` in a
 library, `anyhow` in a binary). Use one error convention per dependency chain: one shared error
-type, or one enum per crate that the caller translates. Do not mix the two. The
-`rust-panic-safety` skill owns panic strategy, `catch_unwind`, and every panic that can reach an
-FFI boundary. The `ffi-error-progress-cancel` skill owns the boundary error type.
+type, or one enum per crate that the caller translates. Do not mix the two.
 
 ## Drop and RAII
 
@@ -250,7 +246,8 @@ FFI boundary. The `ffi-error-progress-cancel` skill owns the boundary error type
 - Struct fields drop in declaration order, after the `Drop::drop` body. When you implement `Drop`
   on a cleanup-critical type, document the order and each dependency between fields.
 - `impl Drop` blocks every move of a non-`Copy` field out of the struct (E0509). Put `Drop` on a
-  one-field guard that holds an `Option`, and keep the aggregate `Drop`-free.
+  one-field guard, and keep the aggregate `Drop`-free. Make the guard's field an `Option` only
+  when the cleanup consumes it.
 - Use `scopeguard::defer!` for cleanup that must run on every exit path, including unwinding.
   Under `panic = "abort"` no destructor runs after a panic.
 - Never argue soundness from a guard's `Drop`. `mem::forget` is safe, so a caller can skip it.
@@ -283,9 +280,10 @@ FFI boundary. The `ffi-error-progress-cancel` skill owns the boundary error type
 - **Wait on a `Condvar` only through a predicate.** A `Condvar` keeps no count, so a bare `wait`
   blocks for ever when the notify arrives first. Call
   `cv.wait_while(lock.lock().expect("queue mutex poisoned"), |n| *n == 0)`, which checks the
-  predicate under the lock before it sleeps and after every wake. Measured with a worker that
-  notifies 200 ms before the waiter starts: the bare form hangs and `timeout 3` kills it with
-  exit 124; `wait_while` exits 0. The predicate reads only state that the same mutex protects.
+  predicate under the lock before it sleeps and after every wake. The predicate reads only state
+  that the same mutex protects.
+  [`references/ownership-and-concurrency-traps.md`](references/ownership-and-concurrency-traps.md)
+  has the measured hang.
 
 A blocking-lock guard (`std::sync::Mutex` or `RwLock`, or a `parking_lot` lock) held across
 `.await` makes the future `!Send` and can deadlock the executor. `clippy::await_holding_lock`
@@ -326,7 +324,7 @@ Route these topics by skill name, when the skill is installed.
 | Handler sets that each need `&mut` to one state object | `rust-event-loop-state` |
 | Lifetime coercion and variance as a breaking change | `rust-variance` |
 | Types whose encoded form is a contract | `rust-serde` |
-| Module layout, naming, visibility, and formatting | `rust-code-style` |
+| Module layout, case and crate naming, visibility, and formatting | `rust-code-style` |
 | Crate splits and dependency direction | `rust-crate-architecture` |
 | Workspace lint tables and `clippy.toml` | `rust-lints` |
 | Advisory triage, `deny.toml`, Miri, and sanitizers | `rust-security`, `rust-sanitizers-miri` |

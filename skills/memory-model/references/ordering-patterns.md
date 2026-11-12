@@ -86,22 +86,69 @@ installed, covers cancellation and progress across a foreign function interface.
 
 ## Pattern 4: reference counting
 
-```rust
+```rust,run
+use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-// Increment: no data is published, and the object is already alive.
-count.fetch_add(1, Ordering::Relaxed);
+const MAX_REFCOUNT: usize = isize::MAX as usize;
+
+// Increment from a live reference: no data is published, and the object is
+// already alive, so `Relaxed` is enough.
+fn increment(count: &AtomicUsize) {
+    let old = count.fetch_add(1, Ordering::Relaxed);
+    // `mem::forget` of a clone is safe code. Without this check a loop of
+    // clone-and-forget wraps the count to 0, and the next decrement frees a
+    // live object: a use-after-free with no `unsafe` in the caller.
+    if old > MAX_REFCOUNT {
+        process::abort();
+    }
+}
+
+// Upgrade from a weak handle: the count can already be 0, and a `fetch_add`
+// would revive a destroyed object. Use a CAS loop that refuses 0.
+fn try_upgrade(count: &AtomicUsize) -> bool {
+    let mut current = count.load(Ordering::Relaxed);
+    loop {
+        if current == 0 {
+            return false;
+        }
+        if current > MAX_REFCOUNT {
+            process::abort();
+        }
+        match count.compare_exchange_weak(current, current + 1, Ordering::Acquire, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(actual) => current = actual,
+        }
+    }
+}
 
 // Decrement: AcqRel, so the thread that observes zero also observes every
 // write made by every other owner before it dropped its reference.
-if count.fetch_sub(1, Ordering::AcqRel) == 1 {
-    // This thread holds the last reference. Destroy the object here.
+fn decrement(count: &AtomicUsize) -> bool {
+    count.fetch_sub(1, Ordering::AcqRel) == 1 // true: destroy the object here
+}
+
+fn main() {
+    let count = AtomicUsize::new(1);
+    increment(&count);
+    assert!(!decrement(&count));
+    assert!(decrement(&count));
+    assert!(!try_upgrade(&count)); // the last owner is gone
 }
 ```
 
 The destructor reads the object, so the decrement must acquire the writes of
 all other owners. std `Arc` uses a `Release` decrement and a `fence(Acquire)` on
 the zero path. Both forms are correct.
+
+The overflow check is required, not defensive. std `Arc::clone` aborts when the
+old count is above `isize::MAX`, and `Weak::upgrade` panics there; the check
+runs after the `fetch_add`, which leaves `isize::MAX` of headroom before the
+`usize` wraps (Rust 1.99.1 `alloc/src/sync.rs`). Apply the same limit to every
+increment path, the CAS loop included: one unchecked path can bring the count
+near the limit for the other to wrap. `Weak::upgrade` uses `Acquire` on success
+so that it synchronizes with `Arc::new_cyclic`, which initializes the value after
+`Weak` handles exist.
 
 ## Compare-exchange and update loops
 

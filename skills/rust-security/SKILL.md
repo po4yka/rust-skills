@@ -1,6 +1,6 @@
 ---
 name: rust-security
-description: Use when running cargo-audit or cargo-deny, editing deny.toml, triaging a RUSTSEC advisory or CVE in a dependency, vetting a new or updated crate for typosquat, malicious crate, or compromised-release risk, or hardening a Rust parser that reads untrusted files, archives, or binary formats. Not for authentication, secret storage, cryptographic design, or TLS policy (TLS belongs to rust-networking). Triggers on "cargo audit", "cargo deny", "RUSTSEC", "supply chain", "yanked", "path traversal", "decompression bomb".
+description: Use when running cargo-audit or cargo-deny, editing deny.toml, triaging a RUSTSEC advisory or CVE in a dependency, vetting a new or updated crate for typosquat, malicious crate, or compromised-release risk, or hardening a Rust parser that reads untrusted files, archives, or binary formats. Not for authentication, secret storage, cryptographic design, or TLS policy (TLS belongs to rust-networking). Triggers on "RUSTSEC", "supply chain", "yanked", "path traversal", "decompression bomb".
 license: BSD-3-Clause
 ---
 
@@ -186,9 +186,9 @@ category and the `unaffected` ranges with the `--json` filter in section 1.
      `cargo update -p <crate>@<bad-version> --precise <unaffected-version>`. If the
      `Cargo.toml` requirement excludes that version, lower the requirement first.
    - If it lists no `unaffected` versions, remove the dependency.
-   - Confirm that every malicious package left `Cargo.lock`, the injected dependency
-     included (for example `proc-macro1`). `grep -n 'name = "<package>"' Cargo.lock` must
-     print nothing.
+   - Confirm it. For a removed or injected package (such as `proc-macro1`),
+     `grep -n 'name = "<package>"' Cargo.lock` prints nothing. For a rollback,
+     `cargo tree --locked -i <crate>@<bad-version>` fails.
 2. Delete the local copies of each malicious package, because the next build can run them
    again. Run `cargo clean` in every workspace that built the crate.
 
@@ -199,6 +199,8 @@ category and the `unaffected` ranges with the `--json` filter in section 1.
    cargo clean
    ```
 
+   Delete the CI caches of each job that built it (`gh cache delete --all`, or a new
+   key), and any sccache or `cargo vendor` copy.
 3. Report to the owner which machines and CI runners built, tested, or opened the
    workspace. Recommend that they rotate every credential those machines could read:
    registry tokens, SSH keys, cloud credentials, and wallet keys. Rotation is an external
@@ -283,11 +285,10 @@ dependency adds a new package name.
    home-directory and key-file paths, embedded blobs, and file writes outside `OUT_DIR`. A
    pure utility crate that opens a socket is a red flag.
 4. **Write a caret requirement at the reviewed version** (`name = "1.2.3"`). The committed
-   `Cargo.lock` holds the exact version. Do not use an `=1.2.3` requirement as a vetting
-   device. It stops `cargo update -p` from taking a security fix. In a published library it
-   makes downstream resolution failures more likely: every other requirement on that crate
-   must accept exactly that version, and a yank of that version breaks resolution. Use `=`
-   only for tightly coupled pairs, such as a crate and its companion proc-macro crate.
+   `Cargo.lock` holds the exact version. Do not vet with `=1.2.3`: it stops
+   `cargo update -p` from taking a security fix, and in a published library every other
+   requirement must accept exactly that version, which a yank breaks. Use `=` only for a
+   crate and its companion proc-macro crate.
 5. **Run the policy on the candidate graph.** Run
    `cargo deny --config deny.toml --locked check`. Reject the dependency if it fails.
 6. **Justify the dependency.** Check whether the standard library or a crate already in
@@ -299,9 +300,8 @@ For a version bump of a package that is already in the lockfile, check the relea
 curl -s -A '<tool> (<contact>)' https://crates.io/api/v1/crates/<crate>/<version> | jq -r .version.created_at
 ```
 
-Read the changes of a release that is less than 7 days old or that adds a build script or a
-proc-macro dependency. Run `diff -ru <old-dir> <new-dir>` on the two unpacked directories
-under `$CARGO_HOME/registry/src`.
+Read the changes of a release under 7 days old or one that adds a build script or a
+proc-macro dependency: `diff -ru <old-dir> <new-dir>` on the two unpacked directories.
 
 ## 6. Supply chain hardening
 
@@ -315,8 +315,8 @@ cargo vet init                     # once per repository
 cargo vet
 ```
 
-`cargo machete` is a heuristic. It reports false positives for renamed dependencies and
-for dependencies that only a macro uses. Confirm each finding before you remove it.
+`cargo machete` is a heuristic: a renamed or macro-only dependency is a false positive.
+Confirm each finding.
 
 - Commit `Cargo.lock` for every package, libraries included. It does not constrain the
   consumers of a library. The `cargo-workflows` skill owns the lockfile policy.
@@ -341,13 +341,14 @@ files, images, and custom binary containers.
 - **Limit recursion depth** with an explicit counter.
 - **Reject non-finite floats** at the parse boundary.
 - **Reject path traversal.** Accept only `Component::Normal` UTF-8 components. Create
-  entries relative to an open staging-root handle, with no-follow semantics. Do not
+  entries relative to an open staging-root handle (cap-std `Dir`, or `rustix::fs::openat2`
+  on Linux), with no-follow semantics. Do not
   canonicalize a destination that does not exist yet. A library `extract` or `unpack_in`
   helper is not a traversal gate.
 - **Disable XML entity expansion.**
 - **Authenticate before you mutate.** Verify the digest or MAC of a container before you
   apply any of its content to live state.
-- **Reject unknown schema versions and unknown fields.**
+- **Reject unknown schema versions.** For unknown fields, follow the `rust-serde` table.
 - **Return typed errors across an FFI boundary.** Do not panic on malformed input.
 - **Keep std `RandomState` for hash-map keys that an outside caller controls**, such as
   HTTP headers, JSON object keys, and archive entry names. `FxHasher`, `FnvHasher`,

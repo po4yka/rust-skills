@@ -1,6 +1,6 @@
 ---
 name: rust-compiler-errors
-description: Use when rustc or cargo fails with a borrow checker, lifetime, trait bound, type inference, or unresolved import error, or any E0xxx code, when the cause matters more than a first fix. Codes include E0382, E0499, E0502, E0506, E0507, E0373, E0597, E0716, E0521, E0106, E0277, E0308, E0599, E0282, E0283, E0284, E0425, E0432, E0433, E0038, E0275. Also "does not live long enough", "missing lifetime specifier", "not dyn compatible", or a pasted rustc error. Not for E0207 in an iterator or handler trait (rust-iterator-impl, rust-event-loop-state), E0793 (rust-unsafe), or whether a type is Send (rust-send-sync).
+description: Use when rustc or cargo fails with a borrow checker, lifetime, trait bound, type inference, or unresolved import error, or any E0xxx code. Codes include E0382, E0499, E0502, E0506, E0507, E0373, E0597, E0716, E0521, E0106, E0277, E0308, E0599, E0282, E0283, E0284, E0425, E0432, E0433, E0038, E0275. Also "does not live long enough", "missing lifetime specifier", "not dyn compatible", or a pasted rustc error. Not for E0207 in an iterator or handler trait (rust-iterator-impl, rust-event-loop-state), E0793 (rust-unsafe), or whether a type is Send (rust-send-sync).
 license: BSD-3-Clause
 ---
 

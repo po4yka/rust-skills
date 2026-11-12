@@ -1,6 +1,6 @@
 ---
 name: rust-database
-description: Use when building or reviewing production Rust database code (sqlx, diesel, tokio-postgres, rusqlite, deadpool, bb8) for database pool exhaustion, transaction rollback, transaction cancellation safety, a serialization failure or deadlock retry, database migration ordering in a rolling deploy, a schema integration test, or a sqlx 0.9 upgrade that hits SqlSafeStr or AssertSqlSafe.
+description: Use when building or reviewing production Rust database code (sqlx, diesel, tokio-postgres, rusqlite, deadpool, bb8) for database pool exhaustion, transaction rollback, transaction cancellation safety, a serialization failure or deadlock retry, SQLITE_BUSY, SQL injection or dynamic SQL with QueryBuilder, database migration ordering in a rolling deploy, a schema integration test, or a sqlx 0.9 upgrade that hits SqlSafeStr or AssertSqlSafe.
 license: BSD-3-Clause
 ---
 
@@ -75,22 +75,21 @@ versions.
 
 ## Verify and finish
 
-Run the database test target while you iterate. Select it explicitly when the
-full suite is too slow. Run the other commands once before merge or at review.
-Skip the two sqlx commands when `Cargo.lock` has no sqlx.
+Run the database test target while you iterate, and the other commands once
+before merge. Skip the two sqlx commands when `Cargo.lock` has no sqlx.
 
 ```bash
-cargo test --locked --test database -- --test-threads=4
+cargo test --locked --test <db-test-target> -- --test-threads=4
 cargo sqlx prepare --workspace --check   # sqlx only
 cargo tree --locked -i sqlx-core --depth 0   # sqlx only
 cargo deny --config deny.toml --locked check advisories
 ```
 
-- Treat the test worker count as a connection-budget input, not a constant to
-  copy. A green run does not prove lock duration or rewrite cost on production
-  data volumes.
-- `prepare --check` exits 1 when the `.sqlx` query metadata is
-  stale.
+- The worker count is a connection-budget input. A green run does not prove
+  lock duration or rewrite cost on production data volumes.
+- `prepare --check` needs `sqlx-cli` and a `DATABASE_URL` with every
+  migration applied. It exits 1 when `.sqlx` is stale; a connection error means
+  the database is not ready.
 - `cargo tree` prints the locked sqlx version for the 0.9.0 floor in "Make
   cancellation safe".
 - `cargo deny` with `unsound = "all"` (or `cargo audit --deny warnings`) gates
@@ -115,8 +114,8 @@ Before merge, confirm each item:
 - [ ] The advisory gate passes.
 
 Report the database and driver versions, pool calculation, transaction and
-retry policy, migration phases, integration test topology, commands run, and
-any production-only behavior that remains unverified.
+retry policy, migration phases, test topology, commands run, and what stays
+unverified.
 
 ## Keep SQL text static
 

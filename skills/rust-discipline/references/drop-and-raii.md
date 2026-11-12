@@ -12,7 +12,12 @@ Contents:
 - The four escape hatches
 - Drop order
 - The design rule: one guard field, never the aggregate
+- A destructor must not fail or block
 - Leaking is safe, so a guard is never a soundness argument
+
+This file owns the `Drop` design rule, the escape hatches, and drop order. The
+`rust-compiler-errors` skill, when it is installed, owns the error-to-fix entry for each code in
+the cost table.
 
 ---
 
@@ -35,9 +40,8 @@ exactly as much as a full one.
 
 `Copy` fields are exempt from E0509. `eat_u32(value.n)` with `n: u32` compiles on a `Drop` type.
 
-The `rust-compiler-errors` skill, when it is installed, has the E0507, E0502, and E0597 examples
-and their fixes. Do not reach for `#[may_dangle]` to relax dropck: it is unstable (E0658) on
-stable Rust. Change the declaration order instead.
+Do not reach for `#[may_dangle]` to relax dropck: it is unstable (E0658) on stable Rust. Change
+the declaration order instead.
 
 ---
 
@@ -180,7 +184,61 @@ fn finish(sink: Sink) -> Vec<u8> {
 ```
 
 The reflexive repair is `data: Option<Box<dyn Data>>` plus an `unwrap` in every method, which
-moves a compile-time guarantee into a run-time panic.
+moves a compile-time guarantee into a run-time panic. The guard above holds an `Option` only
+because `disarm` must empty it; a guard whose cleanup only reads its field holds the field plain.
+
+A consuming method on a `Drop` type is E0509 too: `fn into_data(self) -> Vec<u8> { self.data }`
+fails like `finish` above. Take the field with an escape hatch instead:
+`fn into_data(mut self) -> Vec<u8> { std::mem::take(&mut self.data) }`. `drop` then runs on the
+emptied value.
+
+---
+
+## A destructor must not fail or block
+
+`Drop::drop` returns `()`, so a cleanup error has nowhere to go, and a panic in `drop` during
+unwinding aborts the process. `drop` also runs at every scope exit, on every error path, and on an
+async executor thread. Rust API Guidelines C-DTOR-FAIL and C-DTOR-BLOCK follow from that:
+
+- Put fallible or blocking cleanup (a flush, a final write, a network goodbye, a `join`) in a
+  consuming `close(self) -> Result<T, E>` method, and document that callers who need the error
+  call it.
+- Keep `drop` as the best-effort fallback for a caller that did not call `close`: ignore or log
+  the error, never panic, and never wait on I/O or on another thread's lock.
+
+`std::io::BufWriter` follows this shape: its `drop` flushes and ignores the error, and
+`into_inner` returns it.
+
+```rust
+use std::io::{self, Write};
+
+pub struct Log<W: Write> {
+    // `Option` because `close` consumes the writer.
+    out: Option<W>,
+}
+
+impl<W: Write> Log<W> {
+    /// Flushes and returns the writer.
+    ///
+    /// # Errors
+    ///
+    /// Returns the flush error that `drop` would ignore.
+    pub fn close(mut self) -> io::Result<W> {
+        let mut out = self.out.take().expect("writer present until close");
+        out.flush()?;
+        Ok(out)
+    }
+}
+
+impl<W: Write> Drop for Log<W> {
+    fn drop(&mut self) {
+        // Best effort: `drop` cannot report the error, so `close` exists.
+        if let Some(out) = self.out.as_mut() {
+            let _ = out.flush();
+        }
+    }
+}
+```
 
 ---
 

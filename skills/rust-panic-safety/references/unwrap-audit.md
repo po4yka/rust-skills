@@ -43,14 +43,13 @@ unwraps inside an entry point. Rank the sites:
 
 | Rank | Site | Why |
 |---|---|---|
-| 1 | Inside an `extern` body, outside the guard | Kills the host process immediately |
+| 1 | Inside an `extern` body or a callback that a foreign runtime invokes, outside the guard | Aborts the host with `panic in a function that cannot unwind` (undefined behaviour below MSRV 1.81) |
 | 2 | On a code path an entry point calls, with input-derived data | Turns any malformed input into a crash |
 | 3 | In a `Drop` implementation | Double panic during unwinding aborts |
-| 4 | In a callback that a foreign runtime invokes | Unwinds into foreign frames |
-| 5 | In a spawned task or thread | Kills the task; may deadlock the waiter |
-| 6 | In startup code that runs once | Fails loudly and early; lowest risk |
+| 4 | In a spawned task or thread | Kills the task; may deadlock the waiter |
+| 5 | In startup code that runs once | Fails loudly and early; lowest risk |
 
-Fix rank 1 to 4 first. Leave rank 6 alone unless it is cheap.
+Fix rank 1 to 3 first. Leave rank 5 alone unless it is cheap.
 
 ## Step 3: replace by category
 
@@ -267,5 +266,5 @@ When you finish an audit, report these lines and nothing else:
 1. Total `.unwrap()`/`.expect()` in production code, before and after.
 2. The count on FFI-reachable paths, before and after.
 3. Crates that now deny `clippy::unwrap_used`.
-4. Every remaining rank 1 to 4 site, with the reason it stays.
+4. Every remaining rank 1 to 3 site, with the reason it stays.
 5. The lint command CI runs, so the next reviewer can reproduce the number.

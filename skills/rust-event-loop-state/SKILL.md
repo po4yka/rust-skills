@@ -33,10 +33,10 @@ down costs something concrete, and you pay it whether or not you needed it.
 | `E0499: cannot borrow *st as mutable more than once`, first borrow at `iter_mut()`, second at the dispatch argument | The handler collection is a field of the state | Move the field out of `State`, dispatch a sub-struct field, or `mem::take` it for the tick | [The loop owns both](#the-loop-owns-both-separately) |
 | `E0502 ... immutable borrow later used by call` on `while let Some(ev) = st.queue.front()` | The event is borrowed out of a queue inside the state | Pop the event by value | [Drain the queue](#drain-the-queue-by-value) |
 | `E0499 ... first borrow later used by call`, first borrow at handler construction | A handler holds a `&mut` into the state | Store an index or a generational key | [Store a key](#a-handler-stores-a-key-never-a-borrow) |
-| `E0207: the type parameter S is not constrained` | The handler trait has `type State` | Make it `trait Handler<S>` | [State is a trait parameter](references/generic-and-dynamic-state.md#state-is-a-trait-parameter-not-an-associated-type) |
-| `E0119: conflicting implementations of trait Handler<App>` | A blanket `impl<S: ...> Handler<S> for X` whose bounds `App` satisfies. An unbounded one covers every state | Keep one impl. Delete the per-state impl and move its behavior behind a capability-trait method, or replace the blanket impl with per-state impls. A bound removes the overlap only when `App` does not satisfy it | [State is a trait parameter](references/generic-and-dynamic-state.md#state-is-a-trait-parameter-not-an-associated-type) |
-| `E0499` on `&mut ctx.field` where `ctx` implements `DerefMut` | Auto-deref borrows the whole wrapper | Plain fields, or one `split()` method | [No DerefMut](references/generic-and-dynamic-state.md#static-plus-dynamic-state-no-derefmut) |
-| Run-time panic `... conflicts with a previous system parameter` (an ECS code such as `B0001`) | Two overlapping mutable views in one system | A parameter set or a disjoint filter | [ECS](references/generic-and-dynamic-state.md#ecs-the-price-of-the-dynamic-world) |
+| `E0207: the type parameter S is not constrained` | The handler trait has `type State` | Make it `trait Handler<S>` | [State is a trait parameter](references/state-partitioning.md#state-is-a-trait-parameter-not-an-associated-type) |
+| `E0119: conflicting implementations of trait Handler<App>` | A blanket `impl<S: ...> Handler<S> for X` whose bounds `App` satisfies. An unbounded one covers every state | Keep one impl: move per-state behavior behind a capability-trait method, or replace the blanket impl with per-state impls | [Blanket impl](references/state-partitioning.md#the-blanket-impl-and-e0119) |
+| `E0499` on `&mut ctx.field` where `ctx` implements `DerefMut` | Auto-deref borrows the whole wrapper | Plain fields, or one `split()` method | [No DerefMut](references/state-partitioning.md#static-plus-dynamic-state-three-versions) |
+| Run-time panic `... conflicts with a previous system parameter` (an ECS code such as `B0001`) | Two overlapping mutable views in one system | A parameter set or a disjoint filter | [ECS](references/state-partitioning.md#ecs-trade) |
 | `RefCell already borrowed` or `RefCell already mutably borrowed` panic, or a hang on a nested `lock()` | Shared state behind `Rc<RefCell<_>>` or `Arc<Mutex<_>>`, re-entered during dispatch | Row 1 of the structure table | [Do not do this](#do-not-do-this) |
 | A routine must pause mid-work and continue next tick | - | A `resume(&mut self, &mut State)` trait | [Suspendable routines](references/suspendable-routines.md#suspendable-routines-over-shared-state) |
 | `implementation of Coroutine is not general enough` | A coroutine resume argument is not higher-ranked | Same as the row above | [Suspendable routines](references/suspendable-routines.md#suspendable-routines-over-shared-state) |
@@ -48,7 +48,7 @@ down costs something concrete, and you pay it whether or not you needed it.
 | `Rc<RefCell<State>>` cloned into every handler, re-borrowed during dispatch | The `E0499` becomes a `RefCell already borrowed` or `RefCell already mutably borrowed` panic the first time one handler calls another. The compile error told you the truth |
 | `Arc<Mutex<State>>` inside one thread, re-locked during dispatch | The nested `lock()` never returns. std leaves the outcome unspecified: it can deadlock or panic. A deadlock gives no output and no backtrace, and it needs no load to happen |
 | `unsafe { &mut *ptr }` to hand two handlers the state | Two live `&mut` to one place are undefined behavior. Miri rejects it under Stacked Borrows and Tree Borrows |
-| `async fn(&mut State)` as a suspendable routine | `E0499` before any executor runs. No version of this works |
+| Two live `async fn(&mut State)` routines as suspendable routines over one state | `E0499` before any executor runs: each future holds the `&mut` until it completes |
 | An ECS taken for ergonomics, not for an open component set | You pay run-time conflict panics for a component set the compiler could have checked |
 | `std::mem::take(&mut st.handlers)`, then `st.handlers = hs` | Every handler registered during the tick is silently dropped. Call `hs.append(&mut st.handlers)` first |
 | A bare `usize` slot key when slots are removed or reused | The key names a different slot, or an out-of-bounds slot, with no error. Use a generational key |
@@ -193,7 +193,7 @@ staleness rules.
 
 ## Generic state, dynamic worlds, and suspendable routines
 
-Read `references/generic-and-dynamic-state.md` when handlers are reused across states (structure row 2), a context pairs a static state with a dynamic world, or the component set is open at run time (structure row 3).
+Read `references/state-partitioning.md` when handlers are reused across states (structure row 2), a context pairs a static state with a dynamic world, or the component set is open at run time (structure row 3).
 
 Read `references/suspendable-routines.md` when a routine must pause and resume next tick, and `references/coroutines-and-generators.md` when someone proposes `async fn(&mut State)`, a coroutine, or a generator for it.
 

@@ -1,6 +1,6 @@
 ---
 name: rust-native-linking
-description: Use when writing a build.rs or *-sys crate that builds, discovers, binds, links, or packages a native C or C++ library, or when diagnosing a native link or load failure on host or cross targets. Triggers on rustc-link-lib, pkg-config, vcpkg, CMake, bindgen, cbindgen, rpath, install name, windows-msvc, windows-gnu, import library, raw-dylib, PDB, LNK2019, ERROR_BAD_EXE_FORMAT, undefined reference, undefined symbol, library not loaded, or DLL not found.
+description: Use when writing a build.rs or *-sys crate that builds, discovers, binds, links, or packages a native C or C++ library, or when diagnosing a native link or load failure on host or cross targets. Triggers on rustc-link-lib, pkg-config, vcpkg, CMake, bindgen, cbindgen, rpath, install name, windows-msvc, windows-gnu, import library, raw-dylib, PDB, LNK2019, ERROR_BAD_EXE_FORMAT, undefined reference, undefined symbol, library not loaded, or DLL not found. Not for wasm32 link errors; use rust-wasm.
 license: BSD-3-Clause
 ---
 

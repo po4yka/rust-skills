@@ -1,6 +1,6 @@
 ---
 name: rust-variance
-description: Use when a lifetime coercion is refused ("is invariant over the parameter", "borrowed for 'static", "lifetime may not live long enough" on a return or argument), when deciding whether a type is covariant, contravariant, or invariant, or when adding a lifetime parameter, a PhantomData variance marker, or interior mutability to a public type. Also for subtyping of a fn item that fails a trait bound (resize_with), dyn Fn lifetime parameters, and an unbounded lifetime from a raw pointer. Triggers on "variance", "phantomdata variance", "&mut is invariant", "sender is invariant".
+description: Use when a lifetime coercion is refused ("is invariant over the parameter", "borrowed for 'static", "lifetime may not live long enough" on a return or argument), when deciding whether a type is covariant, contravariant, or invariant, or when adding a lifetime parameter, a PhantomData variance marker, or interior mutability to a public type. Also for subtyping of a fn item that fails a trait bound (resize_with), dyn Fn lifetime parameters, and an unbounded lifetime from a raw pointer. Triggers on "phantomdata variance", "&mut is invariant", "sender is invariant".
 license: BSD-3-Clause
 ---
 
@@ -71,31 +71,16 @@ error: lifetime may not live long enough
   = note: the struct `Cell<T>` is invariant over the parameter `T`
 ```
 
-Two traps make a probe lie.
-
-**A `'static` outer reference.** Never write one into a probe. This compiles, and it proves
-nothing, because `&'static mut` forces `&'b u8: 'static` and collapses both lifetimes:
-
-```rust
-fn degenerate<'a, 'b: 'a>(x: &'static mut &'b u8) -> &'static mut &'a u8 { x }
-```
-
-Use a fresh outer lifetime instead: `fn p<'x, 'a: 'x, 'b: 'a>(x: &'x mut &'b u8) -> &'x mut &'a u8`.
-That form is rejected with `note: mutable references are invariant over their type parameter`, which
-is the true answer for `&mut T`.
-
-**An unsizing step.** The `{ x }` return is a coercion site. The trap applies when the outermost
-probe type is a std pointer or cell that implements `CoerceUnsized` (such as `&`, `&mut`,
-`*const`, `*mut`, `NonNull`, `Box`, `Rc`, `Arc`, `Pin`, `Cell`, `RefCell`, `UnsafeCell`) and it
-holds `dyn Trait + 'b`. An unsize coercion then shortens the lifetime even in an invariant
-position, so `Cell<Box<dyn Debug + 'b>>` coerces to `Cell<Box<dyn Debug + 'a>>`. Rust 1.98 adds
-an inner `&'b mut` to the coercions that do this. A compiles verdict then measures the
-coercion, not the variance. Wrap such a probe type in `Vec<...>`, which forwards no coercion. A
-rejected verdict needs no wrapper. A probe of a type you define needs none either, because a
-type of your own cannot implement `CoerceUnsized` on stable. Never let the output differ from
-the input in anything but the lifetime (array to slice, `T` to `dyn Trait`). Read
-[references/variance-tables.md](references/variance-tables.md) for the per-version table when
-code that passes through such a coercion compiles on one toolchain and fails on another.
+Two traps make a probe lie. Never put `'static` in the outer position: `&'static mut &'b u8`
+forces `'b: 'static`, so the probe compiles and proves nothing. Use a fresh outer lifetime,
+`fn p<'x, 'a: 'x, 'b: 'a>(x: &'x mut &'b u8) -> &'x mut &'a u8`. Never let the output differ
+from the input in anything but the lifetime. A std pointer or cell that holds `dyn Trait + 'b`
+can unsize-coerce to a shorter lifetime even in an invariant position, so a compiles verdict
+then measures the coercion: wrap such a probe type in `Vec<...>`. A rejected verdict needs no
+wrapper, and a type you define needs none, because it cannot implement `CoerceUnsized` on
+stable. Read [references/variance-tables.md](references/variance-tables.md) for both traps and
+the per-version unsize table, also when code that passes through such a coercion compiles on
+one toolchain and fails on another.
 
 ## The variance table
 
@@ -166,17 +151,15 @@ These std functions hand out an unbounded lifetime the same way: `<*const T>::as
 `<*mut T>::as_mut`, `NonNull::as_ref` and `as_mut`, `as_ref_unchecked` and `as_mut_unchecked`
 (stable since 1.95), `slice::from_raw_parts`, and `CStr::from_ptr`. When no input carries the
 lifetime, take `&self` on a wrapper that owns the pointer, or return a guard. The `rust-unsafe`
-skill, when it is installed, owns the pointer-validity rules and the Miri workflow. Without it,
-run `cargo +nightly miri test --locked` on every path that turns a raw pointer into a reference.
+skill, when it is installed, owns the pointer-validity rules; the `rust-sanitizers-miri` skill
+owns the Miri workflow. Run `cargo +nightly miri test --locked` on every path that turns a raw
+pointer into a reference when a nightly with the miri component is installed. Without Miri,
+report that path as not checked by Miri.
 
-Since Rust 1.94 a raw-pointer cast cannot extend the lifetime bound of a trait object, and old
-unsafe code that does fails with `note: raw pointer casts of trait objects cannot extend
-lifetimes`. Keep `'a` in the stored type. The longer bound can make a method with a
-`where Self: 'x` bound callable through a vtable that has no entry for it
-(rust-lang/rust#141402). Use `transmute` only when no method of the trait has a lifetime bound on
-`Self` and the owner outlives every use of the pointer, and state both facts in the `SAFETY`
-comment. Read [references/variance-tables.md](references/variance-tables.md) when you need the
-rejected cast and the exact `transmute` form.
+Since Rust 1.94 a raw-pointer cast cannot extend the lifetime bound of a trait object
+(`note: raw pointer casts of trait objects cannot extend lifetimes`). Keep `'a` in the stored
+type. Read [references/variance-tables.md](references/variance-tables.md) before a `transmute`
+that erases the bound: it gives the two facts the `SAFETY` comment must state.
 
 ## Coerce the message, not the handle
 
@@ -357,7 +340,8 @@ Hand off to these skills when they are installed.
 
 | Skill | Boundary |
 | --- | --- |
-| `rust-unsafe` | Raw-pointer validity, `PhantomData` on FFI handles, the Miri workflow, and the proof for a manual `unsafe impl Send` or `Sync` |
+| `rust-unsafe` | Raw-pointer validity, `PhantomData` on FFI handles, and the proof for a manual `unsafe impl Send` or `Sync` |
+| `rust-sanitizers-miri` | Running Miri and reading its report |
 | `rust-compiler-errors` | E0597, E0521, and E0106 beyond the variance shapes here, and dyn compatibility (E0038) |
 | `rust-callback-bounds` | Choosing `Fn`, `FnMut`, `FnOnce`, or a `fn` pointer for a callback, once variance is settled |
 | `rust-type-erasure` | `TypeId`-keyed stores, `dyn Any` downcasting and upcasting, and the `'static` bound of `Any` |

@@ -437,7 +437,7 @@ owns it.
 
 | Skill | What it covers |
 | --- | --- |
-| [rust-tdd](skills/rust-tdd/SKILL.md) | Test-first red-green-refactor, bug reproduction, refactor safety nets, hand-written fakes, a fault-injection queue, async tokio tests with paused time, and golden-bless rules. |
+| [rust-tdd](skills/rust-tdd/SKILL.md) | Test-first red-green-refactor, bug reproduction, refactor safety nets, hand-written fakes, a fault-injection queue, async tokio tests with paused time. |
 | [rust-test-tools](skills/rust-test-tools/SKILL.md) | loom, proptest, cargo-fuzz and differential fuzz targets, cargo-careful, cargo-mutants survived-mutant triage, and golden or snapshot tests. |
 | [rust-sanitizers-miri](skills/rust-sanitizers-miri/SKILL.md) | ASan, TSan, and MSan, Miri validity and provenance checks, bounded many-seed schedules, FFI stubbing, HWASan and MTE, and report triage. |
 | [rust-panic-safety](skills/rust-panic-safety/SKILL.md) | Unwind versus abort, FFI panic guards, safe disposal of a panicking payload, unwrap and expect audits, privacy-safe hooks, and typed-error mapping. |

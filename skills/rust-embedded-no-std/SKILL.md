@@ -22,6 +22,10 @@ Use these skills, when they are installed, for adjacent work:
 
 | Symptom | Likely cause | Check and fix |
 |---|---|---|
+| E0463 ``can't find crate for `std` `` | A dependency without `default-features = false`, or a crate root without `#![no_std]` | `cargo tree --target <triple> -e features -i <crate>`; set `default-features = false` or add `#![no_std]` |
+| `` `#[panic_handler]` function required, but not found `` | No panic provider in the binary | Link one, such as `panic-halt` or `panic-probe`, or define one `#[panic_handler]` |
+| E0152 ``found duplicate lang item `panic_impl` `` | Two panic providers | Inspect `cargo tree`; keep one in the binary |
+| `no global memory allocator found but one is required` | `alloc` is used with no allocator | Remove allocation or initialize one bounded heap |
 | `` custom targets are unstable and require `-Zunstable-options` ``, or `` `.json` target specs require -Zjson-target-spec to be added to the cargo invocation `` | JSON target spec on stable (Rust 1.95+) | Use a built-in target, or pin nightly with `-Z json-target-spec` and `-Z build-std=core` |
 | E0599 ``no method named `fetch_add` found``, or the same for `compare_exchange` or `swap` | Target has no compare-and-swap | Use `portable-atomic`; the final binary selects its backend |
 | E0432 `` unresolved import `core::sync::atomic::AtomicU32` `` | Target has no atomic types | Use `portable-atomic`; the final binary selects its backend |
@@ -29,21 +33,15 @@ Use these skills, when they are installed, for adjacent work:
 | warning ``suspicious definition of the runtime `memset` symbol used by the standard library`` | The same symbol with the right arity and a wrong parameter type, such as `c: u8` for the `c_int` of `memset` (`suspicious_runtime_symbol_definitions`, warn-by-default since 1.98). The build succeeds, and the caller and callee disagree on the ABI | Treat it as an error: match the C types (`core::ffi::c_int`, `usize` for `size_t`). Add `#![deny(suspicious_runtime_symbol_definitions)]` to the crate root |
 | `` `-C soft-float`: this option has been removed (use a corresponding *eabi target instead) ``, or ``target feature `<name>` must be enabled to ensure that the ABI of the current target can be implemented correctly`` | Float ABI changed by a flag | Select the `eabi` or `eabihf` target that matches the linked C objects; do not toggle ABI features |
 | `creating a shared reference to mutable static` (or `mutable reference`) | `static mut` under edition 2024 | Use an atomic, `critical_section::Mutex`, or framework resources |
-| Duplicate panic implementation | Two panic provider crates | Inspect `cargo tree`; select one in the binary |
-| `#[global_allocator]` missing | `alloc` is used with no allocator | Remove allocation or initialize one bounded heap |
 | Link errors that name defmt symbols or sections | No `-Tdefmt.x`, or zero or two global loggers | Add the link argument; link exactly one logger in the binary |
 | Linker reports region overflow | Code, statics, heap, or stack exceed layout | Inspect sections; reduce use or change only a verified memory budget |
-| Firmware flashes but does not start | Wrong vector address, entry point, or reset setup | Check boot offset, vector contents, and runtime feature |
-| Hard fault after enabling DMA | Buffer lifetime, alignment, cache, or region error | Stop DMA; inspect ownership and chip memory rules |
-| Interrupt fires once | Pending flag is not cleared correctly | Read the peripheral sequence; clear only documented flags |
-| Interrupt storm | Level source remains asserted or priority is wrong | Inspect source state and acknowledgement order |
-| Async task stops progressing | Blocking call, lost wake, or exhausted task slot | Inspect executor trace and all bounded slots |
 | Logs missing below `ERROR` | `DEFMT_LOG` not set for this build | Set `DEFMT_LOG` and rebuild; record it with the ELF |
 | Logs corrupt or disappear | Wrong ELF, transport overflow, or reset during output | Match build identity and reduce bounded log volume |
 | Host tests try to run firmware | Global embedded target or runner leaked into tests | Pass the host target explicitly or scope target config |
-| Debug build works, release fails | Timing race, overflow, layout, or logging side effect | Test the release ELF and inspect optimization-sensitive sharing |
 
-Do not weaken optimization, increase memory, or add delays as the final fix until
+Read [references/runtime-faults.md](references/runtime-faults.md) when firmware
+builds but does not start, faults, hangs, or works only in a debug build. Do not
+weaken optimization, increase memory, or add delays as the final fix until
 inspection identifies the violated invariant.
 
 Apply these rules to every change. Each one prevents a silent, unsound, or

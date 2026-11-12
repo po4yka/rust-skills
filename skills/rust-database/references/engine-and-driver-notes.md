@@ -136,7 +136,12 @@ cargo sqlx prepare --workspace --check
 ```
 
 `sqlx migrate run` changes the database; the target rules in `SKILL.md` apply.
-`prepare --check` exits with 1 when the `.sqlx` query metadata needs an update.
+`prepare --check` needs `cargo install --locked sqlx-cli`. As of sqlx-cli 0.9.0 it
+connects to `DATABASE_URL` first, then runs `cargo check` with `SQLX_OFFLINE=false`, so
+the query macros run against that live database: apply every migration there first
+(`sqlx migrate run` on a disposable database). It exits with 1 when the `.sqlx` query
+metadata needs an update; a connection error is a setup failure, not stale
+metadata.
 
 ## tokio-postgres
 

@@ -4,7 +4,7 @@ Rules about the *shape* of data that crosses a boundary: alignment, pointer widt
 layout, and handle ownership. [SKILL.md](../SKILL.md) covers the safety contract of an unsafe
 block. This file covers the cases where the contract is met and the layout is still wrong.
 
-The repository compile check type-checks every example in this file on rustc 1.98.1, edition 2024.
+The repository compile check type-checks every example in this file on rustc 1.99.1, edition 2024.
 
 Contents:
 
@@ -456,8 +456,11 @@ A `union` has no tag, so the compiler cannot check which variant is live. Readin
 was never written is undefined behavior.
 
 - Use a `union` only to match a C type that is itself a union.
-- Never store a reference or a lifetime-carrying type in a variant. The compiler cannot
-  determine when the borrow ends.
+- Do not put a reference, `NonNull`, `Box`, or other type with a validity invariant beside an
+  integer variant. Borrowck tracks the lifetime of a `&'a T` field (rustc 1.99.1 rejects a
+  dangling one with E0597), but a read of `r` after a write of `n` fabricates a reference from an
+  arbitrary integer, which is undefined behavior. Store a raw pointer when the C type holds a
+  pointer.
 - Pair every union with the discriminant that the C API uses, and read the discriminant first.
 - Prefer an `enum` whenever the layout is yours to choose. It carries the tag for you.
 

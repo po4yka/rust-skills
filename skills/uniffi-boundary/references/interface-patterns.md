@@ -23,12 +23,14 @@ uniffi::setup_scaffolding!();
 mod engine {
     use std::sync::Arc;
 
+    // Flat: only the variant name and the `Display` text cross the boundary.
     #[derive(Debug, thiserror::Error, uniffi::Error)]
+    #[uniffi(flat_error)]
     pub enum EngineError {
-        #[error("invalid spec: {reason}")]
-        InvalidSpec { reason: String },
-        #[error("unexpected engine failure")]
-        Unexpected,
+        #[error("{0}")]
+        InvalidSpec(String),
+        #[error("{0}")]
+        Unexpected(String),
     }
 
     #[derive(uniffi::Record)]
@@ -66,7 +68,9 @@ mod engine {
     impl From<ProgressCallbackError> for EngineError {
         fn from(err: ProgressCallbackError) -> Self {
             match err {
-                ProgressCallbackError::Unexpected => Self::Unexpected,
+                ProgressCallbackError::Unexpected => {
+                    Self::Unexpected("foreign progress callback failed".to_owned())
+                }
             }
         }
     }
@@ -250,7 +254,7 @@ Move large data by file path or URL string:
 - Write the output file in Rust. Return a small Record with the path, the byte size, and the
   summary the caller needs.
 - For a large input buffer that the platform already holds, a `&[u8]` argument avoids the
-  copy. Kotlin callers then pass a direct `ByteBuffer` at position 0.
+  copy. Kotlin callers then pass a direct `ByteBuffer` at position 0: call `flip()` after `put()`.
 - A small `Vec<u8>`, such as a hash, a signature, or a short header, is fine.
 
 ## Trait interfaces versus Objects

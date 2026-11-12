@@ -131,10 +131,9 @@ Two checks before you convert a signature:
   100%. The 20x above comes from a 5% rate.
 - **Read the call sites.** One `.into_owned()` in the only caller cancels the whole change.
 
-`Cow` is free in size. Measured on aarch64: `&str` 16 bytes, `String` 24, `Cow<'_, str>` 24,
-`Cow<'_, [u8]>` 24. Enum layout is an unspecified implementation detail, and Rust 1.97 changed
-the layout of some enums. If you depend on the size, assert it in a form that holds on every
-target: `const _: () = assert!(size_of::<Cow<'_, str>>() == size_of::<String>());`.
+`Cow` is free in size: on aarch64 `Cow<'_, str>` and `Cow<'_, [u8]>` are 24 bytes, like `String`.
+Enum layout is unspecified, so assert it if you depend on it:
+`const _: () = assert!(size_of::<Cow<'_, str>>() == size_of::<String>());`.
 
 ## `Cow` in argument position
 
@@ -148,16 +147,22 @@ same three stages with `fn(&str) -> String` signatures:
 | `Cow<'a, str> -> Cow<'a, str>`, 3 stages | 50 | 394 |
 | `String -> String`, 3 stages | 3000 | 23670 |
 
-Only `to_slashes` allocates on this input set. The other two stages pass their input
-through, so the chain costs what one stage costs. The `String` chain pays 7890 bytes per
+Only `to_slashes` allocates on this input set. No input starts with `./` or ends with `/`, so
+the table does not exercise the trim branches; a trim reborrows a `Borrowed` input and edits an
+`Owned` one in place, so it allocates nothing either way. The chain costs what one stage costs. The `String` chain pays 7890 bytes per
 stage whether the stage changes anything or not.
 
 ```rust,run
 use std::borrow::Cow;
 
-// Reborrowing out of an Owned value does not compile, so re-own the tail.
 fn strip_dot(s: Cow<'_, str>) -> Cow<'_, str> {
-    match s.strip_prefix("./") { Some(r) => Cow::Owned(r.to_string()), None => s }
+    match s {
+        Cow::Borrowed(b) => Cow::Borrowed(b.strip_prefix("./").unwrap_or(b)),
+        Cow::Owned(mut o) => {
+            if o.starts_with("./") { o.drain(..2); }
+            Cow::Owned(o)
+        }
+    }
 }
 
 fn to_slashes(s: Cow<'_, str>) -> Cow<'_, str> {
@@ -165,12 +170,20 @@ fn to_slashes(s: Cow<'_, str>) -> Cow<'_, str> {
 }
 
 fn drop_trailing(s: Cow<'_, str>) -> Cow<'_, str> {
-    if s.ends_with('/') { Cow::Owned(s[..s.len() - 1].to_string()) } else { s }
+    match s {
+        Cow::Borrowed(b) => Cow::Borrowed(b.strip_suffix('/').unwrap_or(b)),
+        Cow::Owned(mut o) => {
+            if o.ends_with('/') { o.pop(); }
+            Cow::Owned(o)
+        }
+    }
 }
 
 fn main() {
     let clean = drop_trailing(to_slashes(strip_dot(Cow::Borrowed("a/b"))));
     assert!(matches!(clean, Cow::Borrowed("a/b")));   // zero allocations
+    let tail = drop_trailing(strip_dot(Cow::Borrowed("./a/b/")));
+    assert!(matches!(tail, Cow::Borrowed("a/b")));    // a trim is a reborrow
     assert_eq!(drop_trailing(to_slashes(strip_dot(Cow::Borrowed("a\\b/")))), "a/b");
 }
 ```
@@ -233,7 +246,8 @@ rg '\.to_mut\(\)\.' --type rust -n
 
 ## A `Cow` field infects the struct with a lifetime
 
-`struct Header<'a> { name: Cow<'a, str> }` is a borrowing struct. The lifetime spreads to
+`struct Header<'a> { name: Cow<'a, str> }` is a borrowing struct (`Cow<'static, str>` is not;
+see below). The lifetime spreads to
 every signature that mentions it, exactly like a `&'a mut T` field. The `rust-discipline`
 skill, when it is installed, covers lifetime infection in general. Without it, give a
 long-lived struct an owned field (`String`) or a generic parameter, so it carries no lifetime.
@@ -292,17 +306,18 @@ fn main() {
 }
 ```
 
-Add a `Cow` field only when both hold: a real zero-copy parse path exists, and the value dies
-inside the borrow scope. Otherwise store `String`, or store `Arc<str>` when many owners share
-one immutable value. `Arc<str>` is 16 bytes and 1000 clones cost 0 allocations.
+Add a `Cow<'a, str>` field only when both hold: a real zero-copy parse path exists, and the
+value dies inside the borrow scope. A field that is mostly a literal and sometimes computed
+takes `Cow<'static, str>`: `Cow::Borrowed("content-type")` is both borrowed and `'static`, adds
+no lifetime parameter, and is `Send + 'static`, so `thread::spawn` accepts it. Otherwise store
+`String`, or `Arc<str>` when many owners share one immutable value (16 bytes, 0 allocations
+per clone).
 
 When a shared `'static` value must change now and then without a length change, use
-`Arc::make_mut`. It accepts `Arc<str>` and `Arc<[T]>` since 1.81, and `Arc<Path>`, `Arc<OsStr>`,
-and `Arc<CStr>` since 1.82. Use `Arc<String>` or `Arc<Vec<T>>` when the length changes. A custom
-unsized newtype such as `CiStr` gets E0277, because `CloneToUninit` is unstable (an
-`impl CloneToUninit` gets E0658). Share its owned form, such as `Arc<CiString>`, and do not add
-a nightly feature gate. The `rust-hot-path` skill, when it is installed, has the table of
-`make_mut` cases and the `Weak` detach trap.
+`Arc::make_mut` on `Arc<str>` or `Arc<[T]>` (Rust 1.81+); use `Arc<String>` or `Arc<Vec<T>>`
+when the length changes. A custom unsized newtype gets E0277 (`CloneToUninit` is unstable), so
+share its owned form. The `rust-hot-path` skill, when it is installed, has the full `make_mut`
+table and the `Weak` detach trap.
 
 ## The `Cow` parameter is the borrowed half
 
@@ -336,39 +351,15 @@ holds, or when E0119 or E0283 appears around `ToOwned`, `borrow()`, `eq`, or `ha
 `Cow` shares one value between one borrower and one owner. It never shares interior nodes.
 A `fn with(&self) -> Self` built on `Cow` has the signature of a persistent collection and
 the cost of a deep copy, because `Clone` on a `Cow::Owned<[String]>` clones the `Vec` and
-every `String` in it.
-
-```rust,run
-use std::borrow::Cow;
-
-#[derive(Clone)]
-struct Log<'a> {
-    lines: Cow<'a, [String]>,
-}
-
-impl Log<'_> {
-    // Looks persistent. Is not: cloning a Cow::Owned deep-clones every String.
-    fn with(&self, line: &str) -> Self {
-        let mut next = self.clone();
-        next.lines.to_mut().push(line.to_string());
-        next
-    }
-}
-
-fn main() {
-    let base = Log { lines: Cow::Owned(vec![String::from("a")]) };
-    let next = base.with("b");
-    assert_eq!(base.lines.len(), 1);
-    assert_eq!(next.lines.len(), 2);
-}
-```
+every `String` in it: `next = self.clone(); next.lines.to_mut().push(..)` on a
+`Cow<'_, [String]>` field is the defect.
 
 The cost is exactly quadratic: 2000 chained `with` calls cost 2 004 999 allocations, against
 2 010 for a `Vec::push` loop. Do not build a version history or an undo stack on `Cow`.
 Benchmark with the production element type: for `T: Copy` the clone is one `memcpy`, so a
 `Vec<u32>` toy benchmark passes and the production `Vec<String>` workload does not. Read
 [references/persistent-collections.md](references/persistent-collections.md) when you need the
-full measurement.
+`Log::with` example or the full measurement.
 
 ## Persistent collections
 
@@ -384,9 +375,8 @@ soundness advisory. `imbl` 7.0.1 still resolved `imbl-sized-chunks` 0.1, which h
 double-free advisory that 7.0.2 removes from the tree.
 
 Read [references/persistent-collections.md](references/persistent-collections.md) before you
-add `im`, `imbl`, or `rpds`, and when you review a change that uses one. It holds the full cost
-table, the write cost of `&self -> Self` (8x) and of `rpds` against `imbl` (72x), the
-`rpds::Vector::new()` `!Send` trap, the resolved-tree advisory check, and the review checklist.
+add `im`, `imbl`, or `rpds`, and when you review a change that uses one. It holds the cost tables,
+the `rpds::Vector::new()` `!Send` trap, the advisory check, and the review checklist.
 
 ## When to use none of this
 
@@ -396,7 +386,7 @@ table, the write cost of `&self -> Self` (8x) and of `rpds` against `imbl` (72x)
 | One owner mutates, others may hold a stale clone | `Arc::make_mut`, also on `Arc<str>` and `Arc<[T]>` when the length stays fixed |
 | The modification rate is above 50% | Plain `String` or `Vec<T>`. The `Cow` saves under half the allocations, and costs a branch and a lifetime parameter |
 | The value is indexed in a loop | `Vec<T>`, cloned. 45x to 89x cheaper per read |
-| The struct must be `'static` and cross a task boundary | Owned fields. A `Cow` field cannot be `'static` and borrowed at once |
+| The struct must be `'static` and cross a task boundary | Owned fields, or `Cow<'static, str>` when most values are literals. A `Cow<'a, str>` that borrows a parse buffer cannot be `'static` |
 
 ## Review checklist
 

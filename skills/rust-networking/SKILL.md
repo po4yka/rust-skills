@@ -1,15 +1,14 @@
 ---
 name: rust-networking
-description: Use when building or reviewing a production Rust network client or server with reqwest, hyper, axum, tower-http, tonic, or rustls; setting an HTTP timeout or deadline budget; retrying safely with Retry-After and jitter; keeping TLS verification on; configuring a connection pool, proxy, or DNS; enforcing a response body limit or overload bound; or adding graceful shutdown. Not for select! or task cancel safety; use `rust-async-internals`.
+description: Use when building or reviewing a production Rust network client or server with reqwest, hyper, axum, tower-http, tonic, or rustls; setting an HTTP timeout or deadline budget; retrying with Retry-After and jitter; keeping TLS verification on; configuring a connection pool, proxy, or DNS; enforcing a response body limit or overload bound; or adding graceful shutdown. Not for select! or task cancel safety; use `rust-async-internals`.
 license: BSD-3-Clause
 ---
 
 # Rust Networking
 
 Apply this policy to HTTP, gRPC, WebSocket, and custom TCP clients and servers.
-Use the timeout, retry, pool, body-limit, and shutdown controls of the stack
-that the workspace already uses. Do not replace the framework to get one
-middleware type.
+Use the controls of the stack that the workspace already uses; do not replace
+the framework to get one middleware type.
 
 Use these skills, when they are installed, for adjacent work:
 `rust-async-internals` for `select!`, task ownership, cancel safety, and runtime
@@ -18,8 +17,7 @@ configuration; `rust-observability` for tracing, metrics, and exporters;
 
 ## Start from one operation contract
 
-Record these decisions next to the client or server configuration before you
-tune individual settings:
+Record these decisions next to the configuration before you tune settings:
 
 | Field | Required decision |
 |---|---|
@@ -33,15 +31,14 @@ tune individual settings:
 | Server idle limits | Keep-alive, request-body, and response-write idle caps |
 | Shutdown grace | Maximum time allowed for accepted work to drain |
 
-Do not copy timeout values from another service. Derive them from the caller's
-deadline and the service latency objective. Keep all values configurable. Give
-each value a finite production default when the caller does not supply one.
+Derive timeout values from the caller's deadline and the service latency
+objective, not from another service. Keep each one configurable, with a finite
+production default.
 
 ## Set the limits the stack leaves open
 
-Most Rust network stacks ship without the limits in the contract. An unset
-limit compiles and passes tests, then fails under a slow or hostile peer. Set
-each one explicitly:
+An unset limit compiles and passes tests, then fails under a slow or hostile
+peer. Set each one explicitly:
 
 | Stack | Default | Consequence |
 |---|---|---|
@@ -65,14 +62,16 @@ a hit is not always a defect.
 
 ```bash
 rg -n --type rust 'danger_accept_invalid|tls_danger_|\.dangerous\(\)|tls_sslkeylogfile\(true\)|KeyLogFile|DefaultBodyLimit::disable|\bTimeoutLayer::new|axum::serve\(|with_graceful_shutdown\(|\breqwest::get\(|\bClient(Builder)?::(new|builder)\(\)|\.(bytes|text|json)\(\)\.await|\.json::<'
-cargo tree --locked -e features -i rustls --prefix none | grep -oE '^rustls feature "(ring|aws_lc_rs|custom-provider)"' | sort -u
+if cargo tree --locked -i rustls --depth 0 > /dev/null 2> rustls.err; then
+  cargo tree --locked -e features -i rustls --prefix none | grep -oE '^rustls feature "(ring|aws_lc_rs|custom-provider)"' | sort -u
+elif ! grep -q 'did not match any packages' rustls.err; then cat rustls.err; exit 1; fi
 cargo deny --config deny.toml --locked check advisories
 ```
 
 | Check | Proves | Does not prove |
 |---|---|---|
 | `rg` | Each bypass, key log, unbounded body, `408` timeout, and unbounded serve or client construction is visible | That the configured values fit the contract |
-| `cargo tree` | Which rustls provider features are on. Any output other than a single `ring` or `aws_lc_rs` line means `main` must install a provider | That the provider is installed before first TLS use |
+| `cargo tree` | Which rustls provider features are on; it skips a graph with no rustls. Output other than one `ring` or `aws_lc_rs` line means `main` must install a provider | That the provider is installed before first TLS use |
 | `cargo deny` | No known vulnerability in rustls, h2, hyper, quinn, or the rest of the graph. An unsound advisory in a transitive crate fails only with `unsound = "all"` (the `rust-security` skill owns this `deny.toml` policy) | Protocol correctness |
 
 A green grep does not prove the timing contract; the tests in "Test

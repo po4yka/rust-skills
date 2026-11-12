@@ -499,10 +499,10 @@ pub fn take(o: Outer) -> Inner {
 
 When the cleanup must consume the guard's field, make that one field an `Option` and `.take()` it
 in `drop`, or `mem::replace` it. Do not make the aggregate's fields `Option` instead: every method
-then needs an `unwrap`, and a compile-time guarantee becomes a run-time panic. Use
-`std::mem::ManuallyDrop` with `unsafe { ManuallyDrop::take(..) }` only when `size_of` shows that
-the payload has no niche, so `Option` costs space. The `rust-discipline` skill, when it is
-installed, has the full guard pattern.
+then needs an `unwrap`. A consuming method such as `fn into_inner(self) -> Inner { self.inner }`
+on a `Drop` type is E0509 as well; write `std::mem::take(&mut self.inner)` in a `mut self` method
+when the field has a `Default`. The `rust-discipline` skill, when it is installed, owns the guard
+design, the four escape hatches (`ManuallyDrop` included), and drop order.
 
 ### E0184 and E0367: the two `Drop` impl rules
 

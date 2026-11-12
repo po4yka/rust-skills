@@ -182,6 +182,8 @@ Code runs the hook in a trusted folder; Codex runs it once you trust it in `/hoo
 loads the hook of the folder where its session starts, so an edit in another worktree gets no
 report. The hook covers the validator only; it does not compile examples or install plugins, and
 it stays silent when it cannot run (no script, no git root, or a Python without `tomllib`).
+A validator crash, a non-zero exit with no `FAIL:` line, is reported with the end of its
+traceback.
 Tests: `scripts/test_agent_hook.py`.
 
 ### 1. Catalog structure

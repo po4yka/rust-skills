@@ -44,8 +44,8 @@ Consequences:
 | Platform | Default ordering | Barrier cost | Notes |
 |----------|------------------|--------------|-------|
 | x86 / x86-64 | TSO (total store order) | Acquire and Release need no extra instruction | SeqCst stores need `mfence` or a locked instruction |
-| **ARM64 (Android, Linux, iOS, Apple silicon)** | **Weakly ordered** | **All barriers explicit** | The most permissive reordering of the common targets |
-| POWER | Weakly ordered | Explicit | Weaker than ARM64 in some cases |
+| **ARM64 (Android, Linux, iOS, Apple silicon)** | **Weakly ordered** | **All barriers explicit** | The weakest model of the usual shipping targets; other-multi-copy-atomic since ARMv8 |
+| POWER | Weakly ordered | Explicit | Weaker than ARM64: not multi-copy atomic, so two readers can see two independent writes in opposite orders (IRIW) unless every access is `SeqCst` |
 | RISC-V | RVWMO | Defined per instruction | Fence granularity is per access type |
 
 - `Relaxed` loads and stores cost no barrier on ARM64 and give no ordering.

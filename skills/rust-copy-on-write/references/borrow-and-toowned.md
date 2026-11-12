@@ -236,13 +236,38 @@ into `E0277` at the call site with the note `the trait Borrow<str> is not implem
 exists.
 
 The tuple case has no fix inside `Borrow`. A `HashMap<(String, String), V>` cannot be probed
-with `(&str, &str)`. Three exits, in order of preference:
+with `(&str, &str)`. Five exits, in order of preference:
 
 | Exit | Cost |
 | --- | --- |
+| Key the map on `(Cow<'static, str>, Cow<'static, str>)` and probe with `&(Cow::Borrowed(a), Cow::Borrowed(b))` | zero allocation per lookup. Inserts store `Cow::Owned`, or `Cow::Borrowed` for a literal |
+| With `hashbrown` or `indexmap`, define a local `struct Pair<'a>(&'a str, &'a str)` with `#[derive(Hash)]` (it hashes like the owned tuple) and implement `equivalent::Equivalent<(String, String)>` for it; the orphan rule rejects the impl on a bare `(&str, &str)` | zero allocation per lookup; the same hash-equivalence contract as `Borrow` |
 | Nest the maps: `HashMap<String, HashMap<String, V>>` | two probes per lookup, zero allocation |
 | Join the halves into one `String` key with a separator neither half can contain, then probe it through `Borrow<str>` from a reused join buffer | two `push_str` calls per lookup, zero steady-state allocation |
 | Build the owned tuple for every probe | two allocations per lookup on a 2-tuple |
+
+The `Cow` key works because `HashMap` is covariant in its key: a `&HashMap<(Cow<'static, str>, ..), V>`
+shrinks to the probe's lifetime, so the probe halves need not be `'static`. The returned `&V`
+then lives only as long as the probe strings; copy or clone the value out when it must outlive
+them.
+
+```rust,run
+use std::borrow::Cow;
+use std::collections::HashMap;
+
+type Key = (Cow<'static, str>, Cow<'static, str>);
+
+fn find(m: &HashMap<Key, u32>, a: &str, b: &str) -> Option<u32> {
+    m.get(&(Cow::Borrowed(a), Cow::Borrowed(b))).copied()
+}
+
+fn main() {
+    let mut m: HashMap<Key, u32> = HashMap::new();
+    m.insert((Cow::Owned(String::from("a")), Cow::Borrowed("b")), 1);
+    let (a, b) = (String::from("a"), String::from("b"));
+    assert_eq!(find(&m, &a, &b), Some(1));
+}
+```
 
 ## A `Clone` type cannot customise `ToOwned`
 

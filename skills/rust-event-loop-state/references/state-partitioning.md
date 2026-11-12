@@ -1,18 +1,20 @@
 # State partitioning for an event loop
 
 Deep material for `SKILL.md`: the full diagnostics and runnable versions of the examples it
-compresses, the generic-state registry in full, and the ECS trade in detail.
+compresses, generic state for a handler trait reused across states (structure row 2), a context
+that pairs static and dynamic state, and the ECS trade (structure row 3).
 
 - [Migration: the handlers already live in the state](#migration-the-handlers-already-live-in-the-state)
 - [Queue drain diagnostic](#queue-drain-diagnostic)
 - [Key-holding handler](#key-holding-handler), with the `E0499` of a `&mut`-holding handler
+- [State is a trait parameter, not an associated type](#state-is-a-trait-parameter-not-an-associated-type): the `E0207`
 - [Capability traits: cutting the god object](#capability-traits-cutting-the-god-object), with the blanket-impl `E0119` and the `?Sized` state
 - [Static plus dynamic state: three versions](#static-plus-dynamic-state-three-versions)
 - [ECS trade](#ecs-trade): the `bevy_ecs` reproduction, the repair, and the test rule
 
-Every `rust,run` block here compiles and runs on rustc 1.98.1, edition 2024. The two
-`bevy_ecs` blocks are not checked automatically. Their output comes from a manual run of
-bevy_ecs 0.19.1 on rustc 1.98.1.
+Every `rust,run` block here compiles and runs on rustc 1.99.1, edition 2024. The two
+`bevy_ecs` blocks are not checked automatically. Their output is as of bevy_ecs 0.19.1, from a
+manual run on rustc 1.98.1; a later bevy_ecs release can change the message and the source line.
 
 ## Migration: the handlers already live in the state
 
@@ -159,6 +161,39 @@ preference:
   generation on every reuse. A `handle` that finds a generation mismatch returns without
   writing. Do not name the field `gen`: it is a reserved keyword in edition 2024.
 
+## State is a trait parameter, not an associated type
+
+A handler that must work against any state cannot use an associated type. The state then
+appears only in the associated-type value, which does not constrain the impl:
+
+```rust,compile_fail,E0207
+struct Mouse;
+struct Standalone;
+
+trait Handler {
+    type State;
+    fn on_mouse(&mut self, st: &mut Self::State, m: &Mouse);
+}
+impl<S> Handler for Standalone {
+    type State = S;
+    fn on_mouse(&mut self, _st: &mut S, _m: &Mouse) {}
+}
+```
+
+```text
+error[E0207]: the type parameter `S` is not constrained by the impl trait, self type, or predicates
+8 | impl<S> Handler for Standalone {
+  |      ^ unconstrained type parameter
+help: use the type parameter `S` in the `Standalone` type and use it in the type definition
+```
+
+Do not take that help. `struct Standalone<S>` makes one handler type per state and defeats
+the point. Put the state on the trait: `trait Handler<S> { fn on_mouse(&mut self, st: &mut S,
+m: &Mouse); }`. `Handler<S>` is a trait reference, so `S` is constrained by construction. The
+trait stays dyn compatible, because the state is a trait parameter and not a method type
+parameter. Each handler bounds `S` by the capability traits it needs,
+`impl<S: TimeState> Handler<S> for Timed`, and the bounds are the documentation.
+
 ## Capability traits: cutting the god object
 
 The god object stays one struct. What you cut is the **view** each handler gets of it. One
@@ -215,8 +250,9 @@ handler dispatch itself.
 
 ### The blanket impl and `E0119`
 
-`impl<S> Handler<S> for Standalone` overlaps every concrete state, and stable Rust has no
-specialization. Adding `impl Handler<App> for Standalone` later gives:
+**A blanket impl is a one-way door.** Stable Rust has no specialization.
+`impl<S> Handler<S> for Standalone` overlaps every concrete state, so a later
+`impl Handler<App> for Standalone` is `E0119`:
 
 ```text
 error[E0119]: conflicting implementations of trait `Handler<App>` for type `Standalone`
@@ -226,8 +262,12 @@ error[E0119]: conflicting implementations of trait `Handler<App>` for type `Stan
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting implementation for `Standalone`
 ```
 
-`impl<S: TimeState> Handler<S> for Standalone` gives the same `E0119` while
-`App: TimeState` holds.
+A bounded blanket impl, `impl<S: TimeState> Handler<S> for Standalone`, gives the same `E0119`
+while `App: TimeState` holds: it closes the door for every state that satisfies its bounds.
+Write a blanket impl only when one body serves every state that meets its bounds. Write the
+unbounded form only for a handler that ignores the state forever. Put behavior that differs per
+state behind a capability-trait method, not in a second impl. Two blanket impls on
+**different** `Self` types with different bounds coexist without error.
 
 ### `?Sized` when the state is a trait object
 
@@ -265,6 +305,14 @@ because it relaxes a bound. Those impls stay `Sized`-only, so a trait-object sta
 not work until every impl is relaxed as well. Write it once, when you write the trait.
 
 ## Static plus dynamic state: three versions
+
+A context that carries a compile-time state next to a dynamic world invites a `DerefMut`, so
+that `ctx.frame` reaches the static half. Do not add it. Auto-deref rewrites `&mut ctx.frame`
+into `&mut DerefMut::deref_mut(&mut *ctx).frame`, which borrows all of `ctx`. Expose both halves
+as plain fields: field access is a place expression, so `&mut ctx.statics.frame` and
+`&mut ctx.world` are disjoint. When the split must sit behind a method, return both halves from
+one call: `fn split(&mut self) -> (&mut S, &mut World)`. One accessor per half is the shape that
+fails.
 
 The `DerefMut` version is rejected. `&mut ctx.frame` goes through `deref_mut`, which takes
 `&mut self` on the whole wrapper, so the second accessor has nothing left to borrow:
@@ -351,6 +399,12 @@ fn main() {
 ```
 
 ## ECS trade
+
+An ECS-shaped world is the right answer when the component set is decided at run time. The
+price is that the borrow checker no longer sees the accesses: a system with two overlapping
+mutable views of one component type builds with zero errors and panics at run time. The
+sections below give the reproduction, the debug feature that makes the panic name the
+system, the repair, and the test that catches every conflict.
 
 | Property | Plain struct plus handler registry | ECS-shaped dynamic world |
 | --- | --- | --- |

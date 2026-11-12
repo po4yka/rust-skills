@@ -11,17 +11,21 @@ symbolication, device builds, LLDB via Android Studio.
 
 ```bash
 # Your own native tags (the tags that the bootstrap passes to the logcat sink)
-adb logcat -s my-native-tag:V my-other-native-tag:V
+adb logcat -d -s my-native-tag:V my-other-native-tag:V
 
-# The crash buffer: the native crash dump, no root needed
-adb logcat -b crash
+# The crash buffer: the native crash dump, no root needed. -d dumps and exits.
+adb logcat -d -b crash
 
-# Panic records and fatal signals, regardless of tag
-adb logcat | grep -E "rust_panic|Abort message|SIGABRT|SIGSEGV|SIGBUS"
+# Panic records and fatal signals, regardless of tag. rust_panic is the tag that the
+# redacted panic hook writes; replace it with the tag of your hook.
+adb logcat -d | grep -E "rust_panic|Abort message|SIGABRT|SIGSEGV|SIGBUS"
+
+# Interactive only: without -d, logcat streams until Ctrl-C. Do not run it from a script.
+adb logcat -s my-native-tag:V
 
 # Native crash and Java runtime channels.
 # Quote the specifiers: an unquoted "*" is a glob in the shell.
-adb logcat -s 'AndroidRuntime:E' 'DEBUG:*' 'libc:*'
+adb logcat -d -s 'AndroidRuntime:E' 'DEBUG:*' 'libc:*'
 ```
 
 An app process sends stdout and stderr to `/dev/null`. `println!`, `dbg!`, and the default
@@ -58,8 +62,8 @@ report. It gets logs from a user who cannot run `adb`. Apply the redaction rules
 `RUST_BACKTRACE` is **not inherited** by an Android app process. Setting it in your shell, in
 Gradle, or in the run configuration does nothing.
 
-1. In an app, use the bootstrap's redacted panic record (the `rust-panic-safety` skill) and the
-   symbolicated tombstone. Capture a full backtrace only in a local diagnostic build whose
+1. In an app, use the bootstrap's redacted panic record (the `rust-panic-safety` skill; a
+   `std::panic::set_hook` that logs only `info.location()`) and the symbolicated tombstone. Capture a full backtrace only in a local diagnostic build whose
    output does not enter telemetry.
 2. For a standalone test binary pushed to the device, the environment works:
 

@@ -13,7 +13,9 @@ If the answer to any question is yes, revise the change before you merge it.
    `<P: AsRef<..>>` generic.
 2. Any `&'a mut Trait` stored in a struct field? Use a generic `H: Trait`, plus forwarding impls
    that carry `+ ?Sized` and delegate through `H::method(self, ..)`.
-3. Any callback without `for<'a>` where the caller must not keep the reference? Add the HRTB.
+3. Any callback argument tied to a lifetime parameter of the function or struct
+   (`fn f<'a, F: Fn(&'a T)>`) where the callback must not keep the reference? Write `F: Fn(&T)`;
+   elision already makes it higher-ranked.
 4. Any `pub` accessor that returns `&mut Vec<T>` or `&mut String`? Return `&mut [T]` or
    `&mut str`, and name each length-changing operation. Any public bound that names `&&T`?
 5. Any callback stored as `Box<dyn FnMut>` where `Box<dyn Fn>` works? Any `Weak` callback
@@ -60,11 +62,13 @@ If the answer to any question is yes, revise the change before you merge it.
 
 **Trait and type-system traps** (details in
 [`type-and-trait-traps.md`](type-and-trait-traps.md),
+[`ownership-and-concurrency-traps.md`](ownership-and-concurrency-traps.md),
 [`trait-resolution.md`](trait-resolution.md), and
 [`data-shape-traps.md`](data-shape-traps.md))
 
-20. Any `impl Drop` on a struct where a field must be consumed? Move `Drop` onto a one-field guard
-    that holds an `Option`. Use `ManuallyDrop` only when `size_of` proves a saving.
+20. Any `impl Drop` on a struct where a field must be consumed? Move `Drop` onto a one-field
+    guard; make its field an `Option` only when the cleanup consumes it. Use `ManuallyDrop` only
+    when `size_of` proves a saving.
 21. Any `fn(T) -> T` that takes a struct past the target's inline-copy boundary on a hot path?
     [`rust-hot-path`]
 22. Any manual `PartialEq` next to a derived `Hash`, or two manual impls that normalize
@@ -87,8 +91,8 @@ If the answer to any question is yes, revise the change before you merge it.
 30. Any foreign trait implemented for `Rc<Local>`, `Arc<Local>`, or `Vec<Local>`? Only `&T`,
     `&mut T`, `Box<T>`, and `Pin<P>` are `#[fundamental]`; the rest is `E0117`. Newtype the
     wrapper.
-31. Any `Box::new([T; N])`, or any return of `[T; N]` by value, where the array is larger than
-    16 KiB (`size_of::<[T; N]>()`)? Build it
+31. Any `Box::new([T; N])`, or any return of `[T; N]` by value, where the array is large enough
+    for `clippy::large_stack_arrays` or `clippy::large_stack_frames` to flag? Build it
     with `vec![x; n].into_boxed_slice()`, or collect an exact-length iterator into `Box<[T]>`.
 32. Any extension-trait method whose name already exists on the type, or on a type in its deref
     chain? The shadowing is silent, and adding the method to a published trait breaks downstream

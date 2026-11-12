@@ -54,13 +54,16 @@ use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Write};
 
 fn main() -> io::Result<()> {
-    let dir = std::env::temp_dir().join(format!("atomic-output-{}", std::process::id()));
-    fs::create_dir_all(&dir)?;
+    // RandomState starts from random keys, so these names are not predictable.
+    let keys = RandomState::new();
+    // create_dir fails when the name exists, so a planted directory or link is never used.
+    let dir_name = format!("atomic-output-{:016x}", keys.hash_one("dir"));
+    let dir = std::env::temp_dir().join(dir_name);
+    fs::create_dir(&dir)?;
     let dest = dir.join("out.txt");
     fs::write(&dest, "old")?;
 
-    // RandomState starts from random keys, so the name is not predictable.
-    let suffix = RandomState::new().hash_one(std::process::id());
+    let suffix = keys.hash_one("temp");
     let temp = dir.join(format!(".out.txt.{suffix:016x}.tmp"));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);

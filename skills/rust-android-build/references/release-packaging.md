@@ -155,6 +155,21 @@ Test the signed release artifact, not a debug package and not the merged
 `System.loadLibrary()` and invokes a stable JNI function with a deterministic
 result.
 
+AGP builds an androidTest APK only for the build type that `testBuildType`
+names, and the default is `debug`. Set it to the release build type, or to a
+release-like build type with the same native build and signing:
+
+```kotlin
+android {
+    testBuildType = "release"
+}
+```
+
+Then `./gradlew :<app-module>:assembleReleaseAndroidTest` builds the test APK.
+`am instrument` requires the test APK and the app under test to carry the same
+signing certificate. Sign both with one key. For an AAB, pass that same key in
+`<test-signing-options>` to `bundletool build-apks`.
+
 On a 16 KB device or emulator image, run the device check in
 [SKILL.md](../SKILL.md) before the install: confirm `getconf PAGE_SIZE` prints
 `16384`, turn 16 KB backcompat mode off, and read both properties back.
@@ -257,6 +272,7 @@ the current request authorizes only build or verification.
 | AGP cannot extract native metadata | Cargo or an earlier task stripped the input | Inspect the Rust profile and the pre-packaging `.so` |
 | Sidecar contains the expected file but a crash does not symbolicate | Symbols came from another build | Compare GNU build IDs |
 | One ABI is absent from the symbols archive | Release ABI set and packaging inputs differ | Diff archive entries against the final package |
+| `am instrument` fails with `does not have a signature matching the target` | The androidTest APK and the app APKs carry different certificates | Sign both with one key: same signing config in Gradle, same key in the `bundletool` options |
 | Installed app throws `UnsatisfiedLinkError` | Wrong ABI, missing library, or missing JNI export | Inspect installed APKs and the ELF export allowlist |
 | AAR consumer links but fails at runtime | Transitive native dependency is absent | Inspect `DT_NEEDED` and every `jni/<abi>/` directory |
 | Prefab consumer cannot find or link the Rust library | The Rust `.so` never entered the supported native build graph, or the explicit package lacks metadata or an ABI library | Inspect the final AAR `prefab/` tree and build a clean CMake consumer |

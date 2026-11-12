@@ -10,8 +10,8 @@ names one defect class from `SKILL.md` and the repair.
 4. Does any handler struct hold a `&` or `&mut` into the state? Replace it with a key. Use a
    generational key when slots are freed.
 5. Does the handler trait use `type State`? Make it `Handler<S>`.
-6. Is there a blanket `impl<S: ...> Handler<S> for X`? No per-state impl of `Handler` for `X`
-   can follow for a state that meets its bounds.
+6. Is there a blanket `impl<S: ...> Handler<S> for X`? Check it against the blanket-impl rule
+   in [state-partitioning.md](state-partitioning.md#the-blanket-impl-and-e0119).
 7. Does a context wrapper implement `DerefMut`? Delete it and use plain fields.
 8. Is an ECS proposed? Name the run-time input that decides the component set. No such input,
    no ECS. An ECS already in use needs the schedule test and the debug feature in CI.

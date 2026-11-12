@@ -218,11 +218,28 @@ def compile_fail_failures(manifest: dict, errors: dict[str, list[dict]]) -> list
         if not errors.get(name):
             problems.append(f"{where}: tagged compile_fail, but it compiles")
             continue
-        missing = [c for c in info.get("codes", []) if c not in found]
+        expected = info.get("codes", [])
+        missing = [c for c in expected if c not in found]
         if missing:
             seen = ",".join(sorted(c for c in found if c)) or "no coded error"
             problems.append(
                 f"{where}: fence expects {','.join(missing)}, cargo reported {seen}"
+            )
+            continue
+        # A named code proves what the prose says only when it is the failure.
+        # Another coded error in the same block is a second defect the reader
+        # cannot tell from the lesson, so name it too or remove it.
+        # An unresolved name is excused here as it is everywhere: the prose
+        # defines it, and the gate cannot judge it either way.
+        extra = sorted(
+            {code_of(d) for d in errors.get(name, []) if not is_resolution(d)}
+            - set(expected)
+            - {None}
+        )
+        if expected and extra:
+            problems.append(
+                f"{where}: fence expects {','.join(expected)}, and cargo also reported "
+                f"{','.join(extra)}; fix the block or name the code in the fence"
             )
     return problems
 

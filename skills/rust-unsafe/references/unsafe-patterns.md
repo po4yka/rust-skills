@@ -15,9 +15,7 @@ Contents:
   `align_to`
 - Pointer arithmetic and `NonNull`
 - Transmute table and `dyn` lifetime extension; broken UTF-8; `black_box`
-- A `Drop` impl that cannot abort the process
-- Drop hazards; unsafe operations and declarations; pointer arithmetic, syscalls, and
-  unmangled exports
+- Drop hazards; a `Drop` impl that cannot abort the process
 
 ## Safety comment format
 
@@ -160,7 +158,9 @@ running.
 4. Read a field of a union.
 5. Execute inline assembly.
 
-If a block does none of these, delete it.
+If a block does none of these, delete it. An `unsafe impl`, an unsafe attribute, and an `unsafe
+extern` block are declarations, not operations; each needs its own review and its own SAFETY
+comment.
 
 ## Raw pointers to statics and union fields
 
@@ -475,8 +475,8 @@ The bad form compiles, runs, and returns the right bytes on an x86-64 developmen
 x86-64 and AArch64 user space perform most misaligned loads. The optimizer still relies on the
 promised alignment. Atomic and exclusive accesses on AArch64, multi-word loads on 32-bit ARM, and
 some RISC-V cores trap or take a slow emulation path. Only cargo-careful and Miri report it. Default
-Miri reports it on some seeds only (on Miri nightly-2026-05-15, seeds 0 and 3 failed and seeds 1 and
-2 passed); `-Zmiri-symbolic-alignment-check` reports it on every seed:
+Miri reports it on some seeds only (on Miri nightly-2026-11-09, a `vec![0u8; 16]` buffer failed on
+15 of seeds 0 to 15 and passed on seed 10); `-Zmiri-symbolic-alignment-check` reports it on every seed:
 
 ```rust
 #[repr(C)]
@@ -656,7 +656,7 @@ builds a `char`. Only `Chars::next` reaches the decoder:
 error: Undefined Behavior: entering unreachable code
 ```
 
-Measured on Miri nightly-2026-05-15. The error points into `core`'s UTF-8 decoder, not into the
+Measured on Miri nightly-2026-11-09. The error points into `core`'s UTF-8 decoder, not into the
 code that built the `&str`.
 
 Write the reproducing test as a decode loop. A test that ends in `.chars().count()` passes and
@@ -687,9 +687,20 @@ let s = String::from_utf8(v)?;
 `String::from_utf8` runs the same single scan, reuses the same buffer with no copy, and its
 `FromUtf8Error` carries `utf8_error().valid_up_to()` so you can report the offending offset.
 
-## A `Drop` impl that cannot abort the process
+## Drop hazards
 
-A panic inside `drop()` during an unwind aborts the process. Move every fallible cleanup into an
+Soundness must not depend on `Drop` running. Safe code skips a destructor with `mem::forget`,
+`Box::leak`, `ManuallyDrop::new`, an `Rc` or `Arc` cycle, or `process::exit`. So an API whose
+soundness needs a guard's destructor is unsound. For example, if only a `Drop` unregisters a
+pointer to borrowed data that foreign code holds, a forgotten guard leaves that pointer dangling.
+Make a forgotten guard impossible or harmless, as `thread::scope` does: it keeps the scope inside
+a closure and joins every thread itself. A future inside `select!` can be dropped at any
+`.await`, so its correctness must not depend on its `Drop` either.
+
+### A `Drop` impl that cannot abort the process
+
+A panic inside `drop()` during an unwind aborts the process with `panic in a destructor during
+cleanup`, and `catch_unwind` cannot catch it. Move every fallible cleanup into an
 explicit `close()`, and leave `drop()` as a best-effort fallback that only logs.
 
 ```rust
@@ -735,42 +746,3 @@ flushes again. A failed flush then reaches the caller and the log both.
 
 The auto-trait proofs, the two reference fabrications, the aliasing models, and the Miri and
 clippy invocations are in [miri-and-aliasing.md](miri-and-aliasing.md).
-
-## Drop hazards
-
-Soundness must not depend on `Drop` running. Safe code skips a destructor with `mem::forget`,
-`Box::leak`, `ManuallyDrop::new`, an `Rc` or `Arc` cycle, or `process::exit`. So an API whose
-soundness needs a guard's destructor is unsound. For example, if only a `Drop` unregisters a
-pointer to borrowed data that foreign code holds, a forgotten guard leaves that pointer dangling.
-Make a forgotten guard impossible or harmless, as `thread::scope` does:
-it keeps the scope inside a closure and joins every thread itself. A future inside `select!` can
-be dropped at any `.await`, so its correctness must not depend on its `Drop` either.
-
-`Drop::drop` must not panic. A panic in a destructor during an unwind aborts the process with
-`panic in a destructor during cleanup`, and `catch_unwind` cannot catch it. Move fallible
-cleanup, such as `self.flush().unwrap()`, into a `close()` or `flush()` that returns `Result`,
-and let `drop()` only log.
-
-## Unsafe operations and declarations
-
-An `unsafe` block permits five operations: a raw-pointer dereference, an unsafe function call, an
-access to a `static mut` or an unsafe `extern` static, a union field read, and inline assembly.
-If a block does none of these, delete it. Taking a raw pointer needs no `unsafe`:
-`&raw mut SOME_STATIC_MUT` (1.82) and `&raw const my_union.field` (1.92). An `unsafe impl`, an
-unsafe attribute, and an `unsafe extern` block are declarations; each needs its own review and
-its own SAFETY comment. `unsafe trait` binds the implementor and `unsafe fn` binds the caller, so
-put each `# Safety` section where its obligation sits.
-
-## Pointer arithmetic, syscalls, and unmangled exports
-
-`ptr.add(n)` is undefined behavior once the result leaves the allocation, even with no
-dereference; `wrapping_add` is always sound to compute. Pointer methods return a new pointer, so
-assign a cursor back: `self.ptr = unsafe { self.ptr.add(1) };`. Check every syscall return value
-and convert `io::Error::last_os_error()`; never discard `errno`. Duplicate a descriptor that a
-foreign caller passes in (`BorrowedFd::borrow_raw`, then `try_clone_to_owned`) before you own it,
-or the foreign runtime closes it under you.
-
-When two libraries in one process export the same unmangled symbol, the linker silently picks
-one, and the wrong function runs. Read
-[ffi-layout-rules.md](ffi-layout-rules.md) when you add a
-`#[unsafe(no_mangle)]` or `#[unsafe(export_name)]` export.

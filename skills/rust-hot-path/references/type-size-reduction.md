@@ -125,7 +125,10 @@ prints its block, a build after an edit prints it again, and a build with no edi
   `Gen<u32>` is present. A type missing from the dump is usually a generic that this crate never
   instantiates. Measure it from a crate that does.
 - On stable the flag is rejected. rustc 1.98.1 prints
-  ``error: the option `Z` is only accepted on the nightly compiler``.
+  ``error: the option `Z` is only accepted on the nightly compiler``. The stable fallback is a
+  test that prints `size_of`, `align_of`, and `core::mem::offset_of!(T, field)` for each suspect
+  type; it shows size and field offsets but not variant sizes or padding lines. Or install a
+  nightly toolchain for the dump only and keep the build on stable.
 - `top-type-sizes` 0.2.1, released 2025-12-26, reformats the same output. Install it with
   `cargo install --locked top-type-sizes` and pipe the dump through it. Its value is sorting, compaction
   and filtering. It re-sorts the whole stream by size, which repairs the per-unit order of a
@@ -385,7 +388,7 @@ that owns the layout, in every profile, including a release build that runs no t
 ## Order of attack
 
 1. Dump with `-Zprint-type-sizes` from a clean build. Grep the stream for your own types, or pipe
-   it through `top-type-sizes`.
+   it through `top-type-sizes`. On stable only, print `size_of`, `align_of`, and `offset_of!`.
 2. Box the outsized variant, if the block shows one.
 3. Merge fields that share a `Mutex`, a `RefCell`, or an `Arc`.
 4. Narrow indices from `usize` to `u32`.

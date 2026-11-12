@@ -52,7 +52,7 @@ Apply these gates before you approve a change that adds or edits `unsafe`.
 
 ## 3. Failure triage
 
-Miri messages below were measured on nightly 2026-05-15. Match on the quoted
+Miri messages below were measured on nightly 2026-11-09. Match on the quoted
 fragment. Tags and allocation ids change with the program, the toolchain, the
 seed and the flags.
 
@@ -71,7 +71,7 @@ seed and the flags.
 | Miri: `memory leaked: allocN` | An allocation that no static can reach: `Box::leak`, `mem::forget`, or a pointer held only by a thread still running at exit or by foreign state | Store an intended process-lifetime value in a static (`OnceLock` or `LazyLock`), which Miri does not report, or add `-Zmiri-ignore-leaks` to that job only |
 | Miri passes, ASan fails | The defect is in foreign code that Miri stubbed or skipped | Debug with ASan and read the allocation stack |
 | ASan passes, Miri fails | An aliasing or provenance breach that did not corrupt memory on this run | Fix it. It is UB, and the optimizer can act on it later |
-| MSan reports uninitialized reads in a dependency | Not every object was built with MSan | Rebuild every dependency with MSan, or use Miri |
+| MSan reports uninitialized reads in a C or C++ dependency | That object was built without MSan | Rebuild it with clang `-fsanitize=memory`, or use Miri |
 | TSan reports a race inside an atomics-based structure | An ordering is too weak, or the code synchronizes with a `fence` that TSan does not model | Confirm with Miri `-Zmiri-many-seeds` or `loom` before you change an ordering; see the `memory-model` skill |
 | ``mixing `-Zsanitizer` will cause an ABI mismatch in crate`` | A crate or std was built without the sanitizer | Add `-Zbuild-std`; for doctests, set `RUSTDOCFLAGS` to the `RUSTFLAGS` value |
 | Doctests fail to link with undefined `__asan_*` symbols | `RUSTDOCFLAGS` lacks the `-Zsanitizer` flag | Set `RUSTDOCFLAGS` to the `RUSTFLAGS` value |
@@ -100,16 +100,17 @@ RUSTDOCFLAGS="-Zsanitizer=memory -Zsanitizer-memory-track-origins" \
     cargo +nightly test --locked -Zbuild-std --target "$HOST"
 ```
 
-Rules (build failures and ASan defaults measured on nightly 2026-05-15,
+Rules (build failures measured on nightly 2026-11-09,
+`x86_64-unknown-linux-gnu`; ASan defaults on nightly 2026-05-15,
 `aarch64-apple-darwin`):
 
 - Pass `-Zbuild-std`. The prebuilt standard library is not instrumented.
-  Without the rebuild, TSan stops with
-  ``mixing `-Zsanitizer` will cause an ABI mismatch in crate``, ASan leaves std
-  unchecked, and MSan reports false positives.
+  Without the rebuild, TSan and MSan stop with
+  ``mixing `-Zsanitizer` will cause an ABI mismatch in crate``, and ASan builds
+  but leaves std unchecked.
 - Never silence that error with `-Cunsafe-allow-abi-mismatch=sanitizer`. The
   mixed build misses errors in the uninstrumented crates and can report false
-  positives. Fix the flags so every crate is instrumented.
+  positives.
 - Pass `--target`, also for the host. Then Cargo keeps `RUSTFLAGS` off build
   scripts and proc macros. An instrumented proc macro can abort rustc.
 - Set `RUSTDOCFLAGS` to the same `-Zsanitizer` value, or every doctest fails
@@ -303,7 +304,7 @@ Flag hazards:
   Miri can miss bugs on exposed pointers either way.
 - Miri reports 1 CPU by default, so `cargo miri test` runs one test at a
   time and does not detect a race between two tests on a shared resource
-  (measured on nightly 2026-05-15). Add `-Zmiri-num-cpus=4` or
+  (measured on nightly 2026-11-09). Add `-Zmiri-num-cpus=4` or
   `-- --test-threads=4` for that job. `RUST_TEST_THREADS` does not reach the
   program under isolation. `cargo miri nextest run` runs each test in its own
   process and never detects such a race.
@@ -351,7 +352,7 @@ Treat a Miri failure as a build failure. Miri reports UB, not style.
 ## Related skills
 
 - `rust-unsafe`: unsafe patterns and the review checklist for `unsafe`
-- `memory-model`: atomics, memory ordering, `loom`
+- `memory-model`: atomics and memory ordering
 - `rust-debugging`: symbolication and `addr2line` for sanitizer and tombstone frames
 - `rust-test-tools`: property tests and fuzzing that feed these tools
 - `rust-jni`, `uniffi-boundary`: FFI layers that Miri cannot execute

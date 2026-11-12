@@ -185,6 +185,21 @@ let handle: tokio::task::JoinHandle<u64> = todo!();
 
 # references/jni-boundary.md
 
+# The loader skeleton: the registration and the hook install are the parts the
+# rust-jni template and references/panic-hook.md own.
+[[block]]
+file = "rust-panic-safety/references/jni-boundary.md"
+section = "Loader: `JNI_OnLoad`"
+block = 1
+items = '''
+fn install_bootstrap_panic_hook() {
+    todo!()
+}
+fn register_natives(vm: &jni::JavaVM) -> jni::errors::Result<()> {
+    todo!()
+}
+'''
+
 [[block]]
 file = "rust-panic-safety/references/jni-boundary.md"
 section = "Error policy with a fixed message"

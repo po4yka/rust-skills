@@ -186,7 +186,7 @@ form for a shared callback. Or follow the `note:` and wrap: `takes(move || a())`
 
 ## Field sizes are measurable
 
-The field sizes in the `SKILL.md` table are measurable. The coercion from a `fn` item to a `fn`
+The field sizes in the [field table](#store-a-callable-in-a-field) above are measurable. The coercion from a `fn` item to a `fn`
 pointer is silent (no warning, no lint) and adds one machine word:
 
 ```rust,run

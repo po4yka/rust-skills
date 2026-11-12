@@ -96,10 +96,11 @@ the lock for a context box, set or check the isolation build settings,
 interpret an isolation diagnostic, write an async wrapper, or make Foundation
 objects in a callback.
 
-Mark an `async` wrapper method that calls a blocking Rust export `@concurrent`
-(Swift 6.2+), or make the call in `Task.detached`. Under approachable
-concurrency, a plain `nonisolated` async method runs on the caller's actor,
-which can be the main actor.
+Under approachable concurrency, a plain `nonisolated` async method runs on the
+caller's actor, which can be the main actor. Use `@concurrent` for a short
+blocking Rust call and a dedicated `Thread` for a long one; the "Async wrappers
+over blocking exports" section of [swift-isolation.md](swift-isolation.md) has
+the rule and its bound.
 
 The C trampoline must copy scalar values and borrowed bytes before it returns.
 Then it schedules the copied event on the main actor:

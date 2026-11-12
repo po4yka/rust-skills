@@ -1,8 +1,8 @@
 # The JVM half of the boundary
 
 The Kotlin class that declares the `external fun` is part of the same contract
-as the Rust side. The rules for it are in [../SKILL.md](../SKILL.md); this file
-holds the worked class and the session-handle contract.
+as the Rust side. This file holds the worked class and the session-handle
+contract behind the hard rules in [../SKILL.md](../SKILL.md).
 
 ```kotlin
 class NativeBindings : Bindings {
@@ -33,11 +33,16 @@ the same patch as the Rust side.
 - Keep `external fun` declarations `private` behind a plain interface
   (`Bindings` above). Tests fake the interface; they cannot fake an
   `external fun`.
+- Serialize every call that touches a session handle (the `mutex` above),
+  unless the Rust side documents that handle as thread-safe. A call that races
+  `nativeDestroy` is a use-after-free and a native abort.
 
 ## Session-handle lifecycle
 
-The common raw-JNI surface is a handle-based session. Write the contract down,
-because the blocking behaviour of each call is part of it:
+The common raw-JNI surface is a handle-based session. Write the contract down.
+The blocking behaviour of each call and every structured (JSON) payload are
+compatibility contracts: change both sides in one patch, with contract tests on
+both sides.
 
 | Function | Parameters | Returns | Contract |
 |----------|------------|---------|----------|
@@ -49,6 +54,8 @@ because the blocking behaviour of each call is part of it:
 
 Registry rules:
 
+- Never expose a `Box::into_raw` pointer as the handle. A caller can forge any
+  integer, and Rust cannot check that an address is live.
 - Encode a non-zero slot index and a generation in the `jlong` key. On each
   call, check the slot bounds and the generation under the registry lock before
   you access the session. Return a Java exception or the documented
@@ -58,19 +65,6 @@ Registry rules:
   session occupies the same slot. Never issue `0`; keep it as the failure value.
 - Surface setup failures as Java exceptions, not as magic return values, unless
   the return value is already documented as a status code.
-
-## The JVM side and session handles
-
-- Serialize every call that touches a session handle unless the Rust side
-  documents that handle as thread-safe: a use-after-free of a handle is a
-  native abort.
-- Make a `jlong` session handle an opaque generational registry key (a non-zero
-  slot index plus a generation, checked under the registry lock on every call).
-  Never expose a `Box::into_raw` pointer: a caller can forge any integer, and
-  Rust cannot check that an address is live.
-- The blocking behaviour of each method and every structured (JSON) payload are
-  compatibility contracts. Change both sides in one patch, with contract tests
-  on both sides.
 
 ## Add or rename a native method
 

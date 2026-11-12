@@ -53,7 +53,8 @@ cargo test --locked --workspace
 
 ## Where to look
 
-Work through the areas in this order. The first four are where real defects live.
+Work through the areas in this order. The first four are where real defects live. Run a lint
+that the table names with `cargo clippy --locked --workspace --all-targets -- -W clippy::<lint>`.
 
 | Area | Look for | Owner of the rule | Check without the owner |
 | --- | --- | --- | --- |
@@ -61,11 +62,13 @@ Work through the areas in this order. The first four are where real defects live
 | Threads and tasks | A value that is not `Send` across a thread or an `.await`, a lock guard held across `.await`, a `select!` branch that is not cancel-safe | `rust-send-sync`, `rust-async-internals` | `clippy::await_holding_lock`; a compile-time `fn assert_send<T: Send>() {}` call |
 | Atomics and globals | `Ordering::Relaxed` that publishes data, `static mut` | `memory-model` | `MIRIFLAGS="-Zmiri-many-seeds=0..16" cargo +nightly miri test` |
 | Reachable panics | `unwrap`, `expect`, indexing, or an `as` cast on input from outside; a panic that can cross `extern "C"` | `rust-panic-safety` | `clippy::unwrap_used`, `clippy::indexing_slicing`, `clippy::cast_possible_truncation` |
+| FFI boundary | An `extern` function, a JNI or UniFFI export, a Swift bridge type: a pointer or length the caller controls, ownership that crosses, an unguarded panic | `rust-jni`, `uniffi-boundary`, `rust-swift-ffi` | `clippy::missing_safety_doc`; a `catch_unwind` guard on each `extern` body (`rust-panic-safety`); ASan on the tests that cross |
 | Drop and borrow points | A guard alive through a `match`, a temporary that drops early or late | `rust-borrow-semantics` | `clippy::significant_drop_in_scrutinee`; a `try_lock().is_ok()` assertion in a test |
 | Errors | `String`, `()`, or `Box<dyn Error>` as a library's error type, `anyhow::Error` in a public signature, `map_err(\|_\| ...)` that drops the cause | `rust-code-style` | a `thiserror` enum with `#[from]` for each cause |
 | API shape | `&String` or `&Vec<T>` parameters, a `bool` parameter, `Rc<RefCell<_>>` in a `pub` signature, `get_` getters, conversions named against their cost, missing standard traits | `rust-discipline` and its API conventions reference | `clippy::ptr_arg`, `clippy::fn_params_excessive_bools`, `clippy::wrong_self_convention`, `missing_debug_implementations` |
-| Published compatibility | A new variant on an exhaustive `pub enum`, a new field on a public struct, a removed item | `rust-crate-release` | `cargo semver-checks --baseline-rev <base>` |
+| Published compatibility | A new variant on an exhaustive `pub enum`, a new field on a struct whose fields are all `pub` and that has no `#[non_exhaustive]`, a removed item | `rust-crate-release` | `cargo semver-checks --baseline-rev <base>` |
 | Wire formats | A changed `Serialize` or `Deserialize` on stored or sent data | `rust-serde` | a test that decodes a recorded old payload with `serde_json::from_str` |
+| Dependencies | A change to `Cargo.toml` or `Cargo.lock`: a new dependency, a new `build.rs`, widened features, a `git` source | `rust-security` | `cargo deny check` or `cargo audit`; a read of the `Cargo.lock` diff |
 | Lints and suppressions | `#[allow]` with no reason, `#![deny(warnings)]` in source | `rust-lints` | `clippy::allow_attributes_without_reason` |
 | Tests | A bug fix with no regression test, a test that restates a constant | `rust-tdd` | the test count in `cargo test` output before and after the change |
 | Ports | A rewrite that must keep another implementation's output | `rust-port` | the recorded comparison in its `PORTING.md` |

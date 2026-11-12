@@ -519,7 +519,8 @@ Use this list when you review code that pins or projects. Each item restates a r
   hand-written pinning macro exists in the tree.
 - No `pin!(&mut x)`, or `pin!(r)` with `r: &mut T`, stands in for pinning the value itself.
 - No hand-written `impl Unpin` sits next to a pinning projection.
-- No manual `impl Drop` sits on a type with a structurally pinned field. `PinnedDrop` does.
+- No manual `impl Drop` sits on a type with a structurally pinned field, unless it moves its body
+  into an inner function that takes `Pin<&mut Self>`. Under a projection macro, `PinnedDrop` does.
 - No pinned type is `#[repr(packed)]`.
 - No projection exposes `take`, `replace`, or `swap` on a structurally pinned field.
 - Every `map_unchecked_mut` and `get_unchecked_mut` call carries a `SAFETY:` comment that names

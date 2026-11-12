@@ -135,29 +135,35 @@ The rule holds only for a zero fill. `vec![0xFFu8; n]` has no `calloc` to lose.
 An inline-capacity type stores the first N elements in the struct itself. It trades bytes for
 allocations, and the trade is only worth making when the collection is almost always short.
 
-Sizes on 64-bit, smallvec 1.16.1 and arrayvec 0.7.8:
+Sizes on 64-bit, smallvec 1.16.1 without its `union` feature and arrayvec 0.7.8. The `union`
+column is smallvec 1.16.4 with `union` on, measured on rustc 1.99.1, x86_64:
 
-| Type | Bytes | Note |
-| --- | --- | --- |
-| `Vec<u32>`, `String` | 24 | The baseline |
-| `SmallVec<[u8; 1]>` | 24 | Free: below the 24-byte floor |
-| `SmallVec<[u8; 8]>` | 24 | Free |
-| `SmallVec<[u32; 1]>` | 24 | Free |
-| `SmallVec<[u32; 2]>` | 24 | Free |
-| `SmallVec<[u8; 16]>` | 32 | |
-| `SmallVec<[u32; 4]>` | 32 | |
-| `SmallVec<[u32; 32]>` | 144 | Six times `Vec` |
-| `ArrayVec<u32, 4>` | 20 | Never spills, never allocates |
+| Type | Bytes | With `union` | Note |
+| --- | --- | --- | --- |
+| `Vec<u32>`, `String` | 24 | 24 | The baseline |
+| `SmallVec<[u8; 1]>` | 24 | 24 | Free: below the 24-byte floor |
+| `SmallVec<[u8; 8]>` | 24 | 24 | Free |
+| `SmallVec<[u32; 1]>` | 24 | 24 | Free |
+| `SmallVec<[u32; 2]>` | 24 | 24 | Free |
+| `SmallVec<[u8; 16]>` | 32 | 24 | |
+| `SmallVec<[u32; 4]>` | 32 | 24 | |
+| `SmallVec<[u32; 32]>` | 144 | 136 | Six times `Vec` |
+| `ArrayVec<u32, 4>` | 20 | 20 | Never spills, never allocates |
 
-smallvec 1.x holds a `usize` beside a niche-packed enum, so no one-line size rule holds. Up to 8
-inline bytes stay free. Above that the width steps by 8 and stops tracking the array: `[u8; 9]`,
-`[u8; 12]`, `[u8; 17]`, `[u16; 5]`, `[u32; 3]`, and `[u32; 5]` all measure 32 bytes, the same as
-the two 32-byte rows above. Assert the width of the N you pick.
+Without `union`, smallvec 1.x holds a `usize` beside a niche-packed enum, so no one-line size
+rule holds. Up to 8 inline bytes stay free. Above that the width steps by 8 and stops tracking
+the array: `[u8; 9]`, `[u8; 12]`, `[u8; 17]`, `[u16; 5]`, `[u32; 3]`, and `[u32; 5]` all measure
+32 bytes. With `union`, up to 16 inline bytes stay free, and `[u8; 17]` and `[u32; 5]` measure 32.
+
+Cargo unifies features across the whole dependency graph: one dependency that enables
+`smallvec/union` changes the width for every crate in the build. Read the feature with
+`cargo tree -e features -i smallvec`. Assert the width of the N you pick; the assert pins
+whichever layout the resolved graph gives, and fails when a new dependency flips `union`.
 
 ```rust
 use smallvec::SmallVec;
 
-const _: () = assert!(std::mem::size_of::<SmallVec<[u32; 4]>>() == 32);
+const _: () = assert!(std::mem::size_of::<SmallVec<[u32; 4]>>() == 32); // 24 with `union`
 ```
 
 A spilled `SmallVec` does not grow from N. It rejoins the normal `Vec` ladder.
@@ -199,7 +205,7 @@ smallvec 2.0 is a pre-release, 2.0.0-beta.1 as of 2026-09. Pin the full version:
 smallvec@2` fails with "could not be found in registry index". It changes the type form to
 `SmallVec<T, N>` and packs the value into a union, so it inlines 8 more bytes at the same width.
 Measured on beta.1 with rustc 1.98.1: `SmallVec<u32, 4>` is 24 bytes against 32 for
-`SmallVec<[u32; 4]>` in 1.16.1, and a push past N still jumps to capacity 8. The width still
+`SmallVec<[u32; 4]>` in 1.16.1 without `union`, and a push past N still jumps to capacity 8. The width still
 rounds by 8, so measure it there too.
 
 ## Inline strings
@@ -211,11 +217,13 @@ type:
 | --- | --- | --- | --- |
 | `String` | 0 bytes | 1 | std |
 | `CompactString` (compact_str 0.10.0) | 24 bytes | 25 | current |
-| `SmartString` (smartstring 1.0.1) | 23 bytes | 24 | 2022 |
+| `SmartString` (smartstring 1.0.1; 2.0.0 the same) | 23 bytes | 24 | 2.0.0, 2026-11 |
 
-Prefer `compact_str`. It inlines one more byte and it is maintained. Measured allocation
-counts confirm both thresholds: at length 24, `CompactString` allocates 0 times and
-`SmartString` allocates 2.
+As of 2026-11, both crates are maintained: smartstring 2.0.0 was published 2026-11-01 after
+no release since 2022. Prefer `compact_str` by default: it inlines one more byte. Measured
+allocation counts on 1.0.1 confirm both thresholds: at length 24, `CompactString` allocates 0
+times and `SmartString` allocates 2. On smartstring 2.0.0 (rustc 1.99.1), a 23-byte value is
+inline and a 24-byte value is not.
 
 ```rust
 let key = compact_str::CompactString::from("content-length");

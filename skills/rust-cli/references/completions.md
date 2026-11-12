@@ -7,9 +7,9 @@ supported shell, or change the release job that produces completion files.
 
 Keep the completion companion crate on the parser's version and inside the
 existing build or release feature policy. Do not package `clap_complete`
-`CompleteEnv` output as a static file. It needs the `unstable-dynamic` feature,
-and its shell code calls back into the binary through an interface that can
-change on upgrade.
+`CompleteEnv` output as a static file. As of clap_complete 4.6.9, it needs the
+`unstable-dynamic` feature, and its shell code calls back into the binary
+through an interface that can change on upgrade.
 
 Provide a deterministic command such as:
 
