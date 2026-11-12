@@ -6,24 +6,22 @@ license: BSD-3-Clause
 
 # Rust macros
 
-Every quoted message and number below comes from rustc, cargo, and Clippy 1.99.1,
-edition 2024.
+Every quoted message comes from rustc, cargo, and Clippy 1.99.1, edition 2024.
 
 ## Decide whether you need a macro
 
-| You want | Reach for | Why not a macro |
-| --- | --- | --- |
-| One body, many types | A generic function, or a blanket impl | Monomorphization already does this |
-| A constant computed at build time | `const fn`, or a `const { }` block | You add no syntax |
-| Code generated from a schema or a data file | `build.rs` plus `include!` | The input is not Rust tokens |
-| Items or an expression chosen per target or feature | `cfg_select!` (std, Rust 1.95+) | No hand-written macro and no `cfg-if` dependency |
-| Repeated syntax inside one crate | `macro_rules!` | — |
-| The same trait impl per type, derived from the type's shape | A derive macro | — |
-| An item rewritten or wrapped | An attribute macro (procedural) | — |
+| You want | Reach for |
+| --- | --- |
+| One body, many types | A generic function, or a blanket impl |
+| A constant computed at build time | `const fn`, or a `const { }` block |
+| Code generated from a schema or a data file | `build.rs` plus `include!` |
+| Items or an expression chosen per target or feature | `cfg_select!` (std, Rust 1.95+), not `cfg-if` |
+| Repeated syntax inside one crate | `macro_rules!` |
+| The same trait impl per type, derived from its shape | A derive macro |
+| An item rewritten or wrapped | An attribute macro (procedural) |
 
-A macro costs compile time, a second crate in the procedural case, diagnostics that point at
-the invocation instead of the defect, and an IDE that cannot look inside. Take a non-macro row
-when one fits.
+A macro costs compile time, a second crate when procedural, diagnostics at the invocation, and
+an IDE that cannot look inside. Take a non-macro row when one fits.
 
 Do not copy nightly macro syntax: `attr()` and `derive()` arms and `${count($x)}` fail with
 E0658 on stable ([messages](references/declarative-macros.md#nightly-macro-syntax)).
@@ -33,63 +31,46 @@ E0658 on stable ([messages](references/declarative-macros.md#nightly-macro-synta
 | Symptom or task | Section |
 | --- | --- |
 | `error: cannot find macro ... in this scope` | [Scope is textual](#scope-is-textual) |
-| `error[E0425]: cannot find function ...` or `error[E0433]: cannot find ... in the crate root` in another crate, from an exported macro | [Emit absolute paths](#emit-absolute-paths) |
-| An error on a caller's type or alias that says `this error originates in the macro` | [Emit absolute paths](#emit-absolute-paths) |
-| `error[E0425]: cannot find value ...`, with a macro-hygiene note | [Hygiene stops at bindings](#hygiene-stops-at-bindings) |
-| `error[E0428]: the name ... is defined multiple times` from two invocations | [Hygiene stops at bindings](#hygiene-stops-at-bindings) |
-| ``error: `$x:frag` is followed by ..., which is not allowed``, or `missing fragment specifier` | [Fragment specifiers](#fragment-specifiers) |
-| `error: no rules expected ...` when one macro forwards to another | [Fragment specifiers](#fragment-specifiers) |
-| `error: recursion limit reached while expanding` | [Fragment specifiers](#fragment-specifiers) |
+| E0425 or E0433 in another crate from an exported macro, or `this error originates in the macro` on a caller's type | [Emit absolute paths](#emit-absolute-paths) |
+| E0425 with a macro-hygiene note, or E0428 from two invocations | [Hygiene stops at bindings](#hygiene-stops-at-bindings) |
+| ``$x:frag` is followed by ...``, `missing fragment specifier`, `no rules expected` when forwarding, or `recursion limit reached while expanding` | [Fragment specifiers](#fragment-specifiers) |
 | `error: trailing semicolon in macro used in expression position` | [Trailing semicolons](#a-trailing-semicolon-breaks-expression-position) |
-| `format argument must be a string literal`, or `there is no argument named ...` | [Build a format string](#build-a-format-string) |
-| A proc-macro crate error, `proc-macro derive panicked`, or an undeclared helper attribute | [Procedural macro crates](#procedural-macro-crates) |
+| `format argument must be a string literal`, or `there is no argument named` | [Build a format string](#build-a-format-string) |
+| A proc-macro crate error, a derive panic, or an undeclared helper attribute | [Procedural macro crates](#procedural-macro-crates) |
 | Choosing a `syn` version, or E0599/E0609 on `BareFn`, `unsafety`, or `guard` | [Pick the syn major](#pick-the-syn-major) |
-| `error: cyclic package dependency` from a derive-crate back edge | [references/derive-macro-crates.md](references/derive-macro-crates.md) |
-| `error[E0405]: cannot find trait ... in module ...`, from a derive macro | [references/derive-macro-crates.md](references/derive-macro-crates.md) |
-| You must see what the macro produced, or prove it works | [Read the expansion and verify](#read-the-expansion-and-verify) |
+| `cyclic package dependency` from a derive-crate back edge, or E0405 from a derive | [references/derive-macro-crates.md](references/derive-macro-crates.md) |
+| See the expansion, or prove the macro works | [Read the expansion and verify](#read-the-expansion-and-verify) |
 
 ## Read the expansion and verify
 
-Read the expansion before you reason about why a macro fails.
+Read the expansion before you reason about a failure.
 
 ```bash
-# Nightly toolchain. Prints the whole crate after expansion.
 cargo +nightly rustc --locked -p <crate> --profile=check -- -Zunpretty=expanded
-
-# One file, no cargo.
-rustc +nightly --edition 2024 -Zunpretty=expanded src/main.rs
-
-# Works on the stable toolchain: it sets RUSTC_BOOTSTRAP=1 for the -Zunpretty call.
+# On stable: cargo-expand sets RUSTC_BOOTSTRAP=1 for the -Zunpretty call.
 cargo install --locked cargo-expand
 cargo expand --locked --package <crate> <path::to::item>
 ```
 
-Expansion to text is lossy: it prints hygienic identifiers as plain names. Do not paste the
-output back as source. It can fail to compile, or compile and behave differently.
+The text expansion prints hygienic identifiers as plain names. Do not paste it back as source.
 
 | Claim | Check |
 | --- | --- |
-| The expansion compiles and behaves in another crate | An invocation in `tests/*.rs` of the macro crate: `cargo test --locked -p <macro-crate>` |
-| Emitted paths survive the caller's names | A test module that defines `mod facade {}` and `type Result<T> = ...;`, then invokes the macro |
-| A rejected input produces the intended message | `trybuild` compile-fail cases, same command |
-| No `crate::` path and no metavariable inside `unsafe` | `cargo clippy --locked --all-targets -- -D warnings` reports no `crate_in_macro_def` or `macro_metavars_in_unsafe`. The second lint has [preconditions](#keep-caller-expressions-out-of-unsafe-blocks) |
-| No trailing `;` in an expression-position arm | One invocation in expression position inside the defining crate, for example in a `#[cfg(test)] mod tests` |
-| The macro is usable through the facade | A test in the facade crate: `cargo test --locked -p <facade-crate>` |
+| The expansion works in another crate | An invocation in `tests/*.rs`: `cargo test --locked -p <macro-crate>` |
+| Emitted paths survive the caller's names | A test module with `mod facade {}` and `type Result<T> = ...;` that invokes the macro |
+| A rejected input gives the intended message | `trybuild` compile-fail cases, same command |
+| No `crate::` path, no metavariable inside `unsafe` | `cargo clippy --locked --all-targets -- -D warnings` (`crate_in_macro_def`, `macro_metavars_in_unsafe` with its [preconditions](#keep-caller-expressions-out-of-unsafe-blocks)) |
+| No trailing `;` in an expression-position arm | One expression-position invocation inside the defining crate |
+| The facade works | `cargo test --locked -p <facade-crate>` |
 
-rustc does not report most lints, for example `unused_variables` and `unsafe_code`, in the
-expansion of another crate's macro. Lint the expansion through an invocation inside the defining
-crate.
+rustc skips most lints, `unsafe_code` included, in another crate's expansion: lint through an
+invocation inside the defining crate.
 
-Set up `trybuild` with `trybuild = "1"` under `[dev-dependencies]` and a `#[test]` that calls
-`trybuild::TestCases::new().compile_fail("tests/ui/*.rs")`. Run
-`TRYBUILD=overwrite cargo test --locked` to write the `.stderr` files, and review each one before
-you commit it. They hold rustc's rendered diagnostics, which change between releases. Run the
-`trybuild` test on one pinned toolchain only, and rerun `TRYBUILD=overwrite` on each bump.
+Read [references/review-checklist.md](references/review-checklist.md#set-up-trybuild) when you
+set up `trybuild`: run it on one pinned toolchain only, and review every `.stderr` it writes.
 
-A green run proves only the input shapes you tested. Add one case per supported shape: a
-generic type, a `PhantomData<T>` field, a unit struct, and each rejected shape. Read
-[references/review-checklist.md](references/review-checklist.md) when you review a finished
-macro change.
+A green run proves only the shapes you tested: add a generic type, a `PhantomData<T>` field, a
+unit struct, and each rejected shape. Review a finished change against the same checklist.
 
 ## Emit absolute paths
 
@@ -98,133 +79,81 @@ caller's imports and local items.
 
 | The path names | Emit | Because |
 | --- | --- | --- |
-| An item of the macro's own crate | `$crate::render(...)` | A bare `render` fails in every other crate with E0425. `crate::render` names the caller's crate, and `clippy::crate_in_macro_def` flags it |
-| A standard-library item | `::core::result::Result`. For an `alloc` item, put `pub use alloc::vec::Vec;` in `$crate::__private` and emit `$crate::__private::Vec`. Emit `::std::` only for an item that neither `core` nor `alloc` has, and only when no `#![no_std]` caller is supported. Do not emit `::alloc::` | A bare `Result` resolves to the caller's `type Result<T> = ...` alias. `::std::` fails with E0433 in a `#![no_std]` caller. `::alloc::` fails with E0433 in every caller that does not write `extern crate alloc;`, ordinary std crates included, because `alloc` is not in their extern prelude (verified on Rust 1.99.1) |
-| An item of a dependency of the macro crate | Re-export it (`#[doc(hidden)] pub mod __private { pub use dep_name; }`) and emit `$crate::__private::dep_name::Item`. From a derive, re-export it from the facade and emit `::facade::__private::dep_name::Item` | `::dep_name` resolves in the caller's crate, and the caller may not depend on `dep_name` |
-| The derive attribute | `#[::core::derive(...)]` when the macro crate's `rust-version` is 1.96 or later, else `#[::core::prelude::v1::derive(...)]` | `derive` also resolves at the call site. Rust 1.95 rejects `::core::derive` with E0433 |
+| The macro's own crate | `$crate::render(...)` | A bare name is E0425 elsewhere; `crate::` names the caller's crate |
+| `std` | `::core::result::Result`; an `alloc` item via `$crate::__private::Vec`; `::std::` only with no `#![no_std]` caller. Never `::alloc::` | A bare `Result` meets the caller's alias; `::alloc::` is E0433 without `extern crate alloc;` |
+| A dependency | `$crate::__private::dep_name::Item`, re-exported from a `#[doc(hidden)] pub mod __private`; from a derive, `::facade::__private::...` | The caller may not depend on it |
+| `derive` | `#[::core::derive(...)]` with `rust-version` 1.96+, else `#[::core::prelude::v1::derive(...)]` | 1.95 rejects `::core::derive` |
 
-Emit `::dep_name::` only for a crate that the caller must depend on directly, such as the facade.
-A `tests/*.rs` invocation does not catch a `::dep_name::` path, because an integration test
-sees every dependency of its package. Do not put `$crate::` in front of a path the caller passed
-in as a metavariable. That path names an item in the caller's crate.
-
-A missing `$crate` passes in one place only: a module of the defining crate that already has
-the item in scope. It fails in every downstream crate, in a `#[cfg(test)] mod tests` that does
-not `use super::*`, and in your own `tests/*.rs`. A bare standard-library name fails only in a
-caller that shadows it, for example E0107 on a bare `Result<T, E>` under a caller's
-`type Result<T>` alias. Read [references/declarative-macros.md](references/declarative-macros.md)
-when you need that reproduction as a test. A derive macro follows the same rule with `::facade::Trait` paths; see
+Emit `::dep_name::` only for a crate the caller depends on directly, such as the facade. Never put `$crate::` before a path the caller passed
+as a metavariable. A missing `$crate` passes only where the item is already in scope. Read [references/declarative-macros.md](references/declarative-macros.md)#absolute-path-details) when you need the
+details or the reproduction. A derive follows the same rule with `::facade::Trait`; see
 [references/derive-macro-crates.md](references/derive-macro-crates.md).
 
 ## Keep caller expressions out of `unsafe` blocks
 
-`unsafe { f($e) }` evaluates the caller's expression `$e` inside your `unsafe` block, so the
-caller can write unsafe operations with no `unsafe` keyword at the call site. Evaluate each
-metavariable into a local before the block: `let v = $e;`, then `unsafe { f(v) }`.
-`clippy::macro_metavars_in_unsafe` flags the unbound form. It fires only on an invocation in
-the defining crate, such as a `#[cfg(test)] mod tests`; an invocation in `tests/*.rs` does not
-trigger it. By default the lint checks only `#[macro_export]` macros. For a private macro, set
-`warn-unsafe-macro-metavars-in-private-macros = true` in `clippy.toml`.
-
-A local does not help when the block's soundness depends on the value the caller passes. Then
-emit a call to an `unsafe fn` outside any `unsafe` block, so the caller must write `unsafe`.
-
-A downstream `#![forbid(unsafe_code)]` does not reject an `unsafe` block that another crate's
-macro emits. The macro crate owns the soundness of every `unsafe` block in its expansion.
+`unsafe { f($e) }` runs the caller's `$e` inside your block with no `unsafe` at the call site.
+Bind first: `let v = $e;`, then `unsafe { f(v) }`. When soundness depends on the value, emit a
+call to an `unsafe fn` outside any block. `clippy::macro_metavars_in_unsafe` fires only on an
+invocation in the defining crate, and on private macros only with
+`warn-unsafe-macro-metavars-in-private-macros = true` in `clippy.toml`. A downstream
+`#![forbid(unsafe_code)]` does not reject your expansion: the macro crate owns its soundness.
 
 ## Scope is textual
 
-A `macro_rules!` macro is the one item in Rust whose definition must appear **before** its use
-in source order, and a macro in `mod a` is invisible in `mod b`. The message names no missing
-import. Default: write `pub(crate) use name;` after the definition, and call the macro by path;
-order then does not matter. Do not use `#[macro_export]` to cross a module boundary inside one
-crate: it makes the macro public API. Read
-[references/declarative-macros.md](references/declarative-macros.md#textual-scope) when you need
-the two messages or another way to widen the scope.
+A `macro_rules!` definition must come **before** its use, and a macro in `mod a` is invisible in
+`mod b`. Default: `pub(crate) use name;` after the definition, and call it by path. Do not use
+`#[macro_export]` inside one crate: it makes public API. Read
+[references/declarative-macros.md](references/declarative-macros.md#textual-scope) for the
+messages and other ways to widen the scope.
 
 ## Hygiene stops at bindings
 
-Hygiene is not a general namespace shield. It covers exactly the identifiers rustc can rename.
+Hygiene covers only `let` bindings, parameters, and labels: the caller cannot name them (E0425,
+`not accessible due to macro hygiene`). It does **not** cover lifetimes (a generated `<'a>` is the
+caller's `'a`; name it from a metavariable), item, type, field, method, or macro names: two invocations collide with E0428.
 
-| Identifier a macro creates | Hygienic | Consequence |
-| --- | --- | --- |
-| `let` binding, function parameter | Yes | The caller cannot name it, and you cannot hand a name back |
-| Loop label, block label | Yes | Same as a `let` binding |
-| Lifetime | **No** | A generated `<'a>` and a caller's `'a` are the same name. Take the lifetime name from a metavariable, or pick one no caller uses |
-| `struct`, `enum`, `fn`, `const`, `mod`, `static` | **No** | The caller sees it, and two invocations collide |
-| Type name, field name, method name | **No** | Same |
-| Macro name | **No** | Same |
-
-A generated local is invisible to the caller: E0425 with `help: an identifier with the same name
-is defined here, but is not accessible due to macro hygiene`. A fixed item name collides on the
-second invocation with ``error[E0428]: the name `Inner` is defined multiple times``.
-
-Two fixes. Derive every generated item name from a metavariable, or wrap the private helpers in
-an anonymous `const _: () = { ... };` block. Each expansion of that block gets its own item
-namespace, and an `impl` inside it still applies to the outer type. Read
-[references/declarative-macros.md](references/declarative-macros.md) when you need the
-reproductions or a working `const _` example.
+Derive every generated item name from a metavariable, or wrap the private helpers in an anonymous
+`const _: () = { ... };` block, which gives each expansion its own item namespace; an `impl`
+inside it still applies to the outer type. Read
+[references/declarative-macros.md](references/declarative-macros.md#hygiene-examples) for the
+reproductions.
 
 ## Fragment specifiers
 
 ### Follow sets are checked at definition time
 
-rustc rejects an illegal token sequence when it reads the `macro_rules!` item, before anyone
-invokes the macro. Design the separators before you write the arms. Only `=>`, `,`, or `;` may
-follow an `expr` or `stmt` fragment, and `|` cannot follow `pat`; use `pat_param` when `|` must
-be your separator. Read [references/declarative-macros.md](references/declarative-macros.md)
-when you pick a separator after `pat`, `ty`, `path`, or `vis`; it has the full follow-set table.
-
-```text
-error: `$e:expr` is followed by `$s:stmt`, which is not allowed for `expr` fragments
-  = note: allowed there are: `=>`, `,` or `;`
-```
-
-Every metavariable in a matcher needs a fragment specifier. `($x) =>` fails with
-`error: missing fragment specifier` in every edition since Rust 1.89.
+rustc rejects an illegal separator when it reads the `macro_rules!` item. Only `=>`, `,`, or `;`
+may follow `expr` or `stmt`, and `|` cannot follow `pat` (use `pat_param`). Read
+[references/declarative-macros.md](references/declarative-macros.md#follow-sets) when you pick a
+separator after `pat`, `ty`, `path`, or `vis`. `($x) =>` without a fragment specifier fails with
+`missing fragment specifier` since Rust 1.89.
 
 ### A parsed fragment is opaque to the next matcher
 
-Once a matcher captures `$e:expr`, the capture is a single AST node, not tokens. Forwarding it
-to a macro that expects `$i:ident` fails even when the caller wrote a bare identifier.
-
-```text
-error: no rules expected `expr` metavariable
-note: while trying to match meta-variable `$i:ident`
-```
-
-Capture as `tt` in the outer macro when you must forward to an inner matcher, and parse only at
-the last step that needs the fragment.
+A captured `$e:expr` is one AST node, so a `$i:ident` matcher rejects it (`no rules expected`).
+Capture as `tt` in the outer macro, and parse only at the last step.
 
 ### Edition 2024 and the recursion limit
 
-In edition 2024 `$e:expr` also matches `const { .. }` and `_`; write `expr_2021` to keep the old
-set. An exported `tt`-muncher must stay under 128 expansions per call, because the caller's
-`recursion_limit` applies. Read
+In edition 2024 `$e:expr` also matches `const { .. }` and `_`; `expr_2021` keeps the old set. An
+exported `tt`-muncher stays under 128 expansions per call, the caller's `recursion_limit`. Read
 [references/declarative-macros.md](references/declarative-macros.md#edition-2024-widened-expr)
-when an arm receives `_` or a muncher hits `recursion limit reached while expanding`.
+when either bites.
 
 ### A trailing semicolon breaks expression position
 
-The braces around an arm body are delimiters, not a block. `() => { 42; }` expands to the
-statement `42;`, and `let x = val!();` needs an expression. The
-`semicolon_in_expressions_from_macros` lint rejects it, deny-by-default since Rust 1.91.
-That lint fires only when the macro is defined in the crate that invokes it. Up to Rust 1.98.1,
-an invocation from `tests/*.rs` or a downstream crate compiles without a warning. Rust 1.99
-adds `semicolon_in_expressions_from_non_local_macros`, warn-by-default and part of
-`future_incompatible`, for a macro from another crate. On 1.99.1 a downstream build under
-`-D warnings` fails on the defect.
-
-Remove the `;` after the last expression. When the body needs statements, add an inner block
-with double braces: `() => {{ let base = 40; base + 2 }}`.
+The braces around an arm body are delimiters, not a block: `() => { 42; }` expands to the
+statement `42;`. `semicolon_in_expressions_from_macros` (deny since 1.91) catches it only in the
+defining crate; for a downstream caller, Rust 1.99 adds the warn-by-default
+`semicolon_in_expressions_from_non_local_macros`. Remove the `;` after the last expression; for
+statements, use double braces: `() => {{ let base = 40; base + 2 }}`.
 
 ## Build a format string
 
-A format string must be a literal token: forward the caller's literal with `$fmt:literal`, or
-build one with `concat!`. A format string from `concat!` cannot capture variables inline. The
-`$(,)?` tail accepts an optional trailing comma; add it to every repetition that a caller writes
-across several lines. Read [references/declarative-macros.md](references/declarative-macros.md)
-when a macro builds or forwards a format string.
+A format string must be a literal token: forward `$fmt:literal`, or build one with `concat!`,
+which cannot capture variables inline. End every multi-line repetition with `$(,)?`. Read
+[references/declarative-macros.md](references/declarative-macros.md#build-a-format-string) when a
+macro builds or forwards a format string.
 
 ## Procedural macro crates
 
@@ -240,43 +169,31 @@ quote = "1"
 syn = "3"
 ```
 
-The crate exports macro functions and nothing else, and it cannot invoke its own macros.
-Neither error carries an `error[Ennnn]` code or names the `proc-macro = true` key.
+It exports macro functions only and cannot invoke its own macros.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| ``error: `proc-macro` crate types currently cannot export any items other than functions tagged with `#[proc_macro]`, ...`` | A `pub struct`, `pub fn`, or `pub use` in the macro crate | Keep helpers private. Move a shared type to a plain support crate that the macro crate depends on, never to the facade |
-| `error: can't use a procedural macro from the same crate that defines it`; a test build adds ``help: you can define integration tests in a directory named `tests` `` | A `#[cfg(test)] mod tests` in `src/lib.rs` invokes the macro | Put macro tests in `tests/`, which compiles as a separate crate |
-| `error: proc-macro derive panicked` with `help: message: ...` and a span on the whole derive | A `panic!`, `unwrap`, or `expect` in the macro | Return a `syn::Error` at the offending span; see below |
-| `error: cannot find attribute ... in this scope` on a field | The derive reads a helper attribute it did not declare | List it: `#[proc_macro_derive(Checked, attributes(checked))]` |
-| ``error[E0659]: `inline` is ambiguous`` on a field; `ambiguous_derive_helpers` warning in the macro crate | A helper attribute shares a built-in attribute's name | Name the helper after the derive, for example `checked` |
+| ``error: `proc-macro` crate types currently cannot export any items other than functions ...`` | A `pub` item in the macro crate | Keep helpers private; share types via a support crate, never the facade |
+| `error: can't use a procedural macro from the same crate that defines it` | A `#[cfg(test)] mod tests` invokes the macro | Put macro tests in `tests/` |
+| `error: proc-macro derive panicked` | A `panic!`, `unwrap`, or `expect` in the macro | Return a `syn::Error` at the offending span |
+| `cannot find attribute ... in this scope` on a field | An undeclared helper attribute | `#[proc_macro_derive(Checked, attributes(checked))]` |
+| ``error[E0659]: `inline` is ambiguous``, or `ambiguous_derive_helpers` | A helper named like a built-in attribute | Name the helper after the derive |
 
-Keep the `#[proc_macro_derive]` function thin. Parse with `syn::parse_macro_input!`, put the
-logic in `fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream>`, and map an
-error with `.unwrap_or_else(syn::Error::into_compile_error)`. The user then sees a normal
-diagnostic on the span you chose.
+Keep the `#[proc_macro_derive]` function thin: parse with `syn::parse_macro_input!`, put the logic
+in `fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream>`, and map an error with
+`.unwrap_or_else(syn::Error::into_compile_error)`.
 
 Read [references/derive-macro-crates.md](references/derive-macro-crates.md) when you write a
-derive or set up the facade and derive pair: skeleton, dependency direction, generic bounds,
-and the missing-derive error.
+derive or set up the facade and derive pair.
 
 ### Pick the syn major
 
 Use the syn major that `cargo tree --locked -e normal,build -i syn` already shows; with both or
 none, use `syn = "3"`. Read [references/syn-3.md](references/syn-3.md) when you choose the major,
-port a macro crate, or fix E0599, E0609, or E0432 on `Type::BareFn`, `Signature::unsafety`, or
-`Arm::guard`.
+port a macro crate, or fix E0599, E0609, or E0432 on a renamed syn item.
 
 ## Related skills
 
-Use each when it is installed.
-
-| Skill | Boundary |
-| --- | --- |
-| `rust-crate-architecture` | Which crates exist and which way normal dependencies point, apart from the macro crate pair |
-| `rust-lints` | Lint policy |
-| `rust-compiler-errors` | Diagnostics that do not come from a macro |
-| `rust-unsafe` | Soundness of the `unsafe` code a macro emits |
-| `rust-discipline` | API design of the trait a derive implements, including the delegation macro pattern |
-| `rust-serde` | `#[derive(Serialize, Deserialize)]` and its container and field attributes as a contract |
-| `rust-test-tools` | Golden tests (`cargo insta review`) and CI wiring. `trybuild` guidance stays in this skill |
+When installed: `rust-unsafe` owns the soundness of emitted `unsafe` code, `rust-serde` owns
+`#[derive(Serialize, Deserialize)]` attributes, and `rust-test-tools` owns golden tests
+(`cargo insta review`). The `rust-lints` skill owns lint policy in `[workspace.lints]`.

@@ -6,6 +6,7 @@ Contents:
 - [Scope a macro by path](#scope-a-macro-by-path)
 - [Edition 2024 widened `expr`](#edition-2024-widened-expr)
 - [The recursion limit is 128 expansions](#the-recursion-limit-is-128-expansions)
+- [Absolute path details](#absolute-path-details)
 - [A caller's alias shadows a bare standard-library name](#a-callers-alias-shadows-a-bare-standard-library-name)
 - [Hygiene examples](#hygiene-examples)
 - [Follow sets](#follow-sets)
@@ -77,6 +78,24 @@ tokens compile, 128 fail with ``error: recursion limit reached while expanding `
 The limit of the crate that invokes the macro applies. A `#![recursion_limit = "256"]` in the
 macro's own crate does not help a downstream caller, so an exported macro must stay under 128
 expansions per call. Prefer a shape that halves the input per step.
+
+## Absolute path details
+
+The full table behind the `SKILL.md` rule:
+
+| The path names | Emit | Because |
+| --- | --- | --- |
+| An item of the macro's own crate | `$crate::render(...)` | A bare `render` fails in every other crate with E0425. `crate::render` names the caller's crate, and `clippy::crate_in_macro_def` flags it |
+| A standard-library item | `::core::result::Result`. For an `alloc` item, put `pub use alloc::vec::Vec;` in `$crate::__private` and emit `$crate::__private::Vec`. Emit `::std::` only for an item that neither `core` nor `alloc` has, and only when no `#![no_std]` caller is supported. Do not emit `::alloc::` | A bare `Result` resolves to the caller's `type Result<T> = ...` alias. `::std::` fails with E0433 in a `#![no_std]` caller. `::alloc::` fails with E0433 in every caller that does not write `extern crate alloc;`, ordinary std crates included, because `alloc` is not in their extern prelude (verified on Rust 1.99.1) |
+| An item of a dependency of the macro crate | Re-export it (`#[doc(hidden)] pub mod __private { pub use dep_name; }`) and emit `$crate::__private::dep_name::Item`. From a derive, re-export it from the facade and emit `::facade::__private::dep_name::Item` | `::dep_name` resolves in the caller's crate, and the caller may not depend on `dep_name` |
+| The derive attribute | `#[::core::derive(...)]` when the macro crate's `rust-version` is 1.96 or later, else `#[::core::prelude::v1::derive(...)]` | `derive` also resolves at the call site. Rust 1.95 rejects `::core::derive` with E0433 |
+
+A missing `$crate` passes in one place only: a module of the defining crate that already has the
+item in scope. It fails in every downstream crate, in a `#[cfg(test)] mod tests` that does not
+`use super::*`, and in your own `tests/*.rs`. `::std::` fails with E0433 in a `#![no_std]`
+caller. `::alloc::` fails in ordinary std crates too, because `alloc` is not in their extern
+prelude (verified on Rust 1.99.1). A `tests/*.rs` invocation does not catch a `::dep_name::` path, because
+an integration test sees every dependency of its package.
 
 ## A caller's alias shadows a bare standard-library name
 
@@ -184,6 +203,13 @@ rustc checks these rules when it reads the `macro_rules!` item. The rules are in
 ```text
 error: `$e:expr` is followed by `$s:stmt`, which is not allowed for `expr` fragments
   = note: allowed there are: `=>`, `,` or `;`
+```
+
+A captured fragment is opaque to the next matcher:
+
+```text
+error: no rules expected `expr` metavariable
+note: while trying to match meta-variable `$i:ident`
 ```
 
 The note for `ty` and `path` omits `>>` and a `$b:block` metavariable. Both compile.
