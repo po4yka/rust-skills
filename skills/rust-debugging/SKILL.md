@@ -1,6 +1,6 @@
 ---
 name: rust-debugging
-description: Use when debugging a Rust crash, panic, hang, or unreadable native stack trace, on the host or inside an Android or iOS app behind JNI or UniFFI. Triggers on RUST_BACKTRACE, SIGSEGV, SIGABRT, native crash, tombstone, logcat crash output, addr2line, ndk-stack, atos, dSYM, rust-lldb, rust-gdb, lldb-server, _RNv mangled frames, JNI panic, UniFFI panic, and tokio-console for async stalls. Not for slow code or profiling; use `rust-performance`.
+description: Use when debugging a Rust crash, panic, hang, or unreadable native stack trace, on the host or inside an Android or iOS app behind JNI or UniFFI. Triggers on RUST_BACKTRACE, SIGSEGV, SIGABRT, tombstone, logcat crash output, addr2line, ndk-stack, atos, dSYM, rust-lldb, rust-gdb, lldb-server, _RNv mangled frames, JNI panic, UniFFI panic, and tokio-console for async stalls. Not for slow code or profiling; use `rust-performance`.
 license: BSD-3-Clause
 ---
 
@@ -17,10 +17,10 @@ device, go from logs to the tombstone or crash report, then symbolicate, and att
 | Panic message and a Rust backtrace are visible | Host. Write a test that calls the same function. |
 | Crash only under one input file or payload | Host. Feed the input to a CLI or a unit test. |
 | Crash only on device, no panic message | Android or iOS. Pull the tombstone or crash report (sections 3 and 4). |
-| SIGSEGV or SIGBUS with no Rust frames | Native memory bug. Symbolicate, then run the host repro under ASan, or the device build under HWASan or MTE (the `rust-sanitizers-miri` skill). |
+| SIGSEGV or SIGBUS with no Rust frames | Native memory bug. Symbolicate, then run the host repro under ASan (`RUSTFLAGS=-Zsanitizer=address cargo +nightly test --target <host-triple>`), or the device build under HWASan or MTE (the `rust-sanitizers-miri` skill). |
 | Kotlin or Swift gets an error, Rust logs nothing | FFI boundary. See section 2. |
 | Process hangs | Deadlock or async stall. Backtrace every thread, then see section 5. |
-| Snapshot or golden output changed, no panic | Not a crash. Read the diff. Re-bless only in a commit that explains why (the `rust-test-tools` skill). |
+| Snapshot or golden output changed, no panic | Not a crash. Read the diff. Re-bless only in a commit that explains why (`cargo insta review` for `insta`; the `rust-test-tools` skill). |
 
 ## Panic and signal triage
 
@@ -33,12 +33,12 @@ device, go from logs to the tombstone or crash report, then symbolicate, and att
 | `attempt to multiply with overflow` | Overflow in size math | Use `checked_mul` before you allocate. |
 | `panic in a function that cannot unwind` | A panic reached an `extern "C"` or `extern "system"` export with no guard | Guard the export (section 2). |
 | Signal 6 (SIGABRT) | Double panic, `abort()`, `panic = "abort"` (the `Abort message` holds the panic text), or an unguarded export (no `Abort message`; a `panic_cannot_unwind` frame after symbolication) | Read the tombstone `Abort message` when it is present. Check the export guards, then reproduce on the host. |
-| Signal 11 (SIGSEGV) | Null or dangling pointer, use-after-free in `unsafe` or in a C dependency | Symbolicate, then run the host repro under ASan, or the device build under HWASan or MTE (the `rust-sanitizers-miri` skill). |
+| Signal 11 (SIGSEGV) | Null or dangling pointer, use-after-free in `unsafe` or in a C dependency | Symbolicate, then run the sanitizers of the SIGSEGV row in the table above. |
 | Signal 7 (SIGBUS) | Misaligned or invalid memory access, often a bad pointer cast | Audit the `unsafe` cast (the `rust-unsafe` skill). |
-| Process killed while it writes to a pipe or socket | SIGPIPE | Ignore SIGPIPE during init (section 2). |
+| Process killed while it writes to a pipe or socket | SIGPIPE | On an iOS, Swift, or C host, ignore SIGPIPE during init (section 2). |
 | Kotlin `InternalException`, or a Swift error outside your error enum | Rust panic caught by the UniFFI guard | Fix the panic. Do not add a catch-all variant. |
 | Swift fatal error on a non-throwing UniFFI call | Panic in a non-throwing export | Make the export panic-free, or return `Result`. |
-| `JNI DETECTED ERROR IN APPLICATION` in logcat | Wrong JNI usage: stale local ref, wrong signature, missing exception check | See the `rust-jni` skill. |
+| `JNI DETECTED ERROR IN APPLICATION` in logcat | Wrong JNI usage: stale local ref, wrong signature, missing exception check | Call `env.exception_check()` after each JNI call that can throw, and keep each local ref inside its call (the `rust-jni` skill). |
 | Frames print as `_RNv...` or `__RNv...` | The tool predates v0 mangling, the default since 1.97 | Upgrade the tool (binutils 2.36+, Linux perf 6.16+; the perf in Ubuntu 24.04 and Debian 13 is too old), or pipe through `rustfilt`. On macOS, use `c++filt -_`. |
 | A grep for `_ZN` finds nothing | v0 symbols start with `_R` (`__R` in Mach-O) | Grep `_R`. `#[no_mangle]` exports keep their literal names. |
 | Deadlock or hang, no CPU load | Lock ordering, or a channel with no sender | Attach the debugger and backtrace every thread. |
@@ -174,8 +174,9 @@ RUST_LOG=my_crate=debug,my_other_crate=trace cargo run --locked -p my-cli -- <ar
 
 ## 2. Panics at the FFI boundary
 
-The `rust-panic-safety` skill owns the guard and hook policy. The `rust-jni` skill owns JNI
-export patterns. This section maps what you see to the cause.
+The `rust-panic-safety` skill owns the guard and hook policy, and the `rust-jni` skill owns JNI
+export patterns; without them, wrap each export body in `std::panic::catch_unwind`. This section
+maps what you see to the cause.
 
 - Since Rust 1.81, a panic that reaches an `extern "C"` or `extern "system"` function aborts the
   process. This is defined behavior. On the host, stderr shows the panic, then `panic in a
@@ -203,12 +204,14 @@ UniFFI generates the boundary guard. You must still know what the foreign side s
   one of them records the message.
 - Do not add an `Internal` variant and expect panics to arrive in it. They do not. Convert the
   failure into a real `Err` on the Rust side when the caller must handle it. Keep a non-throwing
-  export panic-free. See the `uniffi-boundary` and `ffi-error-progress-cancel` skills.
+  export panic-free: return `Result<T, E>` with a `#[derive(uniffi::Error)]` enum (the
+`uniffi-boundary` and `ffi-error-progress-cancel` skills own the mapping).
 
 ### Panic reports on a device
 
 In a shipped build, report a panic only through the bootstrap's redacted hook: a closed site
-code plus the line and the column. The `rust-panic-safety` skill has the one copy of that hook. Never
+code plus the line and the column. The `rust-panic-safety` skill has the one copy of that hook;
+without it, print only `info.location()` from `std::panic::set_hook`. Never
 put the payload, a file path, or a backtrace into a shipped log, because panic text can hold input
 data, paths, or secrets. Get the message and the backtrace from a host repro, or symbolicate the
 crash offline.
@@ -236,9 +239,11 @@ fn main() {
 }
 ```
 
-A `cdylib` or `staticlib` inside a JVM or Swift process gets no such setup. Let the application
-bootstrap set the ignore disposition during init, then handle `ErrorKind::BrokenPipe` like any
-other error:
+A `cdylib` or `staticlib` gets no such setup. Inside a JVM it needs none: ART blocks SIGPIPE
+and HotSpot installs its own handler, so the write returns `BrokenPipe`. Never change a signal
+disposition there, because the runtime chains signals and owns the table. In an iOS, Swift, or
+plain C host, let the application bootstrap ignore SIGPIPE during init, then handle
+`ErrorKind::BrokenPipe` like any other error:
 
 ```rust
 pub fn ignore_sigpipe() {
@@ -253,8 +258,9 @@ Reach for the device only after the host attempt fails. The order that works:
 
 1. **Wire logging first.** Without a logcat sink, nothing Rust prints reaches logcat. The crash
    channels still fire, but they give a signal and an address, not a panic record.
-2. **Read the record and the signal.** `adb logcat | grep -E "rust_panic|SIGABRT|SIGSEGV"`, and
-   `adb logcat -b crash` for the crash dump.
+2. **Read the record and the signal.** `adb logcat -d | grep -E "rust_panic|SIGABRT|SIGSEGV"`
+   (`rust_panic` is the tag of the redacted hook; use your hook's tag), and `adb logcat -d -b
+   crash` for the crash dump. `-d` dumps and exits; without it logcat streams until killed.
 3. **Symbolicate.** A tombstone is addresses until `ndk-stack` or `llvm-addr2line` maps them
    against the unstripped `.so` from the same build.
 4. **Attach LLDB** only when the log and the tombstone both fall short.
@@ -270,7 +276,8 @@ Use the same order as on Android: the crash report, then symbolication, then LLD
 - Symbolicate against the `.dSYM` of the app build, because the linker moves the `staticlib` code
   into the app binary. Its `dwarfdump --uuid` must match the image UUID in the crash report.
 - The Xcode ASan and TSan switches do not instrument a prebuilt Rust `staticlib`. Run the
-  sanitizers on a host target (the `rust-sanitizers-miri` skill).
+  sanitizers on a host target with `-Zsanitizer=address` or `-Zsanitizer=thread` (the
+  `rust-sanitizers-miri` skill).
 
 Read [references/ios-debugging.md](references/ios-debugging.md) when you symbolicate with `atos`,
 check that the `.dSYM` holds Rust lines, build for a device or the simulator, or break in Rust
@@ -284,34 +291,13 @@ Start with the `FmtSpan::CLOSE` span timing from section 1.
 feature, and the `tokio_unstable` cfg. It opens a local TCP port, so use it in a local debug
 build only and never ship it in a mobile or production build.
 
-1. Add `console-subscriber` to the binary crate, enable `features = ["full", "tracing"]` on
-   `tokio`, and call `console_subscriber::init()` first in `main`. `init()` installs the global
-   subscriber with its own `fmt` layer, and it panics when a subscriber is already set. Remove
-   the section 1 `fmt()...init()` call, or keep your subscriber and add
-   `console_subscriber::spawn()` to a `tracing_subscriber::registry()` as a layer.
-2. Add the cfg to the rustflags in `.cargo/config.toml`, not to `RUSTFLAGS`. The `RUSTFLAGS`
-   variable replaces every config-file rustflag. Matching `[target.<triple>]` rustflags replace
-   `[build]` rustflags, so add it to the table that the workspace already uses.
-
-Remove all four changes, the rustflags entry included, before you commit. A committed
-`tokio_unstable` flag reaches every CI and release build.
-
-```toml
-# .cargo/config.toml
-[build]
-rustflags = ["--cfg", "tokio_unstable"]
-```
-
-```bash
-cargo install --locked tokio-console
-cargo run --locked -p my-cli -- <args>
-tokio-console        # in a second terminal
-```
+Read [references/tokio-console.md](references/tokio-console.md) before you add it: it has the
+four setup changes, the subscriber conflict, and the run commands.
 
 | tokio-console shows | Cause | Next step |
 |---|---|---|
 | `This task has lost its waker, and will never be woken again.` | A `poll` returned `Pending` and dropped every waker clone | Before `poll` returns `Pending`, store `cx.waker().clone()` where the event source can call `wake`. Replace the stored waker when `will_wake` returns `false` |
-| `This task has never yielded (...)`, threshold 1 s | Blocking work holds a worker thread | Move it to `spawn_blocking`. The `rust-async-internals` skill has the blocking-call table |
+| `This task has never yielded (...)`, threshold 1 s | Blocking work holds a worker thread | Move it to `spawn_blocking` (the `rust-async-internals` skill has the blocking-call table) |
 | `This task has woken itself for more than 50% of its total wakeups` | A self-wake loop: the task busy-polls | Wait on a real event instead of waking itself |
 | An idle task, never polled again, no warning | A channel or a lock that nobody releases | Backtrace every thread and find the holder |
 
