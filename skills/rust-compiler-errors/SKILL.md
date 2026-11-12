@@ -45,7 +45,7 @@ Each of these removes the error and keeps the defect. Do not use one to silence 
 | `RefCell` or `Rc<RefCell<T>>` for E0499 or E0502 | A `RefCell already borrowed` panic at run time | A split failed and the graph shape needs it |
 | `Box::leak` for E0521 or E0597 | Memory that grows once per call | Use `Arc` or `std::thread::scope` |
 | `.unwrap()` or `.expect()` to get `T` out of `Option<T>` or `Result<T, E>` for E0308 or E0277 | A panic path. rustc's own `help:` for E0308 on an `Option` suggests `Option::expect` | Use `?` or handle `None` and `Err`. Use `.expect("<invariant>")` only for a documented invariant |
-| An `unsafe` block, `unsafe impl Send`, or `transmute` | The check that found the bug; possible undefined behavior | Never for a type or borrow error. Fix the ownership or the type; see the `rust-unsafe` skill |
+| An `unsafe` block, `unsafe impl Send`, or `transmute` | The check that found the bug; possible undefined behavior | Never for a type or borrow error. Fix the ownership or the type |
 | `#![feature(...)]` for E0658 | E0554 on stable, and a crate that builds only on nightly | Never in a stable crate. Use a stable alternative, or raise the toolchain and MSRV on purpose |
 | `cargo add <name>` from a `help:` line for E0432 or E0433 | rustc suggests `cargo add` for any unknown first path segment, a module of this crate included. A guessed name can be an unrelated or malicious package | Follow [Unresolved imports](#e0432-and-e0433-unresolved-imports) |
 | A higher `#![recursion_limit]` for E0275 or "reached the recursion limit while instantiating" | An infinite type chain; the build fails later and slower | See the E0275 row and the "while instantiating" row of the triage table |
@@ -80,7 +80,7 @@ and answer these:
 | E0106 | missing lifetime specifier | A struct or return type holds a reference with no stated source | Struct field: store owned data unless the type is a short-lived view, such as a parser view or a zero-copy frame; a struct lifetime spreads to every type that holds it. Return type: name the input it borrows from, with the narrowest lifetime that is true. See [references/borrow-checker-fixes.md](references/borrow-checker-fixes.md) |
 | E0277 | the trait bound `T: X` is not satisfied | A required trait is missing or not in scope | Read which trait and which type; import it or add the bound |
 | E0277 | the trait bound `!: X` is not satisfied | Edition 2024 never-type fallback | Name the type, see [the fallback section](#e0282-e0283-e0284-and-the-never-type-need-a-type-anchor) |
-| E0277 | `T` cannot be sent between threads safely | A non-`Send` value crosses a thread boundary | Decide with the `rust-send-sync` skill |
+| E0277 | `T` cannot be sent between threads safely | A non-`Send` value crosses a thread boundary | If `help:` names `Sync`, a `&T` crossed: make `T` `Sync` with a `Mutex` or an atomic, never with `unsafe impl Send` (the `rust-send-sync` skill) |
 | (none) | future cannot be sent between threads safely | A non-`Send` value (an `Rc`, a lock guard, a `RefCell` borrow) lives across an `.await` | Read the `note:`; it names the value and the `.await`. Drop the value before the `.await`, or use `Arc`. `cargo clippy` flags a held lock guard (`clippy::await_holding_lock`, warn by default) |
 | E0271 | expected `A` to be an iterator that yields `B` | An associated type does not match | Fix the item type, usually with `map` |
 | E0308 | mismatched types | The two sides differ, often by one reference layer or one `Option` | Compare the two types the note prints, not the expressions |
@@ -102,7 +102,7 @@ and answer these:
 | E0658 | use of unstable library feature `f` | The API is unstable, or stable only in a newer Rust than this toolchain | Compare `rustc -V` and the crate's `rust-version` with the version on the API's docs page |
 | E0015 | cannot call non-const function `f` in constants | A `const` or `static` initializer calls a non-`const fn` | Make `f` a `const fn`, or compute the value at run time in a `std::sync::LazyLock` |
 | E0072 | recursive type has infinite size | A type contains itself by value | `Box`, `Rc`, or `Arc` the recursive field; `Weak` for a back edge |
-| E0793 | reference to field of packed struct is unaligned | A reference into `#[repr(packed)]` | See the `rust-unsafe` skill |
+| E0793 | reference to field of packed struct is unaligned | A reference into `#[repr(packed)]` | Copy the field out, or `(&raw const f).read_unaligned()` |
 
 ## The clone reflex
 
@@ -118,8 +118,9 @@ for a small owned copy and wrong for an identity, a handle, a large buffer, or s
 | An identity: a connection, a file, a job | One owner. Pass `&mut` down, or pass a handle |
 | Large and consumed once | Move it, and restructure the caller so it can be moved |
 
-A clone inside a loop compiles, is correct, and allocates once per iteration. See the
-`rust-performance` skill.
+A clone inside a loop compiles, is correct, and allocates once per iteration. Measure it before
+you remove it: the `rust-performance` skill records a baseline with
+`cargo bench --locked -p <crate> --bench <b> -- --save-baseline before`.
 
 ## Borrow conflicts are usually a split problem
 
@@ -205,11 +206,11 @@ Refer to these by name when they are installed.
 | `rust-callback-bounds` | E0309, E0621, E0502 on a `Fn(&T) -> K` parameter; the `&mut impl Write` recursion chain; `&mut dyn Trait` against `impl Trait` |
 | `rust-send-sync` | Whether a type is `Send` or `Sync`, behind every `cannot be sent` message |
 | `rust-async-internals` | `Send` across `.await`, cancel safety, and shutdown |
-| `rust-unsafe` | E0793 and the layout rules behind it |
+| `rust-unsafe` | E0793, `#[repr(packed)]` layout, and `ptr::read_unaligned` |
 | `rust-iterator-impl` | E0207 on an iterator impl |
 | `rust-event-loop-state` | E0207 and E0119 on a generic `Handler` trait, and E0499 in a dispatch loop |
 | `rust-type-erasure` | `dyn Any` and `TypeId` stores, downcasting, and the `'static` bound of `Any` |
 | `rust-discipline` | API shapes that avoid E0038 and the borrow errors; the one-field `Drop` guard |
 | `rust-crate-architecture` | Ownership and dependency direction across modules and crates |
-| `rust-performance` | The cost of the clone that silenced the error |
-| `cargo-workflows` | Build, check, feature, and target commands in full |
+| `rust-performance` | The cost of the clone that silenced the error, with DHAT or `cargo bench` |
+| `cargo-workflows` | Build, check, feature, and target commands in full, each with `--locked` |
