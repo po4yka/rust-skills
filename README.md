@@ -299,6 +299,7 @@ Enter by the symptom, not by the skill name.
 | A `RUSTSEC` advisory, or a new dependency nobody vetted | [rust-security](skills/rust-security/SKILL.md) |
 | `DeserializeOwned`, a JSON map key, a large integer, or `rename_all` broke the wire format | [rust-serde](skills/rust-serde/SKILL.md) |
 | Method ambiguity, autoderef, UFCS, E0034, or blanket-impl overlap | [rust-discipline](skills/rust-discipline/SKILL.md) |
+| "`?` couldn't convert the error", a thiserror or anyhow error type, or an error chain to print | [rust-error-handling](skills/rust-error-handling/SKILL.md) |
 | A caught panic aborts while its payload is dropped | [rust-panic-safety](skills/rust-panic-safety/SKILL.md) |
 | A bug to reproduce as a failing test, or a refactor that must keep its behavior | [rust-tdd](skills/rust-tdd/SKILL.md) |
 | Hand-rolled atomics for loom, a parser for proptest or cargo-fuzz, or a survived mutant | [rust-test-tools](skills/rust-test-tools/SKILL.md) |
