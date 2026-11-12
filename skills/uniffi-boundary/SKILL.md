@@ -23,19 +23,10 @@ the shape of that surface. These skills, when installed, own the adjacent topics
 
 ## Version floor
 
-The examples target UniFFI 0.32.x. The proc-macro surface changes between minor versions.
-When `Cargo.lock` pins a `uniffi` version below the floor of a row, use the older form or
-upgrade. The `uniffi-packaging-versioning` skill owns the upgrade.
-
-| Form | Needs |
-|------|-------|
-| `uniffi::custom_type!(T, Bridge, { lower, try_lift })`. `UniffiCustomTypeConverter` is removed. | 0.29 |
-| `#[uniffi::export] impl` on a Record or an Enum (methods on data types) | 0.31 |
-| `#[uniffi::export(foreign)]` and `#[uniffi::export(rust, foreign)]`. Before 0.32, write `with_foreign`. | 0.32 |
-| `&[u8]` argument without a copy (Kotlin direct `java.nio.ByteBuffer`) | 0.32 |
-| `HashSet<T>`, `Box<T>` (parameters, enum variants, recursive types), `async_runtime` on a trait export | 0.32 |
-
-Kotlin consumers need 0.32.1 or later; `uniffi-packaging-versioning` owns pins.
+The examples target UniFFI 0.32.x, and Kotlin consumers need 0.32.1 or later. The proc-macro
+surface changes between minor versions. Read `references/versions-and-sources.md` when
+`Cargo.lock` pins `uniffi` below 0.32, or when you need the primary UniFFI documentation. The
+`uniffi-packaging-versioning` skill owns the upgrade and the pins.
 
 ## Scaffolding: proc-macros, no UDL
 
@@ -111,11 +102,10 @@ The error names the field type at the derive, not at a call site. Here it is
   or return it. A borrowed return fails with an unsatisfied `LowerReturn<UniFfiTag>` bound.
   `&mut T`, `Option<&T>`, and nested references do not cross.
 - **`&[u8]` changes the Kotlin type.** In 0.32, a `&[u8]` argument becomes a direct
-  `java.nio.ByteBuffer` in Kotlin, and a heap buffer throws `IllegalArgumentException`. The
-  generated converter sends the base address of the buffer with `remaining()` bytes, so the
-  position must be 0: after `put()`, call `flip()`. For data at `position..limit`, pass
-  `buf.slice()`. Otherwise Rust silently reads the wrong bytes. Swift passes `Data`. `&[u8]` flows only from the foreign
-  side into Rust. It does not work in an async export or in a foreign-trait method.
+  `java.nio.ByteBuffer`. Rust reads `remaining()` bytes from the buffer's base address, so
+  Kotlin must call `flip()` after `put()`, or pass `buf.slice()`; otherwise Rust silently reads
+  the wrong bytes. `&[u8]` flows only into Rust, and not in an async export or a foreign-trait
+  method. The triage table has the failure messages.
 - **Records are copied.** Every Record field is converted on every call. A large `Vec<T>`
   field is a per-call cost, not a pointer handoff.
 - **Cycles leak.** A foreign object that holds the Rust Object, and a Rust Object that holds
@@ -156,7 +146,7 @@ panic in a non-throwing export is a Swift fatal error. Add `clippy::arithmetic_s
 when the crate does arithmetic.
 
 Add `#![forbid(unsafe_code)]` when the crate has no hand-written `unsafe`. The generated
-scaffolding does not trip it (rustc 1.98.1, UniFFI 0.32.2). The `rust-unsafe` skill owns
+scaffolding does not trip it (Rust 1.99.1, UniFFI 0.32.2). The `rust-unsafe` skill owns
 that rule.
 
 The lints do not see a panic inside an inner crate that the adapter calls, or inside a
@@ -167,7 +157,7 @@ a panic to a no-op or a logged event.
 
 ## Codegen and bindgen failure triage
 
-The Rust messages below are from rustc 1.98.1 with UniFFI 0.32.2.
+The Rust messages below are from Rust 1.99.1 with UniFFI 0.32.2.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
@@ -227,15 +217,14 @@ UniFFI 0.32, with the full `ProgressListener` pattern.
 - Keep the trait coarse: one `on_progress(event)`, not a per-item or per-row callback. A
   synchronous callback blocks the Rust worker until Kotlin or Swift returns. Coalesce and
   rate-limit in Rust before you call out.
-- An `Arc<dyn Trait>` keeps the foreign object alive. Hold it for one call or one job, then
-  drop it. A listener that must outlive a job needs a registration token and an idempotent
-  release method (the `ffi-error-progress-cancel` skill owns it). Never store it with no
-  release path; the platform cannot see or break that reference.
+- An `Arc<dyn Trait>` keeps the foreign object alive. Hold it for one call or one job. A
+  listener that must outlive a job needs a registration token and an idempotent release
+  method (the `ffi-error-progress-cancel` skill owns it); never store one with no release
+  path.
 - Take the trait as `Arc<dyn Trait>`. Use `#[uniffi::export(foreign)]` when only foreign
   implementations cross, and `#[uniffi::export(rust, foreign)]` when both sides implement it.
-  Do not add `callback_interface` (soft-deprecated) to new code. On 0.32 or later, do not add
-  `with_foreign` (deprecated alias). Below 0.32, `with_foreign` is the only spelling.
-  `references/interface-patterns.md` has the migration rule.
+  Do not add `callback_interface` or, on 0.32 or later, `with_foreign` to new code
+  (`references/interface-patterns.md` has the migration rule).
 
 ## Async exports
 
@@ -264,19 +253,3 @@ A reshaped export regenerates Kotlin and Swift and can break both consumers in o
 
 Read `references/review-checklist.md` when you review a change to the boundary crate or gate
 its merge.
-
-## Sources
-
-Read the pages for the UniFFI version in `Cargo.lock`. `latest` tracks the newest release.
-
-| Topic | URL |
-|-------|-----|
-| Proc-macros, derives, `setup_scaffolding!` | <https://mozilla.github.io/uniffi-rs/latest/proc_macro/index.html> |
-| Interfaces (Objects), constructors, `Arc` | <https://mozilla.github.io/uniffi-rs/latest/types/interfaces.html> |
-| Foreign traits, `UnexpectedUniFFICallbackError`, cycles | <https://mozilla.github.io/uniffi-rs/latest/foreign_traits.html> |
-| `&[u8]` arguments | <https://mozilla.github.io/uniffi-rs/latest/types/bytes.html> |
-| Custom types | <https://mozilla.github.io/uniffi-rs/latest/types/custom_types.html> |
-| Async and futures | <https://mozilla.github.io/uniffi-rs/latest/futures.html> |
-| Kotlin object lifetimes | <https://mozilla.github.io/uniffi-rs/latest/kotlin/lifetimes.html> |
-| Swift panics and `Sendable` | <https://mozilla.github.io/uniffi-rs/latest/swift/overview.html> |
-| CHANGELOG | <https://github.com/mozilla/uniffi-rs/blob/main/CHANGELOG.md> |
