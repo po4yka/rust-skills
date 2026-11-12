@@ -1,6 +1,6 @@
 ---
 name: rust-ios-build
-description: Use when building, packaging, or verifying a Rust static library for iOS (Rust for iOS) - device and simulator slices, IPHONEOS_DEPLOYMENT_TARGET, C header and modulemap, XCFramework assembly, SwiftPM binaryTarget, dSYM UUID checks, smoke tests, code signing, or PrivacyInfo.xcprivacy. Triggers on aarch64-apple-ios-sim, target_env = "sim", xcodebuild -create-xcframework, swift package compute-checksum, or the ld message built for newer iOS version than being linked.
+description: Use when building, packaging, or verifying Rust for iOS as a static library - device and simulator slices, IPHONEOS_DEPLOYMENT_TARGET, C header and modulemap, XCFramework assembly, SwiftPM binaryTarget, dSYM UUID checks, smoke tests, code signing, or PrivacyInfo.xcprivacy. Triggers on aarch64-apple-ios-sim, target_env = "sim", xcodebuild -create-xcframework, swift package compute-checksum, or the ld message built for newer iOS version than being linked.
 license: BSD-3-Clause
 ---
 
@@ -61,6 +61,7 @@ look green.
 | Undefined `_Sec*`, `_CF*`, or C++ runtime (`__ZNSt...`, `___cxa_*`) symbols from a Rust dependency | A dependency needs a system framework or library, and a staticlib does not carry that link request | Run the `--print=native-static-libs` build and link each listed framework and library. |
 | `duplicate symbol '__R...'` in two `lib*.a` archives | Two Rust staticlibs in one app; `-all_load` or `-force_load` loads both `std` copies | Build one staticlib for the app. |
 | Swift reports `no such module` | Header or `module.modulemap` is absent from one slice | Inspect the selected slice and stage the same module files in every headers directory. |
+| `Multiple commands produce '.../include/module.modulemap'` | Two library XCFrameworks put `module.modulemap` at the headers root | Stage the module files under `headers/<ModuleName>/`. |
 | SwiftPM checksum does not match | ZIP bytes changed after checksum generation | Recreate the immutable release ZIP and update its checksum atomically. |
 | Simulator passes and device fails to link | Release lacks the device slice | Require `aarch64-apple-ios` in the release matrix. |
 | Crash report stays unsymbolicated | dSYM came from another archive action | Compare executable and dSYM UUIDs with `dwarfdump --uuid`. |
@@ -133,16 +134,8 @@ xcodebuild -version
 xcode-select -p
 ```
 
-As of 2026-09, App Store Connect accepts only uploads built with Xcode 26 or
-later and the iOS 26 SDK or later
-([Apple upcoming requirements](https://developer.apple.com/news/upcoming-requirements/)).
-From April 2027, uploads need the iOS 27 SDK or later
-([Apple news, 2026-09-09](https://developer.apple.com/news/?id=k1mtkt1k)).
-Plan the release Xcode for the date of the upload. Xcode 26 and 27 accept iOS
-deployment targets from iOS 15. Xcode 27 supports only iOS 17 or later devices
-and simulators
-([Xcode system requirements](https://developer.apple.com/xcode/system-requirements/)).
-Choose the declared Xcode from these limits.
+Read [references/release.md](references/release.md#choose-the-release-xcode) when you
+choose the declared Xcode. It has the App Store SDK minimums.
 
 Resolve the SDK with `xcrun`. Do not check an absolute SDK path into Cargo
 configuration:
@@ -280,13 +273,16 @@ lipo -create \
 ```
 
 Otherwise copy the Apple silicon simulator archive to the simulator staging
-directory. Keep separate header directories for the two Apple platforms:
+directory. Keep separate header directories for the two Apple platforms, with
+the module files in a subdirectory named after the module. Xcode copies the
+headers of every library XCFramework into one `include/` directory, so a
+`module.modulemap` at the headers root collides with any other such SDK:
 
 ```text
-<staging>/device/headers/native_core.h
-<staging>/device/headers/module.modulemap
-<staging>/simulator/headers/native_core.h
-<staging>/simulator/headers/module.modulemap
+<staging>/device/headers/NativeCore/native_core.h
+<staging>/device/headers/NativeCore/module.modulemap
+<staging>/simulator/headers/NativeCore/native_core.h
+<staging>/simulator/headers/NativeCore/module.modulemap
 ```
 
 Create the package at a new path:
