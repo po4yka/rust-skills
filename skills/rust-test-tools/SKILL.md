@@ -53,7 +53,8 @@ assertions are on. A `--release` build removes these checks.
 | cargo-fuzz | `cargo +nightly fuzz run <target> -- -max_total_time=900` for each `cargo fuzz list` entry | nightly or weekly schedule, not every pull request |
 | cargo-mutants | `--in-diff` run on demand, full run on a schedule | after a refactor, and weekly |
 
-The `cargo-workflows` skill owns nextest profiles and GitHub Actions pinning.
+The `cargo-workflows` skill owns nextest profiles (`.config/nextest.toml`, run with
+`cargo nextest run --locked --profile ci`) and pins each GitHub Action to a full commit SHA.
 
 ## Review gate
 
@@ -261,7 +262,7 @@ These skills own the adjacent topics, when they are installed:
 
 - `rust-sanitizers-miri`: Miri flags and model policy; `#[cfg(miri)]` stubs for foreign calls;
   ASan, TSan, MSan, and HWASan.
-- `memory-model`: the choice of atomic orderings that a loom test checks.
+- `memory-model`: the choice of atomic orderings that a loom test checks; it pairs loom with
+  `MIRIFLAGS="-Zmiri-many-seeds=0..16" cargo +nightly miri test --locked`.
 - `rust-unsafe`: SAFETY contracts and the `unsafe` audit surface.
 - `rust-tdd`: the test-first cycle, and tests that call the changed code.
-- `cargo-workflows`: nextest profiles and CI workflow rules.

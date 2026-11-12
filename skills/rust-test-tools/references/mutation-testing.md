@@ -331,9 +331,9 @@ jobs:
 
 Key details:
 
-- Pin every action to a full commit SHA with a version comment, and use node24 majors
-  (checkout v5 or later, upload-artifact v6 or later). GitHub runners removed Node 20 on
-  2026-09-23. The `cargo-workflows` skill owns these rules.
+- The `cargo-workflows` skill owns these rules: pin every action to a full commit SHA with a
+  version comment, and use node24 majors (`actions/checkout` v5 or later,
+  `actions/upload-artifact` v6 or later). GitHub runners removed Node 20 on 2026-09-23.
 - Install the Rust toolchain that `rust-toolchain.toml` pins, so that CI and local runs agree.
 - Install `cargo-nextest` and `cargo-mutants` from prebuilt binaries. A source install
   costs several minutes per run.
