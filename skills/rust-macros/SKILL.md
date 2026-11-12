@@ -269,14 +269,14 @@ port a macro crate, or fix E0599, E0609, or E0432 on `Type::BareFn`, `Signature:
 
 ## Related skills
 
-Use these skills by name when they are installed.
+Use each when it is installed.
 
 | Skill | Boundary |
 | --- | --- |
 | `rust-crate-architecture` | Which crates exist and which way normal dependencies point, apart from the macro crate pair |
-| `rust-lints` | Lint policy for the code you write |
+| `rust-lints` | Lint policy |
 | `rust-compiler-errors` | Diagnostics that do not come from a macro |
 | `rust-unsafe` | Soundness of the `unsafe` code a macro emits |
 | `rust-discipline` | API design of the trait a derive implements, including the delegation macro pattern |
 | `rust-serde` | `#[derive(Serialize, Deserialize)]` and its container and field attributes as a contract |
-| `rust-test-tools` | Golden tests and CI wiring. `trybuild` guidance stays in this skill |
+| `rust-test-tools` | Golden tests (`cargo insta review`) and CI wiring. `trybuild` guidance stays in this skill |
