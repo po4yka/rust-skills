@@ -7,6 +7,7 @@ Contents:
 - [Hygiene examples](#hygiene-examples)
 - [Follow sets](#follow-sets)
 - [Build a format string](#build-a-format-string)
+- [Nightly macro syntax](#nightly-macro-syntax)
 
 Every quoted message comes from rustc 1.98.1, edition 2024.
 
@@ -38,8 +39,8 @@ caller's `type Result<T> = ...` alias:
 ```rust,compile_fail,E0107
 macro_rules! parse_fn {
     ($name:ident) => {
-        pub fn $name(s: &str) -> Result<i32, String> {
-            s.parse().map_err(|_| s.to_owned())
+        pub fn $name(_s: &str) -> Result<i32, String> {
+            todo!()
         }
     };
 }
@@ -176,3 +177,13 @@ A format string that comes from `concat!` cannot capture variables inline. `log!
 fails with ``error: there is no argument named `count` ``, and the note says `format_args!`
 cannot capture variables when the format string is expanded from a macro. Pass the arguments
 explicitly, or forward `$fmt` to `println!` unchanged when you need inline capture.
+
+## Nightly macro syntax
+
+As of Rust 1.98.1, these forms fail on the stable toolchain. Do not copy them from nightly code.
+
+| Form | Error |
+| --- | --- |
+| A `macro_rules!` arm written `attr() (...) => ...` | ``error[E0658]: `macro_rules!` attributes are unstable`` |
+| A `macro_rules!` arm written `derive() (...) => ...` | ``error[E0658]: `macro_rules!` derives are unstable`` |
+| `${count($x)}` | `error[E0658]: meta-variable expressions are unstable` |
