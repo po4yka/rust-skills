@@ -57,9 +57,8 @@ it. The final module can contain those instructions even when a runtime path
 does not execute them. Gate optional SIMD code with
 `#[cfg(target_feature = "simd128")]` and keep a portable implementation.
 
-Install each target with `rustup target add <triple>`. Rust 1.84 removed the
-`wasm32-wasi` name, so that command fails for it. Rename it to `wasm32-wasip1`
-in CI, `.cargo/config.toml`, and `rust-toolchain.toml`.
+Rust 1.84 removed the `wasm32-wasi` target, so `rustup target add` fails for it.
+Rename it to `wasm32-wasip1` in CI, `.cargo/config.toml`, and `rust-toolchain.toml`.
 
 ## Triage
 
@@ -70,7 +69,7 @@ in CI, `.cargo/config.toml`, and `rust-toolchain.toml`.
 | Wasmtime: `expected a WebAssembly module but was given a WebAssembly component`; V8 or Node.js: `expected version 01 00 00 00, found 0d 00 01 00` | Host accepts a core module, but the artifact is a component | Run `wasm-tools component wit` | Use a component host or build the required core-module target |
 | `compile_error!` from `getrandom` on `wasm32-unknown-unknown` | No random backend for a JavaScript host | `cargo tree --locked --target wasm32-unknown-unknown -e features -i getrandom` | Enable the backend for each major version in the final `cdylib` or binary, never in a library (see "Keep portable logic separate") |
 | "rust Wasm file schema version" from `wasm-bindgen` | CLI version differs from the locked crate | Compare `wasm-bindgen --version` with `Cargo.lock` | Install the exact locked version, or build through `wasm-pack` |
-| `wasm-opt` rejects bulk-memory or non-trapping float-to-int instructions | The optimizer does not enable the Rust 1.87+ default features | Find `found wasm-opt at ...` in the wasm-pack log (absent means the bundled binaryen ran), then run `wasm-opt --version` on that binary | Enable both features in the `wasm-opt` arguments; `references/size-and-optimizer.md` has the setting |
+| `wasm-opt` rejects bulk-memory or non-trapping float-to-int instructions | The optimizer does not enable the Rust 1.87+ default features, or the profile strips `target_features` | Find `found wasm-opt at ...` in the wasm-pack log (absent means the bundled binaryen ran), then run `wasm-opt --version` on that binary | Enable both features in the `wasm-opt` arguments; `references/size-and-optimizer.md` has the setting |
 | `cc` build script fails for a WASI target, for example `'stdio.h' file not found` | `cc` fell back to a system `clang` with no WASI sysroot | `echo "$WASI_SDK_PATH"`, `ls "$WASI_SDK_PATH/bin"`, and the `cc` version in `Cargo.lock` (1.2.39 or later) | Install wasi-sdk, set `WASI_SDK_PATH`, and update `cc`, or set `CC_<target>`; `references/wasi.md` has the details |
 | Export is undefined | Wrong generated-JS mode or initialization did not finish | Inspect the generated module and package test | Match the consumer mode and await initialization |
 | "time not implemented on this platform", or a bare `RuntimeError: unreachable` near timing code | `Instant::now()` or `SystemTime::now()` on `wasm32-unknown-unknown` | Install the panic hook in a debug build and read the message | Read the clock in the JavaScript adapter. For a dependency, enable its wasm or JavaScript feature, or replace it (`web-time` gives drop-in types) |
