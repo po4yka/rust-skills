@@ -296,7 +296,7 @@ Audit that nothing bypasses it:
 
 ```bash
 # Every extern definition should come from the macro. Hand-written bodies are findings.
-rg -n 'extern "(C|system)" fn' --type rust
+rg -n 'extern ("(C|system)" )?fn' --type rust
 ```
 
 ## UniFFI
@@ -305,7 +305,7 @@ rg -n 'extern "(C|system)" fn' --type rust
 its panic guard. Consequences:
 
 - Generated scaffolding needs no hand-written guard. Run
-  `rg -n 'extern "(C|system)"' <crate>/src`. Generated scaffolding does not appear there, so
+  `rg -n 'extern ("(C|system)"|fn)' <crate>/src`. Generated scaffolding does not appear there, so
   every hit is a hand-rolled export.
 - Any hand-rolled `extern "C"` in the same crate bypasses the generated guard and needs the
   full treatment.

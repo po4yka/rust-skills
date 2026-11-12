@@ -1,6 +1,6 @@
 ---
 name: rust-panic-safety
-description: Use when guarding an extern "C", extern "system", or JNI entry point with catch_unwind, choosing panic = "unwind" or "abort", installing a panic hook, disposing of a panic payload, or triaging an abort such as "panic in a function that cannot unwind". Also use when a panic can escape a foreign callback, spawned task, thread, or Drop, or when replacing unwrap or expect on an FFI-reachable path. Owns the panic policy at a C ABI boundary.
+description: Use when guarding an extern "C", extern "system", or JNI entry point with catch_unwind, choosing panic = "unwind" or "abort", installing a panic hook, disposing of a panic payload, fixing an UnwindSafe bound with AssertUnwindSafe, or triaging an abort such as "panic in a function that cannot unwind". Also use when a panic can escape a foreign callback, spawned task, thread, or Drop, or when replacing unwrap or expect on an FFI-reachable path. Owns the panic policy at a C ABI boundary.
 license: BSD-3-Clause
 ---
 
@@ -9,8 +9,8 @@ license: BSD-3-Clause
 ## Start here: find the boundaries
 
 ```bash
-# Every function that foreign code can call.
-rg -n 'extern "(C|system|C-unwind|system-unwind)"|#\[jni_mangle|native_method!' --type rust
+# Every function that foreign code can call. A bare `extern fn` is `extern "C"`.
+rg -n 'extern "(C|system|C-unwind|system-unwind)"|extern fn|#\[jni_mangle|native_method!' --type rust
 
 # Every symbol that leaves the crate unmangled.
 rg -n '#\[unsafe\(no_mangle\)\]|#\[no_mangle\]|#\[export_name|#\[unsafe\(export_name' --type rust
@@ -122,30 +122,12 @@ This skill is the catalog's single home for this policy:
 
 ## Choose the panic strategy before you write the guard
 
-- `panic = "unwind"` (default) keeps panics catchable; landing pads add code. Use it when a
-  panic must be survived: a shared library inside a host process, a server that isolates a
-  request, any FFI boundary that returns an error to the caller.
-- `panic = "abort"` aborts at the panic site. It is smaller and marginally faster. Use it when
-  no guard depends on catching, for example a standalone binary where a panic is a crash
-  anyway. It silently turns every `catch_unwind` guard into dead code.
-
-```toml
-[profile.release]
-panic = "unwind"                # required if any entry point relies on catch_unwind
-overflow-checks = true          # a wrapped length becomes a panic, not a bad slice bound
-debug = "line-tables-only"      # file and line when you symbolicate a backtrace offline
-```
-
-Rules:
-
-- Cargo reads manifest profiles only from the workspace root. A `[profile]` table in a member
-  manifest has no effect, and a per-package override cannot set `panic`. A config-file
-  profile, `CARGO_PROFILE_<NAME>_PANIC`, and `-C panic` in any rustflags source override the
-  manifest.
-- Cargo ignores the `panic` key for tests, benchmarks, build scripts, and proc macros. A
-  `#[should_panic]` test therefore runs under unwind even when release aborts. Do not read a
-  green test run as proof that the shipped library unwinds.
-- State the reason for the strategy in a comment next to the `panic` key.
+`panic = "abort"` silently turns every `catch_unwind` guard into dead code. Set
+`panic = "unwind"` in the workspace-root `[profile.release]` when any entry point relies on
+`catch_unwind`; a member manifest's profile has no effect. Cargo builds tests with unwind
+whatever the profile says, so a green test run does not prove that the shipped library unwinds.
+Read `references/panic-strategy.md` when you set or review the `panic` key, its overrides, or
+the release profile next to it.
 
 ## What `catch_unwind` catches
 
@@ -241,12 +223,8 @@ Not allowed on such a path:
 
 Deny `clippy::unwrap_used`, `clippy::panic`, `clippy::todo`, `clippy::unimplemented`, and
 `clippy::panic_in_result_fn` in every crate on an FFI path. Set `clippy::expect_used` and
-`clippy::indexing_slicing` to at least `warn`. Set them as crate-root attributes and keep
-`[lints] workspace = true`, so the crate keeps the workspace floor that the `rust-lints` skill
-owns. Read `references/unwrap-audit.md` when you roll these lints out or a crate already has
-many sites. It holds the crate-root block, the `clippy.toml` test exemptions (and the
-`panic_in_result_fn` case, which has none), the reachability ranking, the replacement recipes,
-and the `#[expect]` contract. Count the debt with a command, never from memory:
+`clippy::indexing_slicing` to at least `warn`. Read `references/unwrap-audit.md` when you roll
+these lints out or a crate already has many sites. Count the debt with a command, never from memory:
 
 ```bash
 rg -n --type rust '\.unwrap\(\)|\.expect\(' \

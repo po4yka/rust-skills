@@ -27,7 +27,7 @@ rg -c --type rust '\.unwrap\(\)|\.expect\(' \
   | sort -t: -k2 -rn | head -20
 
 # Directories that define extern functions.
-rg -l 'extern "(C|system)"' --type rust | xargs -n1 dirname | sort -u
+rg -l 'extern ("(C|system)"|fn)' --type rust | xargs -n1 dirname | sort -u
 
 # Crates that the boundary crate reaches: the rank 2 sites live here.
 cargo tree -p <boundary-crate> -e normal --prefix none
