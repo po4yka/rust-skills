@@ -1,6 +1,7 @@
 # Callbacks and cancellation
 
-Detail for the callback, threading, and cancellation rules in `SKILL.md`.
+The home of the callback, threading, and cancellation rules. The failure
+triage table in `SKILL.md` lists their symptoms.
 
 Contents:
 

@@ -1,7 +1,8 @@
 # Dispatcher Install and the `log` Bridge
 
-This reference expands the dispatcher rules in `SKILL.md`. The six rules, the
-gates, and the "It emits nothing" triage table stay in `SKILL.md`.
+This reference expands the dispatcher rules in `SKILL.md`, and says what a host,
+a bootstrap `cdylib`, and an embedded sink each see. The six rules, the gates,
+and the "It emits nothing" triage table stay in `SKILL.md`.
 
 Contents:
 
@@ -10,7 +11,7 @@ Contents:
 - Keep callsite interest valid
 - Bridge `log` once
 - Test the install
-- An Android bootstrap sink
+- Host, bootstrap, and embedded sink (and an Android bootstrap sink)
 
 ## Why one install
 
@@ -109,12 +110,42 @@ in its own process.
 6. Emit one event with a message, a `%` value, and an undeclared field. Assert
    that the sink record holds only the declared fields and no message.
 
-## An Android bootstrap sink
+## Host, bootstrap, and embedded sink
 
-The bootstrap `cdylib` is the application-owned outermost library that a mobile
-app or plugin host loads. It owns the install and may depend on
-`tracing-subscriber`. In a shipped build, its platform sink receives the
-redacted record, like any embedded sink.
+The six rules and the gates in `SKILL.md` apply to all three; each sees a
+different part of an event.
+
+- **Host** (a CLI, a service, or a test binary): it owns rule 1's single
+  install and may call `init()`. Rules 5 and 6 apply as written. Rules 2 to 4
+  apply to each emission that leaves the process (an exporter, a log store, a
+  crash reporter). A `tracing-subscriber` formatting layer renders the full
+  event, including an error's `Display` message. Write to stderr so stdout
+  stays machine-readable. In a CLI, keep the layer off unless an environment
+  filter is set. The layer renders untrusted text: use `tracing-subscriber`
+  0.3.20 or later, which escapes ANSI sequences in logged values
+  (RUSTSEC-2025-0055), and gate advisories with
+  `cargo deny --config deny.toml --locked check advisories`, or
+  `cargo audit --deny warnings` without cargo-deny.
+
+  ```bash
+  RUST_LOG=my_pipeline=debug my-cli render input.toml
+  ```
+
+- **Bootstrap `cdylib`** (the application-owned outermost library that a mobile
+  app or plugin host loads): it owns the install and may depend on
+  `tracing-subscriber`. In a shipped build, its platform sink receives the
+  redacted record, like any embedded sink. The Android case follows.
+
+- **Embedded sink** (a callback registered across FFI): receives a redacted
+  record: severity, target, callsite name, and the fields that survive the
+  visitor. **Never the message.** An error arrives as its kind, a frozen
+  enumeration case, and nothing else.
+
+Only a host binary and the bootstrap `cdylib` depend on `tracing-subscriber`.
+Engine crates, the shared observability crate, and inner FFI library crates do
+not. Put the layer in the host instead.
+
+### An Android bootstrap sink
 
 An Android app process sends stderr to `/dev/null` and does not inherit a shell
 environment, so stderr and `RUST_LOG` do not apply. `tracing-logcat` is a `fmt`

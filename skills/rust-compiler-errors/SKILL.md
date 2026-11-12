@@ -76,6 +76,7 @@ and answer these:
 | E0716 | temporary value dropped while borrowed | A temporary ended before its borrow | Name the owner in a `let`; a function argument such as `bar(&foo())` is never extended. See [references/borrow-checker-fixes.md](references/borrow-checker-fixes.md) |
 | E0515 | cannot return reference to local variable | The callee owns the data the caller wants | Return owned, or accept a buffer parameter |
 | E0521 | borrowed data escapes outside of function | A borrowed parameter reaches a `'static` bound such as `thread::spawn` | Pass an `Arc` or owned data, or use `thread::scope` |
+| E0310 | the parameter type `T` may not live long enough | A generic `T` reaches a `'static` bound: `Box<dyn Trait>`, `thread::spawn`, `Any` | Add `T: 'static` when `T` is owned data; give the `dyn` type a `+ 'a` when it may borrow |
 | E0106 | missing lifetime specifier | A struct or return type holds a reference with no stated source | Struct field: store owned data unless the type is a short-lived view, such as a parser view or a zero-copy frame; a struct lifetime spreads to every type that holds it. Return type: name the input it borrows from, with the narrowest lifetime that is true. See [references/borrow-checker-fixes.md](references/borrow-checker-fixes.md) |
 | E0277 | the trait bound `T: X` is not satisfied | A required trait is missing or not in scope | Read which trait and which type; import it or add the bound |
 | E0277 | the trait bound `!: X` is not satisfied | Edition 2024 never-type fallback | Name the type, see [the fallback section](#e0282-e0283-e0284-and-the-never-type-need-a-type-anchor) |
@@ -84,6 +85,8 @@ and answer these:
 | E0271 | expected `A` to be an iterator that yields `B` | An associated type does not match | Fix the item type, usually with `map` |
 | E0308 | mismatched types | The two sides differ, often by one reference layer or one `Option` | Compare the two types the note prints, not the expressions |
 | E0599 | no method named `m` found | Typo, the trait is not imported, or the method is from another version of the crate | `use` the trait from `help:`; otherwise read the locked source, see step 4 [below](#e0432-and-e0433-unresolved-imports) |
+| E0599 | the method `m` exists for `T`, but its trait bounds were not satisfied | The impl that has `m` needs a bound that a type argument lacks | The `note:` lists the unmet bounds: derive the trait on the inner type, or add the bound to the generic |
+| E0369 | cannot add `T` to `T`; binary operation `==` cannot be applied to type `T` | An operator on a generic `T` with no operator bound | Add the bound that `help:` names, such as `T: std::ops::Add<Output = T>` or `T: PartialEq` |
 | E0631 | type mismatch in function arguments | A function item was passed to a higher-order call; no deref coercion applies at a trait bound | Wrap the call in a closure, or insert `.map(String::as_str)` |
 | E0275 | overflow evaluating the requirement `T: X` | The trait solver reached the recursion limit during type checking | A repeating type in the note means an infinite chain: fix the impl. Raise the limit only for a finite, deep type |
 | (none) | reached the recursion limit while instantiating | An infinite chain at monomorphization, often `&mut &mut ... W` from a recursive call on a by-value `impl Write` | `cargo check` exits 0 on it. Take `&mut dyn Write`; see the `rust-callback-bounds` skill |
@@ -97,6 +100,7 @@ and answer these:
 | E0425 | cannot find value, type, or function `x` in this scope (E0412 for a type on older toolchains) | Typo, a missing import, or an item behind an off feature | Read the `note:` and `help:`, see [Unresolved imports](#e0432-and-e0433-unresolved-imports) |
 | E0603 | `x` is private | The path exists but is not exported | `pub use` it, or use the public path |
 | E0658 | use of unstable library feature `f` | The API is unstable, or stable only in a newer Rust than this toolchain | Compare `rustc -V` and the crate's `rust-version` with the version on the API's docs page |
+| E0015 | cannot call non-const function `f` in constants | A `const` or `static` initializer calls a non-`const fn` | Make `f` a `const fn`, or compute the value at run time in a `std::sync::LazyLock` |
 | E0072 | recursive type has infinite size | A type contains itself by value | `Box`, `Rc`, or `Arc` the recursive field; `Weak` for a back edge |
 | E0793 | reference to field of packed struct is unaligned | A reference into `#[repr(packed)]` | See the `rust-unsafe` skill |
 
@@ -175,39 +179,12 @@ fn load() -> Result<(), ()> {
 ## E0432 and E0433: unresolved imports
 
 Read the `note:` and `help:` lines before you add a dependency. A `cargo add` line in `help:` is
-not a fix (see the hazard table). Stop at the first step that matches:
-
-1. `note: found an item that was configured out` with "the item is gated behind the `f`
-   feature". The feature is off. Read the file path under the note.
-   - The item is in a dependency: enable its feature with `cargo add <crate> --features f`, or
-     add `f` to that dependency's `features` list. Do not rewrite the import.
-   - The item is in this crate: the caller lacks the item's gate. Put the same
-     `#[cfg(feature = "f")]` on the caller, or build with `--features f`. Do not add `f` to
-     `default` to silence the error; that hides the break in the build without the feature.
-2. `help:` offers a `use` path ("consider importing") or says "a similar path exists". This
-   covers `cannot find type` and `cannot find value` (E0425 or E0433) and E0432. Take that path:
-   `std::...`, `crate::...`, or `super::...`. Check `std` and this crate before any new crate.
-3. The first path segment is a module of this crate: `grep -rn 'mod <segment>' src` finds it.
-   Write the path from `crate::` or `super::`.
-4. The first path segment is a crate that `Cargo.toml` already lists. The item path is wrong, or
-   the item exists only in another version. Read the source of the version in `Cargo.lock`, not
-   the documentation of the latest release. Use the package name as `Cargo.toml` writes it: the
-   path segment `tokio_util` is the package `tokio-util`.
-
-   ```bash
-   cargo metadata --format-version 1 --locked \
-     | jq -r '.packages[] | select(.name == "<package>") | "\(.version) \(.manifest_path)"'
-   ```
-
-   If `jq` is not installed, `cargo tree -i <package> --locked --depth 0` prints the locked
-   version.
-5. The crate is not in `Cargo.toml`. Add a crate only when the code was written against that
-   crate, or the task asks for a new dependency. Otherwise use `std` or an existing dependency.
-   Run `cargo info <name>`: it prints the description, version, `rust-version`, repository, and
-   features of that exact package, or "could not find". It proves that the name exists, not that
-   it is the crate the code expects. Compare its `repository` and `description` with that crate.
-   If they do not match, or the name came only from rustc's `help:` line, do not add it; ask the
-   user. Otherwise run `cargo add <name>`.
+not a fix (see the hazard table). Check in this order, and stop at the first match: a
+configured-out item behind a feature, a `use` path that `help:` offers, a module of this crate
+(`crate::` or `super::`), an item path that differs in the locked version of a listed crate, and
+only then a new crate. Read
+[references/unresolved-imports.md](references/unresolved-imports.md) for the commands and the
+rules of each step, and always before you add a crate.
 
 ## A `Drop` impl changes the borrow checker
 

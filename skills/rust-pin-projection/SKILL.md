@@ -9,7 +9,7 @@ license: BSD-3-Clause
 `Pin<&mut T>` enforces nothing when `T: Unpin`, and `!Unpin` never makes a type unmovable. The
 restriction starts at the pin, and it applies only to a `!Unpin` type.
 
-The diagnostics below come from rustc 1.98.1, edition 2024, pin-project 1.1.13, and
+The diagnostics below come from rustc 1.99.1, edition 2024, pin-project 1.1.13, and
 pin-project-lite 0.2.17. The Miri output comes from nightly 2026-05-15 with the default Stacked
 Borrows model.
 
@@ -83,36 +83,9 @@ depends on a type that "cannot move", or a review needs the moves shown.
 
 `std::pin::pin!` is stable since 1.68. It needs no crate and no feature gate.
 
-```rust,run
-use std::marker::PhantomPinned;
-use std::pin::{pin, Pin};
-
-/// Address-sensitive: `ptr` points into `buf` in the same value.
-struct SelfRef { buf: [u8; 4], ptr: *const u8, _p: PhantomPinned }
-
-impl SelfRef {
-    fn new(v: u8) -> Self { SelfRef { buf: [v; 4], ptr: std::ptr::null(), _p: PhantomPinned } }
-
-    /// Write the self-pointer only after the value is pinned.
-    fn init(self: Pin<&mut Self>) {
-        // SAFETY: no field is moved out; only `ptr` is written.
-        let this = unsafe { self.get_unchecked_mut() };
-        this.ptr = this.buf.as_ptr();
-    }
-
-    /// # Safety
-    /// Call only after `init`, and only while the value has not moved.
-    unsafe fn read(&self) -> u8 { unsafe { *self.ptr } }
-}
-
-fn main() {
-    let mut on_stack = pin!(SelfRef::new(0xAA));      // Pin<&mut SelfRef>, no allocation
-    on_stack.as_mut().init();
-    let mut on_heap = Box::pin(SelfRef::new(0xBB));   // Pin<Box<SelfRef>>, outlives the frame
-    on_heap.as_mut().init();
-    assert_eq!(unsafe { (on_stack.read(), on_heap.read()) }, (0xAA, 0xBB));
-}
-```
+`SelfRef` below is a struct whose `ptr` field points into its own `buf` field, with a
+`PhantomPinned` marker. Its `init(self: Pin<&mut Self>)` writes `ptr`. Read `references/pin-projection-macros.md` (section "The SelfRef example")
+for its definition and a run block that pins it with `pin!` and with `Box::pin`.
 
 `Pin::new` on that type fails with ``error[E0277]: `PhantomPinned` cannot be unpinned`` and the
 advice to use `pin!` or `Box::pin`. Take that advice. Do not reach for `Pin::new_unchecked`.
@@ -121,19 +94,9 @@ advice to use `pin!` or `Box::pin`. Take that advice. Do not reach for `Pin::new
 
 `Pin::new_unchecked(&mut local)` commits the **value** for the rest of its life, not for the
 lifetime of the `Pin`. The `Pin` is an ordinary value that holds an ordinary `&mut`. Its drop
-releases the borrow, and the borrow checker then gives by-value access back to the local:
-
-```rust
-use std::pin::Pin;
-
-fn make() -> SelfRef {
-    let mut s = SelfRef::new(0xAA);
-    unsafe { Pin::new_unchecked(&mut s) }.init();   // establishes the self-pointer
-    s     // moving it out compiles with zero warnings, and is undefined behaviour
-}
-```
-
-`cargo build`, `cargo test`, and `cargo clippy -- -W clippy::pedantic` accept that function with no
+releases the borrow, and the borrow checker then gives by-value access back to the local. A
+function body `let mut s = SelfRef::new(0xAA); unsafe { Pin::new_unchecked(&mut s) }.init(); s`
+moves the pinned value out. `cargo build`, `cargo test`, and `cargo clippy -- -W clippy::pedantic` accept that function with no
 diagnostic. Miri reports `allocN has been freed, so this pointer is dangling` at the read through
 the self-pointer after the move. Read `references/pin-projection-macros.md` (section "A named
 stack binding under Miri") when you must match the full Miri report.
@@ -159,34 +122,8 @@ A pinning projection is a method with the shape `Pin<&mut Self> -> Pin<&mut Fiel
 the field **structurally pinned**: the field is pinned whenever the struct is. Write it with
 `Pin::map_unchecked_mut`. A field that is not structurally pinned projects to a plain `&mut`
 through `Pin::get_unchecked_mut`. Choose per field, and state the choice in the `SAFETY:`
-comment:
-
-```rust,run
-use std::pin::Pin;
-
-pub struct Pair<A, B> { first: A, second: B }
-
-impl<A, B> Pair<A, B> {
-    pub fn first(self: Pin<&mut Self>) -> Pin<&mut A> {
-        // SAFETY: `first` is structurally pinned. This type has no manual `Drop`,
-        // no manual `Unpin` impl, is not `#[repr(packed)]`, and no method of it
-        // moves out of `first`.
-        unsafe { self.map_unchecked_mut(|s| &mut s.first) }
-    }
-
-    pub fn second(self: Pin<&mut Self>) -> &mut B {
-        // SAFETY: `second` is not structurally pinned, so `&mut` to it is free.
-        // No projection of this type returns `Pin<&mut B>`.
-        unsafe { &mut self.get_unchecked_mut().second }
-    }
-}
-
-fn main() {
-    let mut p = std::pin::pin!(Pair { first: 1u32, second: String::new() });
-    p.as_mut().second().push('x');
-    assert_eq!(*p.as_mut().first(), 1);
-}
-```
+comment. Read `references/pin-projection-macros.md` (section "Project two fields by hand")
+for a run block that projects one pinned and one unpinned field, with both `SAFETY:` comments.
 
 The choice creates four obligations. Break one, and safe callers get undefined behaviour.
 
@@ -194,21 +131,9 @@ The choice creates four obligations. Break one, and safe callers get undefined b
 
 The struct may be `Unpin` only when every structurally pinned field is `Unpin`. The auto impl
 already does that. The defect is a hand-written one:
-
-```rust
-use std::pin::Pin;
-
-struct Wrapper<T> { inner: T }
-
-impl<T> Wrapper<T> {
-    fn inner(self: Pin<&mut Self>) -> Pin<&mut T> {
-        // SAFETY: claims `inner` is structurally pinned. The impl below breaks the claim.
-        unsafe { self.map_unchecked_mut(|w| &mut w.inner) }
-    }
-}
-
-impl<T> Unpin for Wrapper<T> {}   // one safe line, and the program is unsound
-```
+`impl<T> Unpin for Wrapper<T> {}` on a `Wrapper<T>` whose `inner` method projects
+`Pin<&mut Self>` to `Pin<&mut T>`. Read `references/pin-projection-macros.md` (section "A
+hand-written Unpin impl") for the full type.
 
 `impl Unpin` needs no `unsafe`, so this line passes an `unsafe`-focused review. It makes
 `Pin::get_mut` safe for `Wrapper<T>`, and safe callers then swap pinned data with

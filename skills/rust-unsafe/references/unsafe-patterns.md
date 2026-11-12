@@ -644,10 +644,14 @@ The undefined behavior surfaces in the consumer, and only in one kind of consume
 // `v` ends with a lone 0xF0, so `s` is not valid UTF-8.
 let s: &str = unsafe { std::str::from_utf8_unchecked(&v) };
 
-let _ = s.replace("a", "b");   // fine: a byte-wise search, it never decodes
-let _ = s.chars().count();     // fine: specialized to count non-continuation bytes
-for _c in s.chars() {}         // UB: this is the only one that decodes
+let _ = s.replace("a", "b");   // no Miri fault: a byte-wise search, it never decodes
+let _ = s.chars().count();     // no Miri fault: counts non-continuation bytes
+for _c in s.chars() {}         // Miri reports UB: this is the only one that decodes
 ```
+
+"No Miri fault" is not "sound". The `str` invariant is broken from the
+`from_utf8_unchecked` call on, so every use of `s` is a bug. These two calls only do not fault
+on the std of Miri nightly-2026-11-09, and a later std can decode in either one.
 
 `Chars::count` delegates to `core`'s `count_chars`, which counts non-continuation bytes and never
 builds a `char`. Only `Chars::next` reaches the decoder:

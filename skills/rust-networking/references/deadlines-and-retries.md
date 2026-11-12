@@ -14,6 +14,14 @@ phase `min(configured phase cap, operation deadline - monotonic now)`.
 | Read idle cap | After body starts | Each body chunk | Peer that stops sending |
 | Operation deadline | At API entry | Body consumed or discarded | All cumulative work |
 
+## Retry budget
+
+Bound retries per upstream across the process. Require a retry permit or token before a second
+attempt. Limit retry concurrency, and suppress retries when the local service is overloaded or the
+upstream failure rate crosses the configured threshold. If no retry budget remains, return the
+original failure instead of adding outage load. `tower::retry::budget::TpsBudget` implements such a
+budget for a tower stack.
+
 ## Full-jitter delay
 
 Keep the delay calculation pure. Pass the random sample in, so a test can fix it. For retry number

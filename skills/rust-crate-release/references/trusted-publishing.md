@@ -46,6 +46,16 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check that the tag matches the package version
+        run: |
+          version="$(cargo metadata --locked --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "<package>") | .version')"
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match <package> $version" >&2
+            exit 1
+          fi
       - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
       - run: cargo publish --locked -p <package>
@@ -56,7 +66,10 @@ jobs:
 - Give `id-token: write` only to the publish job.
 - Add required reviewers to the `release` environment, and enter the same environment name in the
   crate settings. The environment then gates each publish.
-- Start the job from a tag push or a manual dispatch. Limit the tag pattern to release tags.
+- Start the job from a tag push or a manual dispatch. Limit the tag pattern to release tags. Run a
+  manual dispatch on the tag ref: the version check fails on a branch name.
+- Set `persist-credentials: false` on the checkout. Otherwise the checkout leaves the `GITHUB_TOKEN`
+  in the git configuration, where a build script that `cargo publish` verifies can read it.
 - Do not restore or save a shared build cache in the publish job. A job that can write a cache
   that pull requests read must not hold secrets.
 - Run the release gates in an earlier job. The publish job runs `cargo publish` without
@@ -85,6 +98,7 @@ upper case, with `-` as `_`), or use the credential provider that the registry d
 | Environment | The job environment matches the crate settings and has required reviewers |
 | Publisher | The crate settings list this repository, this workflow file, and this environment |
 | Command | `cargo publish --locked -p <package>`, with no `--allow-dirty` or `--no-verify` |
+| Version | The checkout has `persist-credentials: false`, and a step fails when the tag differs from the package version |
 
 After the job, read its log, then confirm the version with
 `cargo info <package>@<version> --registry crates-io`.

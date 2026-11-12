@@ -78,7 +78,7 @@ enough`): a type parameter cannot stand for a higher-ranked reference. See
 Find violations:
 
 ```bash
-rg ':\s*&(String|Vec<|PathBuf)\b' --type rust -n
+rg ':\s*&(String\b|Vec<|PathBuf\b)' --type rust -n
 ```
 
 Keep `&String` or `&Vec<T>` only for the
@@ -160,27 +160,13 @@ forwarding impl per pointer the caller may pass. Write
 `dyn Handler`, which is the only case the pattern exists to serve; the call site then fails with
 `error[E0277]: the trait bound '&mut dyn Handler: Handler' is not satisfied`.
 
-```rust
-struct Request;
-trait Handler { fn handle(&mut self, r: Request); }
-struct Processor<H: Handler> { handler: H }
 
-// `+ ?Sized` admits `dyn Handler`. `H::handle(self, ..)` names the inner impl;
-// `self.handle(..)` here resolves back to this impl and overflows the stack.
-impl<H: Handler + ?Sized> Handler for &mut H {
-    fn handle(&mut self, r: Request) { H::handle(self, r) }
-}
-impl<H: Handler + ?Sized> Handler for Box<H> {
-    fn handle(&mut self, r: Request) { H::handle(self, r) }
-}
-
-// Only the borrowed form carries a lifetime, inside its type argument.
-fn use_both(_a: Processor<Box<dyn Handler>>, _b: Processor<&mut dyn Handler>) {}
-```
-
-The method receiver decides which pointers can forward, a bridge blanket impl makes every
-forwarding impl `E0119`, and a recursive method must take `&mut W` with `W: Handler + ?Sized`.
-Read [`references/trait-resolution.md`](references/trait-resolution.md) before the trait ships.
+Write the forwarding body as `H::handle(self, r)`: `self.handle(r)` resolves back to the same impl
+and overflows the stack. The method receiver decides which pointers can forward, a bridge blanket
+impl makes every forwarding impl `E0119`, and a recursive method must take `&mut W` with
+`W: Handler + ?Sized`. Read
+[`references/trait-resolution.md`](references/trait-resolution.md#a-pointer-forwarding-impl-needs-sized-and-a-body-that-names-the-inner-impl)
+for the compiled `&mut H` impl and its diagnostics, and before the trait ships.
 
 Find candidates, then check each hit for a `&'_ mut` field:
 
@@ -241,8 +227,8 @@ type, or one enum per crate that the caller translates. Do not mix the two.
 
 ## Drop and RAII
 
-- Prefer `std::os::fd::OwnedFd` and `OwnedSocket` over a raw `i32`. A raw descriptor leaks on
-  every error path that does not call `close()`.
+- Prefer `std::os::fd::OwnedFd` (Unix) and `std::os::windows::io::OwnedSocket` (Windows) over a
+  raw `i32` or `SOCKET`. A raw handle leaks on every error path that does not close it.
 - Struct fields drop in declaration order, after the `Drop::drop` body. When you implement `Drop`
   on a cleanup-critical type, document the order and each dependency between fields.
 - `impl Drop` blocks every move of a non-`Copy` field out of the struct (E0509). Put `Drop` on a

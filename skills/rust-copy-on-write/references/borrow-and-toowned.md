@@ -13,6 +13,7 @@ Contents:
 - [`&String` does not implement `Borrow<str>`](#string-does-not-implement-borrowstr)
 - [A `Clone` type cannot customise `ToOwned`](#a-clone-type-cannot-customise-toowned)
 - [When a dependency demands `&String`](#when-a-dependency-demands-string)
+- [`into_static`: the exit from a borrowing struct](#into_static-the-exit-from-a-borrowing-struct)
 - [Checklist](#checklist)
 
 `Cow<'a, B>` is declared over `B: ToOwned`, and `ToOwned` requires `Owned: Borrow<B>`. Both
@@ -20,7 +21,7 @@ traits carry a contract that the compiler never checks. Break the `Borrow` one a
 silent wrong answer, not a compile error.
 
 Every number below was measured on rustc 1.98.1, edition 2024, aarch64-apple-darwin, release
-profile, with the counting allocator in `SKILL.md`.
+profile, with the allocator in [counting-allocator.md](counting-allocator.md).
 
 ## `Borrow` is a promise. `AsRef` is not
 
@@ -383,6 +384,39 @@ The `ManuallyDrop` fabrication allocates nothing by construction. Its whole adva
 reused buffer is those two warm-up allocations, which amortise to nothing.
 Hoist the buffer to the widest scope the call site allows. When the calls run on several
 threads, give each thread its own buffer with `thread_local!`, not a shared `Mutex<String>`.
+
+## `into_static`: the exit from a borrowing struct
+
+A struct with a `Cow<'a, str>` field cannot become `'static` while a field borrows the parse
+buffer. Convert it where the buffer dies, at one allocation per still-borrowed field:
+
+```rust,run
+use std::borrow::Cow;
+
+pub struct Header<'a> {
+    pub name: Cow<'a, str>,
+    pub value: Cow<'a, str>,
+}
+
+impl Header<'_> {
+    /// One allocation per borrowed field. Call it where the parse buffer dies.
+    pub fn into_static(self) -> Header<'static> {
+        Header {
+            name: Cow::Owned(self.name.into_owned()),
+            value: Cow::Owned(self.value.into_owned()),
+        }
+    }
+}
+
+fn main() {
+    let raw = String::from("host: example");
+    let (n, v) = raw.split_once(": ").expect("the literal holds the separator");
+    let owned = Header { name: Cow::Borrowed(n), value: Cow::Borrowed(v) }.into_static();
+    let store: Vec<Header<'static>> = vec![owned];
+    drop(raw);
+    assert_eq!(store[0].name, "host");
+}
+```
 
 ## Checklist
 

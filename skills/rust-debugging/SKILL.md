@@ -216,10 +216,9 @@ put the payload, a file path, or a backtrace into a shipped log, because panic t
 data, paths, or secrets. Get the message and the backtrace from a host repro, or symbolicate the
 crash offline.
 
-On Android, `panic = "abort"` copies a `&str` or `String` panic payload into the tombstone `Abort
-message` line through `android_set_abort_message` (in `panic_abort` as of Rust 1.98.1). The line
-helps triage, and every crash report that uploads the tombstone also carries the panic text.
-Treat every panic message as a log line.
+On Android, `panic = "abort"` copies the panic message into the tombstone `Abort message` line
+([references/android-debugging.md](references/android-debugging.md) has the detail). Treat every
+panic message as a log line.
 
 ### SIGPIPE
 

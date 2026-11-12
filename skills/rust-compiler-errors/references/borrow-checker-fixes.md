@@ -272,7 +272,7 @@ Reach for these only after the splits above fail.
 
 | Type | Check | Failure mode | Use when |
 | --- | --- | --- | --- |
-| `Cell<T>` | none, `T: Copy` | none | A small `Copy` field, single thread |
+| `Cell<T>` | none; `get` needs `T: Copy`, while `set`, `replace`, and `take` (`T: Default`) work for any `T` | none | A small field that is replaced whole, never borrowed, single thread |
 | `RefCell<T>` | run time | panics on conflict | A graph shape the compiler cannot verify, single thread |
 | `Mutex<T>` | run time | blocks, or deadlocks | Shared write access across threads |
 | `RwLock<T>` | run time | writer starvation | Many readers, rare writers |

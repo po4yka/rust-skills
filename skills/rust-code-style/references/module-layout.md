@@ -26,7 +26,8 @@ src/
 The module root sits next to its children, and every editor tab carries a distinct name.
 
 Use `mod.rs` only for a deeply nested submodule, three levels or more
-(`session/runners/mod.rs`). Do not mix both patterns at the same directory level: a reader
+(`session/runners/mod.rs`). There, a module that lives wholly inside its own directory moves or
+deletes as one unit, which outweighs a distinct tab name. Do not mix both patterns at the same directory level: a reader
 then cannot predict where a module root is.
 
 To enforce `name.rs` everywhere, and to drop the deep `mod.rs` exception, enable
@@ -52,7 +53,7 @@ mod tests;
 The `pub use` lines follow the style edition 2024 sort order that `cargo fmt` applies to an
 edition 2024 crate: `SessionReport` sorts before `run_session`.
 
-Never glob re-export from `lib.rs` (`pub use types::*`). Two reasons:
+Default: no glob re-export from `lib.rs` (`pub use types::*`). Two reasons:
 
 - A reader cannot trace the API surface without opening every module.
 - A glob exports every new item automatically, so a new `pub` item silently becomes part

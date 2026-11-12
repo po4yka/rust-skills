@@ -627,6 +627,35 @@ def check_bundles(bundles: dict[str, list[str]], skill_names: set[str]) -> None:
     for bundle in sorted(set(bundles) - rows):
         fail("README.md", f"bundle {bundle!r} has no row in the Install table")
 
+    # The per-bundle install commands are written by hand too. A `# <bundle>` comment
+    # opens each one; the skill list after it is the `for s in ...;` loop of the `gh skill`
+    # block or the `--skill ...` list of the `npx skills add` block.
+    commands = re.findall(
+        r"^# ([a-z0-9-]+)\n(?:for s in ([^;\n]+);|npx skills add \S+ --skill ([^\n]+))",
+        install.group(1),
+        re.M,
+    )
+    listed: dict[str, int] = {}
+    for bundle, loop, flags in commands:
+        names = (loop or flags).split()
+        listed[bundle] = listed.get(bundle, 0) + 1
+        if bundle not in bundles:
+            fail("README.md", f"an install command is labelled {bundle!r}, which is not in bundles.toml")
+        elif names != bundles[bundle]:
+            fail(
+                "README.md",
+                f"the install command for bundle {bundle!r} lists {names}; bundles.toml lists "
+                f"{bundles[bundle]} in that order",
+            )
+    if commands:
+        for bundle in sorted(bundles):
+            if listed.get(bundle, 0) != 2:
+                fail(
+                    "README.md",
+                    f"bundle {bundle!r} has {listed.get(bundle, 0)} labelled install commands; "
+                    f"the gh skill and npx blocks need one each",
+                )
+
 
 def load_json(path: Path, where: str) -> dict | None:
     if not path.is_file():
@@ -878,8 +907,8 @@ def check_body_tokens(ceilings: dict) -> None:
         fail("scripts/catalog-ceilings.toml", f"body_tokens names {name!r}, which is not in skills/")
 
 
-def check_snippet(skill_names: set[str]) -> None:
-    """The always-on router must route to every skill once and stay small."""
+def check_snippet(skill_names: set[str], bundles: dict[str, list[str]] | None = None) -> None:
+    """The always-on router must route to every skill once, stay small, and follow the bundles."""
     if not SNIPPET.is_file():
         fail("AGENTS.snippet.md", "router snippet is missing")
         return
@@ -893,6 +922,13 @@ def check_snippet(skill_names: set[str]) -> None:
             fail("AGENTS.snippet.md", f"skill {name!r} appears {count} times; route to it exactly once")
     for path in re.findall(r"skills/[a-z0-9-]+/", text):
         fail("AGENTS.snippet.md", f"names a repository path {path!r}; name the skill only")
+    # The snippet tells a consumer to delete the rows of a bundle they did not
+    # install, which works only while the rows stay grouped in bundles.toml order.
+    if bundles:
+        order = [skill for skills in bundles.values() for skill in skills]
+        routed = [row for row in re.findall(r"\|\s*([a-z0-9-]+)\s*\|\s*$", text, re.M) if row in order]
+        if routed != [skill for skill in order if skill in routed]:
+            fail("AGENTS.snippet.md", "rows are not in bundles.toml order; group them by bundle, in that order")
 
 
 # A sibling named as "the `x` skill" (or "`x` and `y` skills"). An installed
@@ -1150,7 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
         check_ceilings_against(args.ceilings_base, ceilings)
     check_description_budget(bundles, ceilings)
     check_body_tokens(ceilings)
-    check_snippet(skill_names)
+    check_snippet(skill_names, bundles)
     check_cross_refs(bundles, ceilings)
     check_negative_cases(descriptions)
 

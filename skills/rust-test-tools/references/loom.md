@@ -96,7 +96,7 @@ fn reader_sees_published_value() {
 ```
 
 If you change the `Release` store to `Relaxed`, loom fails this test with `left: 0, right: 42`
-(loom 0.7.2, Rust 1.98.1).
+(loom 0.7.2, Rust 1.99.1).
 
 ## Commands and search bounds
 

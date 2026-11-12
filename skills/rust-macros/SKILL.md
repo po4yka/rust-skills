@@ -6,7 +6,7 @@ license: BSD-3-Clause
 
 # Rust macros
 
-Every quoted message and number below comes from rustc, cargo, and Clippy 1.98.1,
+Every quoted message and number below comes from rustc, cargo, and Clippy 1.99.1,
 edition 2024.
 
 ## Decide whether you need a macro
@@ -99,7 +99,7 @@ caller's imports and local items.
 | The path names | Emit | Because |
 | --- | --- | --- |
 | An item of the macro's own crate | `$crate::render(...)` | A bare `render` fails in every other crate with E0425. `crate::render` names the caller's crate, and `clippy::crate_in_macro_def` flags it |
-| A standard-library item | `::core::result::Result`. For an `alloc` item, put `pub use alloc::vec::Vec;` in `$crate::__private` and emit `$crate::__private::Vec`. Emit `::std::` only for an item that neither `core` nor `alloc` has, and only when no `#![no_std]` caller is supported. Do not emit `::alloc::` | A bare `Result` resolves to the caller's `type Result<T> = ...` alias. `::std::` fails with E0433 in a `#![no_std]` caller. `::alloc::` fails with E0433 in every caller that does not write `extern crate alloc;`, ordinary std crates included, because `alloc` is not in their extern prelude (verified on Rust 1.98.1) |
+| A standard-library item | `::core::result::Result`. For an `alloc` item, put `pub use alloc::vec::Vec;` in `$crate::__private` and emit `$crate::__private::Vec`. Emit `::std::` only for an item that neither `core` nor `alloc` has, and only when no `#![no_std]` caller is supported. Do not emit `::alloc::` | A bare `Result` resolves to the caller's `type Result<T> = ...` alias. `::std::` fails with E0433 in a `#![no_std]` caller. `::alloc::` fails with E0433 in every caller that does not write `extern crate alloc;`, ordinary std crates included, because `alloc` is not in their extern prelude (verified on Rust 1.99.1) |
 | An item of a dependency of the macro crate | Re-export it (`#[doc(hidden)] pub mod __private { pub use dep_name; }`) and emit `$crate::__private::dep_name::Item`. From a derive, re-export it from the facade and emit `::facade::__private::dep_name::Item` | `::dep_name` resolves in the caller's crate, and the caller may not depend on `dep_name` |
 | The derive attribute | `#[::core::derive(...)]` when the macro crate's `rust-version` is 1.96 or later, else `#[::core::prelude::v1::derive(...)]` | `derive` also resolves at the call site. Rust 1.95 rejects `::core::derive` with E0433 |
 
@@ -135,34 +135,12 @@ macro emits. The macro crate owns the soundness of every `unsafe` block in its e
 ## Scope is textual
 
 A `macro_rules!` macro is the one item in Rust whose definition must appear **before** its use
-in source order. A refactor that moves the definition down the file breaks the build, and the
-message names no missing import.
-
-```text
-error: cannot find macro `hello` in this scope
-  |             ^^^^^ consider moving the definition of `hello` before this call
-note: a macro with the same name exists, but it appears later
-```
-
-The same rule applies across modules. A macro defined in `mod a` is invisible in `mod b`, even
-when `b` comes later:
-
-```text
-error: cannot find macro `only_here` in this scope
-  = help: have you added the `#[macro_use]` on the module/import?
-```
-
-Four ways to widen the scope; prefer the first, which keeps the macro private.
-
-| Goal | Write | Effect |
-| --- | --- | --- |
-| Use it in another module, crate-private | `pub(crate) use name;` after the definition | The macro becomes an ordinary item of that module, reachable by path |
-| Use it in later modules of the same crate | `#[macro_use] mod a;` | Later code in the parent module sees it |
-| Import it by path anywhere in the crate | `#[macro_export]` on the definition, then `use crate::name;` | The macro lands at the crate root, whatever module defines it |
-| Export it to other crates | `#[macro_export]`, then `use thatcrate::name;` in the caller | Same crate-root placement, now public |
-
-Do not use `#[macro_export]` to cross a module boundary inside one crate: it makes the macro
-public API.
+in source order, and a macro in `mod a` is invisible in `mod b`. The message names no missing
+import. Default: write `pub(crate) use name;` after the definition, and call the macro by path;
+order then does not matter. Do not use `#[macro_export]` to cross a module boundary inside one
+crate: it makes the macro public API. Read
+[references/declarative-macros.md](references/declarative-macros.md#textual-scope) when you need
+the two messages or another way to widen the scope.
 
 ## Hygiene stops at bindings
 
@@ -218,21 +196,13 @@ note: while trying to match meta-variable `$i:ident`
 Capture as `tt` in the outer macro when you must forward to an inner matcher, and parse only at
 the last step that needs the fragment.
 
-### Edition 2024 widened `expr`
+### Edition 2024 and the recursion limit
 
-In edition 2024 `$e:expr` also matches `const { 1 + 1 }` and the underscore expression `_`.
-Edition 2021 rejects the const block with ``error: no rules expected keyword `const` `` and
-the underscore with ``error: no rules expected reserved identifier `_` ``. An arm that
-assumes the capture is a value expression can now receive `_`, which is not one. Use
-`expr_2021` to keep the edition 2021 match set.
-
-### The recursion limit is 128 expansions
-
-A `tt`-muncher costs one expansion per token. Measured with a counting muncher: 127 input
-tokens compile, 128 fail with ``error: recursion limit reached while expanding `count!` ``.
-The limit of the crate that invokes the macro applies. A `#![recursion_limit = "256"]` in the
-macro's own crate does not help a downstream caller, so an exported macro must stay under 128
-expansions per call. Prefer a shape that halves the input per step.
+In edition 2024 `$e:expr` also matches `const { .. }` and `_`; write `expr_2021` to keep the old
+set. An exported `tt`-muncher must stay under 128 expansions per call, because the caller's
+`recursion_limit` applies. Read
+[references/declarative-macros.md](references/declarative-macros.md#edition-2024-widened-expr)
+when an arm receives `_` or a muncher hits `recursion limit reached while expanding`.
 
 ### A trailing semicolon breaks expression position
 
@@ -292,20 +262,10 @@ and the missing-derive error.
 
 ### Pick the syn major
 
-syn 3 is current (3.0.0 on 2026-07-18). As of 2026-09, `serde_derive`, `thiserror-impl`,
-`tokio-macros`, and `clap_derive` require `syn ^3`, while other popular macro crates still use
-syn 2. Each major in the tree is a separate build of a large crate.
-
-```bash
-cargo tree --locked -e normal,build -i syn
-```
-
-One version prints its dependents. Two majors print ``error: specification `syn` is ambiguous``
-and list both. Run `cargo tree --locked -e normal,build -i syn@2` to list the dependencies
-that still build syn 2. Use the major the tree already builds. When the tree has both or none, use
-`syn = "3"`. syn-2 code fails on syn 3 with E0599, E0609, or E0432 on renamed items such as
-`Type::BareFn`, `Signature::unsafety`, and `Arm::guard`. Read
-[references/syn-3.md](references/syn-3.md) when you port a macro crate or fix those errors.
+Use the syn major that `cargo tree --locked -e normal,build -i syn` already shows; with both or
+none, use `syn = "3"`. Read [references/syn-3.md](references/syn-3.md) when you choose the major,
+port a macro crate, or fix E0599, E0609, or E0432 on `Type::BareFn`, `Signature::unsafety`, or
+`Arm::guard`.
 
 ## Related skills
 

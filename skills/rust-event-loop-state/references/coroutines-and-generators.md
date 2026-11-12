@@ -11,9 +11,9 @@ routine `&mut State`.
 - [Stable generator crates have the same limit](#stable-generator-crates-have-the-same-limit)
 - [Two stale spellings](#two-stale-spellings)
 
-The stable diagnostics come from rustc 1.98.1, edition 2024. The coroutine diagnostics come
+The stable diagnostics come from rustc 1.99.1, edition 2024. The coroutine diagnostics come
 from nightly rustc 1.97.0-nightly (d7f14d3d8 2026-05-15). Coroutines, the `Coroutine` trait,
-and `gen` blocks are nightly-only as of Rust 1.98.1.
+and `gen` blocks are nightly-only as of Rust 1.99.1.
 
 ## `Future` has no slot for the state
 
@@ -102,7 +102,7 @@ error[E0499]: cannot borrow `st` as mutable more than once at a time
 
 The missing feature is a higher-ranked binder over the resume type. Stabilization of
 coroutines does not add it. `for<...> impl Trait` is not a valid spelling either. On stable
-1.98.1 it gives ``error: `for<...>` expected after `impl`, not before`` with
+1.99.1 it gives ``error: `for<...>` expected after `impl`, not before`` with
 ``help: move `impl` before the `for<...>` ``.
 
 ## Stable generator crates have the same limit

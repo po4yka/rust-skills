@@ -1,7 +1,7 @@
 # Cancellation at the network boundary
 
-Request states and cancellation rules behind "Define cancellation at the
-network boundary" in `SKILL.md`.
+Request states and cancellation rules that the "Conditional references" table
+in `SKILL.md` points to.
 
 ## Define cancellation at the network boundary
 

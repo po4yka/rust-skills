@@ -7,6 +7,26 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+### Changed (audit P3)
+
+- Bodies moved conditional material to references: 30 skills are smaller, and `memory-model` is
+  under the 4,800-token target. New references hold, among others, fuzzing and golden files
+  (`rust-test-tools`), FFI stubs (`rust-sanitizers-miri`), vetting steps (`rust-security`), CI and
+  nextest config (`cargo-workflows`), global state (`memory-model`), rustc transcripts
+  (`rust-send-sync`), and consumer tests (`rust-swift-ffi`).
+- Toolchain labels move to Rust 1.99.1 only where the claim was re-run on 1.99.1; macOS, device,
+  and uninstalled-crate measurements keep their labels. Version labels for cargo-flamegraph,
+  smallvec, wild-linker, proptest, hyper, and serde_json are current as of 2026-11.
+- Small corrections across the catalog: the `&Vec` search regex, `extern fn` with no ABI string,
+  `nm --demangle` checks, `CARGO_BUILD_WARNINGS=deny` (ignored before Cargo 1.97),
+  `avoid-breaking-exported-api = true`, one ban for `mem::forget`, a jq-free crate-edge check,
+  the AsyncFn diagnostics, new rustc triage rows (E0310, E0369, E0015, E0599 bounds), a foldhash
+  row, and grep fallbacks for rg commands.
+- Harness: `gen.py` skips `##` lines inside non-Rust fences; the validator checks the README
+  install commands and the router row order against `bundles.toml`; the skills-CLI gate also
+  fails on extra skills; an uncoded `compile_fail` block that fails only on an undefined name now
+  fails the gate. Client pins: skills 1.8.1, Claude Code 2.1.322, Codex 0.167.2.
+
 ### Fixed (audit P2)
 
 About seventy P2 findings across 43 skills, each re-checked before the fix (rustc and clippy

@@ -4,13 +4,13 @@ Allocation patterns that [SKILL.md](../SKILL.md) names but does not develop. SKI
 `Vec` growth ladder, `reserve_exact`, `clone_from`, and the workhorse-buffer rule. Read those
 first; this file does not repeat them.
 
-Sections: symptom routing; `HashMap` capacity; `collect` exactness; zero-filled buffers;
+Sections: symptom routing; `reserve` on an empty `Vec`; `HashMap` capacity; `collect` exactness; zero-filled buffers;
 inline capacity (`SmallVec`, `ArrayVec`); inline strings; measuring the length distribution;
 `Rc` and `Arc`; `format!` and `format_into` in a loop; eager arguments; `shrink_to_fit`; pinning
 an allocation count with `dhat`; lints.
 
 All figures were measured on rustc 1.97.0, aarch64-apple-darwin, release profile, unless the
-text names 1.98.1.
+text names another version.
 
 ## Route a symptom to a fix
 
@@ -24,6 +24,14 @@ text names 1.98.1.
 | One allocation per iteration of a formatting loop | `format!` returns an owned `String` | [format! in a loop](#format-in-a-loop-allocates-once-per-call) |
 | An allocation happens on the path that discards the value | `ok_or`, `unwrap_or`, `map_or` | [Eager arguments](#eager-arguments-allocate-on-the-path-that-discards-them) |
 | A raw pointer taken before a `Vec` call dangles after it | `shrink_to_fit` reallocated the buffer | [shrink_to_fit](#shrink_to_fit-reallocates) |
+
+## `reserve` and `reserve_exact` on an empty `Vec`
+
+On an empty vector both give the exact request when it is at least the minimum non-zero capacity
+in SKILL.md. Below that minimum, `reserve` rounds up and `reserve_exact` does not: on rustc
+1.99.1, `reserve(1)` gives 4 on a `Vec<u32>`, `reserve_exact(1)` gives 1, and `reserve(5)` gives 8
+on a `Vec<u8>`. A test that starts from `Vec::new()` with a large request shows them as identical
+and hides a 50% overshoot in the real path, where the vector is already non-empty.
 
 ## `HashMap::with_capacity` never returns the number you ask for
 
@@ -135,8 +143,8 @@ The rule holds only for a zero fill. `vec![0xFFu8; n]` has no `calloc` to lose.
 An inline-capacity type stores the first N elements in the struct itself. It trades bytes for
 allocations, and the trade is only worth making when the collection is almost always short.
 
-Sizes on 64-bit, smallvec 1.16.1 without its `union` feature and arrayvec 0.7.8. The `union`
-column is smallvec 1.16.4 with `union` on, measured on rustc 1.99.1, x86_64:
+Sizes on 64-bit, smallvec 1.16.5 without and with its `union` feature, and arrayvec 0.7.8,
+measured on rustc 1.99.1, x86_64:
 
 | Type | Bytes | With `union` | Note |
 | --- | --- | --- | --- |
@@ -201,11 +209,11 @@ fixed.extend([2, 3, 4]);
 assert!(fixed.try_push(5).is_err());   // full: no spill, no allocation
 ```
 
-smallvec 2.0 is a pre-release, 2.0.0-beta.1 as of 2026-09. Pin the full version: `cargo add
+smallvec 2.0 is a pre-release, 2.0.0-beta.4 as of 2026-11. Pin the full version: `cargo add
 smallvec@2` fails with "could not be found in registry index". It changes the type form to
 `SmallVec<T, N>` and packs the value into a union, so it inlines 8 more bytes at the same width.
-Measured on beta.1 with rustc 1.98.1: `SmallVec<u32, 4>` is 24 bytes against 32 for
-`SmallVec<[u32; 4]>` in 1.16.1 without `union`, and a push past N still jumps to capacity 8. The width still
+Measured on beta.4 with rustc 1.99.1: `SmallVec<u32, 4>` is 24 bytes against 32 for
+`SmallVec<[u32; 4]>` in 1.16.5 without `union`, and a push past N still jumps to capacity 8. The width still
 rounds by 8, so measure it there too.
 
 ## Inline strings
@@ -332,9 +340,10 @@ borrows its arguments and allocates nothing.
 
 For one integer, skip `fmt` entirely. `format_into` (Rust 1.98) writes the digits into a stack
 `NumBuffer` and returns a `&str` that borrows it: no allocation, no `write!`, no `itoa`
-dependency. On 1.98 the type exists only at `core::fmt::NumBuffer`; `use std::fmt::NumBuffer`
-fails with E0432. The buffer is generic over the integer type, so declare one per type: passing
-a `NumBuffer<u32>` to `i64::format_into` fails with E0308 (1.98.1).
+dependency. On 1.98.1 the type exists only at `core::fmt::NumBuffer`, and `use std::fmt::NumBuffer`
+fails with E0432; 1.99.1 accepts both paths. Import `core::fmt::NumBuffer` while the MSRV is 1.98.
+The buffer is generic over the integer type, so declare one per type: passing a `NumBuffer<u32>`
+to `i64::format_into` fails with E0308 (1.99.1).
 
 ```rust,run
 use core::fmt::NumBuffer;
@@ -434,7 +443,7 @@ If several heap tests must share one file, run that target with `-- --test-threa
 
 ## Lints that mechanize this file
 
-Groups verified on clippy 0.1.98.
+Groups verified on clippy 0.1.99 (Rust 1.99.1).
 
 | Lint | Group | On by default | Catches |
 | --- | --- | --- | --- |

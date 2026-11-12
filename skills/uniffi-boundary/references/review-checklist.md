@@ -31,6 +31,6 @@ Answer every item before you merge a change to the boundary crate.
 18. Do engine Objects use the host scheduler or one process runtime, with idempotent
     initialization and non-blocking callback release?
 19. Does every form match the pinned UniFFI version in the version floor table in
-    [SKILL.md](../SKILL.md)?
+    [versions-and-sources.md](versions-and-sources.md)?
 
 If the answer to any item is wrong, revise the change before you merge it.

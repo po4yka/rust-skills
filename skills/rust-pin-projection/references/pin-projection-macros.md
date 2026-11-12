@@ -2,15 +2,19 @@
 
 Deep material for `rust-pin-projection`. `SKILL.md` holds the triage table, the verifier, the
 rules, and the four structural pinning obligations. This file holds the proofs behind them, the
-macro details, and the review checklist. `SelfRef` is the type from the "Get a value pinned"
-section of `SKILL.md`, and `Wrapper` is the type from its Obligation 1.
+macro details, and the review checklist. The examples use the `SelfRef` type that
+[The SelfRef example](#the-selfref-example) defines, and the `Wrapper` type that
+[A hand-written Unpin impl](#a-hand-written-unpin-impl) defines.
 
-Measured on rustc 1.98.1, edition 2024, with pin-project 1.1.13 and pin-project-lite 0.2.17. The
+Measured on rustc 1.99.1, edition 2024, with pin-project 1.1.13 and pin-project-lite 0.2.17. The
 Miri output comes from nightly 2026-05-15 with the default Stacked Borrows model. The allocation
 id depends on the program and the Miri version; the shape does not.
 
 Contents:
 
+- [The SelfRef example](#the-selfref-example)
+- [Project two fields by hand](#project-two-fields-by-hand)
+- [A hand-written Unpin impl](#a-hand-written-unpin-impl)
 - [Moves that Pin does not stop](#moves-that-pin-does-not-stop)
 - [How long a pin! value lives](#how-long-a-pin-value-lives)
 - [pin! of a &mut reference](#pin-of-a-mut-reference)
@@ -27,6 +31,94 @@ Contents:
 - [Assign into a pinned value](#assign-into-a-pinned-value)
 - [A pinning pointer that pins nothing](#a-pinning-pointer-that-pins-nothing)
 - [Review checklist](#review-checklist)
+
+## The SelfRef example
+
+`SelfRef` is address-sensitive: its `ptr` field points into its own `buf` field. `init` writes
+the self-pointer only after the value is pinned. The other examples in this file use this type.
+
+```rust,run
+use std::marker::PhantomPinned;
+use std::pin::{pin, Pin};
+
+/// Address-sensitive: `ptr` points into `buf` in the same value.
+struct SelfRef { buf: [u8; 4], ptr: *const u8, _p: PhantomPinned }
+
+impl SelfRef {
+    fn new(v: u8) -> Self { SelfRef { buf: [v; 4], ptr: std::ptr::null(), _p: PhantomPinned } }
+
+    /// Write the self-pointer only after the value is pinned.
+    fn init(self: Pin<&mut Self>) {
+        // SAFETY: no field is moved out; only `ptr` is written.
+        let this = unsafe { self.get_unchecked_mut() };
+        this.ptr = this.buf.as_ptr();
+    }
+
+    /// # Safety
+    /// Call only after `init`, and only while the value has not moved.
+    unsafe fn read(&self) -> u8 { unsafe { *self.ptr } }
+}
+
+fn main() {
+    let mut on_stack = pin!(SelfRef::new(0xAA));      // Pin<&mut SelfRef>, no allocation
+    on_stack.as_mut().init();
+    let mut on_heap = Box::pin(SelfRef::new(0xBB));   // Pin<Box<SelfRef>>, outlives the frame
+    on_heap.as_mut().init();
+    assert_eq!(unsafe { (on_stack.read(), on_heap.read()) }, (0xAA, 0xBB));
+}
+```
+
+## Project two fields by hand
+
+A pinning projection returns `Pin<&mut Field>` through `Pin::map_unchecked_mut`. A field that is
+not structurally pinned projects to a plain `&mut` through `Pin::get_unchecked_mut`. State the
+choice for each field in the `SAFETY:` comment:
+
+```rust,run
+use std::pin::Pin;
+
+pub struct Pair<A, B> { first: A, second: B }
+
+impl<A, B> Pair<A, B> {
+    pub fn first(self: Pin<&mut Self>) -> Pin<&mut A> {
+        // SAFETY: `first` is structurally pinned. This type has no manual `Drop`,
+        // no manual `Unpin` impl, is not `#[repr(packed)]`, and no method of it
+        // moves out of `first`.
+        unsafe { self.map_unchecked_mut(|s| &mut s.first) }
+    }
+
+    pub fn second(self: Pin<&mut Self>) -> &mut B {
+        // SAFETY: `second` is not structurally pinned, so `&mut` to it is free.
+        // No projection of this type returns `Pin<&mut B>`.
+        unsafe { &mut self.get_unchecked_mut().second }
+    }
+}
+
+fn main() {
+    let mut p = std::pin::pin!(Pair { first: 1u32, second: String::new() });
+    p.as_mut().second().push('x');
+    assert_eq!(*p.as_mut().first(), 1);
+}
+```
+
+## A hand-written Unpin impl
+
+`Wrapper` declares `inner` structurally pinned, and one safe line then breaks the claim:
+
+```rust
+use std::pin::Pin;
+
+struct Wrapper<T> { inner: T }
+
+impl<T> Wrapper<T> {
+    fn inner(self: Pin<&mut Self>) -> Pin<&mut T> {
+        // SAFETY: claims `inner` is structurally pinned. The impl below breaks the claim.
+        unsafe { self.map_unchecked_mut(|w| &mut w.inner) }
+    }
+}
+
+impl<T> Unpin for Wrapper<T> {}   // one safe line, and the program is unsound
+```
 
 ## Moves that Pin does not stop
 
@@ -110,9 +202,20 @@ caller can still move `*s` after the call returns.
 
 ## A named stack binding under Miri
 
-The `make` function in the "Never pin a named stack binding" section of `SKILL.md` builds with no
-diagnostic. Miri reports the read through the self-pointer after the move. The line numbers refer
-to the probe, where `SelfRef` lives in a library crate:
+This function builds with no diagnostic:
+
+```rust
+use std::pin::Pin;
+
+fn make() -> SelfRef {
+    let mut s = SelfRef::new(0xAA);
+    unsafe { Pin::new_unchecked(&mut s) }.init();   // establishes the self-pointer
+    s     // moving it out compiles with zero warnings, and is undefined behaviour
+}
+```
+
+Cargo, rustc, and Clippy accept it. Miri reports the read through the self-pointer after the
+move. The line numbers refer to the probe, where `SelfRef` lives in a library crate:
 
 ```text
 $ cargo +nightly miri run --bin stackescape
@@ -303,7 +406,7 @@ field out in plain safe code:
 use std::cell::Cell;
 use std::mem;
 
-// `Holder` projects `inner` as structurally pinned, as `Wrapper` does in `SKILL.md`.
+// `Holder` projects `inner` as structurally pinned, as `Wrapper` does above.
 struct Holder { inner: SelfRef }
 
 thread_local! { static STOLEN: Cell<Option<SelfRef>> = const { Cell::new(None) }; }

@@ -214,6 +214,14 @@ def blocks_of(lines: list[str]):
         if heading:
             section = heading.group(1).strip()
         fence = lines[i].strip()
+        if fence.startswith("```") and not fence.startswith("```rust"):
+            # A `## ` line inside a bash, toml, or text block is a comment, not
+            # a heading; skip the block so it cannot rename the section key.
+            i += 1
+            while i < len(lines) and lines[i].strip() != "```":
+                i += 1
+            i += 1
+            continue
         if fence.startswith("```rust"):
             start = i + 1
             end = start

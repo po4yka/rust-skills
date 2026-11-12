@@ -239,14 +239,23 @@ parsers.
 
 ```rust
 let total: u32 = a + b; // panics in debug on overflow; wraps in release
+```
 
-// CORRECT for a fallible path:
+Pick one of three replacements. For a fallible path:
+
+```rust
 let total = a.checked_add(b).ok_or(Error::Overflow)?;
+```
 
-// CORRECT for intentional wrapping (ring buffers, sequence numbers):
+For intentional wrapping (ring buffers, sequence numbers):
+
+```rust
 let total = a.wrapping_add(b);
+```
 
-// CORRECT for saturation (rate limiters, dimension clamps):
+For saturation (rate limiters, dimension clamps):
+
+```rust
 let total = a.saturating_add(b);
 ```
 

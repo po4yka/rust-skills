@@ -124,7 +124,7 @@ prints its block, a build after an edit prints it again, and a build with no edi
 - An uninstantiated generic never appears. `Gen<T>` is absent; each monomorphization such as
   `Gen<u32>` is present. A type missing from the dump is usually a generic that this crate never
   instantiates. Measure it from a crate that does.
-- On stable the flag is rejected. rustc 1.98.1 prints
+- On stable the flag is rejected. rustc 1.99.1 prints
   ``error: the option `Z` is only accepted on the nightly compiler``. The stable fallback is a
   test that prints `size_of`, `align_of`, and `core::mem::offset_of!(T, field)` for each suspect
   type; it shows size and field offsets but not variant sizes or padding lines. Or install a
@@ -248,7 +248,7 @@ SKILL.md *Type size* gives the word counts of `Vec<T>`, `Box<[T]>`, and `ThinVec
 `collect::<Box<[T]>>()` is `collect::<Vec<_>>().into_boxed_slice()` in std, so it is not a
 cheaper path. It allocates once only when std knows the exact length up front: a range, a
 slice, a `Vec`, and `map` or `copied` over one. After `filter` or another inexact adaptor it runs
-the growth ladder and then one shrinking `realloc`. Measured on 1.98.1, 500 filtered `u32` cost 1
+the growth ladder and then one shrinking `realloc`. Measured on 1.99.1, 500 filtered `u32` cost 1
 allocation and 8 reallocations in both forms. When you know the final length, write
 `Vec::with_capacity(n)`, `extend`, then `into_boxed_slice()`: capacity equals length, so the
 conversion does not reallocate.

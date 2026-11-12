@@ -1,12 +1,15 @@
 # Closure Capture Semantics
 
-Use this reference when `move`, a field projection, or a refactor changes the closure call
-trait, lifetime, `Send` status, size, or cleanup timing.
+Deep material for [SKILL.md](../SKILL.md). Read it when `move`, a field projection, or a
+refactor changes the closure call trait, lifetime, `Send` status, size, or cleanup timing. The
+capture errors below were checked on rustc 1.99.1, edition 2024, on x86_64-unknown-linux-gnu.
 
 - [`move` does not mean `FnOnce`](#move-does-not-mean-fnonce)
 - [Capture precision depends on the projection](#capture-precision-depends-on-the-projection)
 - [Do not depend on capture drop order](#do-not-depend-on-capture-drop-order)
 - [Edition review](#edition-review)
+- [Checklist](#checklist)
+- [Authoritative references](#authoritative-references)
 
 ## `move` does not mean `FnOnce`
 
@@ -113,11 +116,11 @@ the edition-migration workflow, when it is installed.
 
 ## Checklist
 
-- [ ] The required callable trait comes from actual body use, not from `move`.
-- [ ] The exact captured place is known for every field, index, dereference, and packed access.
-- [ ] `Send` and `'static` are checked against the captured owner.
-- [ ] Cleanup correctness does not depend on capture drop order.
-- [ ] Edition migration tests ownership and destructor timing.
+- The required callable trait comes from actual body use, not from `move`.
+- The exact captured place is known for every field, index, dereference, and packed access.
+- `Send` and `'static` are checked against the captured owner.
+- Cleanup correctness does not depend on capture drop order.
+- Edition migration tests ownership and destructor timing.
 
 ## Authoritative references
 

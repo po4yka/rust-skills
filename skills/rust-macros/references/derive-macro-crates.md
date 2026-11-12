@@ -318,7 +318,7 @@ Decide the bound per field, not per parameter:
 | The generated body | Bound to emit |
 | --- | --- |
 | Calls the trait on a field of type `T` | `T: Trait` |
-| Calls the trait on a field of type `Vec<T>` or `Option<T>` | `T: Trait` |
+| Calls the trait on a field of type `Vec<T>` or `Option<T>` | The field type, as a where-clause: `Vec<T>: Trait`. It holds whatever the container's impl requires. `T: Trait` is right only when that impl is `impl<T: Trait> Trait for Vec<T>`, and it is wrong when the impl has another bound or none |
 | Never names `T` at run time (`PhantomData<T>`, a skipped field) | No bound |
 | Calls the trait on an associated type `T::Assoc` | `T::Assoc: Trait`, as a where-clause |
 

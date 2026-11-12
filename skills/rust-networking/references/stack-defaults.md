@@ -1,10 +1,12 @@
 # Stack defaults and setup
 
-Checked in 2026-09 against reqwest 0.13.5, hyper 1.11.1, hyper-util 0.1.20, axum 0.8.9,
-tower-http 0.7.1, tonic 0.14.6, rustls 0.23.45, and rustls-platform-verifier 0.7.0. The two
-claims marked "probe" were run on rustc 1.98.1 with axum 0.8.9, hyper-util 0.1.20, and tokio
-1.53.1. The reqwest, axum, and hyper-util blocks were type-checked against the same versions. The
-rustls block was type-checked separately against rustls 0.23.45 on rustc 1.98.1, because its
+API claims were checked in 2026-09 against reqwest 0.13.5, tonic 0.14.6, rustls 0.23.45, and
+rustls-platform-verifier 0.7.0, and re-checked in 2026-11 against hyper 1.12.0, hyper-util 0.1.21,
+axum 0.8.9, and tokio 1.54.1. The two claims marked "probe" were re-run on rustc 1.99.1 with that
+2026-11 set. The tower-http rows were read in the tower-http 0.7.1 source; the compile harness
+holds tower-http 0.6.11, so no example here compiles against the 0.7 deadline layers. The
+reqwest, axum, and hyper-util blocks are type-checked against the versions above. The rustls
+block was type-checked separately against rustls 0.23.45 on rustc 1.99.1, because its
 default aws-lc-rs provider does not build in every cross-target check.
 
 Contents:

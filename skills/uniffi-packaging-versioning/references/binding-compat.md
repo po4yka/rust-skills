@@ -8,8 +8,10 @@ Contents:
 - Regeneration script contract
 - CI gate
 - Reviewing an FFI change
+- Kotlin device checksum defects (0.30.0–0.32.0)
 - Upgrading uniffi
 - Coordinating a breaking change
+- Sources
 
 ---
 
@@ -52,7 +54,7 @@ Do not put every skew failure under the record checksum gap:
 | New library with an added record field | Stale bindings without that field | Trailing data is rejected or ignored; behavior depends on generated reader and version |
 | Type-compatible field reorder on either side | Opposite stale layout | Values can go to the wrong fields without a checksum error |
 | One generated interface side is stale at link time | Newer other side | Undefined symbols or linker failure; uniffi-rs #333 asks for clearer diagnostics |
-| Same revision, UniFFI 0.30.0–0.32.0 | Same revision, Kotlin on an ARM32 device (0.30.0–0.31.1) or an `arm64-v8a` device (0.31.2–0.32.0) | Checksum mismatch from a UniFFI defect, not from skew. "Pin the generator to the runtime" in `SKILL.md` has the version ranges and the fix |
+| Same revision, UniFFI 0.30.0–0.32.0 | Same revision, Kotlin on an ARM32 device (0.30.0–0.31.1) or an `arm64-v8a` device (0.31.2–0.32.0) | Checksum mismatch from a UniFFI defect, not from skew. "Kotlin device checksum defects" below has the version ranges and the fix |
 
 ---
 
@@ -160,6 +162,21 @@ Use this list for a diff that touches the FFI crate:
 
 ---
 
+## Kotlin device checksum defects (0.30.0–0.32.0)
+
+Generated Kotlin can fail its checksum check on a device when bindings and
+library match:
+
+- ARM32 release builds on 0.30.0–0.31.1 (JNA direct mapping, uniffi-rs #2740).
+- `arm64-v8a` on 0.31.2–0.32.0, introduced in 0.31.2 by the ARM32 fix
+  (reported as uniffi-rs #2939; fixed by PR #2935 in 0.32.1).
+
+No 0.30.x or 0.31.x release is safe on both, so upgrade to 0.32.1 or later.
+Never set `omit_checksums = true` as the fix. A host JVM test does not show
+either defect; only a device lane on that ABI does.
+
+---
+
 ## Upgrading uniffi
 
 A uniffi bump changes generated code and can change checksums. UniFFI 0.31.0,
@@ -168,7 +185,7 @@ one atomic change:
 
 1. Read the uniffi CHANGELOG for every version you skip, patch releases
    included. A patch release can fix one device checksum failure and add
-   another; `SKILL.md` ("Pin the generator to the runtime") has the ARM cases.
+   another; "Kotlin device checksum defects" above has the ARM cases.
 2. Bump the version once, at the workspace root. Let `Cargo.lock` freeze the
    patch.
 3. If you pass `--config`, convert the file to the global config format when
@@ -202,3 +219,16 @@ When the classification table says breaking:
    the consumers after.
 3. Do not keep a compatibility shim in the generated layer. Put it in the
    adapter layer, where you own the code and can delete it later.
+
+---
+
+## Sources
+
+- <https://github.com/mozilla/uniffi-rs/blob/main/CHANGELOG.md>: breaking
+  changes and fixes per release.
+- <https://github.com/mozilla/uniffi-rs/issues/1789>: the record-field
+  checksum gap.
+- <https://mozilla.github.io/uniffi-rs/latest/swift/uniffi-bindgen-swift.html>:
+  Swift-specific generation of sources, headers, and modulemaps.
+- <https://mozilla.github.io/uniffi-rs/latest/kotlin/gradle.html>: the JNA
+  dependency.

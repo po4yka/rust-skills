@@ -26,6 +26,22 @@ Version note: `jni` 0.22 moved several helpers from the env onto the object
 types (`JString::mutf8_chars` replaces `env.get_string`, for example). Confirm
 the method against the docs of the version in your lockfile.
 
+## Pending exceptions and null strings
+
+- `throw_new` returns `Err(Error::JavaException)` on 0.22 and `Ok` on 0.21. In
+  both versions the exception stays pending.
+- On 0.22, `env.exception_catch()` clears a pending exception and returns
+  `Error::CaughtJavaException`.
+- A custom `ErrorPolicy` calls `env.exception_check()` before it throws.
+- For a fixed-message error policy, use the one in the `rust-panic-safety`
+  skill, when it is installed, or write an `ErrorPolicy` that throws a constant
+  message.
+- Convert a `JString` inside the env scope.
+- Return `Ok(JString::null())` for a `null` `String?` from a `native_method!` or
+  `EnvUnowned` export that returns `Result<JString>`. Return
+  `std::ptr::null_mut()` only from an export that returns a raw `jstring`.
+  `Ok(std::ptr::null_mut())` in a `Result<JString>` is E0308.
+
 ## Throw a Java exception
 
 ```rust

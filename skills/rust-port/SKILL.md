@@ -18,10 +18,10 @@ from that behavior.
    port goes wrong there: output order, tie breaks, empty input, whitespace and case handling,
    integer limits, rounding, the length of non-ASCII text, and what counts as an error.
 2. **Port the tests first.** Write one Rust test for each original test, and give it a name that
-   maps back to the original. Run them; they fail until the port exists. When the original has no
-   tests, record its outputs on the inventory inputs first ([A recorded
-   comparison](#a-recorded-comparison)), and make those the Rust tests: a test written from a
-   guess about the original proves nothing.
+   maps back to the original. Stub the API with `todo!()` first so that they compile; then they
+   fail until the port exists. When the original has no tests, record its outputs on the
+   inventory inputs first ([A recorded comparison](#a-recorded-comparison)), and make those the
+   Rust tests: a test written from a guess about the original proves nothing.
 3. **Design the Rust API from the inventory**, not from the original's shape. Drop what exists
    only because of the source language: out-parameters, `NULL` returns, error codes, global state,
    fixed buffers, classes that only group functions, and type checks at run time.

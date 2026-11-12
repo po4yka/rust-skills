@@ -67,6 +67,9 @@ one of two ways:
 - Set `wasm-opt = false` under `[package.metadata.wasm-pack.profile.release]`
   and run a pinned binary as a separate step.
 
+A `--panic-unwind` build needs a nightly toolchain with `-Zbuild-std`: the
+rustup `std` for `wasm32-unknown-unknown` cannot unwind (Rust 1.99.1), so keep
+it out of a stable product (`references/panic-and-errors.md`).
 wasm-pack 0.15.1 adds `--enable-exception-handling` to the `wasm-opt` arguments
 of a `--panic-unwind` build. wasm-pack 0.15.0 relied on the `target_features`
 section instead, so its optimizer step failed when that section was stripped or

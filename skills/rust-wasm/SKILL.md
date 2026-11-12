@@ -208,28 +208,11 @@ warns that it breaks non-JavaScript WebAssembly builds. Read
 `references/target-setup.md` when the graph holds `getrandom` 0.3.0 to 0.3.3 or
 more than one major version.
 
-## Build for a JavaScript host
+## Read the topic references
 
-Read `references/javascript-host.md` when the crate exports to a browser or
-Node.js through `wasm-bindgen`: it has the crate type, the `wasm-pack` output
-modes, the CLI version rule, and initialization.
-
-## Design the JavaScript boundary
-
-Read `references/javascript-host.md` when you design exports, imports,
-callbacks, or error values that cross the JavaScript boundary.
-
-## Handle panic and error behavior
-
-Read `references/panic-and-errors.md` when you choose the panic strategy,
-install a panic hook, or decide whether an instance survives a trap.
-
-## Use the host async model
-
-Read `references/async-hosts.md` when the code awaits a JavaScript `Promise`,
-spawns a future, uses Tokio or threads, or does async I/O on WASI.
-
-## Build WASI artifacts
-
-Read `references/wasi.md` when you ship a WASI component or compile C or C++
-for a WASI target.
+| Task | Read |
+| --- | --- |
+| Export to a browser or Node.js through `wasm-bindgen`: crate type, `wasm-pack` output modes, CLI version rule, initialization; or design exports, imports, callbacks, and error values across the JavaScript boundary | `references/javascript-host.md` |
+| Choose the panic strategy, install a panic hook, or decide whether an instance survives a trap | `references/panic-and-errors.md` |
+| Await a JavaScript `Promise`, spawn a future, use Tokio or threads, or do async I/O on WASI | `references/async-hosts.md` |
+| Ship a WASI component, or compile C or C++ for a WASI target | `references/wasi.md` |

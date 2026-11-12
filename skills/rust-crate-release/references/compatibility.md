@@ -89,9 +89,8 @@ Find the cause before you raise the MSRV:
 | The crate's own code needs a newer Rust | Restore compatibility, or raise the MSRV as a documented compatibility decision |
 | The MSRV Cargo cannot parse `Cargo.toml` or `Cargo.lock` (TOML 1.1 syntax needs Cargo 1.94; lockfile v4 needs 1.78) | Use manifest syntax and a lockfile version that the MSRV Cargo reads. Or document that development needs a newer Cargo; Cargo rewrites the published manifest, so dependents keep the MSRV |
 
-In a workspace with several MSRVs, run
-`cargo hack check --rust-version --workspace --all-targets --ignore-private` when `cargo-hack` is
-installed.
+In a workspace with several MSRVs, use the per-package `cargo hack check --rust-version`
+command of the `cargo-workflows` skill, when it is installed, when `cargo-hack` is installed.
 
 ## Official references
 

@@ -5,7 +5,7 @@
 # `use std::result::Result;` keeps gen.py from inserting its `Result` alias
 # above the block, where it would push `#![no_main]` out of first place.
 [[block]]
-file = "rust-test-tools/SKILL.md"
+file = "rust-test-tools/references/fuzzing.md"
 section = "cargo-fuzz"
 block = 1
 items = '''
@@ -21,7 +21,7 @@ mod my_crate {
 '''
 
 [[block]]
-file = "rust-test-tools/SKILL.md"
+file = "rust-test-tools/references/fuzzing.md"
 section = "Differential testing"
 block = 1
 items = '''

@@ -45,7 +45,7 @@ MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 BUNDLES = ROOT / "bundles.toml"
 ROUTING = ROOT / "tests" / "routing-cases.md"
 VALIDATOR = ROOT / "scripts" / "validate-skills.py"
-# The skills Codex 0.166.0 lists in a fresh CODEX_HOME and HOME. Any other
+# The skills Codex lists in a fresh CODEX_HOME and HOME (0.166.0 and 0.167.2). Any other
 # non-plugin entry shares the skill-list budget and makes the measurement
 # depend on one machine.
 CODEX_BUILTIN_SKILLS = {"imagegen", "openai-docs", "skill-creator", "skill-installer"}
@@ -55,7 +55,7 @@ CODEX_BUILTIN_SKILLS = {"imagegen", "openai-docs", "skill-creator", "skill-insta
 SKILLS_LINE = re.compile(r"^[ \t]*Skills \((\d+)\)[ \t]*(.*)$", re.M)
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # `codex debug prompt-input` lists each plugin skill as `- <plugin>:<skill>: <description>`
-# under an `### Available skills` heading (Codex 0.166.0).
+# under an `### Available skills` heading (Codex 0.166.0 and 0.167.2).
 CODEX_HEADING = "### Available skills"
 
 

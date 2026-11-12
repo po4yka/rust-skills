@@ -1,9 +1,9 @@
 # Preludes for the rust-pin-projection skill. Format: checks/README.md.
 
-# SelfRef exactly as SKILL.md ("Get a value pinned") defines it.
+# SelfRef exactly as the reference ("The SelfRef example") defines it.
 [[block]]
-file = "rust-pin-projection/SKILL.md"
-section = "Never pin a named stack binding"
+file = "rust-pin-projection/references/pin-projection-macros.md"
+section = "A named stack binding under Miri"
 block = 1
 items = '''
 struct SelfRef { buf: [u8; 4], ptr: *const u8, _p: std::marker::PhantomPinned }

@@ -40,6 +40,11 @@ Swift 6.4 imports the three C enum forms differently:
 | `enum_extensibility(open)` | Non-frozen enum | `switch` requires `@unknown default` |
 | `enum_extensibility(closed)` | `@frozen` enum | Exhaustive `switch` has no case for it |
 
+The closed form is why `SKILL.md` forbids a closed C enum as the compatibility
+guard: an app built against an older header has no case for a value that a
+newer library adds. An `int32_t` status with named constants states the open
+contract in the header itself.
+
 ## Header generation and review
 
 Generate the header with the pinned `cbindgen` version when Rust declarations

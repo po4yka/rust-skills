@@ -114,8 +114,7 @@ before Tokio decides which futures to poll.
 
 ## CancellationToken idioms
 
-`tokio_util::sync::CancellationToken` has two idioms beyond `.cancelled().await` and the child
-tokens that `SKILL.md` shows.
+`tokio_util::sync::CancellationToken` has three idioms beyond `.cancelled().await`.
 
 **DropGuard: cancellation on an RAII boundary.**
 
@@ -145,7 +144,33 @@ match token.run_until_cancelled(do_work()).await {
 }
 ```
 
-`SKILL.md`, section "CancellationToken tree", gives its semantics on an already-cancelled token.
+`run_until_cancelled(fut)` returns `None` and never polls `fut` when the token is already
+cancelled (tokio-util 0.7.16+). After that it polls `fut` first on each wake. The losing `fut`
+is still dropped, so it must be cancel safe.
+
+**The token tree: a master token, one child per task, and a tracker.**
+
+```rust
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+
+async fn run_job(_job: u32, _cancel: CancellationToken) {}
+
+async fn run_all(jobs: Vec<u32>) {
+    let master = CancellationToken::new();
+    let tracker = TaskTracker::new();
+    for job in jobs {
+        tracker.spawn(run_job(job, master.child_token()));
+    }
+    // On shutdown: a child's cancel() stops only that child; master.cancel() stops all.
+    master.cancel();
+    tracker.close();
+    tracker.wait().await;
+}
+```
+
+A child's `cancel()` stops only that child; `master.cancel()` stops all of them. `TaskTracker`
+does not abort a task on drop, so the token is the only stop signal.
 
 ## Task sets and supervision
 

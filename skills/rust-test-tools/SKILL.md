@@ -161,7 +161,7 @@ proptest! {
 - Random bytes seldom get past a magic number or a checksum. The structured strategy reaches
   the deeper code, so write one for every format with such a check.
 - A line-based parser tested with `".*"` or `any::<String>()` never sees a newline (probe on
-  proptest 1.11.0). Use `"(?s).*"`.
+  proptest 1.12.0). Use `"(?s).*"`.
 - proptest saves each failing case and runs it first on the next run. A test in `src/` saves to
   `proptest-regressions/` at the crate root. An integration test saves to
   `tests/<name>.proptest-regressions`. Commit these files.
@@ -175,65 +175,21 @@ A new parser without a never-panics property is incomplete.
 proptest finds the bugs that a strategy can reach. A coverage-guided fuzzer also finds the
 bugs that only a mutated corpus reaches, above all in binary protocol and container decoders.
 
-```bash
-# Setup, once per crate. Building and running a target needs nightly.
-cargo install --locked cargo-fuzz
-cargo fuzz init
-cargo fuzz add parse_header
-```
+- Fuzz the outermost entry point that takes untrusted bytes.
+- Cap an allocation length and a nesting depth in the parser, not in the fuzz target.
+- Turn every crash into a committed regression test. Shrink it first with
+  `cargo +nightly fuzz tmin <target> <artifact>`.
 
-```rust
-// fuzz/fuzz_targets/parse_header.rs
-#![no_main]
-use libfuzzer_sys::fuzz_target;
-
-fuzz_target!(|data: &[u8]| {
-    let _ = my_crate::wire::parse_header(data);
-});
-```
-
-```bash
-cargo +nightly fuzz run parse_header -- -max_total_time=600
-cargo fuzz list
-
-# Reproduce a crash from a saved artifact, then shrink it.
-cargo +nightly fuzz run parse_header fuzz/artifacts/parse_header/crash-<id>
-cargo +nightly fuzz tmin parse_header fuzz/artifacts/parse_header/crash-<id>
-```
-
-- Fuzz the outermost entry point that takes untrusted bytes: a frame or header decoder, an
-  archive reader, a decompressor, a document parser.
-- A length field that drives an allocation is the usual out-of-memory crash. Cap the length in
-  the parser, not in the fuzz target.
-- A recursive parser needs a nesting-depth limit. Deep nesting overflows the stack. The
-  report shows `AddressSanitizer: stack-overflow` in the default ASan build, or
-  `has overflowed its stack` without ASan. Cap the depth in the parser, not in the fuzz target.
-- Turn every crash into a regression test. Shrink it with `tmin`, commit the input (for example
-  under `tests/regressions/`), and add a test that feeds it to the entry point.
+Read [references/fuzzing.md](references/fuzzing.md) when you set up cargo-fuzz, write a fuzz
+target, reproduce a crash, or read a stack-overflow report.
 
 ## Differential testing
 
 When a port's reference runs in-process (a C library, the previous Rust version, a spec
 model), run a differential fuzz target; a Python or JavaScript original gets the `rust-port`
-recorded comparison. Feed both the same bytes and compare. A port that is memory-safe and
-passes its own tests can still disagree with the reference.
-
-```rust
-// fuzz/fuzz_targets/decode_matches_reference.rs
-#![no_main]
-use libfuzzer_sys::fuzz_target;
-
-fuzz_target!(|data: &[u8]| {
-    let ours = my_crate::decode(data).ok();
-    let reference = reference_impl::decode(data).ok();
-    assert_eq!(ours, reference, "decoders disagree on {data:?}");
-});
-```
-
-- Compare acceptance and the value. Compare the error kind too when callers depend on it.
-- Seed `fuzz/corpus/<target>/` with non-ASCII text and invalid UTF-8: a lone continuation byte
-  (`0x80`), an overlong encoding (`0xC0 0xAF`), and a truncated 4-byte sequence. Ports often
-  differ on non-ASCII and invalid UTF-8 input.
+recorded comparison. Feed both the same bytes. Compare acceptance and the value, and the error
+kind when callers depend on it. Seed the corpus with non-ASCII text and invalid UTF-8. Read
+[references/fuzzing.md](references/fuzzing.md) when you write the target.
 
 ## cargo-mutants
 
@@ -287,57 +243,17 @@ workflow.
 
 A golden test compares output with a committed file. Use it for output that another party
 reads: serialized records, exported reports, generated code, protocol frames, rendered images.
-Put the fixtures in `tests/golden/` of the crate that owns the output, and the test in
-`tests/golden_contracts.rs`. Cargo builds each `.rs` file directly under `tests/` as a test
-binary, and it skips a subdirectory that has no `main.rs`.
 
-```rust
-use std::path::Path;
+- Never set the bless variable in CI. A missing fixture must fail the run.
+- Bless only an intended output change, and explain the contract change in the commit message.
+  Never bless to turn a red run green.
+- Replace timestamps, generated IDs, ports, temporary paths, and host names with placeholders,
+  and iterate a hash map in sorted order.
+- Do not build a golden file from `Debug` (`{:?}`) output: std does not keep that format stable.
+- If the crate already uses `insta`, use `cargo insta review`. Do not add a second mechanism.
 
-/// Compares `actual` with `tests/golden/<name>`. `BLESS_GOLDENS=1` rewrites the file.
-fn assert_golden(name: &str, actual: &str) {
-    // env! resolves at compile time, so the path does not depend on the working directory.
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(name);
-    if std::env::var("BLESS_GOLDENS").as_deref() == Ok("1") {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, actual).unwrap();
-        return;
-    }
-    let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!("missing golden {}: {error}; bless it with BLESS_GOLDENS=1", path.display())
-    });
-    assert_eq!(actual, expected, "golden mismatch for {}", path.display());
-}
-```
-
-```bash
-cargo nextest run --locked -p <crate> --test golden_contracts                  # compare
-BLESS_GOLDENS=1 cargo nextest run --locked -p <crate> --test golden_contracts  # bless
-git diff -- tests/golden/                                                      # review
-```
-
-- Never set the bless variable in CI. A missing fixture must fail the run, and the helper
-  panics for that reason.
-- Bless only an intended output change. An unexpected failure means the code changed
-  behavior: find out why first. Read the fixture diff, and explain the contract change in the
-  commit message. Never bless to turn a red run green.
-- Make the output deterministic before you compare it. Replace timestamps, generated IDs, ports,
-  temporary paths, and host names with placeholders. Iterate a `HashMap` or `HashSet` in sorted
-  order, or use a `BTreeMap`: std hash iteration order changes from one process to the next.
-- Do not build a golden file or an `insta::assert_debug_snapshot!` from `Debug` (`{:?}`)
-  output. std does not keep that format stable, and Rust 1.98 escapes more characters in
-  strings and chars. Serialize with the real output format instead.
-- Text: compare byte for byte. Add `**/tests/golden/** -text` to the root `.gitattributes` (or
-  `tests/golden/** -text` to a `.gitattributes` in the crate directory), so that a checkout
-  with `core.autocrlf` does not rewrite the line endings. A pattern with a slash is anchored
-  to the directory of its `.gitattributes` file.
-- Binary: compare the bytes from `std::fs::read`. For a PDF or an archive, remove the embedded
-  timestamps first.
-- Raster images: compare decoded pixels, exactly or with a stated per-channel tolerance. Do not
-  compare encoded PNG bytes: another encoder version or setting gives other bytes for the same
-  pixels.
-- If the crate already uses `insta`, use its macros and `cargo insta review`. Do not add a
-  second golden mechanism.
+Read [references/golden-files.md](references/golden-files.md) when you write the helper, set up
+`.gitattributes` for fixtures, or compare binary or image output.
 
 ## Related skills
 

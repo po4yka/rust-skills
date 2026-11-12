@@ -10,8 +10,8 @@ A `#[derive(Deserialize)]` is a parser and a published schema at the same time. 
 incidents are silent: a field stays at its default, a number loses digits, or an older build can
 no longer read a payload.
 
-Behavior below was measured with serde 1.0.229, serde_json 1.0.151, postcard 1.1.3, and
-bincode 2.0.1 on Rust 1.98.1.
+Behavior below was measured with serde 1.0.229, serde_json 1.0.154, and postcard 1.1.3 on
+Rust 1.99.1, and with bincode 2.0.1 on Rust 1.98.1.
 
 ## Find the contracts
 
@@ -199,18 +199,9 @@ Two constraints that the attribute does not show:
 Before you add a format crate, look it up at `https://rustsec.org/packages/<crate>.html`. After
 you add it, and before commit, run `cargo deny --config deny.toml --locked check advisories` or
 `cargo audit --deny warnings`. Plain `cargo audit` exits 0 on unmaintained and unsound
-advisories. As of 2026-09:
-
-- `bincode` is unmaintained (RUSTSEC-2025-0141, which lists wincode, postcard, bitcode, and rkyv
-  as alternatives). Its latest release, 3.0.0, is a `compile_error!` stub, so `cargo add bincode`
-  gives a build that fails with only `error: https://xkcd.com/2347/`. Existing users keep a
-  caret requirement, `bincode = "2.0.1"` or `bincode = "1.3.3"`, until they migrate. A caret
-  requirement already excludes 3.0.0, so an `=` pin adds nothing. Never run a bare
-  `cargo add bincode`; write `cargo add bincode@2.0.1`.
-- `serde_yml` is unsound and unmaintained (RUSTSEC-2025-0068, which lists serde_norway and
-  serde_yaml_ng as alternatives).
-- `serde_yaml` is deprecated: its repository is archived, and its last release is
-  `0.9.34+deprecated`.
+advisories. Never run a bare `cargo add bincode`: its latest release, 3.0.0, is a
+`compile_error!` stub. Read [references/format-crates.md](references/format-crates.md) when you
+add, keep, or replace bincode, serde_yml, or serde_yaml.
 
 ## Validate at the boundary with `try_from`
 

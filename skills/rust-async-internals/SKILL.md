@@ -121,29 +121,12 @@ another arm ends the loop on shutdown. Otherwise shutdown hangs.
 ### CancellationToken tree
 
 Use `tokio_util::sync::CancellationToken` for structured shutdown, not `tokio::sync::Notify`.
-
-```rust
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
-
-async fn run_job(_job: u32, _cancel: CancellationToken) {}
-
-async fn run_all(jobs: Vec<u32>) {
-    let master = CancellationToken::new();
-    let tracker = TaskTracker::new();
-    for job in jobs {
-        tracker.spawn(run_job(job, master.child_token()));
-    }
-    // On shutdown: a child's cancel() stops only that child; master.cancel() stops all.
-    master.cancel();
-    tracker.close();
-    tracker.wait().await;
-}
-```
-
-`run_until_cancelled(fut)` returns `None` and never polls `fut` when the token is already
-cancelled (tokio-util 0.7.16+). After that it polls `fut` first on each wake. The losing `fut`
-is still dropped, so it must be cancel safe.
+Give each task `master.child_token()`, spawn it on a `TaskTracker`, and on shutdown call
+`master.cancel()`, `tracker.close()`, and `tracker.wait().await`. A child's `cancel()` stops only
+that child. `run_until_cancelled(fut)` never polls `fut` when the token is already cancelled, and
+drops the losing `fut`, so `fut` must be cancel safe. Read
+[references/cancellation-and-shutdown.md](references/cancellation-and-shutdown.md#cancellationtoken-idioms)
+when you write the tree, a `drop_guard`, or a `run_until_cancelled` call.
 
 ## Task ownership and concurrency
 
@@ -205,7 +188,7 @@ Pick the callback or trait shape from where the future goes:
 A native `async fn` call on a concrete type still spawns, because the opaque type leaks its auto
 traits. The same call through a generic `T: Trait` bound fails with
 `error: future cannot be sent between threads safely`, which has no error code. Do not emit
-return type notation (`T::m(..): Send`): it is nightly-only on Rust 1.98.1 and fails with E0658
+return type notation (`T::m(..): Send`): it is nightly-only on Rust 1.99.1 and fails with E0658
 on stable. Read [references/async-bounds.md](references/async-bounds.md) when a bound fails to
 compile, before you migrate off `#[async_trait]`, when edition 2024 changes what an
 `impl Future` return captures, or when concurrent futures need one `&mut State`.

@@ -1,7 +1,7 @@
 # Serde Data Model and Lifetime Bounds
 
 Use this reference when a type derives successfully but a generic parser, a map key, or a large
-number fails. Behavior was measured with serde 1.0.229 and serde_json 1.0.151 on Rust 1.98.1.
+number fails. Behavior was measured with serde 1.0.229 and serde_json 1.0.154 on Rust 1.99.1.
 
 ## Choose the deserialization bound from input ownership
 

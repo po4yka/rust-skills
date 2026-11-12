@@ -1,6 +1,7 @@
 # Host Profiler Setup: cargo flamegraph and samply
 
-Setup and invocations for `cargo flamegraph` 0.6.14 and `samply` 0.13.1 on Linux and macOS.
+Setup and invocations for `cargo flamegraph` and `samply` on Linux and macOS, measured with
+`cargo flamegraph` 0.6.14 and `samply` 0.13.1; `cargo flamegraph` 0.6.15 is current as of 2026-11.
 [SKILL.md](../SKILL.md) defines the `profiling` profile that every command here uses. Criterion
 authoring is in [benchmarking.md](benchmarking.md).
 
@@ -21,7 +22,7 @@ echo 'kernel.perf_event_paranoid = 1' | sudo tee /etc/sysctl.d/99-perf.conf  # p
 sudo sysctl -p /etc/sysctl.d/99-perf.conf
 ```
 
-Do not change the process-global `kernel.kptr_restrict` setting as a routine prerequisite.
+Do not change the system-wide `kernel.kptr_restrict` setting as a routine prerequisite.
 User-space Rust stacks do not need kernel symbols. When a specific kernel profile needs them,
 follow the host security policy and restore the setting after the bounded diagnostic session.
 
@@ -136,8 +137,8 @@ aliasing with periodic work.
   `strip = "none"`.
 - On Linux, `readelf -S target/profiling/myapp | grep -c debug_info` prints a non-zero count.
 - Frames show demangled names, not `_R...` strings. Raw v0 names mean the tool is too old for
-  the default mangling since Rust 1.97. `cargo flamegraph` 0.6.14 demangles v0 names itself, so
-  reinstall it with `cargo install --locked flamegraph`. For direct `perf report` or
+  the default mangling since Rust 1.97. `cargo flamegraph` 0.6.14 demangles v0 names itself
+  (the 0.6.15 source still calls `rustc-demangle`), so reinstall it with `cargo install --locked flamegraph`. For direct `perf report` or
   `perf script` output, use Linux perf 6.16 or later (the perf in Ubuntu 24.04 and Debian 13 is
   too old), or pipe the text through `rustfilt`.
 

@@ -2,7 +2,7 @@
 
 Each line restates a rule from `SKILL.md`. Use it to review a finished macro change.
 
-- Every `macro_rules!` definition appears above every use in its file.
+- A macro reached by path (`pub(crate) use name;` after the definition) needs no order. A macro reached only by textual scope (no `use`, no `#[macro_export]`) is defined above every use in its file, and its module's `mod` line comes before the modules that use it.
 - `#[macro_export]` appears only on a macro that is part of the public API.
 - Every emitted path starts with `$crate::`, `::core::`, or, from a derive, `::facade::`. `::alloc::` never appears; an `alloc` item goes through `$crate::__private`. `::std::` appears only when no `#![no_std]` caller is supported.
 - A dependency of the macro crate is reached through a `$crate::__private` re-export, not through `::dep_name::`.
