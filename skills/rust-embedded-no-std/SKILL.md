@@ -163,7 +163,7 @@ it (`static_mut_refs`). `&raw mut` and by-value access still compile, but they
 keep the data race with the interrupt handler. Use an atomic, a
 `critical_section::Mutex<RefCell<T>>`, or the framework's resource model.
 
-Read atomic support from `rustc --target <target> --print cfg | rg 'target_has_atomic='`.
+Read atomic support from `rustc --target <target> --print cfg | grep 'target_has_atomic='`.
 `target_has_atomic="32"` means that 32-bit CAS exists. A target that prints no
 `target_has_atomic="N"` line has no CAS. `target_has_atomic_primitive_alignment`
 lines describe alignment, not atomic support. Stable `--print cfg` does not show
@@ -268,10 +268,12 @@ interrupts, or memory become corrupt.
 Inspect the current workspace:
 
 ```bash
-rg -n '#!\[(no_std|no_main)\]|entry|interrupt|exception|global_allocator|panic_handler' --type rust
-rg -n 'memory\.x|link\.x|runner|rustflags|build-std|panic\s*=' -g '*.toml' -g '*.json' -g '*.x'
+grep -rnE --include='*.rs' --exclude-dir=target \
+  '#!\[(no_std|no_main)\]|entry|interrupt|exception|global_allocator|panic_handler' .
+grep -rnE --include='*.toml' --include='*.json' --include='*.x' --exclude-dir=target \
+  'memory\.x|link\.x|runner|rustflags|build-std|panic[[:space:]]*=' .
 cargo tree --edges normal,build
-rustc --print target-list | rg '<architecture>|thumb|riscv'
+rustc --print target-list | grep -E '<architecture>|thumb|riscv'
 ```
 
 Use a built-in target when it matches the CPU, ABI, floating-point mode, and
@@ -336,30 +338,31 @@ API changes that break code copied from older examples.
 Give each release an explicit budget, with evidence, for flash, static RAM,
 stack, heap, queues, interrupt latency, CPU time, and energy. Read
 [references/resource-budgets.md](references/resource-budgets.md) when you set or
-review that budget; it lists the evidence for each resource and the Cortex-M
-stack measurement.
+review that budget, or set a calibration value such as a watchdog window; it
+lists the evidence for each resource, the Cortex-M stack measurement, and the
+calibration rule.
 
-Make a stack overflow fault instead of corrupting statics: link with
-`flip-link` (LLD only), or enable the `cortex-m-rt` `set-msplim` feature on
-Armv8-M Mainline.
+Make a stack overflow fault instead of corrupting statics. Link with
+`flip-link` (LLD only): run `cargo install flip-link --locked`, then set the
+linker of the final binary's target in `.cargo/config.toml`:
+
+```toml
+[target.<target>]
+linker = "flip-link"
+```
+
+On Armv8-M Mainline (`thumbv8m.main-none-eabi*`), the `cortex-m-rt`
+`set-msplim` feature is the alternative.
 
 Reject unbounded queues, recursive retry, and growth from input-controlled
 lengths. Treat a queue full condition as a normal state. Choose drop-oldest,
 drop-newest, backpressure, coalescing, or fail-safe behavior deliberately.
-
-Keep physical calibration, such as clock tolerance, watchdog window, debounce
-time, and sensor thresholds, as bounded configuration with safe defaults.
-Record the real-hardware measurements that justify the values.
 
 ## Log from the device
 
 Use `defmt` for bounded device logs when the target integration supports it.
 Decode with the exact ELF from the same build: a log decoded with a different
 ELF is invalid evidence. Do not log secrets, credentials, private identifiers,
-or unbounded input. defmt emits only `ERROR` messages unless the compile-time
-`DEFMT_LOG` value enables more; record that value with the ELF. A debug probe
-that drains logs can hide a deadlock or timing failure that appears when the
-device runs alone.
-
-Read [references/defmt.md](references/defmt.md) when you add or change a defmt
-logger, its transport, or the shipped log level.
+or unbounded input. Read [references/defmt.md](references/defmt.md) when you add
+or change a defmt logger, its transport, or the shipped log level: defmt emits
+only `ERROR` messages by default.

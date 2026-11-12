@@ -17,9 +17,8 @@ the evidence in the second column.
 ## Stack on Cortex-M
 
 With `cortex-m-rt`, enable its `paint-stack` feature, run the worst-case load,
-and read the stack high-water mark. Make a stack overflow fault instead of
-corrupting statics: link with `flip-link` (LLD only), or enable the `set-msplim`
-feature on Armv8-M Mainline (`thumbv8m.main-none-eabi*`).
+and read the stack high-water mark. `SKILL.md` has the `flip-link` and
+`set-msplim` setup that makes an overflow fault.
 
 ## Calibration
 
