@@ -6,12 +6,47 @@ arguments.
 
 Contents:
 
+- Inspect the workspace and select a target
 - Target contract
 - Built-in and custom targets
 - Make `memory.x` visible to the linker
 - Memory file
 - Linker-script invariants
 - Runner and link arguments
+
+## Inspect the workspace and select a target
+
+
+Inspect the current workspace:
+
+```bash
+grep -rnE --include='*.rs' --exclude-dir=target \
+  '#!\[(no_std|no_main)\]|entry|interrupt|exception|global_allocator|panic_handler' .
+grep -rnE --include='*.toml' --include='*.json' --include='*.x' --exclude-dir=target \
+  'memory\.x|link\.x|runner|rustflags|build-std|panic[[:space:]]*=' .
+cargo tree --edges normal,build
+rustc --print target-list | grep -E '<architecture>|thumb|riscv'
+```
+
+Use a built-in target when it matches the CPU, ABI, floating-point mode, and
+atomic support. Install it with `rustup target add <target>`. Then read
+`rustc --target <target> --print cfg`: it is the source of truth for CAS
+support, pointer width, endianness, and target features. Since Rust 1.95 a
+custom JSON target spec needs a pinned nightly; add one only when no built-in
+target fits.
+
+Do not infer the memory map from a similar board. Account for a bootloader,
+configuration pages, secure regions, and retained RAM explicitly.
+
+Prefer the architecture runtime crate and its linker template. Supply the chip
+memory regions in `memory.x` or the runtime's documented input. Do not copy the
+runtime's full linker script into the application unless the shipped image has
+a requirement that its extension points cannot express. Add linker `ASSERT`
+expressions for stack, heap, and image boundaries when the runtime template
+permits them.
+
+Keep linker arguments and the runner on the final binary's exact target. A
+library cannot reliably inject final-artifact layout for every consumer.
 
 ## Target contract
 

@@ -31,3 +31,11 @@ Prove the shipped level:
 Measure flash, timing, and transport backpressure at the release level. A debug
 probe that drains logs can hide a deadlock or timing failure that appears when
 the device runs alone.
+
+## Triage
+
+| Symptom | Likely cause | Check and fix |
+|---|---|---|
+| Link errors that name defmt symbols or sections | No `-Tdefmt.x`, or zero or two global loggers | Add the link argument; link exactly one logger in the binary |
+| Logs missing below `ERROR` | `DEFMT_LOG` not set for this build | Set `DEFMT_LOG` and rebuild; record it with the ELF |
+| Logs corrupt or disappear | Wrong ELF, transport overflow, or reset during output | Match build identity and reduce bounded log volume |
