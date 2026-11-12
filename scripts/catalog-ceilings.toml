@@ -10,12 +10,6 @@
 # Regenerate after a change that shrinks a value:
 #   python3 scripts/validate-skills.py --emit-ceilings > scripts/catalog-ceilings.toml
 
-[description]
-total = 22171
-
-[bundle_descriptions]
-language = 6354
-
 [body_tokens]
 cargo-workflows = 6152
 ffi-error-progress-cancel = 6631

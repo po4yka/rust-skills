@@ -56,7 +56,8 @@ bundles are defined in [bundles.toml](bundles.toml).
 
 | Bundle | Subject | Skills | Plugin |
 | --- | --- | ---: | --- |
-| `language` | Language, interfaces, and code discipline | 13 | `rust-skills-language` |
+| `language` | Language semantics and compiler errors | 8 | `rust-skills-language` |
+| `design` | API design, code discipline, and tooling | 5 | `rust-skills-design` |
 | `build` | Build, dependencies, and supply chain | 9 | `rust-skills-build` |
 | `testing` | Correctness and testing | 6 | `rust-skills-testing` |
 | `concurrency` | Concurrency and unsafe code | 6 | `rust-skills-concurrency` |
@@ -79,7 +80,11 @@ gh skill install po4yka/rust-skills rust-unsafe --pin v0.3.0
 
 ```bash
 # language
-for s in rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-discipline rust-code-style rust-crate-architecture rust-lints rust-macros rust-iterator-impl rust-variance rust-callback-bounds rust-type-erasure rust-cli; do
+for s in rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-variance rust-callback-bounds rust-iterator-impl rust-type-erasure rust-macros; do
+  gh skill install po4yka/rust-skills "$s" --pin v0.3.0
+done
+# design
+for s in rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli; do
   gh skill install po4yka/rust-skills "$s" --pin v0.3.0
 done
 # build
@@ -199,7 +204,9 @@ it.
 
 ```bash
 # language
-npx skills add po4yka/rust-skills --skill rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-discipline rust-code-style rust-crate-architecture rust-lints rust-macros rust-iterator-impl rust-variance rust-callback-bounds rust-type-erasure rust-cli
+npx skills add po4yka/rust-skills --skill rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-variance rust-callback-bounds rust-iterator-impl rust-type-erasure rust-macros
+# design
+npx skills add po4yka/rust-skills --skill rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli
 # build
 npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std
 # testing

@@ -119,10 +119,12 @@ CHARS_PER_TOKEN = 2.5
 # when it overflows. A bundle is the unit a consumer installs, so each bundle
 # must fit that budget: 5,000 characters is 2,000 estimated tokens.
 MAX_BUNDLE_DESCRIPTIONS = 5_000
-# The whole catalog does not fit a 200K window at any useful size. This cap
-# bounds the full install, and the warning gives notice before it is reached.
-MAX_TOTAL_DESCRIPTIONS = 20_000
-WARN_TOTAL_DESCRIPTIONS = 18_000
+# The whole catalog does not fit a 200K window at any useful size, and the README
+# says so: the full-catalog plugin is for large windows only. The binding limit
+# is the bundle above, because a bundle is what a consumer installs, and the
+# Codex gate proves each bundle keeps its routing phrases visible. The total is
+# reported, not capped: a cap on it made every new skill or routing fix a
+# zero-sum trade across unrelated bundles.
 
 # Claude Code re-injects an invoked skill body after context compaction and
 # keeps at most 5,000 tokens of it. The margin covers estimate error.
@@ -843,22 +845,12 @@ def check_ceilings_against(ref: str, ceilings: dict) -> None:
 
 def check_description_budget(bundles: dict[str, list[str]], ceilings: dict) -> None:
     total = sum(len(d) for d in descriptions.values())
-    ceiling = ceilings.get("description", {}).get("total", 0)
-    limit = max(MAX_TOTAL_DESCRIPTIONS, ceiling)
     print(
         f"descriptions: {total:,} characters, ~{estimate_tokens('x' * total):,} tokens "
-        f"in {len(descriptions)} skills (limit {limit:,})"
+        f"in {len(descriptions)} skills (the full catalog; each bundle is capped below)"
     )
-    if total > limit:
-        fail(
-            "skills/*/SKILL.md",
-            f"descriptions total {total:,} characters, the limit is {limit:,}; shorten a "
-            f"description instead of growing the always-on listing",
-        )
-    elif total > WARN_TOTAL_DESCRIPTIONS:
-        warn("skills/*/SKILL.md", f"descriptions total {total:,} characters, over {WARN_TOTAL_DESCRIPTIONS:,}")
-    if ceiling > MAX_TOTAL_DESCRIPTIONS and total < ceiling:
-        warn("scripts/catalog-ceilings.toml", f"lower [description] total to {max(total, MAX_TOTAL_DESCRIPTIONS)}")
+    if "description" in ceilings:
+        warn("scripts/catalog-ceilings.toml", "remove [description]: the catalog total is no longer capped")
 
     accepted = ceilings.get("bundle_descriptions", {})
     for bundle, skills in bundles.items():
@@ -1136,9 +1128,6 @@ def emit_ceilings(bundles: dict[str, list[str]]) -> str:
         "#   python3 scripts/validate-skills.py --emit-ceilings > scripts/catalog-ceilings.toml",
         "",
     ]
-    total = sum(len(d) for d in descriptions.values())
-    if total > MAX_TOTAL_DESCRIPTIONS:
-        out += ["[description]", f"total = {total}", ""]
     over = {
         b: size
         for b, skills in bundles.items()

@@ -11,20 +11,25 @@
 # marketplace.json carries one plugin entry per bundle; keep the two in step.
 
 [bundles.language]
-title = "Language, interfaces, and code discipline"
+title = "Language semantics and compiler errors"
 skills = [
     "rust-compiler-errors",
     "rust-borrow-semantics",
     "rust-pattern-semantics",
+    "rust-variance",
+    "rust-callback-bounds",
+    "rust-iterator-impl",
+    "rust-type-erasure",
+    "rust-macros",
+]
+
+[bundles.design]
+title = "API design, code discipline, and tooling"
+skills = [
     "rust-discipline",
     "rust-code-style",
     "rust-crate-architecture",
     "rust-lints",
-    "rust-macros",
-    "rust-iterator-impl",
-    "rust-variance",
-    "rust-callback-bounds",
-    "rust-type-erasure",
     "rust-cli",
 ]
 

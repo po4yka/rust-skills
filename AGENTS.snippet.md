@@ -3,22 +3,22 @@
 
 Find the symptom, then load the named skill before you change code. Load a skill only when your
 skill list names it; otherwise continue without one. Rows follow the bundles in order: language,
-build, testing, concurrency, production, ffi. Delete the rows of a bundle you did not install.
+design, build, testing, concurrency, production, ffi. Delete the rows of a bundle you did not install.
 
 | Symptom | Skill |
 | --- | --- |
 | A pasted rustc error: `E0382`, `E0499`, `E0282`, `does not live long enough` | rust-compiler-errors |
 | A hang on a second `lock()` in a `match`; drop scope or temporary lifetime depends on syntax | rust-borrow-semantics |
 | Match guard, partial move, binding mode, or match ergonomics surprise | rust-pattern-semantics |
+| `is invariant over the parameter`, `borrowed for 'static` | rust-variance |
+| Callback bound rejects `\|o\| &o.field`, a closure stored in a struct | rust-callback-bounds |
+| A hand-written `Iterator` or `IntoIterator` | rust-iterator-impl |
+| `HashMap<TypeId, _>` with borrowed values, `dyn Any`, `downcast_ref` | rust-type-erasure |
+| `macro_rules!`, a derive, `cargo expand` | rust-macros |
 | Method ambiguity, autoderef, UFCS, `E0034`, blanket-impl overlap, pub API shape | rust-discipline |
 | Module file layout, `unreachable_pub`, `lib.rs` re-exports | rust-code-style |
 | New workspace crate, layering violation, crate dependency cycle | rust-crate-architecture |
 | Red clippy, `cargo fmt`, or `cargo doc` gate | rust-lints |
-| `macro_rules!`, a derive, `cargo expand` | rust-macros |
-| A hand-written `Iterator` or `IntoIterator` | rust-iterator-impl |
-| `is invariant over the parameter`, `borrowed for 'static` | rust-variance |
-| Callback bound rejects `\|o\| &o.field`, a closure stored in a struct | rust-callback-bounds |
-| `HashMap<TypeId, _>` with borrowed values, `dyn Any`, `downcast_ref` | rust-type-erasure |
 | `clap`, stdout and exit-code contract, Ctrl-C, shell completions | rust-cli |
 | `--locked` failure, feature unification, `Cargo.lock`, cargo-nextest | cargo-workflows |
 | SemVer bump, `cargo publish`, trusted publishing, a yank | rust-crate-release |
