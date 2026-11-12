@@ -67,7 +67,7 @@ The tokio rows come from the `select!` documentation of tokio 1.53.1.
 | `Notify::notified` | **No (queue position)** | Same queue rule. To avoid a missed `notify_one`, create the future before you check the condition, pin it, call `Notified::enable()`, check, then await. |
 | `sqlx::Transaction::commit` | **No** | A drop before success queues a rollback; nothing reports the failure. |
 | `sqlx` query futures (`fetch_one` and similar) | **No** for the server statement | Dropping the future does not cancel the statement on the server. In sqlx 0.9.0 the drop of a `PoolConnection` spawns a release task that pings the connection. On Postgres the ping waits until the abandoned statement finishes, and only then does the connection, with its pool slot, return to the pool. Abandoned long queries can exhaust the pool. On a connection you own, the next query waits instead. MySQL and SQLite were not checked. |
-| `reqwest::RequestBuilder::send` | **No** (outcome unknown) | After the request starts, the server may have acted. reqwest documents no cancel-safety guarantee. The `rust-networking` skill, when it is installed, owns cancellation at the network boundary. |
+| `reqwest::RequestBuilder::send` | **No** (outcome unknown) | After the request starts, the server may have acted. reqwest documents no cancel-safety guarantee. Retry it only with an idempotency key the server stores; the `rust-networking` skill, when it is installed, owns cancellation at the network boundary (`RequestBuilder::timeout` per attempt). |
 
 ## Spawn-and-join firewall for critical sections
 
@@ -311,7 +311,8 @@ rely on it.
 
 Read against sqlx 0.7.4, 0.8.6, and 0.9.0. The `Drop` body is the same in all three. The
 `rust-database` skill, when it is installed, owns the minimum sqlx version, commit, rollback, and
-unknown-commit-outcome handling.
+unknown-commit-outcome handling. Require sqlx 0.9.0 or later when a timeout or `select!` can
+cancel `begin()`.
 
 ```rust
 let tx = conn.begin().await?;

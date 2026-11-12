@@ -116,7 +116,9 @@ Use this only when the caller is a dedicated service thread that has nothing els
 2. Wrap the `block_on` body in `catch_unwind`. In Shape A, it records a panic into shared state
    before the thread ends. In Shape B, it turns an abort into an error for the host, because
    since Rust 1.81 a panic that reaches an `extern "C"` boundary aborts the process. Both need
-   `panic = "unwind"`. The `rust-panic-safety` skill, when it is installed, owns that policy.
+   `panic = "unwind"`. The `rust-panic-safety` skill, when it is installed, owns that policy;
+   confirm the shipped build with
+   `cargo rustc --locked -p <boundary-crate> --lib --release --target <shipping-triple> -- --print cfg`.
 3. Take ownership of a received file descriptor with a duplicate, because the host can close the
    original at any time. An `OwnedFd` closes on every error path with no cleanup code.
 4. Set a received socket to nonblocking before `from_std` or `AsyncFd::register`. On Unix,
