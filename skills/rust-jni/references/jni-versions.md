@@ -25,4 +25,5 @@ The 0.21 attach-guard mistakes are in
 [jni-threading-and-callbacks.md](jni-threading-and-callbacks.md). The 0.21
 hand-typed export name check is in
 [java-symbol-names.md](java-symbol-names.md). The `rust-panic-safety` skill,
-when it is installed, has the 0.21 panic-guard form.
+when it is installed, has the 0.21 panic-guard form: `catch_unwind(AssertUnwindSafe(..))`
+around the whole export body.
