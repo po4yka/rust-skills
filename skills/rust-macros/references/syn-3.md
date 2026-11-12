@@ -5,6 +5,22 @@ syn 3.0.0 was released on 2026-07-18. As of 2026-09 the current release is 3.0.6
 [release notes](https://github.com/dtolnay/syn/releases/tag/3.0.0)). `quote 1` and
 `proc-macro2 1` work with both majors, so only `syn` changes in `Cargo.toml`.
 
+## Pick the syn major
+
+As of 2026-09, `serde_derive`, `thiserror-impl`,
+`tokio-macros`, and `clap_derive` require `syn ^3`, while other popular macro crates still use
+syn 2. Each major in the tree is a separate build of a large crate.
+
+```bash
+cargo tree --locked -e normal,build -i syn
+```
+
+One version prints its dependents. Two majors print ``error: specification `syn` is ambiguous``
+and list both. Run `cargo tree --locked -e normal,build -i syn@2` to list the dependencies
+that still build syn 2. Use the major the tree already builds. When the tree has both or none, use
+`syn = "3"`. syn-2 code fails on syn 3 with E0599, E0609, or E0432 on renamed items such as
+`Type::BareFn`, `Signature::unsafety`, and `Arm::guard`: the next sections list each rename.
+
 ## Renamed items
 
 Each row was compiled against syn 3.0.6 on rustc 1.98.1. The last column is the error that

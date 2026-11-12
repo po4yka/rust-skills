@@ -2,14 +2,45 @@
 
 Contents:
 
+- [Textual scope](#textual-scope)
 - [Scope a macro by path](#scope-a-macro-by-path)
+- [Edition 2024 widened `expr`](#edition-2024-widened-expr)
+- [The recursion limit is 128 expansions](#the-recursion-limit-is-128-expansions)
 - [A caller's alias shadows a bare standard-library name](#a-callers-alias-shadows-a-bare-standard-library-name)
 - [Hygiene examples](#hygiene-examples)
 - [Follow sets](#follow-sets)
 - [Build a format string](#build-a-format-string)
 - [Nightly macro syntax](#nightly-macro-syntax)
 
-Every quoted message comes from rustc 1.98.1, edition 2024.
+Every quoted message comes from rustc 1.99.1, edition 2024.
+
+## Textual scope
+
+A refactor that moves the definition down the file breaks the build, and the
+message names no missing import.
+
+```text
+error: cannot find macro `hello` in this scope
+  |             ^^^^^ consider moving the definition of `hello` before this call
+note: a macro with the same name exists, but it appears later
+```
+
+The same rule applies across modules. A macro defined in `mod a` is invisible in `mod b`, even
+when `b` comes later:
+
+```text
+error: cannot find macro `only_here` in this scope
+  = help: have you added the `#[macro_use]` on the module/import?
+```
+
+Four ways to widen the scope; prefer the first, which keeps the macro private.
+
+| Goal | Write | Effect |
+| --- | --- | --- |
+| Use it in another module, crate-private | `pub(crate) use name;` after the definition | The macro becomes an ordinary item of that module, reachable by path |
+| Use it in later modules of the same crate | `#[macro_use] mod a;` | Later code in the parent module sees it |
+| Import it by path anywhere in the crate | `#[macro_export]` on the definition, then `use crate::name;` | The macro lands at the crate root, whatever module defines it |
+| Export it to other crates | `#[macro_export]`, then `use thatcrate::name;` in the caller | Same crate-root placement, now public |
 
 ## Scope a macro by path
 
@@ -30,6 +61,22 @@ fn main() {
     println!("{}", math::twice!(21));
 }
 ```
+
+## Edition 2024 widened `expr`
+
+In edition 2024 `$e:expr` also matches `const { 1 + 1 }` and the underscore expression `_`.
+Edition 2021 rejects the const block with ``error: no rules expected keyword `const` `` and
+the underscore with ``error: no rules expected reserved identifier `_` ``. An arm that
+assumes the capture is a value expression can now receive `_`, which is not one. Use
+`expr_2021` to keep the edition 2021 match set.
+
+## The recursion limit is 128 expansions
+
+A `tt`-muncher costs one expansion per token. Measured with a counting muncher: 127 input
+tokens compile, 128 fail with ``error: recursion limit reached while expanding `count!` ``.
+The limit of the crate that invokes the macro applies. A `#![recursion_limit = "256"]` in the
+macro's own crate does not help a downstream caller, so an exported macro must stay under 128
+expansions per call. Prefer a shape that halves the input per step.
 
 ## A caller's alias shadows a bare standard-library name
 
@@ -180,7 +227,7 @@ explicitly, or forward `$fmt` to `println!` unchanged when you need inline captu
 
 ## Nightly macro syntax
 
-As of Rust 1.98.1, these forms fail on the stable toolchain. Do not copy them from nightly code.
+As of Rust 1.99.1, these forms fail on the stable toolchain. Do not copy them from nightly code.
 
 | Form | Error |
 | --- | --- |
