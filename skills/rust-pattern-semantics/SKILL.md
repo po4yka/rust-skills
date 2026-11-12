@@ -33,8 +33,8 @@ compile and change what the code moves, borrows, or matches.
 | Match ergonomics reservations | Edition 2024 | Uncoded errors, see [Edition 2024 match ergonomics](#edition-2024-match-ergonomics) |
 
 Do not add a `#![feature]` gate for an E0658 from this table. Raise `rust-version`, or use the
-fallback: a nested `if let`, or `assert!(matches!(..))`. The `rust-compiler-errors` skill, when it
-is installed, lists the other compile-error repair hazards.
+fallback: a nested `if let`, or `assert!(matches!(..))`. The `rust-compiler-errors` skill lists
+other repair hazards.
 
 A `let` chain inside a match guard compiles on edition 2021 (measured on rustc 1.99.1). A chain in
 an `if` or `while` condition does not.
@@ -295,4 +295,4 @@ Each applies when it is installed.
 | `rust-compiler-errors` | General E0382, E0507, E0509, E0499, and E0502 triage |
 | `rust-discipline` | Exhaustiveness policy and public API review |
 | `rust-callback-bounds` | Closure patterns and higher-ranked callback bounds |
-| `cargo-workflows` | Edition migration and compatibility lints |
+| `cargo-workflows` | Edition migration: `-W rust_2024_compatibility`, then `cargo fix --edition` |
