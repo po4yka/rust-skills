@@ -165,6 +165,20 @@ class TestExcuses(unittest.TestCase):
                 self.assertEqual((fragment, list(suspects)), (0, ["ex"]))
 
 
+class TestCompileFailCodes(unittest.TestCase):
+    def test_an_extra_coded_error_fails_a_named_fence(self):
+        manifest = {"x": entry("compile_fail", codes=["E0107"])}
+        errors = {"x": [error("E0107", "wrong number of generic arguments"), error("E0308", "mismatched types")]}
+        problems = analyze.compile_fail_failures(manifest, errors)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("also reported E0308", problems[0])
+
+    def test_only_the_named_code_passes(self):
+        manifest = {"x": entry("compile_fail", codes=["E0499"])}
+        errors = {"x": [error("E0499", "cannot borrow"), error("E0499", "cannot borrow")]}
+        self.assertEqual(analyze.compile_fail_failures(manifest, errors), [])
+
+
 class TestTestPass(unittest.TestCase):
     """The cfg(test) run adds errors to compile and run blocks, never to compile_fail."""
 

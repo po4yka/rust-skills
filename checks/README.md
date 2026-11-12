@@ -128,7 +128,8 @@ These checks run on the buckets, and each one fails the build:
 2. **Run compilation.** Every block tagged `run` must compile cleanly. It cannot
    use the undefined-name or baseline exceptions.
 3. **compile_fail.** Every block tagged `compile_fail` has to fail, and has to
-   produce the error codes its fence names. A demonstration that starts
+   produce the error codes its fence names and no other coded error, apart from
+   an unresolved name. A demonstration that starts
    compiling after a language change is a claim the catalog can no longer make.
 4. **Fragments.** A fragment that `fragments.txt` does not list fails the run.
 5. **Ignored blocks.** A `rust,ignore` block that `ignored.txt` does not list

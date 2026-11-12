@@ -119,7 +119,17 @@ def check(event: object) -> int:
         return 0
     problems = failures(result.stdout)
     if not problems:
-        return 0  # not a verdict the hook can report; check.sh still runs the validator
+        # A non-zero exit with no FAIL line is a crash (a traceback on stderr), not a
+        # verdict. Say so: a silent hook reads as a clean catalog.
+        tail = [line for line in result.stderr.strip().splitlines() if line.strip()][-MAX_LINES // 4 :]
+        print(
+            f"scripts/validate-skills.py crashed (exit {result.returncode}) after the edit to "
+            f"{', '.join(touched)}:\n"
+            + "\n".join(f"  {line}" for line in tail)
+            + "\nRun python3 scripts/validate-skills.py and fix the cause before the next edit.",
+            file=sys.stderr,
+        )
+        return 2
     shown = problems[:MAX_LINES]
     if len(problems) > MAX_LINES:
         shown.append(f"... and {len(problems) - MAX_LINES} more; run python3 scripts/validate-skills.py")

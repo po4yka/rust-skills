@@ -86,12 +86,14 @@ class TestFailures(unittest.TestCase):
 
 
 class TestMain(unittest.TestCase):
-    def run_hook(self, event: object, validator_stdout: str | None = None, code: int = 1) -> tuple[int, str]:
+    def run_hook(
+        self, event: object, validator_stdout: str | None = None, code: int = 1, validator_stderr: str = ""
+    ) -> tuple[int, str]:
         stdin = io.StringIO(event if isinstance(event, str) else json.dumps(event))
         stderr = io.StringIO()
         patches = [mock.patch.object(sys, "stdin", stdin), contextlib.redirect_stderr(stderr)]
         if validator_stdout is not None:
-            result = subprocess.CompletedProcess([], code, validator_stdout, "")
+            result = subprocess.CompletedProcess([], code, validator_stdout, validator_stderr)
             patches.append(mock.patch.object(agent_hook.subprocess, "run", return_value=result))
         with contextlib.ExitStack() as stack:
             for patch in patches:
@@ -120,9 +122,13 @@ class TestMain(unittest.TestCase):
         self.assertEqual((code, stderr), (0, ""))
         run.assert_not_called()
 
-    def test_a_validator_crash_does_not_block_the_edit(self):
-        code, stderr = self.run_hook(self.edit("README.md"), "Traceback (most recent call last):\n", code=1)
-        self.assertEqual((code, stderr), (0, ""))
+    def test_a_validator_crash_is_reported_not_hidden(self):
+        # A crash prints no FAIL line. A silent hook would read as a clean catalog.
+        trace = "Traceback (most recent call last):\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff\n"
+        code, stderr = self.run_hook(self.edit("README.md"), "", code=1, validator_stderr=trace)
+        self.assertEqual(code, 2)
+        self.assertIn("crashed (exit 1)", stderr)
+        self.assertIn("UnicodeDecodeError", stderr)
 
     def test_a_malformed_event_does_not_block_the_edit(self):
         self.assertEqual(self.run_hook("not json"), (0, ""))
