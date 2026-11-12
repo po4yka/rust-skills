@@ -17,7 +17,7 @@ Skip the items that do not apply.
 | Anything a safe crate already wraps | Use the crate |
 
 Performance is a reason only after a measurement. The `rust-performance` skill, when it is
-installed, shows how to produce one. If a new site fits no row, add the case and say why it is
+installed, shows how to produce one with `samply` or `cargo flamegraph`. If a new site fits no row, add the case and say why it is
 acceptable.
 
 ## Every unsafe block

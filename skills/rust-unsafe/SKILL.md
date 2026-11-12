@@ -63,7 +63,8 @@ invariant), and a `# Safety` section with the caller obligations on every `pub u
 default `unsafe_op_in_unsafe_fn` warns only from edition 2024, the two restriction lints are
 off, and `missing_safety_doc` only warns. Set the lints in `[workspace.lints]`, and restate them
 at the root of each crate that contains unsafe. The `rust-lints` skill, when it is installed,
-owns the workspace floor, the suppression policy, and the CI lint gate.
+owns the workspace floor, the suppression policy, and the CI lint gate
+(`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`).
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -106,7 +107,8 @@ A clean Miri run is evidence about aliasing, provenance, initialization, and ali
 `-Zmiri-symbolic-alignment-check`) on the paths that the tests execute. It is not evidence about
 unexecuted paths, foreign code, or a library contract that the abstract machine never evaluates,
 such as UTF-8 validity or the allocator rule of `String::from_raw_parts`. The
-`rust-sanitizers-miri` skill, when it is installed, owns the Miri flag policy and the sanitizers.
+`rust-sanitizers-miri` skill, when it is installed, owns the Miri flag policy and the sanitizers;
+add a Tree Borrows lane with `MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked`.
 
 The change is complete when clippy passes, a debug test executes each unsafe path, every block
 and `unsafe impl` has a SAFETY comment that names its invariant, and the report names each unsafe
@@ -157,7 +159,8 @@ the compiler nor Miri reports the construction. When you audit:
 1. `rg 'from_utf8_unchecked|from_raw_parts' --type rust -n`. Every hit
    needs a SAFETY comment that traces back to where the invariant is established.
 2. Run `cargo deny --config deny.toml --locked check advisories` to find a dependency with a
-   known soundness advisory. The `rust-security` skill, when it is installed, owns the policy.
+   known soundness advisory. The `rust-security` skill, when it is installed, owns the policy;
+   set `unsound = "all"` so that a transitive unsound crate also fails.
 3. When a dependency's unsafe transits through your API, restate the assumed invariant in your
    own `# Safety` section.
 
@@ -217,7 +220,8 @@ The grep is a floor: it misses a pointer cast in a later statement. `clippy::cas
 ## Panics and unwinding at the FFI boundary
 
 The `rust-panic-safety` skill, when it is installed, owns the panic policy at a C ABI or JNI
-boundary. Two soundness facts stay here:
+boundary: wrap each `extern "C"` entry body in `catch_unwind` and ship `panic = "unwind"`. Two
+soundness facts stay here:
 
 - Below `rust-version` 1.81, an unwind out of `extern "C"` is undefined behavior, not an abort.
 - A foreign exception that unwinds into Rust through an import declared `extern "C"` is
