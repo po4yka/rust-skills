@@ -200,6 +200,10 @@ The error says ``expected `S`, found `&mut S` ``. On 1.97 and 1.98 its help line
 value and write `takes(pin!(s))`. Never use `unsafe { Pin::new_unchecked(s) }` here, because the
 caller can still move `*s` after the call returns.
 
+Rustc 1.88 to 1.96 sometimes coerced `pin!(r)` to `Pin<&mut T>`, and so pinned a value that the
+caller could still move. Those versions also accept `pin!(&mut s)`, after which safe code moves the
+local once the pin drops.
+
 ## A named stack binding under Miri
 
 This function builds with no diagnostic:
