@@ -34,13 +34,13 @@ output comes from Miri 0.1.0 on nightly 2026-05-15.
 Rungs one and two need only ordinary tests. Run these checks when you add or change a
 lifetime-carrying store (rung three), its accessors, its extraction layer, or its `unsafe` cast:
 
-1. If a nightly toolchain with the miri component is installed (`rustup +nightly component add
+1. The `rust-sanitizers-miri` skill, when it is installed, owns the Miri policy. If a nightly
+   toolchain with the miri component is installed (`rustup +nightly component add
    miri`), run `cargo +nightly miri test --locked` on the store's tests. This is the default
    Stacked Borrows model, and it is the gate. Without Miri, report the `unsafe` cast as not
    checked by Miri.
 2. Run `MIRIFLAGS="-Zmiri-tree-borrows" cargo +nightly miri test --locked` after it, as additional
-   evidence. Never make it the only gate. The `rust-sanitizers-miri` skill, when it is installed,
-   owns the Miri policy.
+   evidence. Never make it the only gate.
 3. Pin each rejection the design relies on with a `compile_fail` doctest: a borrow shorter than
    the map in `put`, a `get` result used after the map drops, a `Cell` element shortened through
    `&AnyMap<'short>`, a second tag for one element type, and, for an extraction layer, a system
