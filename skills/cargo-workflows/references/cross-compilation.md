@@ -1,8 +1,7 @@
 # Cross-Compilation and Host Build Integration
 
-Read this file when you set up `.cargo/config.toml` for a non-host target, give cargo a linker or
-C toolchain for a target, run tests for a target, or drive cargo from Gradle, Xcode, CMake, or
-another host build system. Platform packaging lives elsewhere: the `rust-android-build` skill owns
+Read this file when you set up `.cargo/config.toml` for a non-host target, or drive cargo from
+Gradle, Xcode, CMake, or another host build system. Platform packaging lives elsewhere: the `rust-android-build` skill owns
 the NDK, per-ABI rustflags, and Gradle `jniLibs` work, and the `rust-ios-build` skill owns
 XCFramework and SwiftPM work, when they are installed.
 
@@ -10,8 +9,7 @@ Contents:
 
 - Put shared config at the invocation root
 - Target rustflags
-- Linker and C toolchain per target
-- Separate cross-compilation from test execution
+- Linker, C toolchain, and test runners
 - Apple targets
 - Wiring a host build system to cargo
 
@@ -52,45 +50,11 @@ entries, then `build.rustflags`. An environment variable replaces the config ent
 add to them. A CI job that sets `RUSTFLAGS=-Dwarnings` therefore drops the per-target link flags
 without a message.
 
-## Linker and C toolchain per target
+## Linker, C toolchain, and test runners
 
-Call cargo directly and set the linker through the environment at build time.
-
-```bash
-export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
-export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
-export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
-cargo build --locked --target aarch64-unknown-linux-gnu --profile <profile>
-```
-
-`CARGO_TARGET_<TRIPLE>_LINKER` uses the triple upper-cased with underscores; cargo reads it. The
-`CC_<triple>`, `CXX_<triple>`, and `AR_<triple>` variables use the triple with underscores (the
-`cc` crate also accepts hyphens); `cc`-based build scripts read them. Set both kinds, or the Rust
-code links with one compiler and the bundled C code builds with another. For Android NDK drivers,
-the `rust-android-build` skill has the table.
-
-## Separate cross-compilation from test execution
-
-`cargo test --target <triple>` builds a target test binary, then tries to run it. Since Rust 1.89
-it also builds and runs doctests for that target. Configure `target.<triple>.runner` when an
-emulator, device bridge, or remote executor can run the binaries:
-
-```toml
-[target.aarch64-unknown-linux-gnu]
-runner = ["qemu-aarch64", "-L", "/usr/aarch64-linux-gnu"]
-```
-
-If no runner exists, build the tests without running them and report the lane as compile-only.
-Do not call it a test pass.
-
-```bash
-cargo test --locked --no-run --target <triple>
-```
-
-Mark a doctest that cannot run on a target with an `ignore-<target-substring>` fence attribute,
-for example `ignore-android`. Rust 1.88 and later honor it. Keep target execution in a separate
-device or emulator lane and record the digest of the exact artifact that it runs.
+The `rust-cross-compilation` skill, when it is installed, owns the per-target linker and
+`CC_<triple>`/`CXX_<triple>`/`AR_<triple>` variables, musl static builds, `cross`,
+`cargo-zigbuild`, Docker, qemu runners, and the compile-only `--no-run` lane rule.
 
 ## Apple targets
 
