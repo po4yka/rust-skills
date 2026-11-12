@@ -255,9 +255,9 @@ Run `npx skills --help` for the current flag list. The CLI is open source at
 
 A single skill installs on its own, but it names sibling skills for work it does not own. A
 sibling in the same bundle is present when you install the bundle. A reference into another
-bundle should carry a one-sentence fallback that states the rule, so a partial install degrades
-instead of dead-ending; `python3 scripts/validate-skills.py --report cross-refs` lists the
-references that do not have one yet.
+bundle carries the rule in the same sentence, with its command or API, so a partial install
+degrades instead of dead-ending. The validator fails on a reference without one;
+`python3 scripts/validate-skills.py --report cross-refs` lists any.
 
 ## Which skill do I need?
 

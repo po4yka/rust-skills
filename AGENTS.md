@@ -236,7 +236,9 @@ limit. Never raise an entry to make a change pass. `check.sh` runs the validator
 `--ceilings-base` set to the merge base of `HEAD` and `origin/main`, so an added or raised entry
 fails CI; a local clone without `origin/main` skips that comparison and says so. The one
 exception is mechanical: a change that resolves cross-bundle references may raise that skill's
-`body_tokens` by up to 60 per resolved reference, the size of one fallback sentence.
+`body_tokens` by up to 60 per resolved reference, the size of one fallback sentence. As of
+2026-11-12 no skill has a cross-bundle reference without a fallback, and `[cross_refs]` holds no
+entry, so any new one fails.
 `--report budget` prints sizes, and `--report cross-refs` lists every reference that has no
 fallback.
 

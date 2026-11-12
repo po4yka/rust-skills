@@ -7,6 +7,15 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+### Changed (cross-bundle fallbacks)
+
+- The validator checks every code span that names a skill of another bundle, in prose, lists,
+  and table cells, not only the "the `x` skill" form. It found 251 references with no fallback,
+  not 130. Each now carries the owner's rule with its command or API in the same or the next
+  sentence, or was deleted where it only repeated a rule already stated nearby. No skill keeps a
+  `[cross_refs]` ceiling, so any new reference without a fallback fails. Bodies grew only under
+  the documented exception (60 tokens per resolved reference); most shrank.
+
 ### Changed (audit P3)
 
 - Bodies moved conditional material to references: 30 skills are smaller, and `memory-model` is
