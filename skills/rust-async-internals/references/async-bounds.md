@@ -43,7 +43,7 @@ until a type probe shows which call trait the exact closure needs.
 
 `fn f<Fut: Future>(cb: impl Fn(&T) -> Fut)` accepts no `async fn` that borrows its argument.
 `async fn handle(r: &Request)` returns a different opaque type per region, and a single `Fut`
-parameter is chosen once, outside the `for<'a>` binder. rustc 1.98.1 prints:
+parameter is chosen once, outside the `for<'a>` binder. rustc 1.99.1 prints:
 
 ```text
 error[E0308]: mismatched types
@@ -273,7 +273,7 @@ async fn run() {
 fn main() {}
 ```
 
-When `state` is itself a `&mut State` binding, such as a parameter, rustc 1.98.1 reports E0524
+When `state` is itself a `&mut State` binding, such as a parameter, rustc 1.99.1 reports E0524
 ("two closures require unique access to `*state` at the same time") for the same shape.
 
 Correct approaches, in order of preference:
