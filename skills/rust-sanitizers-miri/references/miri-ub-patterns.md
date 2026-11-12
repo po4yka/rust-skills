@@ -17,8 +17,8 @@ Contents:
 - Sanitizer comparison
 - Coverage decision table
 
-The Miri messages were measured on nightly 2026-05-15 (`miri 0.1.0
-(d7f14d3d89 2026-05-15)`). Tags such as `<TAG>` and allocation ids such as
+The Miri messages were measured on nightly 2026-11-09 (`miri 0.1.0
+(ac8310ba64 2026-11-09)`). Tags such as `<TAG>` and allocation ids such as
 `allocN` change with the program, the toolchain, the seed and the flags. Match
 on the rest of the text.
 Re-measure a message before you quote it for a newer nightly.
@@ -293,9 +293,8 @@ the `&*(&x as *const u32)` form above (checked on Rust 1.98.1).
 | UBSan | Integer UB, null dereference and similar, inside C or C++ code | clang or gcc `-fsanitize=undefined` on the C or C++ dependency; rustc has no UBSan option | small runtime cost (clang docs) |
 | `loom` | Interleavings of an atomics-based structure, within its model | stable | high; bounded model |
 
-`loom` has model limits: it treats `SeqCst` accesses as `AcqRel` and does not
-explore load buffering. See the `memory-model` skill before you read a `loom`
-pass as proof.
+`loom` has model limits. The `rust-test-tools` skill, when it is installed,
+owns them; read its loom section before you read a `loom` pass as proof.
 
 ## Coverage decision table
 
