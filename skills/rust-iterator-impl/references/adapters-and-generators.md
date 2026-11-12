@@ -7,6 +7,7 @@ Contents:
 
 - [Which adapter loses the exact length](#which-adapter-loses-the-exact-length)
 - [Three orderings, three results](#three-orderings-three-results)
+- [The from_fn shape](#the-from_fn-shape)
 - [Old generator snippets](#old-generator-snippets)
 - [Two neighbours of from_fn](#two-neighbours-of-from_fn)
 - [What from_fn costs](#what-from_fn-costs)
@@ -67,6 +68,26 @@ fn main() {
 
 Both forms yield the same elements in the same order, so a test that checks only the elements
 passes with either. The indices are mirrored. Assert on the pair, not on the element.
+
+## The from_fn shape
+
+A `move` closure owns the state, and the function returns `impl Iterator`:
+
+```rust,run
+fn evens(limit: u32) -> impl Iterator<Item = u32> {
+    let mut next = 0;
+    std::iter::from_fn(move || {
+        if next >= limit { return None; }
+        next += 2;
+        Some(next - 2)
+    })
+}
+
+fn main() {
+    assert_eq!(evens(10).collect::<Vec<_>>(), vec![0, 2, 4, 6, 8]);
+    assert_eq!(evens(10).size_hint(), (0, None));
+}
+```
 
 ## Old generator snippets
 
