@@ -155,7 +155,7 @@ feature modules             <- depend on the port only
   `nonisolated` isolation. Do not add `.defaultIsolation(MainActor.self)` to it,
   and do not compile the generated file in an app target whose default actor
   isolation is `MainActor`. The generated FFI code does not compile there
-  (uniffi-rs #2818).
+  (uniffi-rs #2818). The `rust-swift-ffi` skill owns the isolation settings.
 - **Adapter arms.** Make every `when` and `switch` over generated types
   exhaustive, with no wildcard arm. A drifted binding is then a compile error,
   not silent behavior.

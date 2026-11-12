@@ -25,7 +25,7 @@ Treat that as the second line of defence, not the first:
 | Property | Value |
 |----------|-------|
 | When it fires (Swift) | At the first call into the library, not at compile time |
-| When it fires (Kotlin 0.30.0–0.32.2) | Only inside `uniffiEnsureInitialized()`. A single-crate binding never calls it, so the consumer must call it at startup |
+| When it fires (Kotlin 0.30.0–0.32.2) | Only inside `uniffiEnsureInitialized()`; the checksum section of `SKILL.md` has the startup rule |
 | How it fails | Kotlin: `ExceptionInInitializerError` caused by `RuntimeException`, then `NoClassDefFoundError` on later calls; Swift: `fatalError`. No fallback |
 | What it covers | The signatures of exported functions, constructors, and methods |
 | What it does **not** cover | Record fields and enum variants. A type enters a checksum only by its name (uniffi-rs #1789) |
@@ -52,7 +52,7 @@ Do not put every skew failure under the record checksum gap:
 | New library with an added record field | Stale bindings without that field | Trailing data is rejected or ignored; behavior depends on generated reader and version |
 | Type-compatible field reorder on either side | Opposite stale layout | Values can go to the wrong fields without a checksum error |
 | One generated interface side is stale at link time | Newer other side | Undefined symbols or linker failure; uniffi-rs #333 asks for clearer diagnostics |
-| Same revision, UniFFI 0.30.0–0.32.0 | Same revision, Kotlin on an ARM32 device (0.30.0–0.31.1) or an `arm64-v8a` device (0.31.2–0.32.0) | Checksum mismatch from a UniFFI defect, not from skew (uniffi-rs #2740, #2939, #2935). Upgrade to 0.32.1 or later |
+| Same revision, UniFFI 0.30.0–0.32.0 | Same revision, Kotlin on an ARM32 device (0.30.0–0.31.1) or an `arm64-v8a` device (0.31.2–0.32.0) | Checksum mismatch from a UniFFI defect, not from skew. "Pin the generator to the runtime" in `SKILL.md` has the version ranges and the fix |
 
 ---
 
@@ -168,8 +168,7 @@ one atomic change:
 
 1. Read the uniffi CHANGELOG for every version you skip, patch releases
    included. A patch release can fix one device checksum failure and add
-   another: 0.31.2 fixed ARM32 and broke `arm64-v8a`, and 0.32.1 fixed
-   `arm64-v8a`.
+   another; `SKILL.md` ("Pin the generator to the runtime") has the ARM cases.
 2. Bump the version once, at the workspace root. Let `Cargo.lock` freeze the
    patch.
 3. If you pass `--config`, convert the file to the global config format when

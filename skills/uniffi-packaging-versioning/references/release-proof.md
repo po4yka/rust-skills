@@ -35,10 +35,9 @@ and Android build-tool versions that compile the generated file. Generated code
 can change when any item in this tuple changes even when the Rust API does not.
 Set `bindings.kotlin.omit_checksums = false` and
 `bindings.swift.omit_checksums = false`. A lane cannot pass release proof when
-the generated binding omits UniFFI checksum checks. On Kotlin with UniFFI
-0.30.0–0.32.2, the setting is not enough: the checks run only inside
-`uniffiEnsureInitialized()`, so the consumer must call it before the proof
-call.
+the generated binding omits UniFFI checksum checks. On Kotlin the setting is
+not enough: call `uniffiEnsureInitialized()` before the proof call (the checksum
+section of `SKILL.md` says why).
 
 Record Apple toolchain fields separately. Record `xcodebuild -version`,
 `swift --version`, the package `swift-tools-version`, the configured Swift
@@ -67,8 +66,8 @@ Use the smallest paired lanes that prove the declared contract:
 2. Run Android at the declared floor and current API levels. Select ABI lanes
    from the shipping policy instead of creating a second ABI list. Give every
    shipping ABI family that CI can execute at least one runtime lane. A host
-   JVM test is not a runtime lane: the Kotlin checksum defects in UniFFI
-   0.30.0–0.32.0 appeared only on ARM devices. For each remaining shipping ABI family, retain
+   JVM test is not a runtime lane: the Kotlin checksum defects in `SKILL.md`
+   appeared only on ARM devices. For each remaining shipping ABI family, retain
    package and device-spec inspection and record runtime proof as blocked or
    unverified. Do not report inspection as runtime proof.
 3. Compile the Apple wrapper with the floor Swift/Xcode tuple and the current
