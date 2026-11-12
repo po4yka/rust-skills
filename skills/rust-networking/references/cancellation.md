@@ -30,3 +30,9 @@ Use `rust-async-internals`, when it is installed, to implement the cancellation
 tree. At minimum, give every spawned task an owner that cancels its
 `CancellationToken` and then joins its `JoinHandle`, and verify that dropped
 futures leave no locks, permits, or transactions behind.
+
+## Stop reading and drop uncertain connections
+
+Stop reading after cancellation, a body-limit error, or an expired deadline.
+Release or reset the protocol stream as the library requires. Do not return a
+connection to the pool when its protocol state is uncertain.

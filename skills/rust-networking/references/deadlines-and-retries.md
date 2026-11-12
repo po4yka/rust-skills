@@ -1,5 +1,8 @@
 # Deadline phases and retry delay
 
+Contents: phase caps; idle and total timeouts; retry classification; replayable uploads; retry budget; full-jitter
+delay; sources.
+
 ## Phase caps
 
 Each cap bounds one failure mode. The operation deadline bounds all of them together. Give each
@@ -13,6 +16,45 @@ phase `min(configured phase cap, operation deadline - monotonic now)`.
 | First-byte cap | After request complete | Response headers arrive | Slow handler or upstream |
 | Read idle cap | After body starts | Each body chunk | Peer that stops sending |
 | Operation deadline | At API entry | Body consumed or discarded | All cumulative work |
+
+## Idle and total timeouts
+
+An idle timeout is not a total transfer timeout. Reset it only after useful
+progress. A peer that sends one byte before every idle timeout can still consume
+the operation deadline, so enforce both. With tower-http, pair
+`RequestBodyTimeoutLayer` (idle) with `RequestBodyDeadlineLayer` (total,
+tower-http 0.7+). With reqwest, pass the remaining time to
+`RequestBuilder::timeout` on every attempt.
+
+## Retry classification
+
+HTTP `GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`, and `TRACE` have idempotent
+method semantics. Application behavior can still make an operation unsafe to
+repeat. Do not infer replay safety from the method name alone. Do not retry
+`POST` unless the application contract provides idempotency or proves that the
+server did not apply the request.
+
+Use this default classification, then narrow it for the target service:
+
+| Result | Automatic retry |
+|---|---|
+| DNS temporary failure | Yes, if another attempt fits |
+| Connect refused, reset, or timeout | Yes, for an eligible operation |
+| Connection closes before response headers | Yes, for an eligible operation |
+| HTTP `408`, `429`, `502`, `503`, or `504` | Yes, when service policy permits it |
+| HTTP `Retry-After` | Wait at least the valid server delay, within the deadline |
+| Other `4xx` | No |
+| TLS certificate or hostname failure | No |
+| Request encode or validation failure | No |
+| Body stream failed after response headers | No by default |
+| Cancellation or exhausted deadline | No |
+
+## Replayable uploads
+
+For uploads, make replayability explicit. A byte buffer is replayable. A file is
+replayable only when each attempt opens a new handle and starts at the same
+offset. A live channel, socket, decoder, or one-shot generator is not
+replayable.
 
 ## Retry budget
 
