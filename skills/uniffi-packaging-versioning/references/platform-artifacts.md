@@ -9,6 +9,7 @@ Contents:
 - Android: toolchain pointers, output layout, build-system wiring, the host
   library for the generator
 - Apple: the UniFFI header and modulemap, `uniffi-bindgen-swift`
+- Crate type and profiles: the manifest, the slice commands, the deployment target
 - Consumer layering: the generated module, the adapter, JNA, SwiftPM targets,
   Swift isolation, exhaustive arms
 
@@ -132,6 +133,41 @@ Rules:
   shipping `.a` slice.
 
 ---
+
+## Crate type and profiles
+
+Select the crate type on the packaging command, not in the manifest:
+
+```toml
+# Cargo.toml of the FFI crate
+[lib]
+crate-type = ["lib"]   # the default. Do not add "cdylib" or "staticlib" here.
+# Set no `name` key. The artifact name then follows the package name, with
+# hyphens replaced by underscores.
+```
+
+```bash
+# Android slice
+cargo rustc --locked --profile android-jni --target aarch64-linux-android \
+  --crate-type cdylib -p <ffi-crate> --lib
+```
+
+Reason: `crate-type = ["cdylib", "staticlib", "lib"]` in the manifest makes
+every `cargo build`, `clippy`, and `test` link all three artifacts, in every
+lane.
+
+Export `IPHONEOS_DEPLOYMENT_TARGET` once, as the "Set one deployment target"
+section of the `rust-ios-build` skill shows. Then build each Apple slice with
+the `--crate-type staticlib` command of that skill, which sets `SDKROOT`. If
+the deployment target is not set, the C objects and the Rust objects of one
+slice get different minimum iOS versions.
+
+Declare the `android-jni` and `ios-release` profiles in the workspace
+`Cargo.toml`, as the `rust-android-build` and `rust-ios-build` skills show. Each
+one inherits `release`, keeps `panic = "unwind"`, sets `strip = "none"`, and
+adds line tables; without them, native symbols and dSYMs get no Rust file or
+line data. Keep `--profile release` only for the host library that feeds the
+generator.
 
 ## Consumer layering
 
