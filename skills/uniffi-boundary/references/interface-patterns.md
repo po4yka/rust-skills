@@ -7,7 +7,8 @@ every fallible export returns `Result`.
 
 Contents: Minimal boundary crate; Crate layout and thin adapter; Constructors; Long-running
 operations with progress and cancel; Async exports; Versioned payloads cross as JSON strings;
-Coarse boundary and crossing cost; Large data by path; Trait interfaces versus Objects.
+Coarse boundary and crossing cost; Large data by path; Trait interfaces versus Objects;
+Foreign trait rules; Mobile ownership shape; A non-`Sync` Object field.
 
 ## Minimal boundary crate
 
@@ -274,3 +275,50 @@ to read, and to version.
 `with_foreign` is a deprecated alias for `rust, foreign`, and 0.32 accepts it without a
 warning. Do not add either to new code. Keep them only in a surface that you migrate, or on a
 crate pinned below 0.32, where `with_foreign` is the only spelling.
+
+## Foreign trait rules
+
+- Put `Send + Sync` on the trait. Rust calls it from a worker thread.
+- Give every method a `Result<_, CallbackError>` return. The callback error is a
+  `uniffi::Error` type that implements `From<uniffi::UnexpectedUniFFICallbackError>`.
+  Without that impl, an undeclared foreign exception panics in the generated code.
+- Map the callback error into the operation's error with an exhaustive `From`. Never discard
+  the callback result. The `ffi-error-progress-cancel` skill owns the listener-failure
+  policy: by default the job fails with `EngineError::Unexpected`.
+- Pass every argument by value. Foreign-trait methods do not accept references
+  (uniffi-rs#2263).
+- Keep the trait coarse: one `on_progress(event)`, not a per-item or per-row callback. A
+  synchronous callback blocks the Rust worker until Kotlin or Swift returns. Coalesce and
+  rate-limit in Rust before you call out.
+- An `Arc<dyn Trait>` keeps the foreign object alive. Hold it for one call or one job. A
+  listener that must outlive a job needs a registration token and an idempotent release
+  method (the `ffi-error-progress-cancel` skill owns it); never store one with no release
+  path.
+- Take the trait as `Arc<dyn Trait>`. Use `#[uniffi::export(foreign)]` when only foreign
+  implementations cross, and `#[uniffi::export(rust, foreign)]` when both sides implement it.
+  Do not add `callback_interface` or, on 0.32 or later, `with_foreign` to new code
+  (`references/interface-patterns.md` has the migration rule).
+
+## Mobile ownership shape
+
+- Export engine Objects whose lifetimes are independent of UI owners. Several engine Objects
+  can hold isolated state and share one process execution provider. Do not model an Android
+  `Activity`, a `ViewModel`, a Swift view controller, or a Swift task as a Rust Object.
+- The `ffi-error-progress-cancel` skill owns the execution model, idempotent initialization,
+  and non-blocking callback release.
+
+## A non-`Sync` Object field
+
+```rust,compile_fail,E0277
+uniffi::setup_scaffolding!();
+
+mod counter {
+    #[derive(uniffi::Object)]
+    pub struct Counter {
+        hits: std::cell::Cell<u32>, // `Cell` is not `Sync`
+    }
+}
+```
+
+The error names the field type at the derive, not at a call site. Here it is
+`` `Cell<u32>` cannot be shared between threads safely ``.
