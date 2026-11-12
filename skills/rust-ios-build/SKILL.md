@@ -116,10 +116,10 @@ pub const IS_APPLE_SIMULATOR: bool = cfg!(all(
 ));
 ```
 
-Rust 1.91 and later set `target_env = "sim"`. Rust 1.78 through 1.90 set
-`target_abi = "sim"`. Keep both checks when the workspace MSRV is 1.78 to 1.90.
-Below Rust 1.78, `cfg(target_abi)` is unstable and stable Rust rejects it. Read
-the `TARGET` variable in `build.rs` and emit a custom cfg instead.
+Rust 1.78 and later set `target_abi = "sim"`; Rust 1.91 and later also set
+`target_env = "sim"` (Rust 1.99.1 prints both). The `any(...)` form holds for
+every MSRV from 1.78. Below 1.78, `cfg(target_abi)` is unstable: read `TARGET`
+in `build.rs` and emit a custom cfg.
 
 Keep platform differences at the host boundary. Do not fork domain logic for
 device and simulator builds.
@@ -359,8 +359,8 @@ repository:
 )
 ```
 
-Name the binary target after the module in the modulemap, because Apple
-requires the two names to match. A local `path` target
+By default, name the binary target after the modulemap module, so the target
+and `import` names agree. A local `path` target
 has no checksum. Compile a Swift target that depends on the binary target.
 Import the module and call `native_core_abi_version()` in a test or smoke
 screen.
