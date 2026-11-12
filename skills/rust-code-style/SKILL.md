@@ -1,6 +1,6 @@
 ---
 name: rust-code-style
-description: Use when laying out Rust modules and source files, choosing visibility (pub, pub(crate), pub(super)), writing lib.rs re-exports or a prelude, ordering items, fixing import grouping, choosing thiserror or anyhow, writing rustdoc Errors and Panics sections, or reviewing a diff for layout and readability. Triggers on mod.rs, re-export, unreachable_pub, Iterator for_each, or flat_map over a Result.
+description: Use when laying out Rust modules and source files, choosing visibility (pub, pub(crate), pub(super)), writing lib.rs re-exports or a prelude, ordering items, fixing import grouping, choosing thiserror or anyhow, writing rustdoc Errors and Panics sections, or reviewing layout and readability. Triggers on mod.rs, re-export, unreachable_pub, Iterator for_each, or flat_map over a Result.
 license: BSD-3-Clause
 ---
 
@@ -299,8 +299,7 @@ that must compile but must not run. Use `ignore` only when the example cannot co
   from a snake_case function (the `rust-jni` skill).
 - Name a test function after the behavior it proves: `fn decoder_rejects_truncated_frame()`.
   The failure output then reads as a sentence.
-- Do not abbreviate a public API name. An abbreviation in a local binding is fine when the
-  context is clear.
+- API method naming: the `rust-discipline` skill, when it is installed.
 - Write a crate name with hyphens in `Cargo.toml` (`app-protocol`). The path in code then uses
   underscores (`app_protocol`).
 - Give the crates of one workspace one shared prefix, so an import shows at a glance whether the
