@@ -143,7 +143,7 @@ See `rust-crate-architecture` for the layering rules behind this.
 
 ### Host builds
 
-`rust-lld` is the default linker for `x86_64-unknown-linux-gnu` since Rust 1.90. Do not configure `-C link-arg=-fuse-ld=lld` there. It is dead config on 1.97.0. Verified in a `rust:1.97-slim` container with no flags and no `.cargo/config.toml`: `readelf -p .comment` on the built binary reports `Linker: LLD 22.1.6`, and adding the flag changes nothing.
+`rust-lld` is the default linker for `x86_64-unknown-linux-gnu` since Rust 1.90. Do not configure `-C link-arg=-fuse-ld=lld` there. It is dead config. Verified in a `rust:1.97-slim` container on 1.97.0, and again on 1.99.1 on a host with Ubuntu LLD 18.1.3 installed, with no other flags and no `.cargo/config.toml`: `readelf -p .comment` on the built binary reports the rustc-bundled LLD (22.1.6, then 23.1.1), and adding the flag changes nothing.
 
 mold is the remaining upgrade on Linux:
 
@@ -156,7 +156,7 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 The [mold README](https://github.com/rui314/mold) reports mold 4.9x faster than LLVM lld and 1.9x faster than wild at the median of its August 2026 benchmarks. Measure the link time of your own project before you switch. mold is Linux ELF only. With lld or mold, add `-Wl,--no-rosegment` before you profile with `perf`; see [cargo-flamegraph-setup.md](cargo-flamegraph-setup.md).
 
-`wild-linker` 0.10.0 is a newer incremental Linux linker. It is less mature than mold, so treat it as an experiment. Note the name: the crates.io crate called `wild` is an unrelated Windows glob-expansion library.
+`wild-linker` (0.11.0 as of 2026-11) is a newer incremental Linux linker. It is less mature than mold, so treat it as an experiment. Note the name: the crates.io crate called `wild` is an unrelated Windows glob-expansion library.
 
 ### Platform rules
 

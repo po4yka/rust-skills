@@ -1,6 +1,6 @@
 ---
 name: rust-performance
-description: Use when a Rust workload is slow, a benchmark regressed, a binary or app bundle grew, or a build is slow, and the next step is to measure with a flamegraph, samply, perf, simpleperf, Perfetto, Instruments, DHAT, Criterion, Gungraun, cargo-bloat, cargo-llvm-lines, or cargo --timings, or to tune LTO, codegen-units, opt-level, PGO, or a rayon thread pool. Not for choosing the code change after a profile names the hotspot; use `rust-hot-path`.
+description: Use when a Rust workload is slow, a benchmark regressed, a binary or app bundle grew, or a build is slow, and the next step is to measure with a flamegraph, samply, perf, simpleperf, Perfetto, Instruments, DHAT, Criterion, Gungraun, cargo-bloat, cargo-llvm-lines, or cargo --timings, or to tune LTO, codegen-units, opt-level, PGO, a rayon thread pool, sccache, or mold. Not for the code change once a profile names the hotspot; use `rust-hot-path`.
 license: BSD-3-Clause
 ---
 
@@ -17,7 +17,7 @@ Measure Rust speed, heap use, binary size, and build time on the host, on Androi
 
 ## Build a profile that the profiler can read
 
-A profile without symbols shows hex addresses and truncated stacks. A release build has no debug info: Cargo passes `-C strip=debuginfo` whenever `debug` is off (checked on 1.98.1), and many ship profiles also set `strip = "symbols"`. Define this profile once in the workspace-root `Cargo.toml`:
+A profile without symbols shows hex addresses and truncated stacks. A release build has no debug info: Cargo passes `-C strip=debuginfo` whenever `debug` is off (checked on Cargo 1.99.1), and many ship profiles also set `strip = "symbols"`. Define this profile once in the workspace-root `Cargo.toml`:
 
 ```toml
 [profile.profiling]
@@ -90,7 +90,7 @@ cargo install --locked samply
 samply record ./target/profiling/myapp --workers 4
 ```
 
-`cargo flamegraph` 0.6.14 records with `perf` on Linux and with `xctrace` on macOS. It has no `--locked` option, and it runs its own `cargo build` without one. Build with `--locked` first, then profile the same profile:
+`cargo flamegraph` (0.6.14 and 0.6.15) records with `perf` on Linux and with `xctrace` on macOS. It has no `--locked` option, and it runs its own `cargo build` without one. Build with `--locked` first, then profile the same profile:
 
 ```bash
 # x86_64 Linux only: rust-lld, the default linker there since Rust 1.90, needs this for perf stacks
@@ -121,28 +121,15 @@ Use Instruments through Product -> Profile in Xcode; there is no `simpleperf` on
 Pass the profile that ships: `android-jni` in the `rust-android-build` skill, or `ios-release` in the `rust-ios-build` skill. Numbers from `release` do not match a size-optimized mobile profile.
 
 ```bash
-# Per-crate breakdown; this maps to app bundle growth. Use aarch64-apple-ios for the iOS device slice.
+# Use aarch64-apple-ios for the iOS device slice. Run again after the change into after.txt, then diff.
 cargo bloat --locked --profile <ship-profile> --target aarch64-linux-android --crates > before.txt
-# apply the change, then run it again and compare
-cargo bloat --locked --profile <ship-profile> --target aarch64-linux-android --crates > after.txt
-diff before.txt after.txt
-
-# Top 20 functions by size
-cargo bloat --locked --profile <ship-profile> --target aarch64-linux-android -n 20
 ```
 
-Each type that crosses an FFI boundary generates scaffolding code. If the FFI crate dominates `--crates`, reduce the enums and records that cross; see `uniffi-boundary` and `rust-jni`. Section 8 has the `strip` rule.
+The crate whose line grew is the verdict; `-n 20` in place of `--crates` lists the top functions. An FFI crate at the top of `--crates` points at the enums and records that cross the boundary; see `uniffi-boundary` and `rust-jni`.
 
 ## 5. Monomorphization bloat (cargo-llvm-lines)
 
-`cargo llvm-lines` counts LLVM IR lines per function. High IR volume costs both compile time and binary size.
-
-```bash
-cargo install --locked cargo-llvm-lines
-cargo llvm-lines --locked --release -p my-crate | head -30
-```
-
-A high `Copies` count means the generic was instantiated many times. Keep the generic surface and move the body into one concrete inner function; this cut LLVM IR 4.6x in a measured case. To cut the number of copies as well, change the signature shape. Read the generic-signature section of [references/build-time-optimization.md](references/build-time-optimization.md) when `cargo llvm-lines` names a generic function: it has the thin-wrapper example and the measured costs.
+Run `cargo llvm-lines --locked --release -p my-crate | head -30` (install it with `cargo install --locked cargo-llvm-lines`). A high `Copies` count means the generic was instantiated many times: keep the generic surface and move the body into one concrete inner function. Read the generic-signature section of [references/build-time-optimization.md](references/build-time-optimization.md) when `cargo llvm-lines` names a generic function: it has the thin-wrapper example and the measured costs.
 
 ## 6. Benchmarks
 
@@ -177,42 +164,20 @@ Gate benchmarks in CI:
 
 ## 7. Data-parallel work with rayon
 
-The global `rayon` pool starts one thread per logical CPU, or `RAYON_NUM_THREADS`. A library must not build the global pool: the host, or an earlier `par_iter` call, can create it first, and `build_global` then returns an error. Build a library-owned pool once at init with `rayon::ThreadPoolBuilder::new().num_threads(threads).build()`, and run the parallel work inside `pool.install(|| ...)`.
-
-- On a phone, let the host app choose the thread count and pass it across the FFI boundary at init. Return the build error to the caller; do not panic in init.
-- Resolve every JNI or FFI value you need into owned data before the parallel section (see Silent failures).
+The global `rayon` pool starts one thread per logical CPU, or `RAYON_NUM_THREADS`. A library must not build the global pool: the host, or an earlier `par_iter` call, can create it first, and `build_global` then returns an error. Build a library-owned pool once at init with `rayon::ThreadPoolBuilder::new().num_threads(threads).build()`, return its error to the caller instead of a panic, and run the work inside `pool.install(|| ...)`. On a phone, take the thread count from the host app at init.
 
 ## 8. Profiles and LTO
 
-Cargo reads `[profile.*]` only from the workspace-root manifest. A table in a member crate or in a dependency is discarded, so a library crate cannot ship optimization settings to its consumers. Profile names other than `dev`, `release`, `test`, `bench`, and, since Cargo 1.99, `debug` are your own convention. As of Cargo 1.99.1 the built-in `debug` profile equals `dev`; Cargo 1.98 and earlier reject `[profile.debug]` as a reserved name.
-
-```toml
-[profile.release]
-lto = "thin"
-codegen-units = 1
-debug = "line-tables-only"
-strip = "none"             # strip the shipped copy in packaging (llvm-strip, Gradle, Xcode); archive this one
-panic = "abort"
-
-[profile.mobile-release]   # this is what ships in the app bundle
-inherits = "release"
-opt-level = "z"            # size-optimized; measure against 3
-lto = "fat"
-panic = "unwind"           # required when the FFI boundary catches panics
-strip = "none"             # keep symbols here; the packaging step strips its own copy
-debug = "line-tables-only"
-```
-
-Add the `profiling` profile from the top of this skill next to these. When the workspace already has a platform ship profile (`android-jni` from `rust-android-build`, `ios-release` from `rust-ios-build`), tune that profile and do not add `mobile-release` next to it.
+Cargo reads `[profile.*]` only from the workspace-root manifest. A table in a member crate or in a dependency is discarded, so a library crate cannot ship optimization settings to its consumers. As of Cargo 1.99.1, `debug` is a built-in profile equal to `dev`; Cargo 1.98 and earlier reject `[profile.debug]` as a reserved name.
 
 Four settings need a deliberate answer:
 
-- `panic`. Use `"abort"` for the smallest binary and no unwinding overhead. Use `"unwind"` when an FFI entry point must return an error instead of aborting (see Silent failures). The `rust-panic-safety` skill owns the boundary policy and the panic-message privacy rule.
-- `strip`. Use `"symbols"` only when the artifact never needs crash symbolication. Otherwise keep `"none"` with `debug = "line-tables-only"`, strip the shipped copy in the packaging step, and archive the unstripped Cargo output it came from. The `rust-debugging` skill has the archive check.
-- `lto`. `"thin"` gives gains similar to `"fat"` in much less link time. For a true no-LTO baseline use `lto = "off"`: `lto = false`, the default, still runs thin-local LTO.
-- `opt-level`. `"s"` and `"z"` turn off the loop vectorizer; measure the hot loop at `3` (the `rust-hot-path` skill has the mechanism and the probe).
+- `panic`: `"abort"` gives the smallest binary; use `"unwind"` when an FFI entry point must return an error instead of aborting (see Silent failures). The `rust-panic-safety` skill owns the boundary policy and the panic-message privacy rule.
+- `strip`: use `"symbols"` only when the artifact never needs crash symbolication. Otherwise keep `"none"` with `debug = "line-tables-only"`, strip the shipped copy in packaging, and archive the unstripped Cargo output. The `rust-debugging` skill has the archive check.
+- `lto`: for a true no-LTO baseline use `lto = "off"`; `lto = false`, the default, still runs thin-local LTO.
+- `opt-level`: `"s"` and `"z"` turn off the loop vectorizer; measure the hot loop at `3` (the `rust-hot-path` skill has the probe).
 
-Read [references/build-configuration.md](references/build-configuration.md) when you change a build flag for speed or size: it has the LTO and strip tables, where Cargo reads each setting from, rustflags precedence, `target-cpu`, profile-guided optimization, and the global allocator.
+Read [references/build-configuration.md](references/build-configuration.md) when you write or change a profile, or a build flag for speed or size: it has a starting `release` and mobile ship profile, the LTO and strip tables, where Cargo reads each setting from, rustflags precedence, `target-cpu`, profile-guided optimization, and the global allocator.
 
 ## 9. Build time
 

@@ -2,8 +2,8 @@
 
 Reference for [SKILL.md](../SKILL.md). It holds the build knobs that change how fast the shipped
 binary runs: where Cargo reads settings from, the LTO and strip tables, `opt-level`, `target-cpu`,
-profile-guided optimization, and the global allocator. SKILL.md section 8 holds the profile block
-and the `panic`, `strip`, and `lto` rules. Compile-time tuning is in
+profile-guided optimization, and the global allocator. SKILL.md section 8 holds the `panic`,
+`strip`, `lto`, and `opt-level` rules. Compile-time tuning is in
 [build-time-optimization.md](build-time-optimization.md).
 
 Contents: 1. Where the settings are read; 2. LTO, codegen units, and strip; 3. opt-level;
@@ -55,7 +55,7 @@ build received only the `[target.aarch64-apple-darwin]` entry, with and without 
 Precedence, highest first: the `CARGO_ENCODED_RUSTFLAGS` environment variable, then `RUSTFLAGS`,
 then the `[target.*]` tables, then `[build] rustflags`. The Cargo reference calls these four
 mutually exclusive sources: the first one present is used and the rest are dropped.
-`CARGO_ENCODED_RUSTFLAGS` also dropped a `[target.<triple>]` entry when re-checked on 1.98.1.
+`CARGO_ENCODED_RUSTFLAGS` also dropped a `[target.<triple>]` entry when re-checked on Cargo 1.99.1.
 
 Inside the `[target.*]` level, entries do join. Cargo concatenates the matching `[target.<triple>]`
 table and every matching `[target.'cfg(...)']` table. With the three tables below, rustc received
@@ -76,7 +76,7 @@ Setting `RUSTFLAGS` on that same config dropped both target tables.
 
 This bites the profiling workflow. The Linux profiling setup passes `-Wl,--no-rosegment` through
 `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`, the environment form of a `[target.<triple>]` entry. Cargo joins
-it with the config-file target tables (checked on cargo 1.98.1). A `RUSTFLAGS="..."` prefix drops
+it with the config-file target tables (checked on Cargo 1.99.1). A `RUSTFLAGS="..."` prefix drops
 it, and `perf` stacks break with no error. A `[build] rustflags` entry disappears as soon as any
 matching `[target.*]` entry exists, from a table or from that variable. Keep every rustflags entry
 at one level.
@@ -97,6 +97,31 @@ against thin LTO. Use `lto = "off"` for the true baseline.
 ---
 
 ## 2. LTO, codegen units, and strip
+
+A starting point, in the workspace-root `Cargo.toml`:
+
+```toml
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"
+strip = "none"             # strip the shipped copy in packaging (llvm-strip, Gradle, Xcode); archive this one
+panic = "abort"
+
+[profile.mobile-release]   # this is what ships in the app bundle
+inherits = "release"
+opt-level = "z"            # size-optimized; measure against 3
+lto = "fat"
+panic = "unwind"           # required when the FFI boundary catches panics
+strip = "none"             # keep symbols here; the packaging step strips its own copy
+debug = "line-tables-only"
+```
+
+Add the `profiling` profile from SKILL.md next to these. When the workspace already has a platform
+ship profile (`android-jni` from the `rust-android-build` skill, `ios-release` from the
+`rust-ios-build` skill), tune that profile and do not add `mobile-release` next to it. Profile names
+other than `dev`, `release`, `test`, `bench`, and, since Cargo 1.99, `debug` are your own
+convention.
 
 | Setting | Link time | Use when |
 | --- | --- | --- |
