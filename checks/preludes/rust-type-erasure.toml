@@ -13,22 +13,3 @@ trait Element<'a>: 'a { type Owner: Owner<Element<'a> = Self>; }
 trait Extractor {}
 struct State<T>(T);
 '''
-
-[[block]]
-file = "rust-type-erasure/SKILL.md"
-section = "Where it breaks: an extractor that detaches the lifetime"
-block = 1
-items = '''
-use std::any::TypeId;
-use std::cell::UnsafeCell;
-use std::collections::HashMap;
-use std::marker::PhantomData;
-
-trait AnyDrop {}
-impl<T> AnyDrop for T {}
-
-struct AnyMap<'a> {
-    invariant: PhantomData<UnsafeCell<&'a mut ()>>,
-    table: HashMap<TypeId, Box<dyn AnyDrop + 'a>>,
-}
-'''

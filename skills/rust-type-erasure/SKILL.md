@@ -109,7 +109,7 @@ longer-lived `s` never fixes this shape. Change the store instead.
 
 `std::any::type_name::<T>()` has no `T: 'static` bound, so it compiles exactly where `TypeId::of`
 refused. That is what makes it dangerous. The std documentation says the string is not a unique
-identifier and can change between compiler versions. As of Rust 1.98.1 it prints a lifetime
+identifier and can change between compiler versions. As of Rust 1.99.1 it prints a lifetime
 argument of a named type as `'_` (`Wrapper<'_>`) and omits reference lifetimes (`&str`). Rust 1.88
 omitted both. No version can tell two lifetimes apart, because rustc erases lifetimes before code
 generation. Two distinct types can share one string:
@@ -151,55 +151,17 @@ genuinely borrow. If either half is false, the rung above costs less and proves 
 An enum parameterized by the lifetime holds borrowed data with no erasure at all. A new variant
 then breaks every `match` with `E0004`, which is the point.
 
-```rust
-use std::borrow::Cow;
-use std::collections::HashMap;
-
-enum Slot<'a> { Text(Cow<'a, str>), Count(u32) }
-
-fn text<'a>(table: &'a HashMap<&str, Slot<'a>>, k: &str) -> Option<&'a Cow<'a, str>> {
-    match table.get(k)? { Slot::Text(c) => Some(c), Slot::Count(_) => None }
-}
-
-fn main() {
-    let s = String::from("hello world");
-    let mut table = HashMap::new();
-    table.insert("greeting", Slot::Text(Cow::from(&s)));
-    table.insert("retries", Slot::Count(3));
-    assert_eq!(text(&table, "greeting").map(|c| &**c), Some("hello world"));
-    assert!(text(&table, "retries").is_none());
-}
-```
+Read [references/ladder-examples.md](references/ladder-examples.md#rung-1-a-lifetime-parameterized-enum)
+when you write it: it has a compiled table of `Slot<'a>` values.
 
 ### Rung 2: an open set of owned values
 
 This is what a request-extension map and a resource registry actually do. They store owned
 values, or `Arc` clones of a shared value, so the `'static` bound costs nothing.
 
-```rust
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
-use std::sync::Arc;
-
-#[derive(Default)]
-struct Extensions { table: HashMap<TypeId, Box<dyn Any + Send + Sync>> }
-
-impl Extensions {
-    fn insert<T: Any + Send + Sync>(&mut self, value: T) {
-        self.table.insert(TypeId::of::<T>(), Box::new(value));
-    }
-    fn get<T: Any + Send + Sync>(&self) -> Option<&T> {
-        self.table.get(&TypeId::of::<T>())?.downcast_ref()
-    }
-}
-
-fn main() {
-    let mut ext = Extensions::default();
-    ext.insert(Arc::<str>::from("hello world"));   // share the buffer, do not borrow it
-    assert_eq!(ext.get::<Arc<str>>().map(|s| &**s), Some("hello world"));
-    assert_eq!(ext.get::<i64>(), None);
-}
-```
+Key the map on `TypeId::of::<T>()`, store `Box<dyn Any + Send + Sync>`, and read with
+`downcast_ref`. Read [references/ladder-examples.md](references/ladder-examples.md#rung-2-an-extensions-map)
+when you write it: it has a compiled `Extensions` map.
 
 Before you climb to rung three, try to reach this rung instead: replace the borrow with `Arc<T>`
 or with an owned copy at the map boundary. The `rust-copy-on-write` skill, when it is installed,
@@ -317,23 +279,10 @@ impl<S: 'static + for<'x> Element<'x>> Extractor for State<&S> { /* ... */ }
 ## Where it breaks: an extractor that detaches the lifetime
 
 The map is sound. A layer on top that hands closures their arguments (an extractor, a system
-param, a `from_world`) is where soundness is lost. This shape is unsound. Do not copy it:
-
-```rust
-trait Extractor {
-    type Extracted: ExtractedType;
-    unsafe fn from_world(world: &AnyMap) -> Self;   // no lifetime ties to `world`
-}
-trait ExtractedType: 'static { type Extractor<'a>: Extractor<Extracted = Self>; }
-```
-
-The design leans on `F: for<'a> FnMut(A1::Extractor<'a>, A2::Extractor<'a>)` to stop the closure
-keeping the reference. **That bound is vacuous when `Extractor<'a>` is constant in `'a`.** One safe
-user impl whose `type Extractor<'a>` reads `Evil<&'static S>` gives the closure a real `&'static`
-into the world. Measured: a use-after-free after the world drops, which both Miri borrow models
-report, observed by a closure with no `unsafe`. Adding the reverse equality
-`type Extracted: ExtractedType<Extractor<'a> = Self>` does not fix it, and E0207 does not fire. No
-bound in Rust forces a GAT to use its lifetime.
+param, a `from_world`) is where soundness is lost. A bound such as
+`F: for<'a> FnMut(A::Extractor<'a>)` is vacuous when `Extractor<'a>` is constant in `'a`: one safe
+user impl then gives the closure a `&'static` into the map, and the result is a use-after-free that
+both Miri borrow models report. No bound in Rust forces a GAT to use its lifetime.
 
 The rule: an extraction API must return a type whose signature ties the result to the input
 borrow, for example `fn from_world<'w, 'm>(world: &'w AnyMap<'m>) -> Self::Out<'w>`. Keep the two
