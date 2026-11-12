@@ -248,8 +248,9 @@ def weak_compile_fail(manifest: dict, errors: dict[str, list[dict]]) -> list[str
     """compile_fail examples that fail only because a name does not resolve.
 
     These do not demonstrate what the prose says they demonstrate. Naming the
-    expected code in the fence is the fix. Reported, not gated: a fragment that
-    also carries the intended error is common and legitimate.
+    expected code in the fence is the fix, and the gate fails on them. A block
+    that names its code is not weak: a fragment that also carries the intended
+    error is common and legitimate.
     """
     weak = []
     for name, info in sorted(manifest.items()):
@@ -491,18 +492,23 @@ def main() -> int:
             # saying so is how the baseline stops growing forever.
             print(f"note: {len(stale)} baseline entr(ies) no longer occur; consider regenerating:")
             print("\n".join(f"  - {s}" for s in stale))
+        # A compile_fail block with no code that fails only on an undefined name
+        # proves nothing about the lesson: a typo would fail it the same way.
         weak = weak_compile_fail(manifest, errors)
+        if weak:
+            print(f"FAIL: {len(weak)} compile_fail block(s) with no code fail only on an undefined name:\n")
+            print("\n".join(f"  {where}" for where in weak))
+            print(
+                "\nName the expected code in the fence, or give the block a prelude so the"
+                " error it shows is the one that fails it."
+            )
+            return 1
         print(
             f"OK: {clean}/{checked} compile blocks build clean,"
             f" {modes['run']} run blocks compile clean,"
             f" {modes['compile_fail']} compile_fail blocks fail as tagged,"
             f" {modes['ignore']} not checked"
         )
-        if weak:
-            print(
-                f"note: {len(weak)} compile_fail block(s) fail only on an undefined name."
-                " Name the expected code in the fence to pin what they prove."
-            )
         print(f"OK: no new compile suspects ({len(signatures)} known, all in the baseline)")
         with_prelude = sum(1 for info in manifest.values() if info.get("prelude"))
         print(

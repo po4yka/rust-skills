@@ -83,9 +83,10 @@ than an ordinary block: it cannot degrade into a fragment, must define
 `unimplemented!()`. The target compile gate still checks it first. `check.sh`
 then compiles it with the pinned toolchain for the native host and executes it.
 
-Name the expected code whenever you know it. Without it, a `compile_fail` block
-that fails only because a name is undefined still counts as failing, and the
-run prints how many blocks are in that state.
+Name the expected code whenever one exists. A `compile_fail` block with no code
+fails the gate when its only errors are undefined names, because a typo fails it
+the same way. Some errors have no code, such as the borrow checker's `lifetime
+may not live long enough` or a lint denied by `forbid`; such a block names none.
 
 Prefer fixing the example over tagging it. `ignore` removes the block from the
 check permanently, and the defect classes this harness actually finds — an
