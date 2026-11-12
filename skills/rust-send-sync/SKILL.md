@@ -301,7 +301,7 @@ Use these skills by name when they are installed.
 | --- | --- |
 | `rust-unsafe` | The proof obligation of a manual `unsafe impl Send` or `Sync`: the field audit, the compile-time field assertions, and the `SAFETY` comment |
 | `rust-variance` | The other half of a `PhantomData` marker: which substitutions the marker still allows, and the invariance a `Cell` or `*mut` marker introduces |
-| `rust-compiler-errors` | Reading E0277 in general, and the async block message that carries no error code |
+| `rust-compiler-errors` | Reading E0277 in general (`rustc --explain E0277`), and the async block message that carries no error code |
 | `rust-async-internals` | Holding a guard across an `.await`, the async lock choice, `Send` trait variants, and cancel safety |
 | `memory-model` | Atomics, orderings, `loom`, and shared statics once the bounds are satisfied |
-| `rust-crate-release` | Semver review of a public auto trait change |
+| `rust-crate-release` | Semver review of a public auto trait change with `cargo semver-checks` |
