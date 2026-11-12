@@ -35,8 +35,8 @@ per-ABI API suffix from `meta/platforms.json` and `meta/abis.json`. The
 
 Rules:
 
-- The directory names are the Android ABI names (the `rust-android-build`
-  skill has the table). They are not the Rust target triples and not the
+- The directory names are the Android ABI names, such as `arm64-v8a` and
+  `x86_64` (the `rust-android-build` skill has the table). They are not the Rust target triples and not the
   architecture names. Write `arm64-v8a`, not
   `aarch64` or `arm64`.
 - The file name is `lib` plus the package name with hyphens replaced by
@@ -51,7 +51,9 @@ Rules:
 
 Wire the per-ABI build tasks as the `rust-android-build` skill describes
 (Gradle and jniLibs integration): task inputs, the cargo environment, the
-working directory, and the ABI set per build type.
+working directory, and the ABI set per build type. At minimum, give each ABI its
+own `CARGO_TARGET_DIR`, pass `--locked` on every cargo call, and set the `Exec`
+task `workingDir` to the workspace root.
 
 ### Host library for the generator
 

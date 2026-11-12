@@ -182,7 +182,7 @@ goes stale, and `--check` does not catch it.
 
 Keep one FFI crate with every platform-facing export: one checksum set, one
 artifact name, one version. The `rust-ios-build` skill,
-when it is installed, owns the one-staticlib-per-app rule. Two UniFFI libraries
+when it is installed, owns the one-staticlib-per-app rule: link one Rust `staticlib` into an app. Two UniFFI libraries
 in one iOS app also define the same C types (uniffi-rs #2802).
 
 The `rust-panic-safety` skill, when it is installed, owns the `panic` profile
