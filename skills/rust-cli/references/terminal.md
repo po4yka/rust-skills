@@ -24,6 +24,9 @@ environment variable in the precedence chain. The `anstream` auto mode, which
 `clap` uses for color, already applies `NO_COLOR`, `CLICOLOR`, and
 `CLICOLOR_FORCE`; only an explicit `ColorChoice` overrides them.
 
+A prompt written to stderr is not visible when stderr goes to a log, so a redirected stderr also
+rules out a prompt.
+
 ## Controlling terminal
 
 If the product opens the controlling terminal directly, make that a separate

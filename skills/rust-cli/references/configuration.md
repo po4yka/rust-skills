@@ -33,6 +33,9 @@ clear inherited values.
 - Record source provenance internally so diagnostics can name the winning value.
 - Do not print secret values in effective-configuration output.
 
+Keep security-sensitive precedence (credentials, endpoints, proxies, TLS trust) separate when
+ordinary setting precedence would let a project file cross the trust boundary in SKILL.md.
+
 Read configuration before starting irreversible work. Validate the complete
 effective configuration once. Do not let separate subsystems reinterpret the
 same variable with different defaults.
