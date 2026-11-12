@@ -1,7 +1,8 @@
 # JNI panic boundaries
 
 Read this file when you write or review a JNI export or `JNI_OnLoad`. The `rust-jni` skill owns
-the binding rules: symbol names, thread attachment, local references, and class loading. This
+the binding rules: symbol names, thread attachment, local references, and class loading. For
+example, wrap a loop that creates local references in `with_local_frame`. This
 file covers only where the panic stops and what Java sees.
 
 Contents:
