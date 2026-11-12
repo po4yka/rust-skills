@@ -14,7 +14,7 @@ test.
 | Pool reuse, drain after a policy change | Expose pool-connect counts |
 | Overload rejection | Hold a concurrency permit |
 | Shutdown deadline | Keep one handler open; assert that the serve future returns within the shutdown deadline |
-| Header-read timeout | Send a partial request header; assert that the server closes the connection after the header timeout |
+| Header-read timeout | Open one connection that sends nothing and one that sends a partial request header; assert that the server closes both after the header timeout |
 
 ## Test deterministic seams
 
