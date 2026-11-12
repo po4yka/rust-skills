@@ -367,9 +367,25 @@ private fun EngineException.toDomain(): Throwable = when (this) {
   for an unknown variant index before any `EngineException` exists.
 - `InternalException` (a Rust panic, with the panic text as its message) and
   that `RuntimeException` are not `EngineException`s. The final
-  `catch (e: Exception)` in the bridge sends both to the engine-bug bucket. It
-  cannot swallow a coroutine cancellation, because the wrapped engine calls
-  block and do not suspend.
+  `catch (e: Exception)` in the bridge sends both to the engine-bug bucket. In
+  the bridge above it cannot swallow a coroutine cancellation, because the
+  wrapped engine calls block and do not suspend.
+- A UniFFI `async fn` export is a `suspend fun`, and a cancelled caller sees
+  `CancellationException` at the call. That is an `Exception`, so a final
+  `catch (e: Exception)` around it turns cancellation into `EngineBug` and the
+  coroutine tree stays alive. Rethrow it before the generic catch:
+
+  ```kotlin
+  try {
+      engine.exportAsync(request.toFfi())               // suspends
+  } catch (e: CancellationException) {
+      throw e                                         // cancellation is not an engine bug
+  } catch (e: EngineException) {
+      throw e.toDomain()
+  } catch (e: Exception) {
+      throw DomainError.EngineBug("internal")
+  }
+  ```
 - The mapper lives in the engine wrapper module. Nothing above it imports a
   generated type.
 
