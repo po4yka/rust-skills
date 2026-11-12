@@ -77,23 +77,8 @@ files then fail in CI on a lint that never showed locally.
 
 ## CI
 
-```yaml
-# Pin each action to a full commit SHA. Keep the version in a comment.
-- uses: Swatinem/rust-cache@<full-commit-sha>   # v2.9.0 or later (node24)
-  with:
-    cache-on-failure: true
-    workspaces: "<workspace-dir> -> target"
-
-# Manual cache, when you need control over the key
-- uses: actions/cache@<full-commit-sha>          # v5 or later (node24)
-  with:
-    path: |
-      ~/.cargo/registry/index/
-      ~/.cargo/registry/cache/
-      ~/.cargo/git/db/
-      <workspace-dir>/target/
-    key: ${{ runner.os }}-cargo-${{ hashFiles('<workspace-dir>/rust-toolchain.toml', '<workspace-dir>/Cargo.lock') }}
-```
+Read [references/ci-and-nextest.md](references/ci-and-nextest.md) when you write the cache steps
+of a workflow or a `.config/nextest.toml`. It has both as complete examples.
 
 - Pin every action to a full commit SHA, with the version in a comment. A tag can move to new
   code.
@@ -109,15 +94,16 @@ files then fail in CI on a lint that never showed locally.
   cache `target/` in that job. Clear the cache and rotate the secret if a cached job had one.
 - Do not set `RUSTFLAGS=-Dwarnings`. A `RUSTFLAGS` change rebuilds every dependency, and the
   variable replaces the per-target `rustflags` in `.cargo/config.toml`. Use
-  `CARGO_BUILD_WARNINGS=deny` (Cargo 1.97+) or clippy's `-- -D warnings`. The `rust-lints` skill
-  owns the lint gate.
+  `CARGO_BUILD_WARNINGS=deny` (Cargo 1.97+) or clippy's `-- -D warnings`. On an older Cargo the
+  variable does nothing and the build stays green (Cargo 1.96.0), so keep the clippy
+  `-D warnings` gate. The `rust-lints` skill owns the lint gate.
 
 ## Toolchain, MSRV, and resolver
 
 ```toml
 # rust-toolchain.toml. Example pin: use the release the project has tested.
 [toolchain]
-channel = "1.98.1"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 ```
 
@@ -136,11 +122,11 @@ components = ["rustfmt", "clippy"]
   `cargo +<msrv> test --locked --workspace`. The `+<msrv>` override beats `rust-toolchain.toml`.
   When a dev-dependency needs a newer Rust than the MSRV, run
   `cargo +<msrv> check --locked --workspace --lib --bins` instead. When cargo-hack is installed,
-  `cargo hack check --rust-version --workspace --ignore-private` does the same per package.
-- Do not let a Cargo older than 1.96.1 download from a third-party registry or over SSH git. It has
-  credential-leak, crate-extraction, and libssh2 CVEs; the `rust-security` skill has the list.
-  Read [references/workspace-patterns.md](references/workspace-patterns.md) when the MSRV is below
-  1.96.1 and the workspace uses such a source: it has the offline vendor procedure.
+  `cargo hack check --rust-version --workspace --ignore-private` does the same per package, at
+  each package's own `rust-version`. Do not add `--all-targets`: it builds the dev-dependencies.
+- Use Cargo 1.96.1 or later for a third-party registry or SSH git source (the `rust-security`
+  skill owns the rule); [references/workspace-patterns.md](references/workspace-patterns.md) has
+  the offline vendor procedure for an older MSRV.
 
 Resolver rules:
 
@@ -187,35 +173,8 @@ cargo test --locked --workspace --doc
 Run `cargo test --doc` as its own step. nextest skips doc-tests, so a nextest-only gate lets
 doc examples rot.
 
-Example `.config/nextest.toml`:
-
-```toml
-# Fail loudly on a nextest too old for the keys below.
-nextest-version = { required = "0.9.131" }
-
-[profile.default]
-fail-fast = true
-slow-timeout = { period = "60s" }
-# Keep the opt-in tests out of the default lane.
-default-filter = 'not test(/^network_integration_/)'
-
-[profile.ci]
-fail-fast = false
-retries = 2
-flaky-result = "fail"
-slow-timeout = { period = "60s", terminate-after = 3 }
-
-# Opt-in profile for tests that touch the network.
-[profile.network-integration]
-default-filter = 'test(/^network_integration_/)'
-
-[test-groups]
-network = { max-threads = 1 }
-
-[[profile.network-integration.overrides]]
-filter = 'test(/^network_integration_/)'
-test-group = 'network'
-```
+Read [references/ci-and-nextest.md](references/ci-and-nextest.md) when you write a
+`.config/nextest.toml`.
 
 - Keep network-dependent or otherwise flaky tests behind an opt-in profile and a single-threaded
   test group.
@@ -264,7 +223,7 @@ from Gradle, Xcode, or CMake.
 
 ## Rust edition
 
-Edition 2024 is stable since Rust 1.85.0 and is the latest edition as of Rust 1.98.1. Keep the
+Edition 2024 is stable since Rust 1.85.0 and is the latest edition as of Rust 1.99.1. Keep the
 steady state at one edition in `[workspace.package]`, inherited with `edition.workspace = true`.
 Treat an edition bump as a workspace-wide contract change, in a dedicated change with formatting,
 clippy, and test evidence.
