@@ -6,18 +6,36 @@ that find it. [unsafe-patterns.md](unsafe-patterns.md) holds the patterns you wr
 
 Contents:
 
-- Asserting an auto trait on each field; the derive leak
+- Manual `unsafe impl Send` or `Sync`: the checklist, per-field assertions, the derive leak
 - Reference fabrication with `RefCell::as_ptr`
 - The `ManuallyDrop<String>` fabrication, and why Miri clears it
 - Aliasing models: Stacked Borrows and Tree Borrows
 - Miri invocations, and FFI code that Miri cannot run
 - Clippy invocations for unsafe
-- Manual `unsafe impl Send` or `Sync`; reference fabrication
 
-Miri messages below were measured on Miri nightly-2026-05-15 unless a line says otherwise. The
+Miri messages below were measured on Miri nightly-2026-11-09 unless a line says otherwise. The
 numbers in `<N>` and `allocN` change from run to run.
 
-## Asserting an auto trait on each field
+## Manual `unsafe impl Send` or `Sync`
+
+The compiler accepts a manual `unsafe impl Send` or `Sync` without a check, also after a field
+gains an `Rc<_>`; a data race or a double free follows at run time. Often a field-type change
+removes the need for the impl; the `rust-send-sync` skill, when it is installed, shows how.
+Before you write the impl:
+
+1. List every field type. Confirm that each is `Send` or `Sync`, or state why the wrapper keeps
+   the invariant despite the field.
+2. Check every `&self` method, derives included. A derived `Debug`, `Clone`, `PartialEq`, or
+   `Hash` hands `&T` to `T`'s own impl on whichever thread calls it.
+3. Assert the auto trait on each field type, not on the wrapper, because the manual impl is
+   unconditional. `clippy::non_send_fields_in_send_ty` (nursery) flags a non-`Send` field under
+   a manual `Send` impl.
+4. Write a `// SAFETY:` comment on the impl that names the fields audited and the argument.
+
+Objects from a C or C++ library are usually not thread-safe, even when the Rust binding
+compiles.
+
+### Asserting an auto trait on each field
 
 A manual `unsafe impl Send` on a wrapper is unconditional, so it stays accepted after the fields
 change. Assert the fields, not the wrapper. The assertion needs no dependency:
@@ -107,7 +125,7 @@ fn main() {
 }
 ```
 
-Measured on rustc 1.98.1, edition 2024: the program compiles, prints `moo MOO`, and exits 0. A
+Measured on rustc 1.99.1, edition 2024: the program compiles, prints `moo MOO`, and exits 0. A
 `&String` observed a mutation and nothing panicked.
 
 The pattern appears when a borrowing iterator is written over `Rc<RefCell<T>>`. The safe form
@@ -144,6 +162,9 @@ fabricated reference with a mutation. A test suite that never holds a yielded re
 `borrow_mut()` passes Miri clean. Treat the pattern as UB on inspection. Miri is a confirmation
 here, never the gate. See the `rust-sanitizers-miri` skill for the two messages.
 
+A reference derived from `UnsafeCell::get` must obey the same aliasing rules: no two live
+`&mut`, and no mutation under a live `&T`.
+
 ## The `ManuallyDrop<String>` fabrication, and why Miri clears it
 
 This pattern builds a `&String` out of a `&str` by rebuilding the `String` header over the
@@ -177,7 +198,7 @@ impl Deref for StringRef<'_> {
 }
 ```
 
-Measured on Miri nightly-2026-05-15: this runs clean under the default Stacked Borrows, under
+Measured on Miri nightly-2026-11-09: this runs clean under the default Stacked Borrows, under
 `-Zmiri-tree-borrows`, and under `-Zmiri-strict-provenance`, for a `&'static str` literal and for
 a sub-slice of a heap `String`, including a `.clone()` of the deref target. The provenance is
 correct, because the pointer comes from a live allocation. The allocator and capacity
@@ -344,35 +365,3 @@ cargo clippy --locked --all-targets -- \
 Use the command line only to try a lint out. Once you keep a lint, move it into
 `[workspace.lints]` so that CI and every developer get the same result. See the `rust-lints`
 skill.
-
-## Manual `unsafe impl Send` or `Sync`
-
-The compiler accepts a manual `unsafe impl Send` or `Sync` without a check, also after a field
-gains an `Rc<_>`; a data race or a double free follows at run time. Often a field-type change
-removes the need for the impl; the `rust-send-sync` skill, when it is installed, shows how.
-Before you write the impl:
-
-1. List every field type. Confirm that each is `Send` or `Sync`, or state why the wrapper keeps
-   the invariant despite the field.
-2. Check every `&self` method, derives included. A derived `Debug`, `Clone`, `PartialEq`, or
-   `Hash` hands `&T` to `T`'s own impl on whichever thread calls it.
-3. Assert the auto trait on each field type, not on the wrapper, because the manual impl is
-   unconditional. `clippy::non_send_fields_in_send_ty` (nursery) flags a non-`Send` field under
-   a manual `Send` impl.
-4. Write a `// SAFETY:` comment on the impl that names the fields audited and the argument.
-
-Objects from a C or C++ library are usually not thread-safe, even when the Rust binding
-compiles.
-
-## Reference fabrication
-
-Never hand a caller a `&T` or a `&mut T` built from `RefCell::as_ptr`. It skips the borrow
-counter, so a later `borrow_mut()` succeeds and safe code mutates behind a live shared
-reference. Yield `Ref<'a, T>`. Miri reports it only when a test interleaves the reference with a
-mutation, so treat it as undefined behavior on inspection. A reference derived from
-`UnsafeCell::get` must still obey the aliasing rules: no two live `&mut`, and no mutation under a
-live `&T`.
-
-Never fabricate a `&String` from a `&str` with `ManuallyDrop<String>` and
-`String::from_raw_parts`. It breaks the allocator and capacity contract, and Miri accepts it
-under every model because that contract is a library rule. Accept `&str` or `impl AsRef<str>`.

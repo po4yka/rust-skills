@@ -6,7 +6,8 @@ reports for each source of `unsafe`, and why a macro from a dependency escapes i
 ## Result by source of `unsafe`
 
 The lint checks the crate's own source text. It does not check the code the crate compiles to.
-Measured on rustc 1.98.1, edition 2024, and on 1.88.0 and 1.97.1 for the attribute rows:
+Re-measured on rustc 1.99.1, edition 2024, for every row. The 1.98 and older attribute results
+were measured on 1.98.1, 1.97.1, and 1.88.0:
 
 | Where the `unsafe` comes from | Result under `#![forbid(unsafe_code)]` |
 | --- | --- |
@@ -35,4 +36,12 @@ rustc suppresses lints on tokens that an external macro expanded. The boundary i
 wrote the macro, not whether the macro is procedural. `cargo clippy -- -D unsafe_code` is silent
 on the same code. No dependency filter closes the gap: `cargo tree -p <crate> | rg proc-macro`
 lists nothing for a crate that exports a plain `macro_rules!`. Only the expansion shows every
-case. Use the `-Zunpretty=expanded` command from the inventory in [SKILL.md](../SKILL.md).
+case. Grep the expansion of each crate in a periodic audit. It needs nightly; keep it out of CI:
+
+```bash
+cargo +nightly rustc -p <crate> --lib --profile=check -- -Zunpretty=expanded \
+  | rg -n 'unsafe \{|unsafe fn|unsafe impl|unsafe extern|#\[unsafe\('
+```
+
+Repeat with `--bin <name>` per binary: cargo passes `--` flags to one target. Hits from `std`
+macros are expected; review the hits from dependency macros.

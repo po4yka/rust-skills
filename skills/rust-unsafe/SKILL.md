@@ -1,6 +1,6 @@
 ---
 name: rust-unsafe
-description: Use when adding, removing, or reviewing unsafe Rust, such as unsafe blocks and unsafe impl Send or Sync, raw pointers, transmute, mem::zeroed and MaybeUninit, unions, hand-written extern "C" exports and no_mangle symbols, syscall or ioctl wrappers, zero-copy buffers or mmap, and forbid(unsafe_code). Also for questions about soundness or undefined behavior. Triggers on "SAFETY comment", "Strict Provenance", "repr(packed)", "E0793", "improper_ctypes", "OwnedFd".
+description: Use when adding, removing, or reviewing unsafe Rust, such as unsafe blocks, unsafe impl Send or Sync, raw pointers, transmute, mem::zeroed and MaybeUninit, unions, hand-written extern "C" and no_mangle exports, syscall or ioctl wrappers, zero-copy buffers, mmap, and forbid(unsafe_code). Also for soundness or undefined-behavior questions. Triggers on "SAFETY comment", "Strict Provenance", "repr(packed)", "E0793", "E0133", "improper_ctypes", "OwnedFd".
 license: BSD-3-Clause
 ---
 
@@ -8,8 +8,7 @@ license: BSD-3-Clause
 
 ## Find the unsafe surface
 
-Run this inventory when you audit a crate, or when you add or remove unsafe code. Do not rely on
-a memory of where unsafe lives:
+Run this inventory when you audit a crate, or when you add or remove unsafe code:
 
 ```bash
 # Crates that promise no unsafe in their own source.
@@ -22,15 +21,9 @@ rg -n 'unsafe\s*\{|unsafe fn|unsafe impl|unsafe extern' --type rust
 rg -n '#\[(unsafe\()?(no_mangle|export_name|link_section)' --type rust
 ```
 
-In a periodic audit, also read the macro expansion of each crate, because
-`forbid(unsafe_code)` does not see dependency macro code. It needs nightly; keep it out of CI:
-
-```bash
-cargo +nightly rustc -p <crate> --lib --profile=check -- -Zunpretty=expanded \
-  | rg -n 'unsafe \{|unsafe fn|unsafe impl|unsafe extern|#\[unsafe\('
-```
-
-Repeat with `--bin <name>` per binary: cargo passes `--` flags to one target. Hits from `std` macros are expected; review the hits from dependency macros.
+In a periodic audit, also grep the macro expansion of each crate, because
+`forbid(unsafe_code)` does not see dependency macro code. The nightly command is in
+[references/forbid-unsafe-code.md](references/forbid-unsafe-code.md).
 
 ## Governance with `#![forbid(unsafe_code)]`
 
@@ -45,8 +38,7 @@ such as `#[unsafe(naked)]`.
 The lint checks the crate's own source, not the code it compiles to. An unsafe block or an
 `#[unsafe(no_mangle)]` export that a dependency's macro expands builds with no diagnostic, and
 `cargo clippy -- -D unsafe_code` is silent too. So a `forbid` hit does not prove that the crate
-compiles to no unsafe. Read [references/forbid-unsafe-code.md](references/forbid-unsafe-code.md)
-when you need the diagnostic for each source of unsafe on each toolchain.
+compiles to no unsafe. Read the same reference for the diagnostic per source of unsafe.
 
 Removing `#![forbid(unsafe_code)]` is a reviewable event. Remove it in the commit that adds the
 unsafe code, not in advance, and state which unsafe operation forced it and where it lives. Keep
@@ -73,6 +65,10 @@ off, and `missing_safety_doc` only warns. Set the lints in `[workspace.lints]`, 
 at the root of each crate that contains unsafe. The `rust-lints` skill, when it is installed,
 owns the workspace floor, the suppression policy, and the CI lint gate.
 
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `E0133: ... is unsafe and requires unsafe block` (an error, or under edition 2024 an `unsafe_op_in_unsafe_fn` warning inside an `unsafe fn`) | An unsafe or foreign `fn` call, a `static mut` or `extern` static access, or a call to a `#[target_feature]` fn from a caller without that feature | One `unsafe { }` per operation, with a SAFETY comment; declare a foreign fn `safe fn` when it has no precondition; or give the caller the same `#[target_feature]` |
+
 When you add the first unsafe to a safe crate, add the floor and run
 `cargo clippy --locked -p <crate> --all-targets -- -D warnings` before you write the unsafe body.
 This proves that the floor is active, so clippy then rejects a bare `unsafe { ... }`.
@@ -92,7 +88,7 @@ Run the checks that match the risk. Each check proves one thing.
    `misaligned pointer dereference`, or `null pointer dereference occurred`: a non-unwinding
    panic that `catch_unwind` cannot catch. Treat it as undefined behavior. `--release` removes
    these checks. With the prebuilt std, no profile checks a misaligned `ptr::read` (rustc
-   1.98.1); `cargo +nightly careful test`, when cargo-careful is installed, does.
+   1.99.1); `cargo +nightly careful test`, when cargo-careful is installed, does.
 3. Code that Miri can execute, when nightly with the `miri` component is installed:
    `cargo +nightly miri test --locked -p <crate>` with the default Stacked Borrows model first,
    then `MIRIFLAGS="-Zmiri-tree-borrows"` as a second opinion. Tree Borrows is more permissive
@@ -147,7 +143,9 @@ this table.
 
 ## Drop hazards
 
-Read `references/unsafe-patterns.md` when soundness could depend on a `Drop` running (a guard, a registration, a future in `select!`), or when a `Drop::drop` can fail or panic.
+Soundness must not depend on a `Drop` running: `mem::forget`, `Box::leak`, and an `Rc` cycle skip
+it in safe code. Make a forgotten guard harmless, as `thread::scope` does. Read
+`references/unsafe-patterns.md` when a guard, a registration, or a `Drop::drop` can fail.
 
 ## One unsafe block breaks local reasoning
 
@@ -168,11 +166,14 @@ reproducing test; only a decode loop fails on invalid UTF-8.
 
 ## Manual `unsafe impl Send` or `Sync`
 
-Read `references/miri-and-aliasing.md` before you write or review a manual `unsafe impl Send` or `Sync`, including one on a wrapper of a C or C++ object.
+The compiler accepts a manual impl unchecked, also after a field gains an `Rc`. Bound it on the
+parameters (`unsafe impl<T: Sync> Sync`), and audit every field and `&self` method, derives
+included. Read `references/miri-and-aliasing.md` before you write or review one.
 
 ## Reference fabrication
 
-Read `references/miri-and-aliasing.md` when code builds a `&T` or `&mut T` from `RefCell::as_ptr` or `UnsafeCell::get`, or a `&String` from `ManuallyDrop<String>` and `String::from_raw_parts`.
+Never hand out a `&T` built from `RefCell::as_ptr` or a `&String` from `String::from_raw_parts`
+over a `&str`; Miri can pass both. Read `references/miri-and-aliasing.md` when code does either.
 
 ## Pointer reads from untrusted byte buffers
 
@@ -195,24 +196,23 @@ so the defect ships unless you follow these steps.
 Grep audit:
 
 ```bash
-rg 'ptr::read\(\s*[a-z_][a-z_0-9]*\.as_ptr\(\)\s*as\s*\*const' --type rust -n
+rg -n 'as_ptr\(\)\s*(as\s*\*const|\.cast::<)' --type rust | rg -v 'read_unaligned|::<u8>'
 rg 'transmute::<\s*&\[u8\]' --type rust -n
 ```
 
-Read [references/unsafe-patterns.md](references/unsafe-patterns.md) when you write a byte
-parser.
+The grep is a floor: it misses a pointer cast in a later statement. `clippy::cast_ptr_alignment`
+(pedantic) flags both `as` and `.cast::<T>()`. Read
+[references/unsafe-patterns.md](references/unsafe-patterns.md) when you write a byte parser.
 
-## `mem::zeroed` and `MaybeUninit`
+## Where the other patterns live
 
-Read `references/validity-and-provenance.md` when you call `mem::zeroed` or `assume_init`, create a reference from a raw pointer, initialize a type from bytes, or convert a pointer through an integer address.
-
-## Zero-copy buffer handoff
-
-Read `references/ffi-layout-rules.md` when you build a slice over a foreign caller's buffer or a memory mapping without a copy.
-
-## Unsafe operations and declarations
-
-Read `references/unsafe-patterns.md` when you decide whether a block needs `unsafe`, or write an `unsafe impl`, an unsafe attribute, an `unsafe extern` block, an `unsafe trait`, or a `# Safety` section.
+- `mem::zeroed`, `assume_init`, a reference from a raw pointer, or an integer-to-pointer
+  conversion: `references/validity-and-provenance.md`.
+- A slice over a foreign buffer or a mapping, or an `#[unsafe(no_mangle)]` export:
+  `references/ffi-layout-rules.md`.
+- Whether a block needs `unsafe`; an `unsafe impl`, `unsafe trait`, unsafe attribute, or
+  `# Safety` section; pointer arithmetic; a syscall, `ioctl`, or descriptor wrapper:
+  `references/unsafe-patterns.md`.
 
 ## Panics and unwinding at the FFI boundary
 
@@ -236,13 +236,8 @@ both types in the turbofish and state the layout and lifetime argument in the SA
 Read [references/unsafe-patterns.md](references/unsafe-patterns.md) when you choose a conversion
 or extend the lifetime bound of a `dyn` raw pointer.
 
-## Pointer arithmetic, syscalls, and unmangled exports
-
-Read `references/unsafe-patterns.md` when you write pointer arithmetic (`add`, `offset_from`, `NonNull`), a syscall, `getsockopt`, `ioctl`, C union, or descriptor wrapper, or an `#[unsafe(no_mangle)]` or `#[unsafe(export_name)]` export.
-
 ## Related skills
 
-When installed: `rust-jni` and `uniffi-boundary` (the full boundary),
-`rust-variance` (`PhantomData` and lifetime coercion), `rust-pin-projection` (the pinning
-obligations behind `map_unchecked_mut`), `memory-model` (atomics and ordering), and
-`rust-debugging` (a crash that unsafe code caused).
+When installed: `rust-jni` and `uniffi-boundary` (the boundary), `rust-variance`
+(`PhantomData`), `rust-pin-projection` (`map_unchecked_mut`), `memory-model` (atomics), and
+`rust-debugging` (a crash).

@@ -3,8 +3,8 @@
 Use this reference before you turn bytes into a typed value, create a reference from a raw
 pointer, or perform pointer arithmetic through an integer address.
 
-Contents: invalid typed values; reference creation; provenance; review procedure;
-`mem::zeroed` and `MaybeUninit`; authoritative references.
+Contents: invalid typed values, `mem::zeroed`, and `MaybeUninit`; reference creation;
+provenance; review procedure; authoritative references.
 
 ## Invalid typed values are immediate undefined behavior
 
@@ -26,6 +26,14 @@ behavior. It is still unsound: any safe consumer of the value may then cause und
 Do not use `mem::zeroed`, `transmute`, or `MaybeUninit::assume_init` to create such a value and
 plan to overwrite it later. Keep the storage as `MaybeUninit<T>` until every byte is initialized
 and the complete value is valid.
+
+`mem::zeroed()` is sound only when the documented contract of the exact type proves that
+all-zero bytes is a valid value, and the SAFETY comment must cite that contract. `repr(C)` and
+an output-only C API do not prove it. Zero is never valid for `NonNull`, `NonZero`, a
+reference, `Box`, or a function pointer, and for `bool` or an enum only as `false` or a declared
+discriminant. Do not use `zeroed()` for a type with a non-trivial `Drop`: the destructor later
+runs on a value that no constructor built. Use `MaybeUninit<T>` when the proof is absent. Call
+`assume_init` only after the API reports that it wrote a complete, valid `T`.
 
 For a partially initialized array, track the initialized prefix. On an error, drop only that
 prefix, for example with `assume_init_drop` on the initialized sub-slice (stable on
@@ -65,7 +73,7 @@ stores a pointer as an integer and later reconstructs it. This is an explicitly 
 Document the exposure, keep the allocation alive, and test the path under Miri. Do not use an
 integer round trip as ordinary pointer arithmetic.
 
-`-Zmiri-strict-provenance` rejects every exposure (Miri nightly-2026-05-15):
+`-Zmiri-strict-provenance` rejects every exposure (Miri nightly-2026-11-09):
 
 ```text
 error: unsupported operation: integer-to-pointer casts and `ptr::with_exposed_provenance` are not supported with `-Zmiri-strict-provenance`
@@ -92,18 +100,6 @@ and rustc warns on it since 1.91 (`integer_to_ptr_transmutes`); use `without_pro
 
 Miri is evidence for the executed path. It is not a proof for unexecuted layouts, schedules, or
 foreign code.
-
-## `mem::zeroed` and `MaybeUninit`
-
-`mem::zeroed()` is sound only when the documented contract of the exact type proves that
-all-zero bytes is a valid value, and the SAFETY comment must cite that contract. `repr(C)` and
-an output-only C API do not prove it. Zero is never valid for `NonNull`, `NonZero`, a
-reference, `Box`, or a function pointer, and for `bool` or an enum only as `false` or a declared
-discriminant. Do not use `zeroed()` for a type with a non-trivial `Drop`: the destructor later
-runs on a value that no constructor built. Use `MaybeUninit<T>` when the proof is absent. Call
-`assume_init` only after the API reports that it wrote a complete, valid `T`.
-
-Creating an invalid typed value is immediate undefined behavior, even if code never reads it.
 
 ## Authoritative references
 
