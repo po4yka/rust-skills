@@ -13,7 +13,8 @@ the framework to get one middleware type.
 Use these skills, when they are installed, for adjacent work:
 `rust-async-internals` for `select!`, task ownership, cancel safety, and runtime
 configuration; `rust-observability` for tracing, metrics, and exporters;
-`rust-security` for dependency advisories and untrusted-input parser hardening.
+`rust-security` for untrusted-input parser hardening and the advisory gate,
+`cargo deny --config deny.toml --locked check advisories`.
 
 ## Start from one operation contract
 
