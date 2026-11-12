@@ -49,12 +49,11 @@ assertions are on. A `--release` build removes these checks.
 | Tests, proptest, golden files | `cargo nextest run --locked --workspace` and `cargo test --locked --workspace --doc` | every pull request |
 | cargo-careful | `cargo +nightly careful test --locked -p <ffi-crate> --no-fail-fast` | pull requests that touch `unsafe` or FFI crates |
 | Miri, sanitizers | the `rust-sanitizers-miri` skill | pull requests that touch `unsafe`, and on a schedule |
-| loom | `RUSTFLAGS="--cfg loom" cargo test --locked --release --test 'loom_*'` | pull requests that touch hand-rolled atomics |
+| loom | `RUSTFLAGS="--cfg loom" cargo test --locked --release --test 'loom_*'`, with no tokio in the graph (`references/loom.md`) | pull requests that touch hand-rolled atomics |
 | cargo-fuzz | `cargo +nightly fuzz run <target> -- -max_total_time=900` for each `cargo fuzz list` entry | nightly or weekly schedule, not every pull request |
 | cargo-mutants | `--in-diff` run on demand, full run on a schedule | after a refactor, and weekly |
 
-The `cargo-workflows` skill owns nextest profiles and the GitHub Actions rules (actions pinned to
-a commit SHA, node24 action majors).
+The `cargo-workflows` skill owns nextest profiles and GitHub Actions pinning.
 
 ## Review gate
 
