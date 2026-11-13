@@ -93,13 +93,13 @@ IDs, and fails when the result names no plugin.
 
 What a green result proves: on that client, model, and catalog commit, a natural request loads
 the skill and the answer carries its verifier. What it does not prove: behavior on Codex, Cursor,
-or another client; behavior with all 50 skills installed when the client truncates its listing
+or another client; behavior with all 51 skills installed when the client truncates its listing
 (the suite loads the whole plugin, so it measures the full listing); or that six cases represent
-50 skills.
+51 skills.
 
 ## `outcome/`: the work itself
 
-Eight cases: one per bundle, and two more testing cases, for `rust-port` and `rust-review`. Each
+Nine cases: one per bundle, and two more testing cases, for `rust-port` and `rust-review`. Each
 case is a small std-only crate with one planted defect that one skill owns: a guard in a `match`
 scrutinee, `Relaxed` publication, a bug in a shared helper with a copy elsewhere, a `feat` commit
 that is a major bump, an allocation on every header, and a C ABI that returns a pointer into a
@@ -113,7 +113,9 @@ a review of a library module whose defects range from undefined behavior to a ge
   Each judged criterion has a PASS line and a FAIL line taken from the owning skill's rules and
   verifier table.
 - `scaffold.sh` builds the workspace from `files/` (and `next/`, for the case that needs git
-  history). `CARGO_NET_OFFLINE` is set in every case, so a run needs no registry.
+  history). The operator sets `CARGO_NET_OFFLINE=true`; case files set no environment
+  overrides. The workflow and cross-agent runner enforce this offline Cargo setting.
+  The pinned evaluation CLI rejects non-`EVAL_*` keys in `execution.env`.
 - `probe/*.rs`, where a portable test can show the defect, proves it: the gate requires the probe
   to fail on the fixture. `solution/` is one correct fix; the gate lays it over the fixture and
   requires `cargo test` with every probe to pass, so a probe fails only on the defect. A case
@@ -123,10 +125,27 @@ a review of a library module whose defects range from undefined behavior to a ge
 ```bash
 python3 evals/outcome/check.py --lint      # structure only; no cargo
 python3 evals/outcome/check.py             # also builds every fixture offline; check.sh runs this
-claude plugin eval . --eval-dir evals/outcome --trust-plugin --scaffold \
+CARGO_NET_OFFLINE=true claude plugin eval . --eval-dir evals/outcome --trust-plugin --scaffold \
   --allow-tools Bash Write Edit --concurrency 4 --max-cost-usd 40 --no-publish \
   --json eval-results.json
 ```
+
+The workflow runs outcome tasks on `macos-26` with the native sandbox. Its
+`checks/sandbox-eval` preflight first requires a real Bash call to report the
+pinned Cargo version, then compile and run the tests of a std-only fixture. This one-run check has a $1 cost limit;
+the outcome suite keeps its $40 limit. The client seals `HOME` and drops Rust
+environment overrides. The workflow puts launchers for the pinned `cargo`,
+`rustc`, and `rustdoc` on `PATH`. The complete toolchain, including compiler
+libraries, is copied to ignored `checks/eval-tools/` inside the plugin root.
+The sandbox can read that root; it cannot read the operator's home toolchains. These launchers call the installed
+binaries directly and set `CARGO_NET_OFFLINE=true` before each call.
+
+The pinned Linux client can reject every shell call in `apply-seccomp` even when
+bubblewrap starts. See [upstream issue #99269](https://github.com/anthropics/claude-code/issues/99269).
+Do not disable the sandbox or its socket filter to make an evaluation pass.
+The summary rejects the observed sandbox failure even if the agent returns
+normally and the run has numeric scores. It also rejects compiler libraries
+blocked by the sandbox.
 
 `--scaffold` runs `scaffold.sh` from this repository, and `--allow-tools` lets the agent run cargo
 and edit the workspace. The command sets no `--threshold`: the result is a measurement, and the

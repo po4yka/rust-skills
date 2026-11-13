@@ -9,7 +9,7 @@ checks that every case is well formed and that every fixture still plants the de
 
 Structure: every case directory is in cases.toml and the reverse; the case names the bundle of
 its skill; every bundle has a case; case.yaml keeps the suite's floor (schema 1.1, three runs or
-more, the scaffold, an offline cargo, a skill-fired indicator, at least one scored grader); the
+more, the scaffold, operator-owned environment, a skill-fired indicator, at least one scored grader); the
 prompt names no skill; every graders/*.md has a known type and both a PASS and a FAIL line.
 
 Fixtures: the scaffold builds the workspace in a temporary directory; every file that a grader
@@ -174,8 +174,8 @@ def lint_case(case_dir: Path, entry: dict, bundle_of: dict[str, str], skill_name
             errors.append(f"{where}/case.yaml: tags must include {tag!r}")
     if not re.search(r"^\s+scaffold_script:\s*scaffold\.sh\s*$", text, re.M):
         errors.append(f"{where}/case.yaml: context.scaffold_script must be scaffold.sh")
-    if not re.search(r"^\s+CARGO_NET_OFFLINE:\s*\"true\"\s*$", text, re.M):
-        errors.append(f"{where}/case.yaml: execution.env must set CARGO_NET_OFFLINE: \"true\"")
+    if re.search(r"^  env:", text, re.M):
+        errors.append(f"{where}/case.yaml: execution.env belongs in the operator environment")
 
     prompt = folded_block(text, "prompt")
     if not prompt:

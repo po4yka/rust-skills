@@ -14,8 +14,6 @@ execution:
   max_turns: 40
   timeout_seconds: 900
   allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
-  env:
-    CARGO_NET_OFFLINE: "true"
   prompt: >-
     Other crates in our workspace are about to depend on this inventory crate. Review src/lib.rs
     before they do. Write the review to REVIEW.md, and do not change the code.

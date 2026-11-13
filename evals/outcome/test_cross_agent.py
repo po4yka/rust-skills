@@ -57,6 +57,17 @@ CODEX_EVENTS = [
 ]
 
 
+class Environment(unittest.TestCase):
+    def test_runner_sets_offline_cargo(self):
+        env = ca.base_env(pathlib.Path("/run"), pathlib.Path("/run/workspace"))
+        self.assertEqual(env["CARGO_NET_OFFLINE"], "true")
+
+    def test_case_cannot_override_operator_environment(self):
+        case = {"execution": {"env": {"CARGO_NET_OFFLINE": "false"}}}
+        with self.assertRaisesRegex(ValueError, "operator environment"):
+            ca.agent_command("claude-skills", case, pathlib.Path("/run"), None, "Fix it.")
+
+
 class Normalize(unittest.TestCase):
     def test_claude_actions_pair_commands_with_results(self):
         norm = ca.normalize_claude(CLAUDE_EVENTS)

@@ -21,6 +21,11 @@ evals/routing/routing-*.json
 evals/plugin/results/
 evals/outcome/results/
 eval-results.json
+/checks/sandbox-eval/results/
+/sandbox-results.json
 
 # Build output of the outcome-eval fixture crates
 evals/outcome/*/files/target/
+
+# Complete compiler copy for the isolated outcome evaluation; never distributed.
+/checks/eval-tools/

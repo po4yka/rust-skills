@@ -28,8 +28,6 @@ runs: 3
 context:
   scaffold_script: scaffold.sh
 execution:
-  env:
-    CARGO_NET_OFFLINE: "true"
   prompt: >-
     {prompt}
 graders:
@@ -145,9 +143,9 @@ class Lint(unittest.TestCase):
         self.edit_yaml("    type: tool_used\n    tool: Skill\n", "    tool: Skill\n    type: tool_used\n")
         self.assertEqual(self.lint(), [])
 
-    def test_a_case_without_offline_cargo_fails(self):
-        self.edit_yaml('CARGO_NET_OFFLINE: "true"', 'CARGO_HOME: "/tmp"')
-        self.assertTrue(any("CARGO_NET_OFFLINE" in e for e in self.lint()))
+    def test_case_environment_overrides_fail(self):
+        self.edit_yaml("execution:\n", 'execution:\n  env:\n    CARGO_NET_OFFLINE: "true"\n')
+        self.assertTrue(any("operator environment" in e for e in self.lint()))
 
     def test_an_old_schema_version_fails(self):
         self.edit_yaml('schema_version: "1.1"', 'schema_version: "1.0"')

@@ -11,8 +11,6 @@ execution:
   max_turns: 30
   timeout_seconds: 900
   allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
-  env:
-    CARGO_NET_OFFLINE: "true"
   prompt: >-
     Since we added TemplateCache::get_or_render, `cargo test` hangs forever in this crate. Find
     the cause and fix it. Keep the public API as it is, and tell me why it hung.

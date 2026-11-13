@@ -72,15 +72,14 @@ skill. It pins the content; it does not pin which skills a bundle contains, so c
 your bundle from [bundles.toml](bundles.toml).
 
 ```bash
-gh skill install po4yka/rust-skills rust-unsafe --pin v0.4.0
+gh skill install po4yka/rust-skills rust-unsafe --pin v0.5.0
 ```
 
 <details>
 <summary><b><code>gh skill</code> command for each bundle</b></summary>
 
 Set `RUST_SKILLS_REF` to a reviewed tag or full commit SHA that contains the
-listed skills. The `v0.4.0` tag predates `rust-allocators`; select a later
-reviewed commit for that skill.
+listed skills. The `v0.5.0` tag includes all 51 skills, including `rust-allocators`.
 
 ```bash
 : "${RUST_SKILLS_REF:?Set RUST_SKILLS_REF to a reviewed tag or full commit SHA}"
@@ -119,10 +118,10 @@ done
 **2. Claude Code plugin marketplace, pinned by the marketplace ref.** Add the marketplace at a
 release tag, then install a bundle plugin. The installed plugin records the commit SHA of that
 tag as its version, and it changes only when you add the marketplace at a newer tag. Without the
-`#v0.4.0` suffix the marketplace tracks `main`.
+`#v0.5.0` suffix the marketplace tracks `main`.
 
 ```text
-/plugin marketplace add po4yka/rust-skills#v0.4.0
+/plugin marketplace add po4yka/rust-skills#v0.5.0
 /plugin install rust-skills-language@rust-skills
 ```
 
@@ -133,7 +132,7 @@ it at a release tag, install a bundle plugin, and start a new session. Without `
 marketplace tracks `main`.
 
 ```bash
-codex plugin marketplace add po4yka/rust-skills --ref v0.4.0
+codex plugin marketplace add po4yka/rust-skills --ref v0.5.0
 codex plugin add rust-skills-language@rust-skills
 ```
 
@@ -188,7 +187,7 @@ Evaluations run before a tag. See [docs/releasing.md](docs/releasing.md) and the
   ```
 
   For Codex, this `.codex/config.toml` registers the marketplace and enables the bundle. The
-  first `codex plugin marketplace upgrade` in that repository installs it. Add `ref = "v0.4.0"`
+  first `codex plugin marketplace upgrade` in that repository installs it. Add `ref = "v0.5.0"`
   under `[marketplaces.rust-skills]` to pin a tag.
 
   ```toml

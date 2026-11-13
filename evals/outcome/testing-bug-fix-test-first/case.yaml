@@ -12,8 +12,6 @@ execution:
   max_turns: 40
   timeout_seconds: 900
   allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
-  env:
-    CARGO_NET_OFFLINE: "true"
   prompt: >-
     A customer's invoice shows $12.05 for an item that the CSV export lists as `WIDGET,1,12.5`.
     Please fix the bug in this crate.

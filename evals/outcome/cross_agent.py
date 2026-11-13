@@ -209,6 +209,7 @@ def base_env(run_dir: Path, workspace: Path) -> dict[str, str]:
         "RUSTUP_TOOLCHAIN": toolchain(),
         "CARGO_TARGET_DIR": str(workspace / "target"),
         "CARGO_TERM_COLOR": "never",
+        "CARGO_NET_OFFLINE": "true",
         "GIT_CONFIG_GLOBAL": str(run_dir / "gitconfig"),
         "GIT_CONFIG_NOSYSTEM": "1",
     })
@@ -220,7 +221,8 @@ def agent_command(config: str, case: dict, run_dir: Path, args: argparse.Namespa
     agent, with_skills = CONFIGS[config]
     workspace = run_dir / "workspace"
     env = base_env(run_dir, workspace)
-    env.update({k: str(v) for k, v in (case.get("execution", {}).get("env") or {}).items()})
+    if case.get("execution", {}).get("env"):
+        raise ValueError("execution.env belongs in the operator environment")
     if agent == "claude":
         env["CLAUDE_CONFIG_DIR"] = str(args.claude_home)
         env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
