@@ -200,8 +200,8 @@ def codex_env(home: Path) -> dict[str, str]:
 def export_tree(dest: Path) -> Path:
     """Copy the files a clone of this checkout would hold into dest, and return dest.
 
-    Codex copies the whole marketplace root into its cache, ignored build
-    output included, so the gate installs from this export: the files git
+    Clients copy the whole marketplace root into their caches, ignored build
+    output included, so both gates install from this export: the files git
     tracks or would track, as they are in the working tree. Without git the
     checkout itself is the source.
     """
@@ -267,7 +267,8 @@ def check_claude(command: list[str], manifest: dict, expected: dict[str, list[st
                 "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
             }
         )
-        run = runner(command, ROOT, env)
+        source = export_tree(Path(tempfile.mkdtemp(prefix="tree-", dir=config)))
+        run = runner(command, source, env)
 
         version = run("--version")
         if version.returncode != 0:

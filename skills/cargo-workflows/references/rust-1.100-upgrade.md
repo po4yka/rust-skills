@@ -18,6 +18,21 @@ using a newly stable API in a library that supports an older compiler.
 Run `cargo check --locked --workspace --all-targets`, tests, rustdoc, and Clippy
 on each supported feature set and target. A host check does not cover target-specific code.
 
+Keep a small before/after probe when the update changes language behavior.
+Record the edition, both exact toolchains, the expected diagnostic code, and the
+runtime assertion. Test the explicit fix on both versions. These Rust 1.100
+transitions need more than a successful current-toolchain build:
+
+| Probe | Before 1.100 | On 1.100 |
+| --- | --- | --- |
+| An irrefutable `if let (_, value) = pair` closure consumes one field | The whole pair can move into the closure | A separate field can remain available; test the actual `Send` bound and destructor log |
+| An unconstrained `f()?` needs `Default` | Editions before 2024 report `dependency_on_unit_never_type_fallback`; an explicit allow can retain unit fallback | All editions fail with E0277 when `!` lacks the bound; the old lint allow does not repair it |
+| Separate impls for `fn() -> !` and `fn() -> Infallible` | Distinct types permit both impls | E0119 reports the overlap |
+
+Use `f::<()>()?` only when unit is the intended type. A successful explicit-type
+probe checks that fix; it does not establish the intended API. Keep migration
+probes separate from a full old-toolchain build when the current code uses new APIs.
+
 ## Read Cargo's artifact messages
 
 Cargo 1.100 changes the intermediate build directory layout. Hashes identify
@@ -29,6 +44,12 @@ Use `--message-format=json` on the build or `cargo test --no-run` command. Read
 metadata from `build-script-executed` messages. Keep the target and profile in
 the command. Final artifacts still go to the target directory; internal paths
 are not an interface. Validate a cache change with two different feature sets.
+
+Use a fixture whose build script emits different source for each feature set.
+Build both sets in dev and release profiles, then build the first set again.
+Execute each `compiler-artifact.executable` and check its expected output. Read
+the generated source from `build-script-executed.out_dir`. Check the cached run
+too: a fresh build alone cannot detect selection of a stale artifact.
 
 ## Check dependencies with Cargo lints
 

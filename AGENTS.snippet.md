@@ -40,6 +40,7 @@ design, build, testing, concurrency, production, ffi. Delete the rows of a bundl
 | `Ordering::Relaxed` vs `SeqCst`, fences, `static mut`, `OnceLock`, `thread_local!` | memory-model |
 | Guard or `RefCell` borrow across `.await`, `select!` side effects, shutdown hang | rust-async-internals |
 | `SAFETY` comment, `MaybeUninit`, provenance, `repr(packed)`, `unsafe impl Send` | rust-unsafe |
+| Custom allocator, per-collection allocator, allocation failure, allocator contract | rust-allocators |
 | `Pin<&mut Self>`, `PhantomPinned`, `#[pin]` projection | rust-pin-projection |
 | `cannot be sent between threads safely`, `MutexGuard` is not `Send` | rust-send-sync |
 | Every handler in an event loop needs `&mut` to one state | rust-event-loop-state |

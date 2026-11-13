@@ -17,12 +17,12 @@ the catalog commit, the client version, and the exact model IDs (`docs/releasing
 
 ## `routing/`: selection from a list
 
-- `prompts.jsonl`: 184 prompts, 4 per skill. Three are positives that the skill owns. One is a
+- `prompts.jsonl`: four prompts per skill. Three are positives that the skill owns. One is a
   near-miss: it shares surface terms with the skill but belongs to a sibling, or to no skill
   (`"expected": "none"`, 2 prompts). Each row has `id`, `skill`, `kind`, `prompt`, `expected`,
-  `accepted_alternates`, and `source`. The prompts were written from the skill bodies at catalog
-  commit `5d5f470`, blind to the descriptions; `source` names the section each one came from at
-  that commit, and a later move into `references/` does not update it.
+  `accepted_alternates`, and `source`. The initial prompts were written from the skill bodies at catalog
+  commit `5d5f470`, blind to the descriptions. Later additions use the same method.
+  Each `source` names the source section; a later move into `references/` does not update it.
 - `negative-cases.md`: phrases a description must not claim. `scripts/validate-skills.py`
   enforces it on every run.
 - `run.py`: the runner.

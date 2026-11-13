@@ -112,16 +112,18 @@ A library must not build the global `rayon` pool: the host, or an earlier `par_i
 
 ## 8. Profiles and LTO
 
-Cargo reads `[profile.*]` only from the workspace-root manifest; a table in a member or a dependency is discarded, so a library cannot ship optimization settings to its consumers.
-
-Four settings need a deliberate answer.
+Set `[profile.*]` at the workspace root; member and dependency tables are ignored.
 
 - `panic`: `"abort"` gives the smallest binary; use `"unwind"` when an FFI entry point must return an error instead of aborting. The `rust-panic-safety` skill owns the boundary policy: with `"unwind"`, guard each entry point with `catch_unwind`.
 - `strip`: use `"symbols"` only when the artifact never needs crash symbolication. Otherwise keep `"none"` with `debug = "line-tables-only"`, strip the shipped copy in packaging, and archive the unstripped Cargo output.
 - `lto`: a true no-LTO baseline is `lto = "off"`; the default `lto = false` still runs thin-local LTO.
 - `opt-level`: `"s"` and `"z"` turn off the loop vectorizer; measure the hot loop at `3` (the `rust-hot-path` skill has the probe).
 
-Read [references/build-configuration.md](references/build-configuration.md) when you change a profile or a build flag for speed or size: it has starting profiles, the LTO and strip tables, rustflags precedence, `target-cpu`, PGO, and the global allocator.
+Read [references/build-configuration.md](references/build-configuration.md) when you change
+profiles, rustflags, `target-cpu`, instrumented PGO, or the global allocator.
+
+Read [references/sample-pgo.md](references/sample-pgo.md) for sample capture, conversion,
+and `-Cprofile-sample-use` validation.
 
 ## 9. Build time
 

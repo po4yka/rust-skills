@@ -2,40 +2,9 @@
 
 ## Keep the allocator with the allocation
 
-Rust 1.100 stabilizes the core `Allocator` API and allocator parameters for
-`Box` and `Vec`. This does not stabilize custom-allocator constructors for every
-collection or for `Rc` and `Arc`. Check the method's stability and the package
-MSRV before use. `Allocator` and `GlobalAlloc` are separate traits.
-
-Use `Box::into_raw_with_allocator` or `Vec::into_raw_parts_with_allocator` when
-ownership leaves Rust. Keep the allocator with the pointer, length, and capacity.
-Reconstruct with the matching `_in` function. Plain `Box::from_raw` uses the
-global allocator and is not a general inverse for a custom allocation.
-
-```rust,run
-use std::alloc::System;
-
-fn main() {
-    let mut values = Vec::with_capacity_in(4, System);
-    values.extend([10_u32, 20]);
-    let (ptr, len, cap, allocator) = values.into_raw_parts_with_allocator();
-    // SAFETY: These parts and this allocator came from the same live Vec.
-    // No other owner frees or accesses the allocation during reconstruction.
-    let values = unsafe { Vec::from_raw_parts_in(ptr, len, cap, allocator) };
-    assert_eq!(values.as_slice(), &[10, 20]);
-
-    let value = Box::new_in(7_u32, System);
-    let (ptr, allocator) = Box::into_raw_with_allocator(value);
-    // SAFETY: The pointer and allocator came from this Box; ownership is unique.
-    let value = unsafe { Box::from_raw_in(ptr, allocator) };
-    assert_eq!(*value, 7);
-}
-```
-
-Run `cargo run --locked --example <name>` for these round trips. It does not
-prove a custom allocator's
-alignment, lifetime, or deallocation contract. Test its failure paths and use
-Miri on a compatible nightly when available.
+The `rust-allocators` skill, when installed, owns allocator selection, contracts,
+and FFI transfer. Keep the allocator with `into_raw_parts_with_allocator` or
+`into_raw_with_allocator`, and reconstruct with the matching `_in` operation.
 
 ## Construct a zero-sized value only with its invariants
 

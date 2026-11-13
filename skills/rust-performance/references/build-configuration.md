@@ -297,9 +297,9 @@ script data in the merge distorts the profile. Always pass `--target`.
 
 Rust 1.100 stabilizes `-Cprofile-sample-use=<profile>`. This uses a sample profile;
 it does not consume the `.profraw` files of the instrumented workflow above.
-Check `rustc -C help` on the shipping toolchain, use a profile that matches its
-LLVM format, and measure the final binary on representative input. Flag support
-alone does not prove that a profile was applied or that performance improved.
+Read [sample-pgo.md](sample-pgo.md) for capture, conversion, profile-consumption
+checks, and paired timing. Flag support alone does not prove that a profile was
+applied or that performance improved.
 
 
 ### Where PGO does not reach

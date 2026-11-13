@@ -1,11 +1,11 @@
 # Pins the toolchain and the compile target for the harness so a local run
-# matches CI exactly. Any cargo invocation inside checks/ uses this. CI installs
-# nothing else; rustup reads this file.
+# matches CI exactly. Any cargo invocation inside checks/ uses this. CI also
+# installs Rust 1.99.1 for the small historical transition fixtures.
 #
 # When you change the channel, run check.sh on that version and fix changed
 # diagnostics or examples. Keep baseline.txt empty; do not accept new failures.
 [toolchain]
 channel = "1.100.0"
-targets = ["x86_64-unknown-linux-gnu"]
-# clippy runs the lint gate (checks/lint_gate.py).
-components = ["clippy"]
+targets = ["x86_64-unknown-linux-gnu", "wasm32-wasip3"]
+# Clippy checks the lint templates. Matching LLVM tools check the real sample profile.
+components = ["clippy", "llvm-tools"]

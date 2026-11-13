@@ -78,5 +78,8 @@ jobs:
       # a compile failure the analyzer cannot attribute to an undefined symbol
       # or to the extraction wrapper. The same command a contributor runs,
       # without the client gates: the validate job runs those.
+      - name: Install the previous compiler for transition fixtures
+        run: rustup toolchain install 1.99.1 --profile minimal
+
       - name: Run checks
         run: bash checks/check.sh --no-clients

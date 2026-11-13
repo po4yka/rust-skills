@@ -66,13 +66,13 @@ Before you call async work done or approve a merge, walk the checklist in
 
 ## Cancellation
 
-`select!` drops every other branch future when the first branch finishes, and the work in
-progress inside a dropped branch is lost. `join!` waits for all branches. Every future in a
-`select!` arm, in `timeout`, or in `FuturesUnordered` must therefore be cancel safe. A disabled
-branch still evaluates its async expression, so keep side effects inside the async body. Read
-[references/cancellation-and-shutdown.md](references/cancellation-and-shutdown.md) when you
-annotate cancel safety, pick a library method for a `select!` arm, or protect a sequence of
-`.await`s that must not be split.
+A winning `select!` branch drops the other futures and their unfinished work. `join!`
+waits for all branches. Futures in `select!`, `timeout`, or `FuturesUnordered` must
+be cancel safe. Disabled branches still evaluate their async expression; put side
+effects inside the async body. Read [cancellation and shutdown](references/cancellation-and-shutdown.md)
+when selecting cancel-safe methods or protecting a sequence of `.await`s.
+Read [guard rollback](references/drop-guard-rollback.md) when `DropGuard` spans `.await`;
+test dropping the future before its first poll and after `Pending`.
 
 ### Put shutdown first with `biased`
 

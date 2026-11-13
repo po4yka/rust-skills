@@ -117,7 +117,7 @@ before Tokio decides which futures to poll.
 
 `tokio_util::sync::CancellationToken` has three idioms beyond `.cancelled().await`.
 
-**DropGuard: cancellation on an RAII boundary.**
+**CancellationToken drop guard: request cancellation on an RAII boundary.**
 
 ```rust
 use tokio_util::sync::CancellationToken;
@@ -131,7 +131,9 @@ let _guard = token.clone().drop_guard();
 
 Use it for a bounded async operation where cancellation must fire on any early exit. It replaces
 hand-written cleanup at each `?`. `drop_guard_ref()` (tokio-util 0.7.16+) borrows the token
-instead of consuming it.
+instead of consuming it. This guard signals cancellation; it does not join tasks or
+complete their cleanup. For synchronous state rollback with `core::mem::DropGuard`,
+read [the future-drop probe](drop-guard-rollback.md).
 
 **`run_until_cancelled`: race a future against cancellation and keep its value.**
 
