@@ -150,12 +150,30 @@ The body starts at an `# Title` heading directly after the frontmatter.
 
 The current compile pin is Rust 1.100.0, edition 2024. Read
 `research/rust-1.100.0-2026-11.md` for this update's scope and evidence.
+Read `research/rust-1.100-practical-workflows-2026-11.md` for the permanent
+regression and platform workflows added after that migration.
 When the pin changes, read the Rust and Cargo release notes, then search all skills,
 references, instructions, scripts, and fixtures for affected claims and artifact paths.
 Run `bash checks/check.sh`; keep `checks/baseline.txt` empty. Fix changed diagnostics
 and examples instead of adding an exemption. Keep historical measurements and API
 stabilization versions at their original version unless the measurement runs again.
 Record the source links, checks, and untested platforms in `research/`.
+
+Keep a permanent regression probe when guidance depends on a compiler behavior
+change. Record the old and new toolchains, edition, command, and expected result.
+Check diagnostics and observable behavior separately: a successful build does not
+prove capture, drop, or cancellation behavior. Run only the small transition
+fixtures on the old compiler; the catalog uses the current pin.
+
+Test Cargo command and configuration claims with Cargo integration fixtures.
+Use isolated workspaces and registry state for resolver tests. Check the selected
+versions and JSON artifact messages, not only the command's exit status. Exercise
+the failure case as well as the successful case. A Markdown validator or a Rust
+code-block check does not establish a Cargo policy's behavior.
+
+State which `cfg`, target, and runtime a probe exercises. A separate `cfg(loom)`
+fixture does not cover all gated catalog code. Keep real-host platform evidence
+separate from compilation and model-evaluation results.
 
 ## How to verify a change locally
 
@@ -171,9 +189,10 @@ discovery step and the Claude Code and Codex plugin install steps, which all nee
 and rerun it without asking.
 
 While you edit descriptions, `bundles.toml`, or `.claude-plugin/`, run the fast form. It skips
-the cargo gates (the example compile check, the behavior probes, and the outcome fixtures) and
-keeps the catalog, unit-test, and client gates. With warm npx caches it takes under a minute,
-against about two and a half for the full run (measured 2026-11-02). A green `--fast` run is not
+the examples, behavior probes, release regressions, platform workflows, and outcome fixtures.
+It keeps the catalog, unit-test, and client gates. The earlier full suite took about two
+and a half minutes with warm caches (measured 2026-11-02, before the release and platform
+fixtures). A green `--fast` run is not
 a green CI run: run the full command before a pull request.
 
 ```bash
@@ -267,7 +286,9 @@ fails the gate as a new fragment.
 `check.sh` compiles the examples twice: once as written, and once with `--profile test`, which
 sets `cfg(test)`. The first run never reads a `#[test]` function, a `#[cfg(test)]` module, or a
 `#[tokio::test]` body, so test code meets the same gates only through the second. Neither run
-sets `cfg(miri)`, `cfg(loom)`, or a non-x86_64 `target_arch`, so code under those stays unchecked.
+sets `cfg(miri)`, `cfg(loom)`, or a non-x86_64 `target_arch`, so code under those stays unchecked
+by these two passes. The separate release regression gate runs one isolated loom fixture.
+The platform gate builds and executes its own WASIp3 guest. Neither covers all catalog blocks.
 
 `check.sh` then runs `npx skills add ./ --list`, which lists the skills and installs nothing.
 Run it after any frontmatter edit. The CLI and the agent runtimes parse frontmatter with a real
@@ -280,9 +301,9 @@ Next, `check.sh` runs `checks/plugin_install.py` with the Claude Code CLI that
 `claude plugin validate .`, adds this checkout as a marketplace, installs the full-catalog plugin
 and one plugin per bundle, and compares the skills of `claude plugin details` with `skills/` and
 `bundles.toml`. A marketplace entry that is neither fails. It needs no API key and does not
-touch `~/.claude`. Run it after any edit to `.claude-plugin/` or `bundles.toml`. A green result
-proves what a local-path install loads, which Claude Code reads in place; it does not prove a
-GitHub install, which copies the plugin to the cache.
+touch `~/.claude`. The script exports the files git tracks or would track before installation,
+so copied plugin caches contain no ignored build output. Run it after any edit to
+`.claude-plugin/` or `bundles.toml`. A green result proves a local-path install, not a GitHub install.
 
 Last, `check.sh` runs the same script with the Codex CLI that `CODEX_VERSION` pins. Codex
 copies the whole marketplace root into its cache, ignored build output included, so the script

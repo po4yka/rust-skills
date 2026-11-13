@@ -116,6 +116,27 @@ build targets were selected; it does not check unused dev-dependencies.
 `unused_dependencies = "deny"` in the Cargo lint table when it is a required gate.
 The `cargo-workflows` skill, when installed, owns `--message-format=json` and the upgrade workflow.
 
+Test a required Cargo lint with a small package before enforcing it across a
+workspace. For `unused_dependencies`, use two binaries, one feature-gated use,
+one dependency under the active target cfg, and an unused dev-dependency:
+
+| Command or change | Expected boundary on Cargo 1.100 |
+| --- | --- |
+| `cargo check --locked --bin one` | An unselected binary can use a shared dependency, so this cannot prove it unused |
+| `cargo check --locked --all-targets` | The dependency used only behind a disabled feature can trigger the lint |
+| Add `--features <feature>` | The dependency is used in this configuration |
+| Remove the last use of an active target dependency | The required lint fails; an inactive target dependency is not judged on this host |
+| Leave a dev-dependency unused | The Cargo lint does not diagnose it |
+
+Require a failing negative case and a passing corrected case. A quiet selected
+binary or inactive target is not evidence that the policy checks the whole graph.
+
 Rust 1.100 also adds `rustdoc::invalid_markdown_table`. Run `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps`
 when a documentation table changes. `#[expect(dead_code)]` inside a dead parent
 no longer reports an unfulfilled expectation merely because the parent owns the diagnostic.
+
+Escape a pipe inside a Markdown table cell as `\|`, including inside code spans.
+The unescaped cell `` `f(|x| x)` `` can lose columns in the rendered documentation.
+Use a rustdoc fixture with that bad row and a corrected `` `f(\|x\| x)` `` row:
+`rustdoc -D rustdoc::invalid_markdown_table <file.rs>` must reject the first and
+accept the second. Rust compilation and Clippy do not exercise this lint.

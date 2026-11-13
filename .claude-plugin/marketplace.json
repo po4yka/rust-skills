@@ -9,7 +9,7 @@
     {
       "name": "rust-skills",
       "source": "./",
-      "description": "All 50 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
+      "description": "All 51 Rust agent skills. The full listing overflows the skill listing of a 200K-context client; prefer one bundle, or add the AGENTS.snippet.md router.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -107,7 +107,7 @@
     {
       "name": "rust-skills-concurrency",
       "source": "./",
-      "description": "Concurrency and unsafe code: 6 Rust agent skills.",
+      "description": "Concurrency and unsafe code: 7 Rust agent skills.",
       "license": "BSD-3-Clause",
       "author": {
         "name": "po4yka",
@@ -119,6 +119,7 @@
         "./skills/memory-model",
         "./skills/rust-async-internals",
         "./skills/rust-unsafe",
+        "./skills/rust-allocators",
         "./skills/rust-pin-projection",
         "./skills/rust-send-sync",
         "./skills/rust-event-loop-state"

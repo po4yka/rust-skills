@@ -47,4 +47,9 @@ cleanup on abort, process exit, or `mem::forget`, which skip destructors.
 Keep cleanup free of panics. A guard is not a memory-safety proof: safe code can
 forget it. Use a local `Drop` type when the package MSRV is below 1.100.
 
+The `rust-async-internals` skill, when installed, owns the cancellation case.
+Poll the real future to `Pending`, drop its owner, and check rollback before
+claiming cancel safety. `DropGuard` runs synchronous cleanup; a remote or async
+rollback needs an explicit completion path that the caller awaits.
+
 Source: [DropGuard](https://doc.rust-lang.org/1.100.0/core/mem/struct.DropGuard.html).

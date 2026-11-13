@@ -1,0 +1,52 @@
+{
+  "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)\nbinary: rustc\ncommit-hash: 0ef1bc386059596dada8fb65b50425aab2ea637a\ncommit-date: 2026-11-09\nhost: aarch64-apple-darwin\nrelease: 1.100.0\nLLVM version: 23.1.5",
+  "llvm_profdata": "LLVM (http://llvm.org/):\n  LLVM version 23.1.5-rust-1.100.0-stable\n  Optimized build.",
+  "samply": "samply 0.13.1",
+  "host": "macOS-27.2.1-arm64-arm-64bit",
+  "source_sha256": "dca2e05f0e5759806f2b82b1755a871cba214de49143971d389eb00dc30d18fe",
+  "sample_count": 8134,
+  "mapped_leaf_samples": 8128,
+  "line_samples": {
+    "3": 2905,
+    "1": 5218,
+    "8": 5
+  },
+  "workload_output": "2378606452826756027",
+  "profile_attached": true,
+  "rounds": 9,
+  "iterations_per_run": 30000,
+  "seconds": {
+    "baseline": [
+      2.887883707997389,
+      2.175918916997034,
+      2.0415440409997245,
+      2.104715875000693,
+      2.215657499997178,
+      2.034752000006847,
+      1.6589626250060974,
+      2.0555400000012014,
+      1.6928757080022478
+    ],
+    "optimized": [
+      2.1389810830005445,
+      2.1144116670038784,
+      2.8306012079992797,
+      1.97816858299484,
+      2.3634543329972075,
+      2.078220750001492,
+      1.2816618329961784,
+      2.1200199169979896,
+      1.3160539999953471
+    ]
+  },
+  "median_seconds": {
+    "baseline": 2.0555400000012014,
+    "optimized": 2.1144116670038784
+  },
+  "binary_bytes": {
+    "baseline": 491896,
+    "optimized": 491848
+  },
+  "median_ratio_optimized_over_baseline": 1.0286404871725399,
+  "profile_sha256": "a5c532b27c126762f63728e71826b67cc2abd4f65c05f3d43a57efe2f3b9b187"
+}

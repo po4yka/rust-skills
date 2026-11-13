@@ -7,8 +7,20 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+### Added
+
+- Add `rust-allocators` for per-collection allocator selection, implementation
+  contracts, failure paths, and foreign ownership. The catalog has 51 skills.
+- Add permanent compiler-transition, Cargo-policy, and isolated loom regression
+  fixtures, plus WASIp3 runtime and recorded sample-PGO checks in CI.
+- Add executable smart-pointer mapping and future-cancellation rollback probes.
+
 ### Changed
 
+- Extend the authoring rules to require permanent evidence for version-sensitive
+  behavior and Cargo policies. Add measured sample-PGO and WASIp3 workflows.
+- Use a tracked-file export for both plugin install gates, so ignored build
+  output does not enter each temporary plugin cache.
 - Update the compile toolchain to Rust 1.100.0, with edition 2024 unchanged.
 - Update harness dependencies to mutants 0.0.4, loom 0.7.3, and syn 3.0.10 (#33).
   Document loom's MSRV, atomic methods, notification limit, and checkpoint feature.

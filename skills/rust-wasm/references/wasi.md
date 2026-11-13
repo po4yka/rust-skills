@@ -5,6 +5,9 @@ async I/O for WASI, ship a WebAssembly component, or compile C or C++ for a
 WASI target. The capability
 and WIT pinning rules in `SKILL.md` apply to every command here.
 
+Contents: Preview 1; WASI 0.2; WASI 0.3 and its async/capability smoke test;
+async I/O selection; C and C++ builds.
+
 ## Build and run Preview 1
 
 Build Preview 1 only for a host that implements its imports:
@@ -43,6 +46,62 @@ in the shipping host with WASI 0.3 async support. A build does not prove host su
 The Rust 1.100 target does not yet enable cooperative `std::thread` support by default.
 Use `cfg(all(target_os = "wasi", target_env = "p3"))` for target-specific code.
 Use wasi-sdk 34 or later when an external C toolchain is required.
+
+### Exercise the async host and capability boundary
+
+This smoke test is checked with Rust 1.100.0, Wasmtime 50.0.1, and wasm-tools
+1.263.0. Pin the runtime and tooling before repeating it. A Tier 2 compiler
+target does not establish a host runtime's support or stability policy.
+
+```rust
+// guest.rs
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let start = std::time::Instant::now();
+    std::thread::sleep(std::time::Duration::from_millis(25));
+    assert!(start.elapsed() >= std::time::Duration::from_millis(25));
+    println!("async clock wait completed");
+    let data = std::fs::read_to_string("/fixture/input.txt")?;
+    assert_eq!(data, "capability granted\n");
+    println!("file capability granted");
+    Ok(())
+}
+```
+
+```bash
+rustup target add --toolchain 1.100.0 wasm32-wasip3
+rustc +1.100.0 --edition=2024 --target wasm32-wasip3 guest.rs -o guest.wasm
+wasm-tools validate guest.wasm
+wasm-tools component wit guest.wasm > imports.wit
+mkdir -p fixtures
+printf 'capability granted\n' > fixtures/input.txt
+wasmtime run -S p3 -W component-model-async --dir ./fixtures::/fixture guest.wasm
+```
+
+Check `imports.wit`: the command exports `wasi:cli/run@0.3.0` with an async
+`run`, imports `wasi:clocks/monotonic-clock@0.3.0` with async waits, and imports
+the WASI 0.3 filesystem. The Rust call is synchronous at its source boundary;
+the component uses async host interfaces. It does not spawn an OS thread.
+
+The run prints both completion lines. Repeat it without `--dir`:
+
+```bash
+wasmtime run -S p3 -W component-model-async guest.wasm
+```
+
+Require a nonzero exit, the clock completion line, and the file error. Wasmtime
+50.0.1 reports `NotFound` for this ungranted path. Also run with `-S p3=n` and
+require a missing `wasi:cli/environment@0.3.0` linker implementation. These
+negative cases prevent an unrelated startup failure from passing as a capability
+test.
+
+This proves a clock wait and one file capability on the pinned host. It does not
+prove cancellation, HTTP streaming, cooperative threads, or another runtime.
+Grant only the directory under test; avoid `--dir /` and inherited network access
+when checking this boundary.
+
+Sources: [Rust WASIp3 target](https://doc.rust-lang.org/1.100.0/rustc/platform-support/wasm32-wasip3.html),
+[Wasmtime CLI](https://docs.wasmtime.dev/cli-options.html),
+[Wasmtime 50.0.1](https://github.com/bytecodealliance/wasmtime/releases/tag/v50.0.1).
 
 ## Select async I/O for WASI
 

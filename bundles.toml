@@ -66,6 +66,7 @@ skills = [
     "memory-model",
     "rust-async-internals",
     "rust-unsafe",
+    "rust-allocators",
     "rust-pin-projection",
     "rust-send-sync",
     "rust-event-loop-state",

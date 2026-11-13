@@ -80,12 +80,12 @@ pub struct Header { id: u64, flags: u32 }
 const _: () = assert!(std::mem::size_of::<Header>() == 16);
 ```
 
-Pin an allocation count with a `dhat` test: one heap test per integration test file, each with
-its own `#[global_allocator]`, because dhat panics when two profilers run at once. Keep that
-allocator out of a library's `src/`, where it replaces the allocator of every binary that links
-the library. Read [references/allocation-reduction.md](references/allocation-reduction.md) when
-you write the test. Pin a time with a Criterion baseline
-through the `rust-performance` skill.
+Use one `dhat` heap test per integration-test binary: two profilers in one process panic.
+Keep its `#[global_allocator]` out of library `src/`; it affects every linked binary.
+Read [allocation reduction](references/allocation-reduction.md) when writing the test.
+Guard time with a Criterion baseline through the `rust-performance` skill.
+Read [pointer mapping](references/smart-pointer-map.md) when using `Box::map`,
+`Rc::map`, or `Arc::map`; measure reuse and test shared owners, layouts, and panic.
 
 ## Lookups
 

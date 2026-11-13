@@ -17,12 +17,16 @@ never sees it.
 
 ```bash
 bash checks/check.sh
-bash checks/check.sh --fast         # skips cargo: no compile check, behavior probes, or outcome fixtures
+bash checks/check.sh --fast         # catalog, unit tests, and clients only
 bash checks/check.sh --no-clients   # skips npx: no skills CLI discovery or plugin installs
 ```
 
 The first form is the whole contract. CI runs the same gates in two jobs: `--fast` in one
 and `--no-clients` in the other. The steps, if you need one of them alone:
+
+Install the previous compiler for the transition fixtures once:
+`rustup toolchain install 1.99.1 --profile minimal`. The catalog itself stays on
+the current pin. Missing fixture toolchains fail the release regression gate.
 
 `check.sh` holds a checkout-scoped process lock for the complete run. Parallel
 calls wait instead of replacing `examples/`, `manifest.json`, `check.json`, or
@@ -45,6 +49,8 @@ python3 checks/test_gen.py                     # executable-fence rules
 python3 checks/test_analyze.py                # the failure classifier itself
 python3 checks/test_lint_gate.py              # the lint gate's parsers
 python3 checks/lint_gate.py                   # every lint the rust-lints templates name fires
+python3 checks/release_regressions.py         # old/new compiler, Cargo integration, and isolated loom
+python3 checks/test_release_regressions.py    # failures and environment isolation in that runner
 python3 evals/outcome/test_check.py           # the outcome-suite lint
 python3 evals/outcome/test_cross_agent.py     # cross-agent runner: traces, blinding, graders
 python3 evals/outcome/check.py                # outcome fixtures: build, test, probes; offline
@@ -117,7 +123,8 @@ never type-checks a `#[test]` function, a `#[cfg(test)]` module, or a
 `#[tokio::test]` body. `--test-pass` joins the second run's errors to the first
 for every `compile` and `run` block, and every gate below sees the union. No run
 sets `cfg(miri)`, `cfg(loom)`, or a non-x86_64 `target_arch`, so code under those
-stays unchecked.
+stays unchecked by these two passes. The separate release regression gate runs
+its own isolated loom fixture; it does not cover every gated catalog block.
 
 ## The gates
 
@@ -237,10 +244,28 @@ print "did not match any packages". If `bitmaps` comes back, pin the last
 `imbl` release without it, or replace the example and record the coverage
 change.
 
+## Release and platform fixtures
+
+`release_regressions.py` runs small real workspaces against the old and current
+compiler. It checks Cargo policies with an isolated loopback registry and runs
+the loom publication fixture outside the harness dependency graph. Read
+`release-fixtures/README.md` for its expected results and coverage limits.
+
+The full check also downloads checksum-pinned WASI tools into its temporary
+directory and runs `platform-workflows/wasip3_smoke.py`. A permitted directory
+must work; missing directory access and disabled WASIp3 must fail for the expected
+reason. The target and LLVM tools come from `rust-toolchain.toml`.
+
+`platform-workflows/sample_pgo.py --replay --output <new-directory>` applies the
+recorded real sample profile, checks LLVM profile metadata, and checks the
+program's output. It does not record a new profile or assert a speedup. Use the
+capture command in `platform-workflows/README.md` for a fresh performance study.
+
 ## Changing the toolchain
 
-`rust-toolchain.toml` pins the channel and the target. CI installs nothing else;
-rustup reads that file. Run the complete check on the new channel. Fix examples
+`rust-toolchain.toml` pins the channel and the target. Rustup reads that file.
+CI also installs Rust 1.99.1 for the historical transition fixtures. Run the
+complete check on the new channel. Fix examples
 and diagnostic expectations that changed; keep `baseline.txt` empty.
 Read `../research/rust-1.100.0-2026-11.md` for the Rust 1.100 update evidence.
 

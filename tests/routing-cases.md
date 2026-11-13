@@ -213,6 +213,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | cargo-fuzz | rust-test-tools |
 | loom | rust-test-tools |
 | cargo-careful | rust-test-tools |
+| custom allocator | rust-allocators |
 | SAFETY comment | rust-unsafe |
 | repr(packed) | rust-unsafe |
 | improper_ctypes | rust-unsafe |

@@ -48,7 +48,7 @@ method, the per-grader tables, and the caveats are in
 ## Install
 
 Install one bundle, not the whole catalog. A bundle is one subject group of the catalog below.
-The full catalog costs about 9,700 tokens of always-on skill listing (50 skills, by the
+The full catalog costs about 9,900 tokens of always-on skill listing (51 skills, by the
 validator's estimate), and a client with a 200K-token window keeps about 2,000: Claude Code then drops
 whole descriptions, and those skills stop loading. Every bundle fits that budget: the validator
 caps each bundle at 5,000 description characters (about 2,000 tokens). The bundles are defined
@@ -60,7 +60,7 @@ in [bundles.toml](bundles.toml).
 | `design` | API design, code discipline, and tooling | 6 | `rust-skills-design` |
 | `build` | Build, dependencies, and supply chain | 10 | `rust-skills-build` |
 | `testing` | Correctness and testing | 6 | `rust-skills-testing` |
-| `concurrency` | Concurrency and unsafe code | 6 | `rust-skills-concurrency` |
+| `concurrency` | Concurrency and unsafe code | 7 | `rust-skills-concurrency` |
 | `production` | Networking, database, performance, debugging, and observability | 7 | `rust-skills-production` |
 | `ffi` | FFI and platform boundaries | 7 | `rust-skills-ffi` |
 
@@ -78,34 +78,39 @@ gh skill install po4yka/rust-skills rust-unsafe --pin v0.4.0
 <details>
 <summary><b><code>gh skill</code> command for each bundle</b></summary>
 
+Set `RUST_SKILLS_REF` to a reviewed tag or full commit SHA that contains the
+listed skills. The `v0.4.0` tag predates `rust-allocators`; select a later
+reviewed commit for that skill.
+
 ```bash
+: "${RUST_SKILLS_REF:?Set RUST_SKILLS_REF to a reviewed tag or full commit SHA}"
 # language
 for s in rust-compiler-errors rust-borrow-semantics rust-pattern-semantics rust-variance rust-callback-bounds rust-iterator-impl rust-type-erasure rust-macros; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
+  gh skill install po4yka/rust-skills "$s" --pin "$RUST_SKILLS_REF"
 done
 # design
 for s in rust-discipline rust-code-style rust-crate-architecture rust-lints rust-cli rust-error-handling; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
+  gh skill install po4yka/rust-skills "$s" --pin "$RUST_SKILLS_REF"
 done
 # build
 for s in cargo-workflows rust-crate-release rust-native-linking rust-serde rust-security rust-android-build rust-ios-build rust-wasm rust-embedded-no-std rust-cross-compilation; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
+  gh skill install po4yka/rust-skills "$s" --pin "$RUST_SKILLS_REF"
 done
 # testing
 for s in rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port rust-review; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
+  gh skill install po4yka/rust-skills "$s" --pin "$RUST_SKILLS_REF"
 done
 # concurrency
-for s in memory-model rust-async-internals rust-unsafe rust-pin-projection rust-send-sync rust-event-loop-state; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
+for s in memory-model rust-async-internals rust-unsafe rust-allocators rust-pin-projection rust-send-sync rust-event-loop-state; do
+  gh skill install po4yka/rust-skills "$s" --pin "$RUST_SKILLS_REF"
 done
 # production
 for s in rust-performance rust-hot-path rust-copy-on-write rust-debugging rust-observability rust-networking rust-database; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
+  gh skill install po4yka/rust-skills "$s" --pin "$RUST_SKILLS_REF"
 done
 # ffi
 for s in rust-jni rust-swift-ffi uniffi-boundary uniffi-packaging-versioning ffi-error-progress-cancel rust-cxx rust-pyo3; do
-  gh skill install po4yka/rust-skills "$s" --pin v0.4.0
+  gh skill install po4yka/rust-skills "$s" --pin "$RUST_SKILLS_REF"
 done
 ```
 
@@ -212,7 +217,7 @@ npx skills add po4yka/rust-skills --skill cargo-workflows rust-crate-release rus
 # testing
 npx skills add po4yka/rust-skills --skill rust-tdd rust-test-tools rust-sanitizers-miri rust-panic-safety rust-port rust-review
 # concurrency
-npx skills add po4yka/rust-skills --skill memory-model rust-async-internals rust-unsafe rust-pin-projection rust-send-sync rust-event-loop-state
+npx skills add po4yka/rust-skills --skill memory-model rust-async-internals rust-unsafe rust-allocators rust-pin-projection rust-send-sync rust-event-loop-state
 # production
 npx skills add po4yka/rust-skills --skill rust-performance rust-hot-path rust-copy-on-write rust-debugging rust-observability rust-networking rust-database
 # ffi
@@ -284,6 +289,7 @@ Enter by the symptom, not by the skill name.
 | Where a module file goes (`mod.rs` or `name.rs`), `unreachable_pub`, or a `lib.rs` re-export | [rust-code-style](skills/rust-code-style/SKILL.md) |
 | A red clippy, `cargo fmt`, or `cargo doc` gate, or `unfulfilled_lint_expectations` | [rust-lints](skills/rust-lints/SKILL.md) |
 | A `SAFETY` comment, `MaybeUninit`, Strict Provenance, `repr(packed)`, or `mem::zeroed` | [rust-unsafe](skills/rust-unsafe/SKILL.md) |
+| A custom allocator, per-collection allocator, or allocator contract to implement or review | [rust-allocators](skills/rust-allocators/SKILL.md) |
 | Miri, ThreadSanitizer, HWASan, or MTE reports something | [rust-sanitizers-miri](skills/rust-sanitizers-miri/SKILL.md) |
 | You need the profile first: flamegraph, simpleperf, `cargo-bloat` | [rust-performance](skills/rust-performance/SKILL.md) |
 | The profile already named the hot spot: allocations, type size, hasher | [rust-hot-path](skills/rust-hot-path/SKILL.md) |
@@ -357,6 +363,7 @@ flowchart LR
 
     B --> B1[memory-model]
     B --> B2[rust-unsafe]
+    B --> B11[rust-allocators]
     B --> B3[rust-sanitizers-miri]
     B --> B4[rust-tdd]
     B --> B10[rust-review]
@@ -474,7 +481,7 @@ owns it.
 </details>
 
 <details>
-<summary><b>Concurrency and unsafe code</b> — six skills</summary>
+<summary><b>Concurrency and unsafe code</b> — seven skills</summary>
 
 <br>
 
@@ -483,6 +490,7 @@ owns it.
 | [memory-model](skills/memory-model/SKILL.md) | Atomic ordering selection, happens-before reasoning, fence placement, compare-exchange and `update` loops, global state (`static mut`, `OnceLock`, `LazyLock`, `thread_local!`), and verification with Miri and loom. |
 | [rust-async-internals](skills/rust-async-internals/SKILL.md) | `tokio::select!` and timeout cancel safety, task ownership and shutdown trees, blocking-work routing, runtime setup, manual polling with `Waker::noop`, `Send` bounds on async closures and `async fn` in traits, and stall triage. |
 | [rust-unsafe](skills/rust-unsafe/SKILL.md) | `#![forbid(unsafe_code)]` governance, the unsafe lint floor, SAFETY comments, validity and Strict Provenance, `MaybeUninit` and transmute, unaligned reads, syscall wrappers, zero-copy buffers, and manual `unsafe impl Send`. |
+| [rust-allocators](skills/rust-allocators/SKILL.md) | Per-collection allocator selection, the `Allocator` contract, allocation failure, alignment, grow and shrink, allocator lifetime, and FFI ownership. |
 | [rust-pin-projection](skills/rust-pin-projection/SKILL.md) | `Pin`, `Unpin` and `PhantomPinned`: why a `Pin` on an `Unpin` type enforces nothing, `std::pin::pin!` against `Box::pin` and `Pin::new_unchecked`, the four structural pinning obligations, and `pin-project` against `pin-project-lite`. |
 | [rust-send-sync](skills/rust-send-sync/SKILL.md) | The auto traits as a subject: `&T: Send` exactly when `T: Sync`, the reference and smart-pointer table, `Mutex` against `RwLock` payload bounds, `MutexGuard` as `!Send` but `Sync`, `PhantomData` markers that remove exactly one trait, and auto-trait leakage through `impl Trait` and `async fn`. |
 | [rust-event-loop-state](skills/rust-event-loop-state/SKILL.md) | Who owns the handler set and who owns the state in a tick loop, state as a trait parameter with capability bounds, when an ECS-shaped world earns its runtime conflict panic, and why `async fn(&mut State)` cannot suspend over shared state. |
@@ -605,7 +613,7 @@ invocations, and failure triage that a codebase learns the hard way.
   issue when Rust stable or a crate in `checks/Cargo.toml` moves past the pin.
 - The always-on skill listing is small. Claude Code keeps it within 1% of the context window
   (about 2,000 tokens on a 200K window) and drops whole descriptions when it overflows; Codex
-  keeps only a prefix of each. In November 2026, all 50 descriptions cost about 9,700 estimated tokens, so on a 200K window
+  keeps only a prefix of each. On 2026-11-13, all 51 descriptions cost about 9,900 estimated tokens, so on a 200K window
   install one bundle, and paste [AGENTS.snippet.md](AGENTS.snippet.md) into the consuming
   repository so the agent can still name the skill it needs.
 - Codex shortens every description to share one skill-list budget among all listed skills. In a

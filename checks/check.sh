@@ -6,8 +6,8 @@
 #     bash checks/check.sh --no-clients  # no npx: catalog, unit tests, and cargo gates
 #
 # --fast is for the edit loop of a description or a marketplace change. It
-# skips every gate that runs cargo: the compile check of the examples, the
-# behavior probes, and the outcome fixtures. A green --fast run is not a green
+# skips the Rust examples, behavior probes, release regressions, platform
+# workflows, and outcome fixtures. A green --fast run is not a green
 # CI run; run the full script before a pull request.
 #
 # --no-clients skips the three gates that run a consumer's CLI through npx. CI
@@ -94,6 +94,8 @@ python3 "$ROOT/evals/outcome/test_check.py" 2>&1 | tail -3
 python3 "$ROOT/evals/outcome/test_cross_agent.py" 2>&1 | tail -3
 python3 test_with_lock.py 2>&1 | tail -3
 python3 test_lint_gate.py 2>&1 | tail -3
+python3 test_release_regressions.py 2>&1 | tail -3
+python3 "$ROOT/checks/platform-workflows/test_sample_pgo.py" 2>&1 | tail -3
 python3 test_plugin_install.py 2>&1 | tail -3
 python3 test_gen.py 2>&1 | tail -3
 python3 test_analyze.py 2>&1 | tail -3
@@ -105,7 +107,7 @@ trap 'rm -rf "$RUN_DIR"' EXIT
 # The cargo gates. --fast skips this block; its body stays at the outer
 # indentation so each gate reads as it does in CI.
 if [ "$FAST" -eq 1 ]; then
-    echo "==> SKIPPED (--fast): rust example compile check, behavior probes, outcome fixtures"
+    echo "==> SKIPPED (--fast): rust examples, behavior probes, release regressions, platform workflows, outcome fixtures"
 else
 echo "==> extracting rust examples from skills/"
 python3 gen.py
@@ -170,6 +172,15 @@ echo "  ${run_count} behavior probe(s) passed"
 # removes, renames, or silences fails here instead of in a reader's workspace.
 echo "==> rust-lints templates: every named lint exists and fires (clippy)"
 python3 "$ROOT/checks/lint_gate.py"
+
+echo "==> release regressions: compiler transitions, Cargo policies, and cfg(loom)"
+python3 "$ROOT/checks/release_regressions.py"
+
+echo "==> platform workflows: WASIp3 capabilities and recorded sample PGO"
+python3 "$ROOT/checks/platform-workflows/fetch_tools.py" --output "$RUN_DIR/platform-tools"
+python3 "$ROOT/checks/platform-workflows/wasip3_smoke.py" \
+    --tools "$RUN_DIR/platform-tools" --output "$RUN_DIR/wasip3"
+python3 "$ROOT/checks/platform-workflows/sample_pgo.py" --replay --output "$RUN_DIR/sample-pgo"
 
 # Each outcome case plants a defect in a small std-only crate. The gate builds every fixture
 # offline on the pinned toolchain, checks that `cargo test` does what cases.toml says, and
