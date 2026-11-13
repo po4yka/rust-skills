@@ -1,0 +1,20 @@
+schema_version: "1.1"
+name: sandbox-shell
+runs: 1
+execution:
+  max_turns: 3
+  timeout_seconds: 120
+  allowed_tools: [Bash]
+  prompt: >-
+    Use Bash to run exactly `cargo --version > sandbox-probe.txt` in the current
+    directory. Do not write the file with any other command. Report the command's
+    exit status and stop. This checks that the shell and pinned Cargo can start.
+graders:
+  - name: shell-called
+    type: tool_used
+    tool: Bash
+    input_match: 'cargo --version > sandbox-probe\.txt'
+  - name: cargo-started
+    type: regex
+    target: {source: file, path: sandbox-probe.txt}
+    pattern: '^cargo 1\.100\.0 '

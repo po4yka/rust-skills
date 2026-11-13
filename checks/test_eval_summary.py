@@ -57,6 +57,16 @@ class TestEvalSummary(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Execution errors", result.stdout)
 
+    def test_shell_sandbox_failure_in_a_completed_trace_fails(self):
+        result = self.run_summary(json.dumps({
+            "suite": {"plugins": [{"name": "rust-skills"}]},
+            "cases": [{"name": "case", "arms": {"with": [{
+                "score": 0.5, "error": None, "graders": [{"evidence":
+                    "apply-seccomp: write /proc/self/setgroups: Permission denied"}]}]}}],
+        }))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("shell sandbox failed", result.stdout)
+
     def test_valid_low_score_remains_a_measurement(self):
         result = self.run_summary(json.dumps({
             "suite": {"plugins": [{"name": "rust-skills"}], "ablation": True},

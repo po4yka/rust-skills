@@ -36,7 +36,9 @@ concurrency:
 jobs:
   eval:
     name: claude plugin eval
-    runs-on: ubuntu-latest
+    # The Linux client can start but then reject every shell call in apply-seccomp.
+    # Use the native macOS sandbox for outcome tasks; keep sandbox policy unchanged.
+    runs-on: ${{ inputs.suite == 'outcome' && 'macos-26' || 'ubuntu-latest' }}
     # 54 agent runs for the outcome suite (9 cases, 3 runs, 2 arms), four at a time: fourteen
     # batches of at most 15 minutes, plus the judge, the scaffolds, and the toolchain install.
     timeout-minutes: ${{ inputs.suite == 'outcome' && 270 || 60 }}
@@ -90,15 +92,6 @@ jobs:
           printf '%s\n' '{"name": "rust-skills", "description": "rust-skills catalog for the plugin evaluation", "skills": ["./skills"]}' \
             > .claude-plugin/plugin.json
 
-      - name: Install and check the outcome sandbox backend
-        if: inputs.suite == 'outcome'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends bubblewrap socat
-          bwrap --ro-bind / / --unshare-net -- /bin/true
-          socat -V
-
       # The outcome cases build std-only crates offline. The runner's rustup installs the
       # toolchain that checks/rust-toolchain.toml pins, the same one the offline gate uses.
       - name: Install the pinned toolchain for the outcome suite
@@ -108,6 +101,16 @@ jobs:
           channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' checks/rust-toolchain.toml)"
           rustup toolchain install "$channel" --profile minimal
           rustup default "$channel"
+          # The client seals HOME and drops Rust environment overrides. Keep the pin
+          # and offline policy in operator-owned launchers that its PATH can reach.
+          eval_tools="$RUNNER_TEMP/eval-rust-tools"
+          mkdir -p "$eval_tools"
+          for tool in cargo rustc rustdoc; do
+            binary="$(rustup which "$tool" --toolchain "$channel")"
+            printf '#!/bin/sh\nexport CARGO_NET_OFFLINE=true\nexec "%s" "$@"\n' "$binary" > "$eval_tools/$tool"
+            chmod +x "$eval_tools/$tool"
+          done
+          echo "$eval_tools" >> "$GITHUB_PATH"
           cargo --version
 
       - name: Run the plugin suite
@@ -127,6 +130,20 @@ jobs:
             --threshold 0.8 \
             --no-publish \
             --json eval-results.json
+
+      - name: Check shell execution before the outcome suite
+        if: inputs.suite == 'outcome'
+        env:
+          CARGO_NET_OFFLINE: "true"
+          MODEL: ${{ inputs.model }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          claude plugin eval . \
+            --eval-dir checks/sandbox-eval \
+            --trust-plugin --ablation none --allow-tools Bash \
+            --model "$MODEL" --threshold 1 --max-cost-usd 1 \
+            --no-publish --json sandbox-results.json
 
       # A measurement, not a gate: no --threshold. --scaffold runs the case scripts from this
       # checkout, and --allow-tools lets the agent run cargo and edit its workspace.
@@ -175,6 +192,11 @@ jobs:
           runs = [run for case in cases for arm in ("with", "without")
                   for run in case.get("arms", {}).get(arm, [])]
           errors = [run["error"] for run in runs if run.get("error")]
+          sandbox_failures = ("apply-seccomp: write /proc/self/",
+                              "sandbox is enabled but dependencies are missing")
+          errors.extend("shell sandbox failed inside the agent trace" for run in runs
+                        if any(marker in grader.get("evidence", "")
+                               for grader in run.get("graders", []) for marker in sandbox_failures))
           if errors:
               print(f"Execution errors: {len(errors)} run(s) did not complete. First error: {errors[0]}")
               raise SystemExit(1)

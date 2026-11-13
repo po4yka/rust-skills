@@ -60,8 +60,9 @@ practical workflows, and final audit fixes from
 - Check target coverage independently in both compile passes. Reject absent,
   malformed, or empty evaluation results, execution errors, and empty license values.
 - Set offline Cargo in the evaluation runner environment. Remove case-level
-  environment overrides that the pinned evaluation client rejects. Install and
-  check the required Linux sandbox backend before outcome runs.
+  environment overrides that the pinned evaluation client rejects. Run outcome
+  tasks in the native macOS sandbox, check shell execution first, and reject
+  sandbox startup failures found inside agent traces.
 - Accept equivalent Miri command forms in the plugin grader while retaining
   the required Stacked Borrows merge gate.
 - Remove the incomplete clang-only cross-compilation fallback. Correct stale

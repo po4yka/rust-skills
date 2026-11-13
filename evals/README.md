@@ -130,10 +130,19 @@ CARGO_NET_OFFLINE=true claude plugin eval . --eval-dir evals/outcome --trust-plu
   --json eval-results.json
 ```
 
-On Linux, install `bubblewrap` and `socat` before this command. The workflow
-installs and checks this backend before it starts paid agent runs. The client
-requires a working shell sandbox; do not disable it to make an evaluation run.
-See the [sandbox setup instructions](https://code.claude.com/docs/en/sandboxing#set-up-linux-and-wsl2).
+The workflow runs outcome tasks on `macos-26` with the native sandbox. Its
+`checks/sandbox-eval` preflight first requires a real Bash call to start the
+pinned Cargo and write its version. This one-run check has a $1 cost limit;
+the outcome suite keeps its $40 limit. The client seals `HOME` and drops Rust
+environment overrides. The workflow puts launchers for the pinned `cargo`,
+`rustc`, and `rustdoc` on `PATH`. These call the installed binaries directly
+and set `CARGO_NET_OFFLINE=true` before each call.
+
+The pinned Linux client can reject every shell call in `apply-seccomp` even when
+bubblewrap starts. See [upstream issue #99269](https://github.com/anthropics/claude-code/issues/99269).
+Do not disable the sandbox or its socket filter to make an evaluation pass.
+The summary rejects the observed sandbox failure even if the agent returns
+normally and the run has numeric scores.
 
 `--scaffold` runs `scaffold.sh` from this repository, and `--allow-tools` lets the agent run cargo
 and edit the workspace. The command sets no `--threshold`: the result is a measurement, and the
