@@ -1,9 +1,13 @@
 # Port a macro crate to syn 3
 
-syn 3.0.0 was released on 2026-07-18. As of 2026-09 the current release is 3.0.6, and its
-`rust-version` is still 1.71 ([crates.io](https://crates.io/crates/syn),
+syn 3.0.0 was released on 2026-07-18. The checked release is 3.0.10 as of 2026-11-13, and its
+`rust-version` is still 1.71 ([crates.io](https://crates.io/crates/syn/3.0.10),
 [release notes](https://github.com/dtolnay/syn/releases/tag/3.0.0)). `quote 1` and
 `proc-macro2 1` work with both majors, so only `syn` changes in `Cargo.toml`.
+
+Version 3.0.10 avoids repeated scans when it prints nested expressions. The public syn 3
+names below are unchanged. Keep expansion tests for expression precedence and grouping;
+a successful parse alone does not check the tokens that the macro emits.
 
 ## Pick the syn major
 

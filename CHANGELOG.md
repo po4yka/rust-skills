@@ -10,6 +10,8 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 ### Changed
 
 - Update the compile toolchain to Rust 1.100.0, with edition 2024 unchanged.
+- Update harness dependencies to mutants 0.0.4, loom 0.7.3, and syn 3.0.10 (#33).
+  Document loom's MSRV, atomic methods, notification limit, and checkpoint feature.
 - Update Cargo upgrade guidance for its lint system, dependency cooldowns, install
   lockfiles, and intermediate artifact layout. Keep the compile baseline empty.
 - Correct never-type fallback on all editions, the `Infallible` alias, `DropGuard`

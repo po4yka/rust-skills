@@ -11,9 +11,9 @@ and evaluation fixtures for release-sensitive claims. Compare them with the
 [versioned release notes](https://doc.rust-lang.org/1.100.0/releases.html#version-11000-2026-11-12)
 and the [release announcement](https://blog.rust-lang.org/2026/11/12/Rust-1.100.0/).
 Compile the examples of all 50 skills on the new pin. Add portable behavior
-probes for new API guidance. Do not change dependency versions as part of this
-compiler update. `Cargo.lock`, the catalog membership, bundles, and plugin
-membership stay unchanged.
+probes for new API guidance. Include the three harness dependency updates from
+[issue #33](https://github.com/po4yka/rust-skills/issues/33) in the same PR.
+The catalog membership, bundles, and plugin membership stay unchanged.
 
 This is a release-impact pass, not a repeat of every platform experiment or
 performance measurement. Keep historical toolchain labels, MSRV boundaries,
@@ -66,7 +66,36 @@ section at Rust 1.98. It is not used as evidence of a complete 1.100 lint list.
 The repository lint gate checks the deployed template against the installed
 Clippy instead.
 
-## Validation
+## Harness dependency review
+
+Review date: 2026-11-13. Download both published crate archives for each update.
+Check their SHA-256 hashes against the crates.io API before reading the source
+diffs. Review the manifests and changed library code before compiling them.
+None of these releases adds a build script or a dependency to the harness graph.
+
+| Package | Locked before | Locked after | Source review and catalog effect |
+| --- | --- | --- | --- |
+| `mutants` | 0.0.3 | 0.0.4 | The `skip` proc macro still returns its input unchanged. Source changes move the changelog to `NEWS.md`. Raise the manifest requirement to match the existing mutation-testing reference. |
+| `loom` | 0.7.2 | 0.7.3 | MSRV rises from 1.65 to 1.73. Add guidance for atomic `try_update`/`update`, the single-waiter `Notify` limit, and the `checkpoint` feature. The release also fixes `RwLock<T: ?Sized>` and 32-bit builds. Repeat the publish-flag experiment before changing its version label. |
+| `syn` | 3.0.9 | 3.0.10 | Expression-printing fixups avoid repeated scans. Public names and MSRV 1.71 stay unchanged. Update the checked-release note; keep the older rename-table measurements labeled. |
+
+Primary sources: [mutants 0.0.4 source](https://docs.rs/crate/mutants/0.0.4/source/src/lib.rs),
+[loom 0.7.3 changelog](https://docs.rs/crate/loom/0.7.3/source/CHANGELOG.md),
+[loom manifest](https://docs.rs/crate/loom/0.7.3/source/Cargo.toml), and
+[syn 3.0.10 fixup source](https://docs.rs/crate/syn/3.0.10/source/src/fixup.rs).
+The crates.io API reports all three releases as not yanked. It records publication
+on 2026-01-15, 2026-11-08, and 2026-11-09 respectively. The loom changelog gives
+November 7; use the registry timestamp for release age.
+
+Run targeted `cargo update --precise` commands for these three packages. Keep the
+existing `loom = "0.7"` and `syn = "3"` ranges. The lockfile comparison shows only
+these three version/checksum changes and dependent references to syn 3.0.10.
+The separate syn 2 version and all other locked versions stay unchanged.
+
+## Rust update validation
+
+The following full run covers commit `69bfdf9`, before the issue #33 dependency
+updates. Dependency-update validation is recorded separately below.
 
 `bash checks/check.sh` completed with exit 0 and `All checks passed` in an
 x86_64 Linux container based on `rust:1.100.0-slim-trixie`. The environment used
@@ -93,7 +122,7 @@ major version. The official Node archive passed its SHA-256 check.
   The final WASIp3 routing case passes the separate pinned-client gate.
 - `python3 scripts/test_drift_report.py` passes eight tests, including
   three-digit minor-version ordering and dated-claim boundaries.
-- `git diff --check` passes. Dependencies and exception lists have no diff.
+- `git diff --check` passes. At this stage, dependencies and exception lists have no diff.
 
 Additional probes on `aarch64-apple-darwin`:
 
@@ -124,6 +153,32 @@ and the package installer repaired that environment; the normal client gate
 then passed. Debian's Node 20 lacks `fs/promises.glob`, which the skills CLI
 uses. The successful full run uses Node 26, as CI does. No check was disabled
 to resolve these environment failures.
+
+## Dependency update validation
+
+Repeat the two CI gate sets after the issue #33 update. Run the client gates on
+macOS and the cargo gates on x86_64 Linux to avoid the macOS cross-C++ limitation
+described above.
+
+- `bash checks/check.sh --no-clients` exits 0 in the x86_64 Linux container
+  with Python, PyYAML, and G++. Both compile passes meet the same counts above:
+  381 clean compile blocks, 82 passing behavior probes, 79 expected failures,
+  two existing fragments, and 21 explicit ignores. All 53 template lints fire
+  and all nine outcome cases pass. Unit suites pass with no optional YAML skips.
+- `npm_config_cache=/tmp/rust-skills-1100-npm bash checks/check.sh --fast`
+  exits 0 on macOS. The catalog and unit suites pass. The skills CLI discovers
+  50 skills. Both pinned clients load all eight plugins, and all 342 bundle
+  routing phrases remain visible.
+- Copy the publish-flag example into a temporary crate with only loom 0.7.3
+  and the existing locked transitive versions. Run `cargo +1.100.0 test --locked`
+  with `RUSTFLAGS='--cfg loom --check-cfg=cfg(loom)'` on aarch64 macOS.
+  The Release version passes. Change only the ready-flag store to Relaxed:
+  the test exits 101 with `left: 0, right: 42`. Update this example's measured
+  version label; keep the separate Tokio diagnostic at its original version.
+- A parsed lockfile comparison confirms that only mutants, loom, and syn 3
+  change versions. All other package records differ only in references from
+  syn 3.0.9 to syn 3.0.10.
+- `git diff --check` passes. Baseline, fragment, and ignore lists have no diff.
 
 ## Limits and release handoff
 

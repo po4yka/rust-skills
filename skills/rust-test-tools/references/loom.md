@@ -1,6 +1,6 @@
 # loom setup and a worked example
 
-Deep reference for the loom section of `SKILL.md`, for loom 0.7.
+Deep reference for the loom section of `SKILL.md`, for loom 0.7.3 (Rust 1.73 or later).
 
 Contents:
 
@@ -18,6 +18,8 @@ Contents:
 - loom treats `SeqCst` loads and stores as `AcqRel`. Code that needs `SeqCst` accesses can
   fail under loom and still be correct. loom models `fence(SeqCst)` correctly.
 - loom does not explore load-buffering executions. A green loom run can hide such a bug.
+- `loom::sync::Notify` permits only one waiting thread at a time. Concurrent calls to
+  `wait()` on the same value panic. Do not use it to model a multi-waiter notification.
 - The cost grows exponentially with the number of atomic operations and the preemption bound.
   Test one primitive per test, with two or three threads.
 - loom's scheduler is not fair. Under `cfg(loom)`, every spin or retry loop must call
@@ -35,6 +37,9 @@ loom = "0.7"
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 ```
+
+Use loom 0.7.3 or later when the code calls atomic `try_update` or `update`.
+Version 0.7.3 adds these methods and keeps `fetch_update` as an alias for `try_update`.
 
 - A `[target.'cfg(loom)'.dev-dependencies]` entry works only when every loom test is a unit
   test inside the same crate. With a loom test under `tests/`, the library build fails with
@@ -111,7 +116,7 @@ fn reader_sees_published_value() {
 ```
 
 If you change the `Release` store to `Relaxed`, loom fails this test with `left: 0, right: 42`
-(loom 0.7.2, Rust 1.99.1).
+(loom 0.7.3, Rust 1.100.0).
 
 ## Commands and search bounds
 
@@ -124,6 +129,9 @@ LOOM_MAX_PREEMPTIONS=3 RUSTFLAGS="--cfg loom" cargo test --locked --release --te
 
 `RUSTFLAGS` replaces the rustflags in `.cargo/config.toml`, so add any flag that the build
 needs to the same variable.
+
+Enable loom's `checkpoint` dependency feature before you set `LOOM_CHECKPOINT_FILE`.
+The environment variable alone does not enable checkpoint support.
 
 `RUSTFLAGS` reaches every dependency, not only your crate. tokio gates its own code on a bare
 `cfg(loom)`, so under `--cfg loom` tokio itself stops compiling (``error[E0432]: unresolved import
