@@ -7,37 +7,68 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-13
+
+Update the catalog to Rust 1.100.0 and keep edition 2024. The catalog now contains
+51 skills in seven bundles. This release includes the toolchain migration,
+practical workflows, and final audit fixes from
+[#34](https://github.com/po4yka/rust-skills/pull/34),
+[#35](https://github.com/po4yka/rust-skills/pull/35), and
+[#36](https://github.com/po4yka/rust-skills/pull/36).
+
 ### Added
 
-- Add `rust-allocators` for per-collection allocator selection, implementation
-  contracts, failure paths, and foreign ownership. The catalog has 51 skills.
-- Add permanent compiler-transition, Cargo-policy, and isolated loom regression
-  fixtures, plus WASIp3 runtime and recorded sample-PGO checks in CI.
-- Add executable smart-pointer mapping and future-cancellation rollback probes.
+- `rust-allocators`: per-collection allocator selection, implementation contracts,
+  allocation and resize failures, alignment, zero-size allocations, and foreign ownership.
+- Permanent regression fixtures for compiler transitions from Rust 1.99.1 to
+  1.100.0, Cargo dependency policies and artifact paths, and isolated `cfg(loom)` checks.
+- Executable smart-pointer mapping, cancellation rollback, cleanup, lifetime,
+  stale-handle, and FFI output probes. The harness now runs 97 behavior probes.
+- WASIp3 async clock and file-capability checks, plus recorded sample-PGO replay.
+- A Linux container with the Rust toolchains, Node, Python, and C/C++ cross tools
+  needed to run the complete checks from macOS and Linux ARM64.
 
 ### Changed
 
-- Correct unsafe, cleanup, cancellation, lifetime, JNI, and XCFramework guidance
-  from the final catalog audit. Add executable regression examples.
-- Require target coverage in both compile passes and reject empty evaluation
-  results and blank licenses. Add a Linux container for complete local checks.
-- Correct the documented GitHub settings state. Keep the settings changes in a
-  separate approval proposal; this update does not enable them.
-- Extend the authoring rules to require permanent evidence for version-sensitive
-  behavior and Cargo policies. Add measured sample-PGO and WASIp3 workflows.
-- Use a tracked-file export for both plugin install gates, so ignored build
-  output does not enter each temporary plugin cache.
-- Update the compile toolchain to Rust 1.100.0, with edition 2024 unchanged.
-- Update harness dependencies to mutants 0.0.4, loom 0.7.3, and syn 3.0.10 (#33).
-  Document loom's MSRV, atomic methods, notification limit, and checkpoint feature.
-- Update Cargo upgrade guidance for its lint system, dependency cooldowns, install
-  lockfiles, and intermediate artifact layout. Keep the compile baseline empty.
-- Correct never-type fallback on all editions, the `Infallible` alias, `DropGuard`
-  stability, precise `if let` captures, and WASIp3 Tier 2 support.
-- Add checked examples for allocator round trips, rollback, infallible results,
-  and slice comparisons with `Cow`. Cover layout, target ABI, and sample-profile changes.
-- Update repository instructions and add the source and validation report in
-  `research/rust-1.100.0-2026-11.md`. Preserve historical measurement labels.
+- Pin the compile harness to Rust 1.100.0. Update mutants to 0.0.4, loom to 0.7.3,
+  and syn to 3.0.10 from [#33](https://github.com/po4yka/rust-skills/issues/33).
+- Update Cargo guidance for dependency lints, publish-age policy, install lockfiles,
+  and intermediate artifact paths. Document loom's MSRV, atomic methods,
+  notification limit, and checkpoint feature.
+- Update language and library guidance for never-type fallback, the `Infallible`
+  alias, precise `if let` captures, `DropGuard`, allocator APIs, smart-pointer
+  mapping, layout, target ABI, and WASIp3 Tier 2 support.
+- Require permanent evidence for version-sensitive behavior and Cargo policies.
+  Keep historical measurements at the toolchain versions that produced them.
+- Export tracked and unignored files for both plugin install gates, so ignored
+  build output does not enter temporary plugin caches.
+- Update pinned install examples to `v0.5.0`; this tag includes `rust-allocators`.
+
+### Fixed
+
+- Use a scoped callback for borrowed Swift input, require a valid borrowed file
+  descriptor at safe API boundaries, and distinguish a `SendZc` result from its
+  buffer-release notification.
+- Create temporary output files exclusively, keep their handles open, and preserve
+  existing final files on cancellation or failure.
+- Remove unsupported generic cleanup guarantees. Put fallible flushes in explicit
+  close operations and state the limits of the wrapped writer's destructor.
+- Correct rules for `try_join!`, reused slot indices, union reads, `Vec` drop order,
+  owning builders in loops, cache lifetimes, `non_exhaustive`, and boxed string errors.
+- Use `Arc<JavaVM>` for owned handles on jni 0.21. Put each library XCFramework's
+  headers and modulemap in a separate module directory.
+- Check target coverage independently in both compile passes. Reject absent,
+  malformed, or empty evaluation results, execution errors, and empty license values.
+- Set offline Cargo in the evaluation runner environment. Remove case-level
+  environment overrides that the pinned evaluation client rejects.
+- Remove the incomplete clang-only cross-compilation fallback. Correct stale
+  catalog counts and the documented state of GitHub protections and private reporting.
+
+The final audit covers 22 findings: 20 code and content fixes, plus corrected
+instructions for two live GitHub settings gaps. Enabling branch/tag protections
+and private vulnerability reporting remains a separate owner-approved action;
+this release does not claim that those settings are enabled. No compile-baseline,
+fragment, ignore, or size-ceiling allowance was added.
 
 ## [0.4.0] - 2026-11-12
 
@@ -291,7 +322,8 @@ binary releases. The harness came with it: frontmatter and link validation, the 
 `tests/routing-cases.md`, and a gate that type-checks every `rust` block, requires
 `compile_fail` blocks to fail with their named code, and runs `rust,run` probes.
 
-[Unreleased]: https://github.com/po4yka/rust-skills/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/po4yka/rust-skills/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/po4yka/rust-skills/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/po4yka/rust-skills/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/po4yka/rust-skills/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/po4yka/rust-skills/compare/v0.1.0...v0.2.0
