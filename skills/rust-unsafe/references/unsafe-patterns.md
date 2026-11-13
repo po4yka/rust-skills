@@ -15,7 +15,7 @@ Contents:
   `align_to`
 - Pointer arithmetic and `NonNull`
 - Transmute table and `dyn` lifetime extension; broken UTF-8; `black_box`
-- Drop hazards; a `Drop` impl that cannot abort the process
+- Drop hazards; explicit close and the limits of generic cleanup
 
 ## Safety comment format
 
@@ -170,6 +170,7 @@ compiles and runs with no `unsafe` around either `&raw` expression:
 ```rust,run
 static mut COUNTER: u32 = 0;
 
+#[repr(C)]
 union Bits {
     int: u32,
     float: f32,
@@ -185,7 +186,8 @@ fn main() {
     unsafe { *counter += 1 };
     // SAFETY: as above.
     let count = unsafe { *counter };
-    // SAFETY: `bits` is live, and every `u32` bit pattern is a valid `f32`.
+    // SAFETY: repr(C) overlays both fields. `bits` is live and initialized,
+    // and every `u32` bit pattern is a valid `f32`.
     let value = unsafe { *float };
     assert_eq!(count, 1);
     assert_eq!(value, 1.0);
@@ -425,15 +427,18 @@ take ownership, or the foreign runtime closes it under you. The standard library
 no dependency:
 
 ```rust
-use std::os::fd::{BorrowedFd, OwnedFd, RawFd};
+use std::os::fd::{BorrowedFd, OwnedFd};
 
-fn adopt_copy(raw: RawFd) -> std::io::Result<OwnedFd> {
-    // SAFETY: the caller guarantees that `raw` is open for the duration of this call.
-    // `BorrowedFd` takes no ownership; `try_clone_to_owned` returns a new descriptor.
-    let borrowed = unsafe { BorrowedFd::borrow_raw(raw) };
+fn adopt_copy(borrowed: BorrowedFd<'_>) -> std::io::Result<OwnedFd> {
     borrowed.try_clone_to_owned()
 }
 ```
+
+Call this with `owner.as_fd()` while the owner is borrowed. At a raw FFI entry point,
+construct `BorrowedFd` only after establishing that the descriptor stays open throughout
+the borrow. A helper that accepts `RawFd` and requires this caller guarantee is `unsafe fn`
+with a `# Safety` contract; a safe signature cannot impose it. See
+[`BorrowedFd::borrow_raw`](https://doc.rust-lang.org/1.100.0/std/os/fd/struct.BorrowedFd.html#method.borrow_raw).
 
 `nix::unistd::dup` changed its signature in nix 0.30: it now takes `impl AsFd` and returns an
 `OwnedFd`, so code written for 0.29 does not compile against the current release.
@@ -701,11 +706,12 @@ Make a forgotten guard impossible or harmless, as `thread::scope` does: it keeps
 a closure and joins every thread itself. A future inside `select!` can be dropped at any
 `.await`, so its correctness must not depend on its `Drop` either.
 
-### A `Drop` impl that cannot abort the process
+### Explicit close and the limits of generic cleanup
 
 A panic inside `drop()` during an unwind aborts the process with `panic in a destructor during
-cleanup`, and `catch_unwind` cannot catch it. Move every fallible cleanup into an
-explicit `close()`, and leave `drop()` as a best-effort fallback that only logs.
+cleanup`, and an outer `catch_unwind` cannot catch that double panic. Put fallible flushes in
+an explicit `close()`. An arbitrary `Write::flush`, logging callback, or `W::drop` can block
+or panic; removing `unwrap` does not make generic cleanup nonblocking or panic-free.
 
 ```rust
 // DANGEROUS: aborts the process when dropped during an unwind.
@@ -716,37 +722,68 @@ impl Drop for BufferedWriter {
 }
 ```
 
-```rust
+```rust,run
+use std::cell::Cell;
 use std::io::{self, Write};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::rc::Rc;
 
 pub struct BufferedWriter<W: Write> {
     inner: W,
-    closed: bool,
 }
 
-// CORRECT: expose an explicit fallible close; drop flushes only when close did not run.
 impl<W: Write> BufferedWriter<W> {
-    pub fn close(mut self) -> io::Result<()> {
-        let result = self.inner.flush();
-        self.closed = true; // The caller owns this result. Drop must not flush again.
-        result
+    pub fn close(mut self) -> io::Result<W> {
+        self.inner.flush()?;
+        Ok(self.inner)
     }
 }
 
-impl<W: Write> Drop for BufferedWriter<W> {
-    fn drop(&mut self) {
-        if self.closed {
-            return;
-        }
-        if let Err(err) = self.inner.flush() {
-            tracing::error!(error = %err, "flush on drop failed");
+// No custom Drop: this wrapper never starts another flush during cleanup.
+enum Mode { Ok, Error, Panic }
+struct Probe { calls: Rc<Cell<usize>>, mode: Mode }
+impl Write for Probe {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { Ok(bytes.len()) }
+    fn flush(&mut self) -> io::Result<()> {
+        self.calls.set(self.calls.get() + 1);
+        match self.mode {
+            Mode::Ok => Ok(()),
+            Mode::Error => Err(io::Error::other("flush failed")),
+            Mode::Panic => panic!("flush panic probe"),
         }
     }
+}
+
+fn main() {
+    let calls = Rc::new(Cell::new(0));
+    let make = |mode| BufferedWriter { inner: Probe { calls: calls.clone(), mode } };
+    drop(make(Mode::Ok));
+    assert_eq!(calls.get(), 0);
+    let writer = make(Mode::Ok).close().unwrap();
+    drop(writer);
+    assert_eq!(calls.get(), 1);
+    assert!(make(Mode::Error).close().is_err());
+    assert_eq!(calls.get(), 2);
+    assert!(catch_unwind(AssertUnwindSafe(|| {
+        let _ = make(Mode::Panic).close();
+    })).is_err());
+    assert_eq!(calls.get(), 3); // No second flush while close unwinds.
+    assert!(catch_unwind(AssertUnwindSafe(|| {
+        let _writer = make(Mode::Panic);
+        panic!("outer panic probe");
+    })).is_err());
+    assert_eq!(calls.get(), 3); // The wrapper does not flush during unwind.
 }
 ```
 
-Without the `closed` flag, `close()` flushes, then `drop()` runs at the end of `close()` and
-flushes again. A failed flush then reaches the caller and the log both.
+Run this probe on an unwinding profile. It checks that this wrapper calls `flush` only from
+`close`, once per call, even on error or panic. It does not prove a real writer's destructor
+nonblocking or panic-free: `W::drop` still runs, and a `BufWriter<W>` can itself flush on drop.
+Choose and audit the concrete writer when cleanup has a latency or panic requirement.
+An aborting profile does not run this unwind recovery.
+
+Sources: [`Write::flush`](https://doc.rust-lang.org/1.100.0/std/io/trait.Write.html#tymethod.flush),
+[`Drop` and panics](https://doc.rust-lang.org/1.100.0/std/ops/trait.Drop.html#panics).
 
 The auto-trait proofs, the two reference fabrications, the aliasing models, and the Miri and
 clippy invocations are in [miri-and-aliasing.md](miri-and-aliasing.md).

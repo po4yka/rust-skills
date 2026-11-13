@@ -16,7 +16,7 @@ receivers, `Clone` on handles, mutexes, `Arc` and `Weak`, and integer overflow l
 Contents:
 
 - `Deref` on a non-pointer type causes method collision
-- Lifetime laundering across input and storage
+- Borrowed cache values must outlive their use
 - A `Cow` field infects the struct with a lifetime
 - A blanket impl in a public API is a semver hazard
 - A blanket impl on an empty trait is not a bound alias
@@ -59,57 +59,81 @@ failing after you add `Deref`, and the exact E0277 each one gives.
 
 ---
 
-## Lifetime laundering across input and storage
+## Borrowed cache values must outlive their use
 
 **Severity: WARNING**
 
-A function that takes `&'a T` and writes derived references into a long-lived
-`HashMap<_, &'a U>` looks elegant. The shared `'a` forces every call site to pick a single
-lifetime that spans both the input borrow and the cache. In real code that intersection
-collapses to empty almost immediately.
+A borrowed cache requires every stored reference to remain valid until its last use.
+A shared lifetime on the input and cached values states that contract correctly. Different
+input lifetimes can shorten to the common cache lifetime:
 
-```rust
+```rust,run
 use std::collections::HashMap;
 
-// BAD: 'a binds the input slice and the cache values together.
 fn first_word<'a>(s: &'a str, cache: &mut HashMap<String, &'a str>) -> &'a str {
     if let Some(cached) = cache.get(s) { return cached; }
     let word = s.split_whitespace().next().unwrap_or("");
-    cache.insert(s.to_string(), word);
+    cache.insert(s.to_owned(), word);
     word
+}
+
+fn main() {
+    let first = String::from("first source");
+    let second = String::from("second source");
+    let mut cache = HashMap::new();
+    assert_eq!(first_word(&first, &mut cache), "first");
+    { assert_eq!(first_word(&second, &mut cache), "second"); }
+    assert_eq!(cache.len(), 2);
 }
 ```
 
-The definition above compiles. The call sites do not. The cache outlives any single `s`, so the
-first call pins `'a` to the first input, and a second call from a different scope fails.
+Writing separate `'input: 'cache` parameters expresses the same outlives requirement. It
+cannot make a short-lived source survive a later cache lookup:
 
-```rust
+```rust,compile_fail,E0597
 use std::collections::HashMap;
 
-// GOOD: split the lifetimes with a documented contract.
-fn first_word<'cache, 'input: 'cache>(
-    s: &'input str,
-    cache: &mut HashMap<String, &'cache str>,
-) -> &'cache str { todo!() }
+fn remember<'cache, 'input: 'cache>(
+    input: &'input str,
+    cache: &mut HashMap<u8, &'cache str>,
+) {
+    cache.insert(0, input);
+}
+
+fn main() {
+    let mut cache = HashMap::new();
+    {
+        let input = String::from("temporary");
+        remember(&input, &mut cache);
+    }
+    assert_eq!(cache.get(&0), Some(&"temporary"));
+}
 ```
 
-```rust
+Keep the source owners alive until the cache's last use, shorten the cache's scope, or store
+owned values. An owned cache returns a reference tied to the cache borrow, not to the input:
+
+```rust,run
 use std::collections::HashMap;
 
-// BETTER: store owned data and decouple the lifetimes entirely.
-// The return then borrows the cache, so name that lifetime; elision cannot pick it.
-fn first_word<'c>(s: &str, cache: &'c mut HashMap<String, String>) -> &'c str { todo!() }
+fn first_word<'c>(s: &str, cache: &'c mut HashMap<String, String>) -> &'c str {
+    cache.entry(s.to_owned())
+        .or_insert_with(|| s.split_whitespace().next().unwrap_or("").to_owned())
+        .as_str()
+}
+
+fn main() {
+    let mut cache = HashMap::new();
+    {
+        let input = String::from("temporary source");
+        assert_eq!(first_word(&input, &mut cache), "temporary");
+    }
+    assert_eq!(cache.get("temporary source").map(String::as_str), Some("temporary"));
+}
 ```
 
-Rule: when one `&'a` parameter appears in both an input position and a storage position,
-either split the lifetimes with a documented `'input: 'cache` bound, or store owned data. The
-single-lifetime form is a trap planted for the next caller.
-
-Find candidates:
-
-```bash
-rg "fn .+<'[a-z]+>.*HashMap.*&'[a-z]+" --type rust -n
-```
+Run both passing probes and the E0597 probe after changing a cache signature. They distinguish
+an ownership requirement from an annotation change; neither annotation extends an owner's life.
 
 ---
 

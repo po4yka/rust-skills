@@ -104,7 +104,7 @@ impl Buffer {
 
 [[block]]
 file = "rust-unsafe/references/unsafe-patterns.md"
-section = "A `Drop` impl that cannot abort the process"
+section = "Explicit close and the limits of generic cleanup"
 block = 1
 items = '''
 struct BufferedWriter {

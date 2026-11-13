@@ -177,13 +177,18 @@ separate from compilation and model-evaluation results.
 
 ## How to verify a change locally
 
-One command runs every gate CI runs, on the toolchain `checks/rust-toolchain.toml` pins:
+On x86_64 Linux with Python, C/C++ compilers, Rustup, and Node/npm, one command
+runs every gate CI runs, on the toolchain `checks/rust-toolchain.toml` pins:
 
 ```bash
 bash checks/check.sh
 ```
 
-A green run locally means a green run in CI. The gates that can be missing are the skills-CLI
+On macOS, use the Linux container commands in `checks/README.md` for the full run.
+Use `--fast` for native edits. Cross-host compilation needs target C/C++ compilers
+and PyO3 configuration; a clang-only fallback is not sufficient.
+
+The command runs the same gates as CI. The gates that can be missing are the skills-CLI
 discovery step and the Claude Code and Codex plugin install steps, which all need `npx`;
 `check.sh` says so when it skips them. `check.sh` writes only under `checks/` and a temporary directory, so run
 and rerun it without asking.
@@ -331,9 +336,10 @@ The intended guard on `main` is branch protection: it requires the `Validate cat
 `Compile-check examples` checks and a Code Owners review, and rejects direct pushes,
 force-pushes, deletion, and unsigned commits (`docs/releasing.md` lists every setting). These
 settings live in the repository settings, not in this tree, so no gate here proves them. On
-2026-11-10 the branch-protection API, read with a non-admin token, listed no required status
-check and no ruleset; an owner confirms the state under Settings, Branches and Rules. `npx
-skills add` copies `main` into consumers' agent directories, so an unchecked commit is a
+2026-11-13 the read-only API checks found no required status checks or reviews, no
+required signatures, and no ruleset. Private vulnerability reporting was off.
+`docs/github-settings-approval.md` records the proposed settings and the separate
+approval prerequisite. `npx skills add` copies `main` into consumers' agent directories, so an unchecked commit is a
 supply-chain change.
 
 ### Do not run `skills remove` inside this repository

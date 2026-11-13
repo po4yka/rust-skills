@@ -39,7 +39,8 @@ acceptable.
       type?
 - [ ] Does integer-address manipulation keep provenance with `addr`, `with_addr`, or
       `map_addr`, or document why exposed provenance is required?
-- [ ] For a union field: was the field written before it was read?
+- [ ] For a union read: does the storage meet the read type's initialization, validity,
+      pointer provenance, lifetime, and aliasing requirements?
 - [ ] Does any reference point into a `#[repr(packed)]` struct, or into unaligned bytes?
 - [ ] Does a read from a byte buffer use `read_unaligned`, `zerocopy`, or `from_le_bytes`?
 

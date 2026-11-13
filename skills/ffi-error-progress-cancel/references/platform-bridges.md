@@ -240,30 +240,145 @@ Call it:
 
 ### Partial output cleanup
 
-The worker owns cleanup. Write to a temporary path and rename on success.
+The worker owns cleanup. Create a unique sibling file with `create_new(true)`.
+Keep that file open and write through its handle. Give `render_into` a
+`&mut File` or `&mut impl Write`, not a path that it reopens. This preserves
+exclusive creation. Use a destination directory whose entries untrusted code
+cannot replace.
 
-```rust
-fn render_to(
-    target: &Path,
-    flag: &AtomicBool,
-    listener: Arc<dyn ProgressListener>,
-) -> Result<(), CoreError> {
-    let tmp = target.with_extension("part");
-    let result = render_into(&tmp, flag, listener);
-    match result {
-        Ok(()) => std::fs::rename(&tmp, target).map_err(CoreError::io)?,
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp); // best effort; do not mask `e`
-            return Err(e);
+The runnable model uses only the standard library. It keeps the old output on
+cancel, separates jobs with the same file stem, and removes its temporary file
+when either rendering or the final rename fails:
+
+```rust,run
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+fn candidate(parent: &Path) -> PathBuf {
+    let serial = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+    parent.join(format!(".render-{}-{serial}.part", std::process::id()))
+}
+
+struct PartialOutput {
+    path: PathBuf,
+    file: Option<File>,
+    committed: bool,
+}
+
+impl PartialOutput {
+    fn create(target: &Path) -> io::Result<Self> {
+        let parent = target.parent().filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        for _ in 0..128 {
+            let path = candidate(parent);
+            if path.file_name() == target.file_name() {
+                continue; // even a generated-looking target stays separate
+            }
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(file) => return Ok(Self { path, file: Some(file), committed: false }),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(io::Error::new(io::ErrorKind::AlreadyExists, "temporary names exhausted"))
+    }
+}
+
+impl Drop for PartialOutput {
+    fn drop(&mut self) {
+        drop(self.file.take()); // close before removal, including on Windows
+        if !self.committed {
+            let _ = fs::remove_file(&self.path); // keep the original operation error
         }
     }
+}
+
+fn render_to<E>(
+    target: &Path,
+    render: impl FnOnce(&mut File) -> Result<(), E>,
+) -> Result<(), E>
+where
+    E: From<io::Error>,
+{
+    let mut partial = PartialOutput::create(target)?;
+    render(partial.file.as_mut().expect("new temporary file is open"))?;
+    drop(partial.file.take());
+    fs::rename(&partial.path, target)?;
+    partial.committed = true;
+    Ok(())
+}
+
+fn main() -> io::Result<()> {
+    // Create a private test directory with no overwrite of a previous run.
+    let root = (0..128).find_map(|_| {
+        let path = candidate(&std::env::temp_dir());
+        fs::create_dir(&path).ok().map(|()| path)
+    }).expect("create test directory");
+    let target = root.join("report.part");
+    fs::write(&target, b"previous output")?;
+
+    let result: io::Result<()> = render_to(&target, |file| {
+        file.write_all(b"partial")?;
+        Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"))
+    });
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+    assert_eq!(fs::read(&target)?, b"previous output");
+    assert_eq!(fs::read_dir(&root)?.count(), 1); // cancellation removed its temp
+
+    // A stale candidate is never truncated; creation retries a new name.
+    let collision = root.join(format!(".render-{}-{}.part", std::process::id(),
+        NEXT_TEMP.load(Ordering::Relaxed)));
+    fs::write(&collision, b"another operation")?;
+    let retried = PartialOutput::create(&target)?;
+    assert_ne!(retried.path, collision);
+    assert_eq!(fs::read(&collision)?, b"another operation");
+    drop(retried);
+    fs::remove_file(collision)?;
+
+    // Two live operations with the same stem own separate, exclusive files.
+    let png = root.join("image.png");
+    let jpg = root.join("image.jpg");
+    let first = PartialOutput::create(&png)?;
+    let second = PartialOutput::create(&jpg)?;
+    assert_ne!(first.path, second.path);
+    assert_ne!(first.path, png);
+    assert_ne!(second.path, jpg);
+    assert_eq!(OpenOptions::new().write(true).create_new(true).open(&first.path)
+        .unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+    drop((first, second));
+    assert_eq!(fs::read_dir(&root)?.count(), 1);
+
+    render_to(&png, |file| file.write_all(b"png"))?;
+    render_to(&jpg, |file| file.write_all(b"jpg"))?;
+    assert_eq!(fs::read(&png)?, b"png");
+    assert_eq!(fs::read(&jpg)?, b"jpg");
+
+    // A failed commit also drops the temporary file and preserves the target.
+    let directory = root.join("existing-directory");
+    fs::create_dir(&directory)?;
+    assert!(render_to(&directory, |file| file.write_all(b"cannot replace directory")).is_err());
+    assert!(directory.is_dir());
+    assert_eq!(fs::read_dir(&root)?.count(), 4);
+    fs::remove_dir_all(root)?;
     Ok(())
 }
 ```
 
-This makes the cancel path and the failure path identical, so you test one.
-A crashed process leaves a `.part` file that is obviously incomplete, not a
-truncated file that looks real.
+In the engine, implement `From<std::io::Error>` for the core error, then call
+`render_to(target, |file| render_into(file, flag, listener))`. The callback
+checks cancellation and returns the core error. Flush any `BufWriter` before
+it returns success; a flush error must prevent the rename. `Drop` also cleans
+up after an unwinding panic. Removal is best effort if the filesystem fails.
+
+The rename commits a complete file and can replace an existing destination.
+Use a platform-specific atomic no-replace operation when replacement is not
+allowed. This model does not promise crash durability: that also needs file
+and directory sync operations. A process crash can leave its separate `.part`
+file; it does not make that partial file the final output.
 
 ### Panic policy at the boundary
 

@@ -48,7 +48,7 @@ stable `code()` string and catch each panic with `std::panic::catch_unwind`.
 | --- | --- | --- |
 | `` E0277: `?` couldn't convert the error to `AppError` `` with `note: 'AppError' needs to implement 'From<io::Error>'` | No `From` impl for the source error | Add `#[from]` to a variant, or `map_err` into a variant with `#[source]` |
 | The same E0277 with `help: for that trait implementation, expected 'B', found 'ParseIntError'` | A two-hop conversion | Convert the first hop: `.map_err(B::from)?` |
-| `` `?` couldn't convert the error: `String: std::error::Error` is not satisfied `` | `?` into `anyhow::Error` or `Box<dyn Error>` from a type that is not an error | Return a real error type; at the call site, `.map_err(anyhow::Error::msg)?` |
+| `` `?` couldn't convert the error: `String: std::error::Error` is not satisfied `` | `?` into `anyhow::Error` from `String` | Return a real error type; at the call site, `.map_err(anyhow::Error::msg)?`. The std boxed error types accept `String` directly |
 | `` `?` couldn't convert the error: `dyn std::error::Error + Send + Sync: Sized` is not satisfied `` | `?` from a `Box<dyn Error + Send + Sync>` into `anyhow::Error` | `.map_err(anyhow::Error::from_boxed)?`, or return a concrete error type |
 | `` E0599: no method named `context` found for enum `Result<T, E>` `` | The `anyhow::Context` trait is not in scope | `use anyhow::Context as _;` |
 | `` E0599: the method `context` exists for enum `Result<u8, String>`, but its trait bounds were not satisfied `` | The error type does not implement `std::error::Error` | `.map_err(anyhow::Error::msg).context(..)` |

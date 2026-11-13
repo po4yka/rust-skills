@@ -144,6 +144,20 @@ license: BSD-3-Clause
                     any("outside the spec" in f or "indented frontmatter line" in f for f in found), found
                 )
 
+    def test_license_must_equal_repository_license(self):
+        for value in ("", "MIT", "null", "BSD-3-Clause"):
+            with self.subTest(value=value):
+                frontmatter = (
+                    "name: rust-example\n"
+                    "description: Use when checking a complete example of the repository license validation contract.\n"
+                    f"license: {value}"
+                )
+                found = self.run_skill(frontmatter)
+                if value == "BSD-3-Clause":
+                    self.assertEqual(found, [])
+                else:
+                    self.assertTrue(any("license is" in f for f in found), found)
+
     def test_description_must_start_with_use_when(self):
         frontmatter = """name: rust-example
 description: Covers an example with enough detail, but it does not use the required routing prefix.

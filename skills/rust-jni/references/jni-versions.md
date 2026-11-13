@@ -6,6 +6,7 @@ snippet between 0.21 and 0.22. The snippets in [../SKILL.md](../SKILL.md) use
 
 | Task | `jni` 0.21 | `jni` 0.22 |
 |------|------------|------------|
+| Owned VM handle for a worker | `Arc<JavaVM>`; clone the `Arc` | `JavaVM`; clone the handle |
 | Env type inside a call | `JNIEnv<'local>` | `Env<'local>` |
 | Env type in an export signature | `JNIEnv<'local>` | `EnvUnowned<'local>` |
 | Bind a native method | `env.register_native_methods` with hand-built `NativeMethod` entries, or a hand-written `Java_*` export | `native_method!` plus `register_native_methods`, or `#[jni_mangle("pkg.Class")]` |
@@ -17,6 +18,24 @@ snippet between 0.21 and 0.22. The snippets in [../SKILL.md](../SKILL.md) use
 | Pending Java exception | `call_*` returns `Err(JavaException)`; `throw_new` returns `Ok` | `throw*` also returns `Err(JavaException)`; lookups map it to a typed error; attach returns an exception that its closure leaves pending as `CaughtJavaException` |
 | Method name and signature | `&str` literals | `jni_str!` and `jni_sig!` |
 | `jboolean` | `u8` | `bool` |
+
+## Owned handles on 0.21
+
+`JavaVM` on 0.21 is `Send + Sync`, but not `Clone`. Put the captured handle in
+an `Arc` before workers share it. Calling `clone()` on `&JavaVM` only copies
+the reference; it does not make an owned handle:
+
+```rust
+use std::sync::Arc;
+
+fn worker_handle(vm: &Arc<jni::JavaVM>) -> Arc<jni::JavaVM> {
+    Arc::clone(vm)
+}
+```
+
+This block type-checks against jni 0.21. It does not attach a thread or prove
+that the JVM outlives a worker. Join attached workers before JVM shutdown.
+On 0.22, `JavaVM::clone()` supplies an owned handle directly.
 
 Keep one `jni` version in the crate graph. Two copies do not share
 `JavaVM::singleton()` or attach state.

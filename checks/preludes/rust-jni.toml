@@ -105,3 +105,9 @@ block = 1
 # The UniFFI derive and export macros must expand at the crate root, next to
 # the block's own `setup_scaffolding!()`.
 shape = "item"
+
+[[block]]
+file = "rust-jni/references/jni-versions.md"
+section = "Owned handles on 0.21"
+block = 1
+items = "use jni021 as jni;"

@@ -77,14 +77,14 @@ the files that UniFFI generates.
 
 ### Stage the header and the modulemap
 
-Each slice needs a headers directory that holds the generated C header and a
-modulemap:
+Put each slice's generated C header and modulemap in a subdirectory named
+after the FFI module. Pass the parent `headers/` to `-headers`:
 
 ```text
-<staging>/device/headers/
+<staging>/device/headers/<crate_name>FFI/
   <crate_name>FFI.h
   module.modulemap
-<staging>/simulator/headers/
+<staging>/simulator/headers/<crate_name>FFI/
   <crate_name>FFI.h
   module.modulemap
 ```
@@ -94,7 +94,11 @@ modulemap:
 which declares `module <crate_name>FFI`. Clang looks for a modulemap in an
 XCFramework headers directory under the name `module.modulemap`, so the
 regeneration script renames the file. Stage the same two files into every
-slice.
+slice's module subdirectory. Xcode copies library XCFramework headers into
+one `include/` directory. A root-level `module.modulemap` then collides with
+another SDK and causes `Multiple commands produce .../include/module.modulemap`.
+Verify the package in a consumer that also links a second library XCFramework;
+a single-library import does not detect this collision.
 
 The generated Swift file imports the C module behind
 `#if canImport(<crate_name>FFI)`. When that module fails to build or has

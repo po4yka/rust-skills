@@ -18,9 +18,11 @@ Contents:
 ## Build the load-time cache
 
 The env handle (`Env` on `jni` 0.22, `JNIEnv` on 0.21) is per-thread and
-frame-scoped. `JavaVM` is process-wide, `Clone + Send + Sync`, one pointer wide,
-and has no `Drop`. Store it in the same immutable cache as the global classes
-and IDs, and publish that cache once:
+frame-scoped. `JavaVM` is process-wide and `Send + Sync`. On 0.22 it also
+implements `Clone`, is one pointer wide, and has no `Drop`. On 0.21, store it
+in an `Arc<JavaVM>` when workers need owned handles; `JavaVM` has no `Clone`.
+Store the handle in the same immutable cache as the global classes and IDs.
+Publish that cache once. This example uses 0.22:
 
 ```rust
 use std::sync::OnceLock;
@@ -93,14 +95,16 @@ methods. Run any fallible logger or process setup in the same builder. Call
 succeeds. An error before publication drops the local cache and its global
 references.
 
-Other code gets a VM handle from the cache with `vm.clone()`, or from
-`JavaVM::singleton()` on 0.22.
+On 0.22, get a VM handle from the cache with `vm.clone()`, or from
+`JavaVM::singleton()`. On 0.21, clone the `Arc<JavaVM>` instead. A reference
+from a process-lifetime cache also works when ownership is not needed.
 
 ## Attach and detach
 
 A thread that Rust created (a tokio worker, a `std::thread`, a raw pthread)
-must attach before it calls Java. Capture the `JavaVM` once at load, and make
-more handles with `vm.clone()` or, on 0.22, `JavaVM::singleton()`. Call
+must attach before it calls Java. Capture the `JavaVM` once at load. On 0.22,
+use `vm.clone()` or `JavaVM::singleton()` for a worker. On 0.21, use
+`Arc::clone(&vm)` on an `Arc<JavaVM>`. Call
 `from_raw` only on a raw pointer that the host hands you: `JNI_OnLoad`, or
 `ndk_context` in a NativeActivity app. Never rebuild a handle from
 `vm.get_raw()`. An attach call does not change an existing attachment.

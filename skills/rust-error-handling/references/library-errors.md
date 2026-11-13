@@ -2,7 +2,7 @@
 
 Facts are for thiserror 2.0.21 on Rust 1.99.1 unless a section names another version.
 
-Contents: dependency types; opaque errors; error codes; adding variants; infallible results.
+Contents: dependency types; opaque errors; error codes; adding variants; boxed string errors; infallible results.
 
 ## Dependency error types are public API
 
@@ -106,6 +106,33 @@ downstream `match` with no wildcard breaks. A new field on a struct variant brea
 downstream pattern that names the variant's fields without `..`; mark the variant itself
 `#[non_exhaustive]` when it may grow fields. Run `cargo semver-checks check-release`, if it is
 installed, before the release.
+
+## String errors into std boxed errors
+
+`String` does not implement `Error`, but std provides dedicated conversions into both boxed
+error forms. `?` uses those conversions without an additional error crate:
+
+```rust,run
+use std::error::Error;
+
+fn local() -> Result<(), Box<dyn Error>> {
+    Err::<(), _>(String::from("invalid input"))?;
+    Ok(())
+}
+
+fn shared() -> Result<(), Box<dyn Error + Send + Sync>> {
+    Err::<(), _>(String::from("invalid input"))?;
+    Ok(())
+}
+
+fn main() {
+    assert_eq!(local().unwrap_err().to_string(), "invalid input");
+    assert_eq!(shared().unwrap_err().to_string(), "invalid input");
+}
+```
+
+This proves the std conversion and preserved message. It does not give the string a typed
+error kind or make `String` satisfy the `anyhow::Error` conversion bound.
 
 ## Infallible results on Rust 1.100+
 

@@ -3,13 +3,16 @@
 Reference material for `SKILL.md`. Read it when you drive tokio streams from a synchronous,
 step-driven loop, or when you drive an io_uring backend from that loop.
 
+Contents: triage; poll pattern; no-op waker; invariants; bridge extensions;
+io_uring buffer ownership and completion.
+
 ## Triage
 
 | Symptom | Likely cause | Check or fix |
 |---|---|---|
 | A stream stalls forever after one `Pending` | a no-op-waker poll helper was called from async code | move the call into the synchronous loop tick |
 | Writes succeed, the peer sees nothing | the synchronous engine did not run a step after the write | check that the loop does not skip ticks under load |
-| io_uring operations hang or corrupt memory after cancellation | an SQE dropped without `IORING_OP_ASYNC_CANCEL`, or its buffer reused early | submit the cancel; keep the buffer and fd alive until the target's CQE arrives |
+| io_uring operations hang or corrupt memory after cancellation | an operation abandoned without draining its completions, or its buffer reused early | drain the target CQE and, for `SendZc` with `IORING_CQE_F_MORE`, its memory-release notification |
 
 ## The pattern
 
@@ -78,13 +81,27 @@ fixed-buffer `ReadFixed` (`IORING_OP_READ_FIXED`), hold these invariants:
    `IORING_REGISTER_BUFFERS_UPDATE` (Linux 5.13+); the kernel can keep the old buffer alive
    until the requests that use it complete. Before Linux 5.13, registration waits for the ring
    to go idle.
-2. Do not reuse a buffer index until the CQE of every request that uses it has arrived.
+2. Keep each buffer owned and unavailable for reuse until every request releases it. `ReadFixed` releases
+   its buffer at the target CQE. `SendZc` can produce two CQEs: the first reports the send
+   result; `IORING_CQE_F_MORE` on that CQE means the buffer is still in use. Wait for the
+   notification CQE with `IORING_CQE_F_NOTIF` before reuse or deallocation. Without `F_MORE`,
+   the send-result CQE releases the buffer. Track these states per request, not per CQE count.
 3. tokio does not synchronize SQE submission and CQE completion. The loop polls the ring and
    drains completions into per-consumer queues.
 4. Every `unsafe` block that constructs an SQE carries a `// SAFETY:` comment that names the
    buffer-index validity and the fd lifetime. The `rust-unsafe` skill, when it is installed, owns
    the convention.
-5. Cancel an in-flight operation with `IORING_OP_ASYNC_CANCEL`; do not just drop it. After the
-   cancel, keep the buffer and the fd owned until the target request posts its CQE. A cancel
-   result of `-EALREADY` means that the request is still running and will complete. Reuse before
-   the target CQE lets the kernel write into memory that Rust considers free.
+5. To stop an in-flight operation, submit `IORING_OP_ASYNC_CANCEL` and drain its completions.
+   The cancel CQE is not the target CQE and does not release the target's buffer. Keep the fd
+   owned until the target completes, and keep the buffer until the release condition in rule 2.
+   This includes a pending `SendZc` notification after the send result. `-EALREADY` means the
+   request is still running; `-ENOENT` can mean its result is already queued. Neither cancel
+   result permits early reuse.
+
+Verify on the supported Linux kernel with the real backend: exercise normal completion,
+cancel before completion, and a send-result CQE with `F_MORE` followed by `F_NOTIF`. Assert
+that the pool does not return a buffer before release. A compile check or a successful cancel
+CQE does not prove this lifetime contract.
+
+Sources: [zero-copy send completions](https://github.com/axboe/liburing/blob/master/man/io_uring_prep_send_zc.3),
+[cancellation results](https://github.com/axboe/liburing/blob/master/man/io_uring_prep_cancel.3).

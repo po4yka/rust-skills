@@ -46,7 +46,7 @@ The cache can contain these values:
 
 | Value | `jni` 0.21 | `jni` 0.22 | Rule |
 |-------|------------|------------|------|
-| JVM handle | `JavaVM` | `JavaVM` | Clone it for a worker. |
+| JVM handle | `Arc<JavaVM>` for owned worker handles | `JavaVM` | On 0.21 clone the `Arc`; on 0.22 clone the `JavaVM`. |
 | Application class | `GlobalRef` | `Global<JClass<'static>>` | Keep the strong global reference for as long as any cached ID is used. |
 | Instance method ID | `JMethodID` | `JMethodID` | Resolve it with `get_method_id`. Do not pair it with another class. |
 | Static method ID | `JStaticMethodID` | `JStaticMethodID` | Resolve it with `get_static_method_id`. |

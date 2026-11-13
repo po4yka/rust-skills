@@ -17,6 +17,12 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ### Changed
 
+- Correct unsafe, cleanup, cancellation, lifetime, JNI, and XCFramework guidance
+  from the final catalog audit. Add executable regression examples.
+- Require target coverage in both compile passes and reject empty evaluation
+  results and blank licenses. Add a Linux container for complete local checks.
+- Correct the documented GitHub settings state. Keep the settings changes in a
+  separate approval proposal; this update does not enable them.
 - Extend the authoring rules to require permanent evidence for version-sensitive
   behavior and Cargo policies. Add measured sample-PGO and WASIp3 workflows.
 - Use a tracked-file export for both plugin install gates, so ignored build

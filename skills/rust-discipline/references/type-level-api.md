@@ -81,9 +81,27 @@ constructor or a builder, or derive `Default` and let the caller assign fields o
 value (`let mut o = Options::default(); o.retries = 3;`).
 
 Apply it to every public error enum and every public options struct, from the first release. It
-is free before publication and a breaking change to add afterwards. Do not apply it to a type
-whose whole purpose is exhaustive matching inside one crate; the wildcard arm it forces then
-hides a missing case.
+is free before publication and a breaking change to add afterwards. The restriction applies
+outside the defining crate. Inside that crate, keep exhaustive matches without a wildcard so
+a new variant requires a decision at every match:
+
+```rust,run
+#[non_exhaustive]
+pub enum Status { Ready, Stopped }
+
+fn code(status: Status) -> u8 {
+    match status { Status::Ready => 0, Status::Stopped => 1 }
+}
+
+fn main() {
+    assert_eq!(code(Status::Ready), 0);
+    assert_eq!(code(Status::Stopped), 1);
+}
+```
+
+This probe checks the defining crate only. Test an external consumer separately when changing
+the public construction or matching contract. See the
+[Reference](https://doc.rust-lang.org/1.100.0/reference/attributes/type_system.html#the-non_exhaustive-attribute).
 
 ## Sealed trait
 
@@ -352,7 +370,7 @@ load bearing across a module boundary, not on one a single `assert!` already cov
 
 ## Related
 
-- [type-and-trait-traps.md](type-and-trait-traps.md) — blanket impls and lifetime laundering
+- [type-and-trait-traps.md](type-and-trait-traps.md) — blanket impls and borrowed cache lifetimes
 - [ownership-and-concurrency-traps.md](ownership-and-concurrency-traps.md) — reference cycles,
   mutex poisoning, and builder receivers
 - [SKILL.md](../SKILL.md) — the API design rules these techniques implement
