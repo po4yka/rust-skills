@@ -3,14 +3,14 @@
 
     python3 scripts/drift-report.py toolchain            # Rust stable vs checks/rust-toolchain.toml
     python3 scripts/drift-report.py crates               # crates.io vs checks/Cargo.lock
-    python3 scripts/drift-report.py toolchain --stable 1.99.1   # no network: compare to a given version
+    python3 scripts/drift-report.py toolchain --stable 1.100.0   # no network: compare to a given version
 
 It prints a Markdown issue body on stdout. Exit status: 0 when the pins are current, 10 when they
 drifted, 1 on an error. The weekly drift workflows open or update an issue on exit 10.
 
 The toolchain report lists the skills whose text carries a dated claim for the pinned release
 ("as of Rust 1.98.1" or "as of Rust 1.98"), because those are the claims to re-probe before the
-pin moves. Changing the pin also means regenerating checks/baseline.txt on the new version.
+pin moves. Run checks/check.sh on the new pin and keep checks/baseline.txt empty.
 
 The crates report queries https://crates.io/api/v1/crates/<name> once per second, with a
 User-Agent, as the crates.io crawler policy requires.
@@ -45,7 +45,7 @@ def fetch(url: str) -> bytes:
 
 
 def parse_version(text: str) -> tuple[int, ...]:
-    """'1.99.1 (58cf8f9c3 2026-10-13)' or '0.13.2' -> (1, 99, 1); pre-release tails are dropped."""
+    """'1.100.0 (0ef1bc386 2026-11-09)' or '0.13.2' -> (1, 100, 0); pre-release tails are dropped."""
     match = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", text)
     if match is None:
         raise ValueError(f"not a version: {text!r}")
@@ -93,7 +93,7 @@ def toolchain_report(stable: str | None) -> int:
     print(f"`checks/rust-toolchain.toml` pins Rust **{pinned}**. The stable channel is **{stable}**.\n")
     print("Do not bump the pin by itself. A toolchain move is a catalog actualization:\n")
     print("1. Change `channel` in `checks/rust-toolchain.toml`, run `bash checks/check.sh`, and")
-    print("   regenerate `checks/baseline.txt` on the new version in the same commit.")
+    print("   fix changed diagnostics or examples; keep `checks/baseline.txt` empty.")
     print("2. Re-probe every dated claim below on the new version, and relabel only the ones the")
     print("   probe confirms.")
     print("3. Record the findings in `research/` and tag the release (`docs/releasing.md`).\n")

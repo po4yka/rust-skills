@@ -1,6 +1,8 @@
 # Library errors: dependency types, opaque errors, and codes
 
-Facts are for thiserror 2.0.21 on Rust 1.99.1.
+Facts are for thiserror 2.0.21 on Rust 1.99.1 unless a section names another version.
+
+Contents: dependency types; opaque errors; error codes; adding variants; infallible results.
 
 ## Dependency error types are public API
 
@@ -104,3 +106,27 @@ downstream `match` with no wildcard breaks. A new field on a struct variant brea
 downstream pattern that names the variant's fields without `..`; mark the variant itself
 `#[non_exhaustive]` when it may grow fields. Run `cargo semver-checks check-release`, if it is
 installed, before the release.
+
+## Infallible results on Rust 1.100+
+
+Rust 1.100 allows `!` in type arguments and makes `std::convert::Infallible`
+an alias for it. Keep `Infallible` in source that must build on an older MSRV.
+Do not define separate trait impls for these two names; they now name one type.
+
+```rust,run
+use std::convert::Infallible;
+
+fn value(result: Result<u32, !>) -> u32 {
+    let Ok(value) = result;
+    value
+}
+
+fn main() {
+    let result: Result<u32, Infallible> = Ok(42);
+    assert_eq!(value(result), 42);
+}
+```
+
+This probe checks the alias and the irrefutable pattern on Rust 1.100.
+It does not make a fallible operation infallible. Model a real failure with a
+concrete error type.

@@ -20,6 +20,11 @@ class Versions(unittest.TestCase):
     def test_the_channel_version_string_parses(self):
         self.assertEqual(drift.parse_version("1.99.1 (58cf8f9c3 2026-10-13)"), (1, 99, 1))
 
+    def test_three_digit_minor_version_sorts_numerically(self):
+        version = drift.parse_version("1.100.0 (0ef1bc386 2026-11-09)")
+        self.assertEqual(version, (1, 100, 0))
+        self.assertGreater(version, drift.parse_version("1.99.1"))
+
     def test_a_pre_release_tail_is_dropped(self):
         self.assertEqual(drift.parse_version("0.32.0-beta.1"), (0, 32, 0))
 
@@ -54,6 +59,12 @@ class DatedClaims(unittest.TestCase):
 
     def test_a_longer_version_does_not_count(self):
         self.assertEqual(self.claims("as of Rust 1.98.10 and as of Rust 1.980"), {})
+
+    def test_three_digit_minor_claims_keep_version_boundaries(self):
+        self.assertEqual(
+            self.claims("as of Rust 1.100.0; as of Rust 1.100; as of Rust 1.1000", "1.100.0"),
+            {"rust-a": 2},
+        )
 
     def test_another_release_does_not_count(self):
         self.assertEqual(self.claims("as of Rust 1.97.1"), {})

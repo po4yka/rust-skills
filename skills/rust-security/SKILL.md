@@ -15,7 +15,7 @@ license: BSD-3-Clause
 | TLS transport policy | The `rust-networking` skill; never disable certificate checks with `danger_accept_invalid_certs`. |
 | Authentication, secret storage, cryptographic protocol design, key lifecycle | Not this skill; follow the domain security review. |
 
-Other skills named in this file apply when they are installed.
+Use other named skills when installed.
 
 ## Review gate
 
@@ -161,16 +161,16 @@ commands for each step:
 5. **Run the policy**: `cargo deny --config deny.toml --locked check`.
 6. **Justify the dependency** against std and the crates already in the graph.
 
-For a version bump, read the diff of a release under 7 days old or one that adds a build
-script or a proc-macro dependency.
+Read a bump's diff if it is under 7 days old or adds build scripts or proc macros.
 
 ## 6. Supply chain hardening
 
-`cargo machete` finds unused dependencies heuristically: a renamed or macro-only dependency
-is a false positive, so confirm each finding.
+For `cargo::unused_dependencies`, use the `rust-lints` skill, when installed, or
+`cargo check --locked --workspace --all-targets`. Confirm renamed or macro-only `cargo machete` findings.
+Cooldowns: read [the rules](references/dependency-cooldowns.md).
 
-Run `cargo vet` only when a `supply-chain/` directory already exists: `cargo vet init`
-exempts every current dependency, so a run right after it proves nothing.
+Run `cargo vet` only with an existing `supply-chain/`: `cargo vet init` exempts all
+current dependencies, so an immediate run proves nothing.
 
 - Commit `Cargo.lock` (the `cargo-workflows` skill owns the lockfile policy).
 - Allow only crates.io, unless a git dependency has a written reason and a `rev` pin (a

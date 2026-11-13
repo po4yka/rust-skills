@@ -63,6 +63,7 @@ wrong skill, and put the phrase in the right description in the same change.
 | wasm32-unknown-unknown | rust-wasm |
 | wasm32-wasip1 | rust-wasm |
 | wasm32-wasip2 | rust-wasm |
+| wasm32-wasip3 | rust-wasm |
 | wasm-bindgen | rust-wasm |
 | WebAssembly Component Model | rust-wasm |
 | wasm binary size | rust-wasm |

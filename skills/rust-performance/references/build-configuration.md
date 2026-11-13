@@ -293,6 +293,15 @@ to host artifacts when no target triple is given. Measured on a crate with a tri
 and a second after the run. With `--target <host triple>` the count after the build was zero. Build
 script data in the merge distorts the profile. Always pass `--target`.
 
+### Sample profiles on Rust 1.100+
+
+Rust 1.100 stabilizes `-Cprofile-sample-use=<profile>`. This uses a sample profile;
+it does not consume the `.profraw` files of the instrumented workflow above.
+Check `rustc -C help` on the shipping toolchain, use a profile that matches its
+LLVM format, and measure the final binary on representative input. Flag support
+alone does not prove that a profile was applied or that performance improved.
+
+
 ### Where PGO does not reach
 
 `cargo install` exposes no two-pass mechanism. `cargo install --help` offers only `--debug` and

@@ -69,7 +69,7 @@ Gradle, or in the run configuration does nothing.
 
    ```bash
    cargo test --locked --no-run --target aarch64-linux-android -p my-crate
-   # Push the path that the "Executable ... (<path>)" line prints; it is under deps/ with a hash
+   # Push the path that the "Executable ... (<path>)" line prints; do not infer its directory
    adb push <executable-path> /data/local/tmp/my_test
    adb shell "cd /data/local/tmp && chmod +x my_test && RUST_BACKTRACE=1 ./my_test"
    ```

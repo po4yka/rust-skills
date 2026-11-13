@@ -259,4 +259,6 @@ is a memory-safety invariant, the design is unsound whatever the guard does. The
 a value behind `Pin` is dropped before its memory is reused.
 
 Use a guard for the things leaking cannot corrupt: closing a descriptor, releasing a lock,
-decrementing a metric, flushing a buffer. `scopeguard::defer!` covers the fallible variant.
+decrementing a metric, flushing a buffer. On Rust 1.100+, `core::mem::DropGuard`
+runs a cleanup closure. The `rust-panic-safety` skill, when installed, owns rollback
+and `DropGuard::dismiss`; use a local `Drop` type on an older MSRV.

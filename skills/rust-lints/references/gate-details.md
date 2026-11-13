@@ -1,6 +1,7 @@
 # Gate and configuration details
 
 - [What each gate check proves](#what-each-gate-check-proves)
+- [Cargo lints on Rust 1.100+](#cargo-lints-on-rust-1100)
 - [`CARGO_BUILD_WARNINGS`](#cargo_build_warnings)
 - [`clippy.toml` behavior](#clippytoml-behavior)
 - [`rustfmt.toml` and the edition](#rustfmttoml-and-the-edition)
@@ -102,3 +103,19 @@ rustfmt accepts `style_edition` without the unstable-option warning.
 the `#[ ]`: ``usage of the unsafe `no_mangle` attribute``). An export that a proc macro
 generates, such as jni 0.22's `#[jni_mangle]`, passes the lint (verified on 1.98.1); see
 [lint-catalog.md](lint-catalog.md#lints-on-proc-macro-output) for why.
+
+## Cargo lints on Rust 1.100+
+
+Use `[workspace.lints.cargo]` for Cargo's own diagnostics; members still need
+`[lints] workspace = true`. Use `[lints.cargo]` in a standalone package.
+`unused_dependencies` warns by default. Run
+`cargo check --locked --workspace --all-targets` on each supported feature set and
+platform before removal. Cargo checks only dependencies whose possible consuming
+build targets were selected; it does not check unused dev-dependencies.
+`-- -D warnings` controls rustc or Clippy, not this manifest policy. Set
+`unused_dependencies = "deny"` in the Cargo lint table when it is a required gate.
+The `cargo-workflows` skill, when installed, owns `--message-format=json` and the upgrade workflow.
+
+Rust 1.100 also adds `rustdoc::invalid_markdown_table`. Run `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps`
+when a documentation table changes. `#[expect(dead_code)]` inside a dead parent
+no longer reports an unfulfilled expectation merely because the parent owns the diagnostic.

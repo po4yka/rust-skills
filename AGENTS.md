@@ -103,7 +103,7 @@ The body starts at an `# Title` heading directly after the frontmatter.
   or irreversible-release hazard, and give the reason. Mark a team preference as a default.
 - Skills run on many models and agents. Do not describe how a model behaves, and do not require
   a harness feature (subagents, plan mode, nightly, a specific test runner) without a fallback.
-- Label a dated fact with its version or date ("as of Rust 1.98.1"). Do not write "at time of
+- Label a dated fact with its version or date ("as of Rust 1.100.0"). Do not write "at time of
   writing". Re-run a measurement before you change its toolchain label.
 - Prefer a triage table (symptom, cause, fix) over prose for failure handling.
 - Compile any Rust example that is meant to be complete before you commit it. `bash
@@ -145,6 +145,17 @@ The body starts at an `# Title` heading directly after the frontmatter.
    Codex part only when `npx` is available. A skill with
    no routing case fails validation. The check is a regression lint, not proof that routing
    works: do not add a keyword to a description only to satisfy it.
+
+## Toolchain updates
+
+The current compile pin is Rust 1.100.0, edition 2024. Read
+`research/rust-1.100.0-2026-11.md` for this update's scope and evidence.
+When the pin changes, read the Rust and Cargo release notes, then search all skills,
+references, instructions, scripts, and fixtures for affected claims and artifact paths.
+Run `bash checks/check.sh`; keep `checks/baseline.txt` empty. Fix changed diagnostics
+and examples instead of adding an exemption. Keep historical measurements and API
+stabilization versions at their original version unless the measurement runs again.
+Record the source links, checks, and untested platforms in `research/`.
 
 ## How to verify a change locally
 

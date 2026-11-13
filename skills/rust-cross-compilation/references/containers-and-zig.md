@@ -106,7 +106,7 @@ Build the binary in a toolchain stage and copy only the artifact into a small ru
 Pin both tags; record the digests in the release notes.
 
 ```text
-FROM rust:1.99.1-slim-trixie AS build
+FROM rust:1.100.0-slim-trixie AS build
 RUN apt-get update && apt-get install --yes --no-install-recommends musl-tools \
  && rm -rf /var/lib/apt/lists/*
 RUN rustup target add x86_64-unknown-linux-musl

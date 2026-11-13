@@ -1,7 +1,8 @@
 # More error codes
 
 Deep material for the rust-compiler-errors skill: the codes its triage table does not hold, and
-the never-type fallback programs. Every message comes from rustc 1.98.1.
+the never-type fallback programs. The table records rustc 1.98.1 diagnostics.
+The fallback programs are checked on Rust 1.100.0.
 
 Contents:
 
@@ -27,8 +28,8 @@ Contents:
 
 ## The never-type fallback
 
-An unconstrained generic call as a statement, such as `f()?;`, has no anchor at all. Edition 2024
-falls back to `!` instead of `()`, so the error names the never type:
+An unconstrained generic call as a statement, such as `f()?;`, can rely on never-type fallback.
+Rust 1.100 falls back to `!` instead of `()` on every edition, so the error names the never type:
 
 ```rust,compile_fail,E0277
 fn parse_or_default<T: Default>() -> Result<T, ()> { Ok(T::default()) }
@@ -40,9 +41,9 @@ fn load() -> Result<(), ()> {
 ```
 
 The note says "this error might have been caused by changes to Rust's type-inference algorithm".
-On edition 2021 the same code fails with the deny-by-default lint
-`dependency_on_unit_never_type_fallback` (1.92+): "this function depends on never type fallback
-being `()`". Both have one fix. Name the type:
+Before Rust 1.100, edition 2021 reported `dependency_on_unit_never_type_fallback`
+(deny by default since 1.92). On 1.100 it reports E0277, like edition 2024.
+Name the type on every edition:
 
 ```rust
 fn parse_or_default<T: Default>() -> Result<T, ()> { Ok(T::default()) }
