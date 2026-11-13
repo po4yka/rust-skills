@@ -1,20 +1,27 @@
 schema_version: "1.1"
 name: sandbox-shell
 runs: 1
+context:
+  scaffold_script: scaffold.sh
 execution:
   max_turns: 3
   timeout_seconds: 120
   allowed_tools: [Bash]
   prompt: >-
-    Use Bash to run exactly `cargo --version > sandbox-probe.txt` in the current
-    directory. Do not write the file with any other command. Report the command's
-    exit status and stop. This checks that the shell and pinned Cargo can start.
+    Use Bash to run exactly `cargo --version > sandbox-version.txt && cargo test
+    --offline > sandbox-probe.txt` in the current directory. Do not write these
+    files with any other command. Report the exit status and stop. This checks
+    that the pinned compiler can build and run tests inside the sandbox.
 graders:
   - name: shell-called
     type: tool_used
     tool: Bash
-    input_match: 'cargo --version > sandbox-probe\.txt'
-  - name: cargo-started
+    input_match: 'cargo test --offline > sandbox-probe\.txt'
+  - name: cargo-pinned
+    type: regex
+    target: {source: file, path: sandbox-version.txt}
+    pattern: '^cargo 1\.100\.0 '
+  - name: tests-ran
     type: regex
     target: {source: file, path: sandbox-probe.txt}
-    pattern: '^cargo 1\.100\.0 '
+    pattern: 'test result: ok\. [1-9][0-9]* passed'

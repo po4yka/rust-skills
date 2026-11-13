@@ -100,18 +100,20 @@ jobs:
           set -euo pipefail
           channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' checks/rust-toolchain.toml)"
           rustup toolchain install "$channel" --profile minimal
-          rustup default "$channel"
-          # The client seals HOME and drops Rust environment overrides. Keep the pin
-          # and offline policy in operator-owned launchers that its PATH can reach.
-          eval_tools="$RUNNER_TEMP/eval-rust-tools"
+          toolchain_root="$(dirname "$(dirname "$(rustup which rustc --toolchain "$channel")")")"
+          # The sandbox can read the plugin root. Copy the complete compiler there,
+          # including its libraries, and break hard links that the client rejects.
+          eval_tools="$GITHUB_WORKSPACE/checks/eval-tools"
           mkdir -p "$eval_tools"
+          python3 -c 'import shutil, sys; shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True)' \
+            "$toolchain_root" "$eval_tools/toolchain"
           for tool in cargo rustc rustdoc; do
-            binary="$(rustup which "$tool" --toolchain "$channel")"
+            binary="$eval_tools/toolchain/bin/$tool"
             printf '#!/bin/sh\nexport CARGO_NET_OFFLINE=true\nexec "%s" "$@"\n' "$binary" > "$eval_tools/$tool"
             chmod +x "$eval_tools/$tool"
           done
           echo "$eval_tools" >> "$GITHUB_PATH"
-          cargo --version
+          "$eval_tools/cargo" --version
 
       - name: Run the plugin suite
         if: inputs.suite == 'plugin'
@@ -141,9 +143,10 @@ jobs:
           set -euo pipefail
           claude plugin eval . \
             --eval-dir checks/sandbox-eval \
-            --trust-plugin --ablation none --allow-tools Bash \
+            --trust-plugin --scaffold --ablation none --allow-tools Bash \
             --model "$MODEL" --threshold 1 --max-cost-usd 1 \
-            --no-publish --json sandbox-results.json
+            --no-publish --output-dir "$RUNNER_TEMP/sandbox-eval-results" \
+            --json "$RUNNER_TEMP/sandbox-results.json"
 
       # A measurement, not a gate: no --threshold. --scaffold runs the case scripts from this
       # checkout, and --allow-tools lets the agent run cargo and edit its workspace.
@@ -197,6 +200,10 @@ jobs:
           errors.extend("shell sandbox failed inside the agent trace" for run in runs
                         if any(marker in grader.get("evidence", "")
                                for grader in run.get("graders", []) for marker in sandbox_failures))
+          errors.extend("compiler libraries were blocked by the sandbox" for run in runs
+                        if any("librustc_driver" in grader.get("evidence", "")
+                               and "blocked by sandbox" in grader.get("evidence", "")
+                               for grader in run.get("graders", [])))
           if errors:
               print(f"Execution errors: {len(errors)} run(s) did not complete. First error: {errors[0]}")
               raise SystemExit(1)

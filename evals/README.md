@@ -131,18 +131,21 @@ CARGO_NET_OFFLINE=true claude plugin eval . --eval-dir evals/outcome --trust-plu
 ```
 
 The workflow runs outcome tasks on `macos-26` with the native sandbox. Its
-`checks/sandbox-eval` preflight first requires a real Bash call to start the
-pinned Cargo and write its version. This one-run check has a $1 cost limit;
+`checks/sandbox-eval` preflight first requires a real Bash call to report the
+pinned Cargo version, then compile and run the tests of a std-only fixture. This one-run check has a $1 cost limit;
 the outcome suite keeps its $40 limit. The client seals `HOME` and drops Rust
 environment overrides. The workflow puts launchers for the pinned `cargo`,
-`rustc`, and `rustdoc` on `PATH`. These call the installed binaries directly
-and set `CARGO_NET_OFFLINE=true` before each call.
+`rustc`, and `rustdoc` on `PATH`. The complete toolchain, including compiler
+libraries, is copied to ignored `checks/eval-tools/` inside the plugin root.
+The sandbox can read that root; it cannot read the operator's home toolchains. These launchers call the installed
+binaries directly and set `CARGO_NET_OFFLINE=true` before each call.
 
 The pinned Linux client can reject every shell call in `apply-seccomp` even when
 bubblewrap starts. See [upstream issue #99269](https://github.com/anthropics/claude-code/issues/99269).
 Do not disable the sandbox or its socket filter to make an evaluation pass.
 The summary rejects the observed sandbox failure even if the agent returns
-normally and the run has numeric scores.
+normally and the run has numeric scores. It also rejects compiler libraries
+blocked by the sandbox.
 
 `--scaffold` runs `scaffold.sh` from this repository, and `--allow-tools` lets the agent run cargo
 and edit the workspace. The command sets no `--threshold`: the result is a measurement, and the

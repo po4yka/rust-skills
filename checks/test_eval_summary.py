@@ -67,12 +67,22 @@ class TestEvalSummary(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("shell sandbox failed", result.stdout)
 
+    def test_blocked_compiler_library_in_a_completed_trace_fails(self):
+        result = self.run_summary(json.dumps({
+            "suite": {"plugins": [{"name": "rust-skills"}]},
+            "cases": [{"name": "case", "arms": {"with": [{
+                "score": 0.5, "error": None, "graders": [{"evidence":
+                    "Library not loaded: @rpath/librustc_driver.dylib (blocked by sandbox)"}]}]}}],
+        }))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("compiler libraries were blocked", result.stdout)
+
     def test_valid_low_score_remains_a_measurement(self):
         result = self.run_summary(json.dumps({
             "suite": {"plugins": [{"name": "rust-skills"}], "ablation": True},
             "partial": False,
             "cases": [{"name": "case", "arms": {
-                "with": [{"score": 0, "error": None}], "without": [{"score": 0.5, "error": None}]}}],
+                "with": [{"score": 0, "error": None, "graders": [{"evidence": "error[E0308]: mismatched types"}]}], "without": [{"score": 0.5, "error": None}]}}],
         }))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("| case | 0.00 | 0.50 |", result.stdout)
