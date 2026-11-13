@@ -8,7 +8,7 @@ license: BSD-3-Clause
 
 ## Find the unsafe surface
 
-Run this inventory when you audit, add, or remove unsafe code:
+Inventory unsafe code before an audit or change:
 
 ```bash
 # Crates that promise no unsafe in their own source.
@@ -23,7 +23,7 @@ rg -n '#\[(unsafe\()?(no_mangle|export_name|link_section)' --type rust
 
 ## Governance with `#![forbid(unsafe_code)]`
 
-A written rule such as "no unsafe in this crate" is not enforcement. Add `#![forbid(unsafe_code)]`
+Enforce a safe crate with `#![forbid(unsafe_code)]`. Add it
 to every crate root that has no hand-written `unsafe`, including a crate that reaches C or the OS
 only through a safe wrapper crate. A local `#[allow(unsafe_code)]` cannot weaken it (E0453). A
 crate with an `#[unsafe(no_mangle)]` export cannot carry it. A dependency macro that expands to
@@ -60,9 +60,12 @@ Performance is a reason for unsafe only after a measurement. Read
 [references/audit-checklist.md](references/audit-checklist.md) when you decide whether a new
 unsafe site is legitimate.
 
+For Rust 1.100 custom allocators, `conjure_zst`, or `UnsafeCell` access, read
+[the API rules](references/allocator-and-zst.md).
+
 ## Verify an unsafe change
 
-Run the checks that match the risk.
+Match checks to risk.
 
 1. Every change: `cargo clippy --locked -p <crate> --all-targets -- -D warnings`. It proves that
    the lint floor holds. It does not prove that a SAFETY comment is true.
@@ -89,7 +92,7 @@ someone else wrote, or before a merge that adds unsafe.
 
 ## Triage: faults that pass a safety review
 
-Here the unsafe block is correct and the shape of the data is wrong; no SAFETY comment catches it.
+A correct unsafe block cannot fix the wrong data shape.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -137,9 +140,8 @@ reproducing test; only a decode loop fails on invalid UTF-8.
 
 ## Manual `Send` or `Sync` impls and reference fabrication
 
-The compiler accepts a manual `unsafe impl Send` unchecked, also after a field gains an `Rc`.
-Bound it on the parameters (`unsafe impl<T: Sync> Sync`), and audit every field and `&self`
-method. Never hand out a `&T` built from `RefCell::as_ptr` or a `&String` from
+A manual `unsafe impl Send` remains unchecked after a field gains an `Rc`.
+Bound its parameters (`unsafe impl<T: Sync> Sync`); audit each field and `&self` method. Never hand out a `&T` built from `RefCell::as_ptr` or a `&String` from
 `String::from_raw_parts` over a `&str`; Miri can pass both. Read
 `references/miri-and-aliasing.md` before you write or review either.
 

@@ -214,9 +214,8 @@ survives edits above the block, and with a content hash so two blocks in one
 section cannot collapse into one entry). The gate fails only on a signature
 that is not listed.
 
-It is currently empty, and that is the target state. When the gate reports a new
-suspect, fix the example. Add a baseline line only for a failure no fence tag
-can express, and write down why.
+Keep it empty. When the gate reports a new suspect, fix the example or the
+classifier with evidence. Do not add an exemption for a toolchain update.
 
 ## Adding a dependency
 
@@ -241,5 +240,12 @@ change.
 ## Changing the toolchain
 
 `rust-toolchain.toml` pins the channel and the target. CI installs nothing else;
-rustup reads that file. Regenerate `baseline.txt` on the new channel in the same
-commit, because error codes and wording move between releases.
+rustup reads that file. Run the complete check on the new channel. Fix examples
+and diagnostic expectations that changed; keep `baseline.txt` empty.
+Read `../research/rust-1.100.0-2026-11.md` for the Rust 1.100 update evidence.
+
+A macOS cross-check also needs the target C++ headers for `cxx` and
+`PYO3_CROSS_PYTHON_VERSION` for PyO3. `clang --target` alone does not supply a
+Linux C++ sysroot. Use a Linux environment with Python and a C++ compiler when
+these dependencies cannot build locally. Do not disable their build scripts
+or omit their examples to pass the gate.

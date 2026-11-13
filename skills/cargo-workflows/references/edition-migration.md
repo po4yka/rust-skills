@@ -2,7 +2,11 @@
 
 Read this file when you move one or more workspace crates to a new edition. The workflow applies
 to any edition bump. The breaking-change list is for edition 2024, the latest edition as of Rust
-1.98.1.
+1.100.0.
+
+Rust 1.100 changes never-type fallback to `!` on every edition. An edition bump is not
+required to trigger that change. Add an explicit type such as `f::<()>()?` when an old
+call relied on unit fallback.
 
 Contents:
 

@@ -67,7 +67,7 @@ what would owning it cost?
 | E0310 | the parameter type `T` may not live long enough | A generic `T` reaches a `'static` bound | `T: 'static` for owned data; `dyn Trait + 'a` when it may borrow |
 | E0106 | missing lifetime specifier | A struct or return type holds a reference with no stated source | Field: store owned data unless the type is a short-lived view. Return: name the input it borrows from. See [references/borrow-checker-fixes.md](references/borrow-checker-fixes.md) |
 | E0277 | the trait bound `T: X` is not satisfied | A trait is missing or not in scope | Import it or add the bound |
-| E0277 | the trait bound `!: X` is not satisfied | Edition 2024 never-type fallback | Name the type, see [the fallback section](#e0282-e0283-e0284-and-the-never-type-need-a-type-anchor) |
+| E0277 | the trait bound `!: X` is not satisfied | Never-type fallback (all editions since 1.100) | Name the type, see [the fallback section](#e0282-e0283-e0284-and-the-never-type-need-a-type-anchor) |
 | E0277 | `T` cannot be sent between threads safely | A non-`Send` value crosses a thread boundary | If `help:` names `Sync`, a `&T` crossed: use a `Mutex` or an atomic, never `unsafe impl Send` |
 | (none) | future cannot be sent between threads safely | A non-`Send` value (`Rc`, a lock guard) lives across an `.await` | The `note:` names both. Drop the value before the `.await`, or use `Arc`; `clippy::await_holding_lock` flags a guard |
 | E0308 | mismatched types | Often one reference layer or one `Option` apart | Compare the two types the note prints |
@@ -113,10 +113,10 @@ let converted = u64::from(7_u8);
 Do not change a public return type, add `'static`, or add a broad trait bound only to silence
 inference. Rebuild after the one anchor; later diagnostics are often a cascade.
 
-An unconstrained generic call as a statement, such as `f()?;`, has no anchor at all. Edition 2024
-falls back to `!` (``the trait bound `!: Default` is not satisfied``); edition 2021 gives the
-deny-by-default lint `dependency_on_unit_never_type_fallback` (1.92+). Name the type:
-`f::<()>()?;` or `let () = f()?;`. Do not allow the lint; it is a hard error on 2024. Read
+An unconstrained generic call as a statement, such as `f()?;`, can rely on never-type fallback.
+Rust 1.100 falls back to `!` on every edition (``the trait bound `!: Default` is not satisfied``).
+Name the type: `f::<()>()?;` or `let () = f()?;`. Allowing the old compatibility lint cannot
+restore unit fallback. Read
 [references/more-codes.md](references/more-codes.md#the-never-type-fallback) when you need the
 programs.
 

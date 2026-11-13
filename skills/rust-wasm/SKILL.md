@@ -1,13 +1,12 @@
 ---
 name: rust-wasm
-description: Use when building, testing, or shrinking Rust for WebAssembly (wasm32-unknown-unknown, wasm32-wasip1, wasm32-wasip2, wasm32v1-none) in a browser, Node.js, a WASI runtime, or a WebAssembly Component Model host, or when diagnosing a wasm-bindgen boundary, instantiation, link, target-feature, or wasm binary size failure. Triggers on wasm-pack, wasm-bindgen, wit-bindgen, wasmtime, WASI, getrandom wasm_js, and "time not implemented on this platform".
+description: Use when building, testing, or shrinking Rust for WebAssembly (wasm32-unknown-unknown, wasm32-wasip1, wasm32-wasip2, wasm32-wasip3, wasm32v1-none) in a browser, Node.js, a WASI runtime, or a WebAssembly Component Model host, or when diagnosing a wasm-bindgen boundary, instantiation, link, target-feature, or wasm binary size failure. Triggers on wasm-pack, wasm-bindgen, wit-bindgen, wasmtime, WASI, getrandom wasm_js, and "time not implemented on this platform".
 license: BSD-3-Clause
 ---
 
 # Rust WebAssembly
 
-Build and verify Rust for the exact WebAssembly host that runs it. A `.wasm`
-suffix does not define an ABI, an import set, or a runtime.
+Build for the exact WebAssembly host. A `.wasm` suffix does not define its ABI or imports.
 
 ## Write the host contract first
 
@@ -18,7 +17,7 @@ allowed imports and capabilities, the JavaScript output mode, and the engine fea
 and the test matrix.
 
 Do not infer the host from `target_arch = "wasm32"`. Browser, Node.js, WASIp1,
-and WASIp2 builds can share that architecture and still have incompatible APIs.
+WASIp2, and WASIp3 builds can share that architecture and still have incompatible APIs.
 
 ## Select the target
 
@@ -29,7 +28,7 @@ and WASIp2 builds can share that architecture and still have incompatible APIs.
 | WASI 0.2 and Component Model host | `wasm32-wasip2` | Component | The host must support components and the WASI interfaces that the program imports |
 | WASIp1 host with the threads proposal | `wasm32-wasip1-threads` | Shared-memory core module | The host must provide threads and shared memory |
 | Minimal WebAssembly 1.0 engine with `no_std` | `wasm32v1-none` | Core module | Use only when `core` and `alloc` are sufficient |
-| WASI 0.3 async component host | `wasm32-wasip3` | Component | Tier 3 as of Rust 1.98.1: rustup ships no `std` for it. Do not select it for a stable-toolchain product ([target page](https://doc.rust-lang.org/rustc/platform-support/wasm32-wasip3.html)) |
+| WASI 0.3 async component host | `wasm32-wasip3` | Component | Tier 2 since Rust 1.100.0; install `std` with rustup. Require WASI 0.3 async support in the host ([target page](https://doc.rust-lang.org/rustc/platform-support/wasm32-wasip3.html)) |
 
 Do not use `wasm32-unknown-unknown` as a generic WASI target. Do not send a WASIp2 component to an API that accepts only
 a core module.
@@ -102,7 +101,7 @@ an old engine. Read `references/target-setup.md` when you write the validate
 command: it has the SIMD and component-model variants.
 
 Read `references/wasi.md` when a matrix row targets `wasm32-wasip1` or
-`wasm32-wasip2`. Grant a WASI run only the capabilities that it needs: a run with
+`wasm32-wasip2` or `wasm32-wasip3`. Grant a WASI run only the capabilities that it needs: a run with
 broad inherited access does not prove the production policy. Pin the WIT package
 versions and the host runtime together.
 
@@ -127,7 +126,7 @@ adapters at the edge.
 
 Use target predicates only for facts the compiler knows:
 `cfg(all(target_family = "wasm", target_os = "unknown"))` for a bare JavaScript
-host, `cfg(all(target_os = "wasi", target_env = "p1"))` or `"p2"` for WASI.
+host. For WASI, pair `target_os = "wasi"` with `target_env = "p1"`, `"p2"`, or `"p3"`.
 `cfg` cannot tell a browser from Node.js: select adapters with explicit Cargo
 features and reject invalid sets.
 

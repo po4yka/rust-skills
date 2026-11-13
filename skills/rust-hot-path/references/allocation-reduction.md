@@ -3,7 +3,7 @@
 Allocation patterns that [SKILL.md](../SKILL.md) names but does not develop. SKILL.md holds the
 rules for `reserve_exact`, `clone_from`, and the workhorse buffer; this file holds the evidence.
 
-Sections: symptom routing; the `Vec` growth ladder; `reserve` against `reserve_exact`;
+Sections: symptom routing; per-collection allocators; the `Vec` growth ladder; `reserve` against `reserve_exact`;
 `clone_from` keeps the buffer; `reserve` on an empty `Vec`; `HashMap` capacity; `collect` exactness; zero-filled buffers;
 inline capacity (`SmallVec`, `ArrayVec`); inline strings; measuring the length distribution;
 `Rc` and `Arc`; `format!` and `format_into` in a loop; eager arguments; `shrink_to_fit`; pinning
@@ -24,6 +24,14 @@ text names another version.
 | One allocation per iteration of a formatting loop | `format!` returns an owned `String` | [format! in a loop](#format-in-a-loop-allocates-once-per-call) |
 | An allocation happens on the path that discards the value | `ok_or`, `unwrap_or`, `map_or` | [Eager arguments](#eager-arguments-allocate-on-the-path-that-discards-them) |
 | A raw pointer taken before a `Vec` call dangles after it | `shrink_to_fit` reallocated the buffer | [shrink_to_fit](#shrink_to_fit-reallocates) |
+
+## Per-collection allocators on Rust 1.100+
+
+`Vec::new_in` and `Box::new_in` can use an `Allocator` without replacing the
+process-wide allocator. Profile first; a custom allocator does not remove a
+collection's growth or clone costs. Check the package MSRV before adoption.
+The `rust-unsafe` skill, when installed, owns raw-part round trips with
+`Vec::into_raw_parts_with_allocator`; keep the allocator with the allocation.
 
 ## The `Vec` growth ladder
 
@@ -114,6 +122,12 @@ assert_eq!(index.capacity(), 28);   // 32 buckets at a 7/8 load factor
 the rounding; see the `Lookups` section of SKILL.md for the hasher decision.
 
 ## `collect` allocates once only when the length is exact
+
+On Rust 1.100+, `Vec::from_fn(len, |index| value)` expresses a known-length
+construction directly. The closure runs in index order and is not called for
+zero length. It does not prove an allocation-count improvement over `collect`;
+measure both before changing a hot path.
+
 
 `collect` reserves the iterator's exact size when the source reports one, and falls back to
 `size_hint`'s lower bound when it does not. The fallback runs the whole growth ladder.

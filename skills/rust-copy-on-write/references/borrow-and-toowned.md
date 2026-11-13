@@ -15,6 +15,7 @@ Contents:
 - [When a dependency demands `&String`](#when-a-dependency-demands-string)
 - [`into_static`: the exit from a borrowing struct](#into_static-the-exit-from-a-borrowing-struct)
 - [Checklist](#checklist)
+- [Slice comparisons on Rust 1.100+](#slice-comparisons-on-rust-1100)
 
 `Cow<'a, B>` is declared over `B: ToOwned`, and `ToOwned` requires `Owned: Borrow<B>`. Both
 traits carry a contract that the compiler never checks. Break the `Borrow` one and you get a
@@ -430,3 +431,26 @@ fn main() {
 4. Does a delegating `eq` or `hash` call `self.borrow()`? Qualify it, or it is `E0283`.
 5. Does a call site build a `String` only to satisfy a `&String` parameter? Reuse one buffer.
 6. Does the fix reach for `ManuallyDrop` plus `String::from_raw_parts`? Reject it in review.
+
+## Slice comparisons on Rust 1.100+
+
+Rust 1.100 lets `Vec<T>`, `&[T]`, and `&mut [T]` compare directly with
+`Cow<'_, [U]>` when the elements support the required comparison. Do not call
+`into_owned` only to compare; that can copy a borrowed buffer.
+
+```rust,run
+use std::borrow::Cow;
+
+fn main() {
+    let values = vec![1_u8, 2, 3];
+    let borrowed: Cow<'_, [u8]> = Cow::Borrowed(&[1, 2, 3]);
+    assert!(values == borrowed);
+    assert!(values.as_slice() == borrowed);
+    let mut array = [1_u8, 2, 3];
+    assert!(&mut array[..] == borrowed);
+    assert!(matches!(borrowed, Cow::Borrowed(_)));
+}
+```
+
+This probe checks comparison and preserves the borrowed variant. It is not an
+allocator measurement. On an older MSRV, compare slices with `cow.as_ref()`.

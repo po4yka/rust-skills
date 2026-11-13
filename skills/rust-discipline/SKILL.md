@@ -140,7 +140,7 @@ translates, never both.
 - `impl Drop` blocks every move of a non-`Copy` field out of the struct (E0509). Put `Drop` on a
   one-field guard, and keep the aggregate `Drop`-free. Make the guard's field an `Option` only
   when the cleanup consumes it.
-- Use `scopeguard::defer!` for cleanup on every exit path, unwinding included. Under
+- Use `core::mem::DropGuard` on Rust 1.100+, or a local `Drop` type, for cleanup. Under
   `panic = "abort"` no destructor runs after a panic.
 - Never argue soundness from a guard's `Drop`. `mem::forget` is safe, so a caller can skip it.
 

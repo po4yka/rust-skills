@@ -6,9 +6,8 @@ license: BSD-3-Clause
 
 # Cargo Workflows
 
-Run every cargo command from the directory that holds the workspace `Cargo.toml`. Cargo reads
-`.cargo/config.toml` from the current directory upward, so a command run inside a member can
-build with different settings.
+Run Cargo from the workspace root. It reads `.cargo/config.toml` from the current
+directory upward; a member directory can select different settings.
 
 ## `Cargo.lock` and `--locked`
 
@@ -18,7 +17,7 @@ reproducible. Omit it only in a command whose purpose is to change the lock: `ca
 `cargo add`, the `cargo metadata` resolve in the triage table below, and the scheduled
 latest-dependencies job.
 
-Change the lockfile only on purpose, in a change that says why:
+State why each lockfile change is needed:
 
 | Task | Command |
 |------|---------|
@@ -39,13 +38,16 @@ Never repair the lock by running any command that compiles (`cargo build`, `chec
 `clippy`, `doc`, `run`, `nextest`) without `--locked`. That command compiles the new packages and
 runs their build scripts and proc macros before anyone vets them.
 
-A committed lockfile does not reach the users of a library: they resolve from `Cargo.toml`. Add a
-scheduled job that runs `cargo +stable update` and the tests, and reports without blocking merges.
-It runs build scripts that nobody vetted.
+Library users resolve from `Cargo.toml`, not the library's lockfile. Add a scheduled
+`cargo +stable update` and test job that reports without blocking merges.
+It runs unreviewed build scripts.
 
 Read [references/workspace-patterns.md](references/workspace-patterns.md) when you write this job
 (runner, secret, and cache rules), lay out a workspace, add or pin a dependency, add a
 member crate, review a `Cargo.lock` diff, or need a selective build or `cargo tree` command.
+
+Read [the upgrade guide](references/rust-1.100-upgrade.md) when you upgrade
+to Rust 1.100.
 
 ## Verification
 
@@ -159,7 +161,8 @@ cargo rustc --locked --profile <profile> --target <triple> \
 
 - Find the produced file from the target directory's final-artifact path or from
   `--message-format=json`. Never read `deps/` or `build/` inside the target directory:
-  `build.build-dir` (Cargo 1.91+) moves them, and their layout is not stable.
+  `build.build-dir` (Cargo 1.91+) moves them. Cargo 1.100 changes their layout; use
+  `compiler-artifact.filenames` and `executable` from JSON messages in scripts.
 - Put `[profile.*]` sections only in the root manifest. Cargo ignores a member's profiles and
   warns `profiles for the non root package will be ignored`.
 - The `rust-panic-safety` skill, when it is installed, owns the `panic` setting of a profile
@@ -179,7 +182,7 @@ Read [references/cross-compilation.md](references/cross-compilation.md) when you
 
 ## Rust edition
 
-Edition 2024 is the latest edition as of Rust 1.99.1. Keep one edition in `[workspace.package]`,
+Edition 2024 is the latest edition as of Rust 1.100.0. Keep one edition in `[workspace.package]`,
 inherited with `edition.workspace = true`, and bump it in a dedicated change. Two edition-2024
 changes alter drop order with a clean build and green tests, and their lints go quiet after the
 bump: run `-W rust_2024_compatibility` before `cargo fix --edition`.

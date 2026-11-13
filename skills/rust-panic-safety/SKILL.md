@@ -6,7 +6,7 @@ license: BSD-3-Clause
 
 # Rust panic safety
 
-## Start here: find the boundaries
+## Find the boundaries
 
 ```bash
 # Every function that foreign code can call. A bare `extern fn` is `extern "C"`.
@@ -23,9 +23,9 @@ rg -n --hidden 'panic\s*=\s*"?(abort|unwind)' \
   -g '**/Cargo.toml' -g '**/.cargo/config.toml' -g '**/.cargo/config'
 ```
 
-Compare list 1 with list 3. A `native_method!` entry has a generated `with_env` guard, unless
-it is `raw` or sets `catch_unwind = false`. An entry point with no guard and no documented abort
-policy (Rule 1) is a finding. Derive the lists from the tree for each review.
+Compare lists 1 and 3 from this checkout. `native_method!` generates a `with_env` guard
+unless it is `raw` or sets `catch_unwind = false`. Report an entry with neither a
+guard nor a documented abort policy (Rule 1).
 
 ## Verify a boundary change
 
@@ -37,8 +37,8 @@ policy (Rule 1) is a finding. Derive the lists from the tree for each review.
 | No new unguarded panic sites | `cargo clippy --locked --all-targets -- -D warnings` with `-p` for every crate on the FFI path, with the lints below | That each kept `.expect` invariant holds; overflow, panicking std APIs (`split_at`, `RefCell::borrow_mut`), and dependency panics |
 | No std-checked precondition fires on tested paths | `cargo test --locked` in the default debug profile | Soundness: run Miri, or ASan where Miri cannot run the foreign code (the `rust-sanitizers-miri` skill) |
 
-Run the `--print cfg` check with the same `--target`, `--profile`, and environment as the
-shipping build; without `--target`, it can print `unwind` for a library that ships with `abort`.
+Use the shipping `--target`, `--profile`, and environment for `--print cfg`.
+Without `--target`, it can print `unwind` for a shipped `abort` build.
 Read `references/panic-strategy.md` (section "Check the shipped strategy") for every source it
 reflects. When the boundary decodes untrusted input, fuzz the decoder behind it: a guard turns
 each panic into a status code and hides it from every other test.
@@ -164,6 +164,9 @@ Deny `clippy::unwrap_used`, `clippy::panic`, `clippy::todo`, `clippy::unimplemen
 `clippy::panic_in_result_fn` in every crate on an FFI path. Set `clippy::expect_used` and
 `clippy::indexing_slicing` to at least `warn`. Count the debt with the command in `references/unwrap-audit.md` ("Step 1"), never from memory,
 and read that file when you roll these lints out.
+
+Read [the rollback guide](references/drop-guard.md) for rollback with
+`DropGuard` on Rust 1.100+.
 
 ## Errors at the boundary
 

@@ -30,7 +30,7 @@ Every quoted diagnostic comes from rustc 1.98.1, edition 2024, on aarch64-apple-
 | `expected an Fn() closure, found Arc<dyn Fn()>` | Read [storing-callables.md](references/storing-callables.md#arc-and-rc-of-dyn-fn-do-not-implement-fn) |
 | `reached the recursion limit while instantiating` on a writer or visitor trait | Read [storing-callables.md](references/storing-callables.md#by-value-impl-trait-plus-a-delegating-impl-is-a-monomorphization-bomb) |
 | A `move` closure unexpectedly implements `Fn`, captures a whole owner, or changes drop timing | Read [closure-capture-semantics.md](references/closure-capture-semantics.md) |
-| New E0502, E0505, or E0506 on a closure after a toolchain bump, from a `match` or `let` inside it | Read [closure-capture-semantics.md](references/closure-capture-semantics.md#capture-precision-depends-on-the-projection) |
+| New E0502, E0505, or E0506 on a closure after a toolchain bump, from `match`, `if let`, or `let` | Read [closure-capture-semantics.md](references/closure-capture-semantics.md#capture-precision-depends-on-the-projection) |
 | The callback is `async` | [Pick the bound](#pick-the-bound-from-the-return-type): `AsyncFn`, or a boxed `Send` future |
 
 ## Pick the bound from the return type

@@ -4,7 +4,7 @@ Rules about the *shape* of data that crosses a boundary: alignment, pointer widt
 layout, and handle ownership. [SKILL.md](../SKILL.md) covers the safety contract of an unsafe
 block. This file covers the cases where the contract is met and the layout is still wrong.
 
-The repository compile check type-checks every example in this file on rustc 1.99.1, edition 2024.
+The repository compile check type-checks these examples on its pinned toolchain, edition 2024.
 
 Contents:
 
@@ -13,10 +13,20 @@ Contents:
 - `&T` to `&mut T`; `pointer::cast` over `as`
 - Fat pointers, opaque handles, and closures across a C boundary
 - `OwnedFd` and `BorrowedFd`; bitfields; `assert!` over `debug_assert!`
+- Rust 1.100 layout diagnostics
 - `PhantomData` markers for raw-pointer structs
 - `union` for C interop only
 - Symbol collision in `cdylib` crates
 - Zero-copy buffer handoff
+
+## Rust 1.100 layout diagnostics
+
+Rust 1.100 reports repeated `#[repr(..)]` attributes. Combine the intended
+representations in one attribute and remove duplicates. An aligned field inside
+a packed type now triggers the deny-by-default `aligned_fields_in_packed` lint.
+Keep the error policy; lowering it does not make references to packed fields aligned.
+The x86 Rust ABI also changes register use. Keep a stable foreign boundary on an
+explicit ABI such as `extern "C"`; do not exchange Rust-ABI objects across compiler versions.
 
 ## Never reference a field of a `#[repr(packed)]` struct
 

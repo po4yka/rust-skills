@@ -7,6 +7,20 @@ toolchain and one set of crate versions. `docs/releasing.md` says when to tag.
 
 ## [Unreleased]
 
+### Changed
+
+- Update the compile toolchain to Rust 1.100.0, with edition 2024 unchanged.
+- Update harness dependencies to mutants 0.0.4, loom 0.7.3, and syn 3.0.10 (#33).
+  Document loom's MSRV, atomic methods, notification limit, and checkpoint feature.
+- Update Cargo upgrade guidance for its lint system, dependency cooldowns, install
+  lockfiles, and intermediate artifact layout. Keep the compile baseline empty.
+- Correct never-type fallback on all editions, the `Infallible` alias, `DropGuard`
+  stability, precise `if let` captures, and WASIp3 Tier 2 support.
+- Add checked examples for allocator round trips, rollback, infallible results,
+  and slice comparisons with `Cow`. Cover layout, target ABI, and sample-profile changes.
+- Update repository instructions and add the source and validation report in
+  `research/rust-1.100.0-2026-11.md`. Preserve historical measurement labels.
+
 ## [0.4.0] - 2026-11-12
 
 A full audit of the catalog and of the gates that check it. Every skill and every harness script

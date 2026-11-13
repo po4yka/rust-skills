@@ -1,7 +1,7 @@
 name: Toolchain drift
 
 # checks/rust-toolchain.toml pins the Rust release every example is checked against, and the
-# skills date their claims to it ("as of Rust 1.98.1"). Nothing else notices when stable moves
+# skills date their claims to it ("as of Rust 1.100.0"). Nothing else notices when stable moves
 # on. This job compares the pin with the stable channel once a week and opens one issue, with
 # the skills whose dated claims need a re-probe. It never changes the pin: a toolchain move is a
 # catalog actualization (docs/releasing.md).

@@ -49,7 +49,7 @@ libfuzzer-sys = { version = "0.4", default-features = false }
 log = "0.4"
 loom = "0.7"
 # `#[cfg_attr(test, mutants::skip)]` in the rust-test-tools examples.
-mutants = "0.0.3"
+mutants = "0.0.4"
 nohash-hasher = "0.2"
 nix = { version = "0.31", features = ["fs", "process", "socket", "uio"] }
 once_cell = "1"

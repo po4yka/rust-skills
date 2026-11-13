@@ -385,7 +385,8 @@ impl only.
 
 ## Unstable escape hatches for a callable field
 
-Do not plan a stable API around either of these. Both are still nightly-gated on 1.98.1:
+`impl Trait` in an associated type still needs nightly. A stable callable field needs
+a named type or a generic parameter:
 
 ```rust,compile_fail,E0658
 trait DropBehavior { type OnDrop: FnOnce(u32); }
@@ -405,8 +406,10 @@ error: unconstrained opaque type
   = note: `OnDrop` must be used in combination with a concrete type within the same impl
 ```
 
-`std::mem::DropGuard` is also unstable: E0658 for the library feature `drop_guard`, issue
-#144426. `fn_traits` is also nightly-gated, so no user type can implement `FnOnce` on stable. That
+`std::mem::DropGuard` is stable since Rust 1.100. It accepts an `FnOnce(T)` closure,
+but does not make a closure's anonymous type nameable in a field. The `rust-panic-safety`
+skill, when installed, owns rollback with `DropGuard::dismiss`.
+`fn_traits` still needs nightly, so no user type can implement `FnOnce` on stable. That
 gate does not make the blanket-impl pattern in
 [Declare your own callable trait](#declare-your-own-callable-trait) coherent; the orphan rule does.
 

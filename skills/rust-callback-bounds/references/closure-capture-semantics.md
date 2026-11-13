@@ -6,6 +6,7 @@ capture errors below were checked on rustc 1.99.1, edition 2024, on x86_64-unkno
 
 - [`move` does not mean `FnOnce`](#move-does-not-mean-fnonce)
 - [Capture precision depends on the projection](#capture-precision-depends-on-the-projection)
+- [Rust 1.100 `if let` captures](#rust-1100-if-let-captures)
 - [Do not depend on capture drop order](#do-not-depend-on-capture-drop-order)
 - [Edition review](#edition-review)
 - [Checklist](#checklist)
@@ -88,6 +89,31 @@ require_send_static(move || use_field(&owner.field));
 
 If the probe fails, do not write `unsafe impl Send`. Reshape ownership so the closure captures a
 safe owner.
+
+## Rust 1.100 `if let` captures
+
+Rust 1.100 makes `if let` captures more precise. An irrefutable pattern can now
+capture separate fields instead of the whole owner. A borrow of one field can
+then prevent a closure from being `'static`, even when another field moves into it.
+Recheck `Send`, lifetimes, and cleanup order after the bump. A local binding does
+not guarantee that the closure owns the complete binding.
+
+```rust,run
+fn main() {
+    let pair = (String::from("kept"), String::from("moved"));
+    #[allow(irrefutable_let_patterns)]
+    let consume = || {
+        if let (_, value) = pair {
+            assert_eq!(value, "moved");
+        }
+    };
+    assert_eq!(pair.0, "kept");
+    consume();
+}
+```
+
+This probe checks field capture on edition 2024. It does not check a project's
+`Send` bounds or destructor order. Compile a caller at the real bound for those claims.
 
 ## Do not depend on capture drop order
 

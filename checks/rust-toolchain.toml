@@ -2,11 +2,10 @@
 # matches CI exactly. Any cargo invocation inside checks/ uses this. CI installs
 # nothing else; rustup reads this file.
 #
-# When you change the channel, regenerate baseline.txt on the same version in
-# the same commit. Error codes and wording move between releases, and a stale
-# baseline either hides a regression or fails a clean tree.
+# When you change the channel, run check.sh on that version and fix changed
+# diagnostics or examples. Keep baseline.txt empty; do not accept new failures.
 [toolchain]
-channel = "1.99.1"
+channel = "1.100.0"
 targets = ["x86_64-unknown-linux-gnu"]
 # clippy runs the lint gate (checks/lint_gate.py).
 components = ["clippy"]

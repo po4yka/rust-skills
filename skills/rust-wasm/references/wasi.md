@@ -1,6 +1,6 @@
 # WASI builds and components
 
-Use this file when you build for `wasm32-wasip1` or `wasm32-wasip2`, select
+Use this file when you build for `wasm32-wasip1`, `wasm32-wasip2`, or `wasm32-wasip3`, select
 async I/O for WASI, ship a WebAssembly component, or compile C or C++ for a
 WASI target. The capability
 and WIT pinning rules in `SKILL.md` apply to every command here.
@@ -32,6 +32,17 @@ Do not introduce `cargo-component` without a project-specific requirement. Its
 README (0.21.1, as of 2026-10) calls it experimental, and a newer release can
 break the build of an existing project. The same README still points to
 `cargo component` for a project with non-WASI WIT interfaces.
+
+## Build a WASI 0.3 component
+
+Rust 1.100 promotes `wasm32-wasip3` to Tier 2. Install the target with
+`rustup target add wasm32-wasip3`, then run
+`cargo build --locked --release --target wasm32-wasip3`.
+Inspect the component imports with `wasm-tools component wit` and run the result
+in the shipping host with WASI 0.3 async support. A build does not prove host support.
+The Rust 1.100 target does not yet enable cooperative `std::thread` support by default.
+Use `cfg(all(target_os = "wasi", target_env = "p3"))` for target-specific code.
+Use wasi-sdk 34 or later when an external C toolchain is required.
 
 ## Select async I/O for WASI
 

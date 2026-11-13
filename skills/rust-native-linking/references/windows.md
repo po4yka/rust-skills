@@ -42,6 +42,11 @@ C runtime (MSVCRT or UCRT), the C++ runtime (libstdc++ or libc++), and the
 unwinder (libgcc or libunwind) can all differ. Build every native input with
 the toolchain selected by `TARGET`.
 
+Rust 1.100 makes `i686-pc-windows-gnu` Tier 2 without host tools. Cross-compile
+32-bit outputs from a supported host; do not require a native 32-bit toolchain.
+On `windows-gnullvm`, Rust 1.100 links libunwind statically. Recheck the final
+DLL import list instead of packaging an old unwinder DLL by habit.
+
 For `-pc-windows-gnu`, Rust 1.98 documents GNU Binutils 2.44, GCC 14.2, and
 mingw-w64 12.0.0 as the oldest supported tools. Older tools, especially
 Binutils, may not work. Record the versions in build evidence.

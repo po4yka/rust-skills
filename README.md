@@ -6,7 +6,7 @@
 ownership semantics · unsafe review · async · mobile delivery · FFI · native linking · releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
-[![Rust 1.99 · edition 2024](https://img.shields.io/badge/rust-1.99%20%C2%B7%20edition%202024-000000?style=flat-square&logo=rust)](checks/rust-toolchain.toml)
+[![Rust 1.100 · edition 2024](https://img.shields.io/badge/rust-1.100%20%C2%B7%20edition%202024-000000?style=flat-square&logo=rust)](checks/rust-toolchain.toml)
 [![License BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-0969da?style=flat-square)](LICENSE)
 
 </div>
@@ -451,7 +451,7 @@ owns it.
 | [rust-security](skills/rust-security/SKILL.md) | cargo-audit and cargo-deny policy, RUSTSEC advisory triage, vetting new or updated crates for typosquat, malicious-crate, and compromised-release risk, and untrusted-input parser hardening. |
 | [rust-android-build](skills/rust-android-build/SKILL.md) | Android cdylib builds, NDK and per-ABI flags, 16 KiB alignment, ELF and size gates, native debug symbols, installed release smoke tests, and reusable AAR or Prefab packages. |
 | [rust-ios-build](skills/rust-ios-build/SKILL.md) | iOS device and simulator static libraries, C headers and modulemaps, XCFramework and SwiftPM packaging (UniFFI builds included), deployment-target and symbol verification, signing, and simulator and device release smoke tests. |
-| [rust-wasm](skills/rust-wasm/SKILL.md) | Exact WebAssembly host and target selection, JavaScript boundary ownership, panic and async behavior, WASI capabilities, runtime tests, feature compatibility, and packaged size gates. |
+| [rust-wasm](skills/rust-wasm/SKILL.md) | Exact WebAssembly host and target selection, JavaScript boundary ownership, panic and async behavior, WASI 0.2/0.3 capabilities, runtime tests, feature compatibility, and packaged size gates. |
 | [rust-embedded-no-std](skills/rust-embedded-no-std/SKILL.md) | Bare-metal and `no_std` policy for runtime and memory layout, panic and allocation, interrupts and critical sections, task frameworks, finite resource budgets, and real-device diagnostics. |
 | [rust-cross-compilation](skills/rust-cross-compilation/SKILL.md) | Cross-compiling for other Linux targets: rustup targets, per-target linker and `CC_<target>`, static musl and `crt-static` binaries, `cross`, cargo-zigbuild glibc floors, Docker multi-stage builds, qemu-user test runs, and artifact checks. |
 
@@ -595,7 +595,8 @@ invocations, and failure triage that a codebase learns the hard way.
 > Verify those against the consuming workspace and toolchain.
 
 - Every ` ```rust ` block without the `rust,ignore` tag is extracted and type-checked in CI
-  against the toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.99.1 on edition 2024.
+  against the toolchain `checks/rust-toolchain.toml` pins, currently Rust 1.100.0 on edition 2024.
+  The [update report](research/rust-1.100.0-2026-11.md) records sources and validation.
   A name that the surrounding prose defines comes from a per-block prelude in `checks/preludes/`,
   so the block is type-checked in full; any compile error fails the gate. Portable `rust,run` blocks are also compiled and executed on the native
   CI host.

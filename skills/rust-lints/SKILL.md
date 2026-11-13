@@ -31,6 +31,9 @@ A crate attribute overrides the inherited level in both directions: `#![warn(lin
 `lib.rs` lowers a workspace `deny` (1.99.1). Only `forbid` cannot be lowered. Restate an
 inherited lint in source only at the same or a stricter level.
 
+Read [references/gate-details.md](references/gate-details.md#cargo-lints-on-rust-1100)
+when you set Cargo 1.100+ lint policy or triage `cargo::unused_dependencies`.
+
 ## Verification
 
 While you iterate, run `cargo clippy --locked -p <crate> --all-targets -- -D warnings`. Before a

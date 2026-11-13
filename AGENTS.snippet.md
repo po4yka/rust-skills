@@ -28,7 +28,7 @@ design, build, testing, concurrency, production, ffi. Delete the rows of a bundl
 | `RUSTSEC` advisory, `cargo-deny`, a new unvetted dependency | rust-security |
 | 16 KiB page alignment, Android AAR or Prefab, NDK flags | rust-android-build |
 | `IPHONEOS_DEPLOYMENT_TARGET`, XCFramework, SwiftPM | rust-ios-build |
-| `wasm32-unknown-unknown`, WASI, `wasm-bindgen`, Wasm size | rust-wasm |
+| `wasm32-unknown-unknown`, WASI (including `wasm32-wasip3`), `wasm-bindgen`, Wasm size | rust-wasm |
 | `no_std`, `memory.x`, interrupts, Embassy, RTIC, `defmt` | rust-embedded-no-std |
 | Cross-compiling to another Linux target, a musl static binary, ``version `GLIBC_2.xx' not found`` | rust-cross-compilation |
 | Reproduce a bug as a failing test, or refactor under a safety net | rust-tdd |
