@@ -121,11 +121,12 @@ jobs:
 
       # A measurement, not a gate: no --threshold. --scaffold runs the case scripts from this
       # checkout, and --allow-tools lets the agent run cargo and edit its workspace.
-      # A failed grader is a result to record. Summarize fails when no valid result exists.
+      # A failed grader is a result to record. Summarize fails on execution errors or missing measurements.
       - name: Run the outcome suite
         if: inputs.suite == 'outcome'
         continue-on-error: true
         env:
+          CARGO_NET_OFFLINE: "true"
           MODEL: ${{ inputs.model }}
           JUDGE_MODEL: ${{ inputs.judge-model }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -162,9 +163,13 @@ jobs:
               print("No result file: the run failed before it wrote one.")
               raise SystemExit(1)
           cases = data.get("cases", [])
-          scores = [run.get("score") for case in cases
-                    for arm in ("with", "without")
-                    for run in case.get("arms", {}).get(arm, [])]
+          runs = [run for case in cases for arm in ("with", "without")
+                  for run in case.get("arms", {}).get(arm, [])]
+          errors = [run["error"] for run in runs if run.get("error")]
+          if errors:
+              print(f"Execution errors: {len(errors)} run(s) did not complete. First error: {errors[0]}")
+              raise SystemExit(1)
+          scores = [run.get("score") for run in runs]
           if not scores or any(type(score) not in (int, float) or not math.isfinite(score)
                                for score in scores):
               print("No valid measurements: expected numeric scores in with/without arms.")

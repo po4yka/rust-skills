@@ -13,8 +13,6 @@ execution:
   max_turns: 60
   timeout_seconds: 1200
   allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
-  env:
-    CARGO_NET_OFFLINE: "true"
   prompt: >-
     Port report.py to Rust in src/lib.rs of this crate, with its tests, so that our Rust service can use it
     instead of shelling out to Python. Keep the three function names. The Rust version has to

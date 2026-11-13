@@ -12,8 +12,6 @@ execution:
   max_turns: 30
   timeout_seconds: 900
   allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
-  env:
-    CARGO_NET_OFFLINE: "true"
   prompt: >-
     Callers of config_loader::load want to treat a missing config file as "use the defaults", so
     they need the io::ErrorKind of a read failure, and our log reporter walks Error::source to

@@ -48,12 +48,21 @@ class TestEvalSummary(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("No valid measurements", result.stdout)
 
+    def test_execution_error_with_numeric_score_fails(self):
+        result = self.run_summary(json.dumps({
+            "suite": {"plugins": [{"name": "rust-skills"}]},
+            "cases": [{"name": "case", "arms": {"with": [{
+                "score": 0, "error": "execution.env key is not allowed"}]}}],
+        }))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Execution errors", result.stdout)
+
     def test_valid_low_score_remains_a_measurement(self):
         result = self.run_summary(json.dumps({
             "suite": {"plugins": [{"name": "rust-skills"}], "ablation": True},
             "partial": False,
             "cases": [{"name": "case", "arms": {
-                "with": [{"score": 0}], "without": [{"score": 0.5}]}}],
+                "with": [{"score": 0, "error": None}], "without": [{"score": 0.5, "error": None}]}}],
         }))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("| case | 0.00 | 0.50 |", result.stdout)

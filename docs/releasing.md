@@ -87,7 +87,7 @@ change to a case. It measures the delta between the plugin arm and the no-plugin
 pass mark:
 
 ```bash
-claude plugin eval . --eval-dir evals/outcome --trust-plugin --scaffold \
+CARGO_NET_OFFLINE=true claude plugin eval . --eval-dir evals/outcome --trust-plugin --scaffold \
   --allow-tools Bash Write Edit --concurrency 4 --max-cost-usd 40 --no-publish \
   --json eval-results.json
 ```

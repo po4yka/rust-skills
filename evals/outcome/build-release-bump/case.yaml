@@ -12,8 +12,6 @@ execution:
   max_turns: 30
   timeout_seconds: 900
   allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
-  env:
-    CARGO_NET_OFFLINE: "true"
   prompt: >-
     I want to release what is on main since the v1.4.2 tag of this crate. Bump the version in
     Cargo.toml and write the CHANGELOG entry for the release. I will publish it myself.

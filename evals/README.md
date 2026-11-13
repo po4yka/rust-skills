@@ -93,13 +93,13 @@ IDs, and fails when the result names no plugin.
 
 What a green result proves: on that client, model, and catalog commit, a natural request loads
 the skill and the answer carries its verifier. What it does not prove: behavior on Codex, Cursor,
-or another client; behavior with all 50 skills installed when the client truncates its listing
+or another client; behavior with all 51 skills installed when the client truncates its listing
 (the suite loads the whole plugin, so it measures the full listing); or that six cases represent
-50 skills.
+51 skills.
 
 ## `outcome/`: the work itself
 
-Eight cases: one per bundle, and two more testing cases, for `rust-port` and `rust-review`. Each
+Nine cases: one per bundle, and two more testing cases, for `rust-port` and `rust-review`. Each
 case is a small std-only crate with one planted defect that one skill owns: a guard in a `match`
 scrutinee, `Relaxed` publication, a bug in a shared helper with a copy elsewhere, a `feat` commit
 that is a major bump, an allocation on every header, and a C ABI that returns a pointer into a
@@ -113,7 +113,9 @@ a review of a library module whose defects range from undefined behavior to a ge
   Each judged criterion has a PASS line and a FAIL line taken from the owning skill's rules and
   verifier table.
 - `scaffold.sh` builds the workspace from `files/` (and `next/`, for the case that needs git
-  history). `CARGO_NET_OFFLINE` is set in every case, so a run needs no registry.
+  history). The operator sets `CARGO_NET_OFFLINE=true`; case files set no environment
+  overrides. The workflow and cross-agent runner enforce this offline Cargo setting.
+  The pinned evaluation CLI rejects non-`EVAL_*` keys in `execution.env`.
 - `probe/*.rs`, where a portable test can show the defect, proves it: the gate requires the probe
   to fail on the fixture. `solution/` is one correct fix; the gate lays it over the fixture and
   requires `cargo test` with every probe to pass, so a probe fails only on the defect. A case
@@ -123,7 +125,7 @@ a review of a library module whose defects range from undefined behavior to a ge
 ```bash
 python3 evals/outcome/check.py --lint      # structure only; no cargo
 python3 evals/outcome/check.py             # also builds every fixture offline; check.sh runs this
-claude plugin eval . --eval-dir evals/outcome --trust-plugin --scaffold \
+CARGO_NET_OFFLINE=true claude plugin eval . --eval-dir evals/outcome --trust-plugin --scaffold \
   --allow-tools Bash Write Edit --concurrency 4 --max-cost-usd 40 --no-publish \
   --json eval-results.json
 ```
