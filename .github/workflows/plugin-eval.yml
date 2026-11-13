@@ -90,6 +90,15 @@ jobs:
           printf '%s\n' '{"name": "rust-skills", "description": "rust-skills catalog for the plugin evaluation", "skills": ["./skills"]}' \
             > .claude-plugin/plugin.json
 
+      - name: Install and check the outcome sandbox backend
+        if: inputs.suite == 'outcome'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap socat
+          bwrap --ro-bind / / --unshare-net -- /bin/true
+          socat -V
+
       # The outcome cases build std-only crates offline. The runner's rustup installs the
       # toolchain that checks/rust-toolchain.toml pins, the same one the offline gate uses.
       - name: Install the pinned toolchain for the outcome suite

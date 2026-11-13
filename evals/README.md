@@ -130,6 +130,11 @@ CARGO_NET_OFFLINE=true claude plugin eval . --eval-dir evals/outcome --trust-plu
   --json eval-results.json
 ```
 
+On Linux, install `bubblewrap` and `socat` before this command. The workflow
+installs and checks this backend before it starts paid agent runs. The client
+requires a working shell sandbox; do not disable it to make an evaluation run.
+See the [sandbox setup instructions](https://code.claude.com/docs/en/sandboxing#set-up-linux-and-wsl2).
+
 `--scaffold` runs `scaffold.sh` from this repository, and `--allow-tools` lets the agent run cargo
 and edit the workspace. The command sets no `--threshold`: the result is a measurement, and the
 number to record is the delta between the arms, not a pass mark. Run it from a clean checkout with
