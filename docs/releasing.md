@@ -39,7 +39,7 @@ marketplace ref that the consumer adds, so the release commit has no manifest fi
 Codex reads the same file as a legacy-compatible marketplace. There is no
 `.claude-plugin/plugin.json`, and each marketplace entry is the whole plugin manifest. Codex
 installs an entry only when no root `plugin.json` names a different plugin, so a root manifest
-would block all six bundles (measured with Codex 0.166.0). `scripts/validate-skills.py` fails
+would block every bundle (measured with Codex 0.166.0). `scripts/validate-skills.py` fails
 when the file exists.
 
 ## Plugin versioning
@@ -109,3 +109,10 @@ them. The intended state:
 - A tag ruleset on `v*` blocks update and deletion, so a published tag cannot move.
 - Dependabot opens updates for GitHub Actions and for `checks/Cargo.lock`.
 - Private vulnerability reporting is on (see `SECURITY.md`).
+
+As of 2026-11-13, read-only API checks show that required CI, reviews, and signed
+commits are not enabled. No ruleset exists, and private vulnerability reporting
+is off. Force-push and deletion of main are disabled. These are observed settings,
+not guarantees from this file. See [the separate approval proposal](github-settings-approval.md)
+for the exact changes and the Code Owners review prerequisite. A merge of the
+audit fixes does not apply these settings.

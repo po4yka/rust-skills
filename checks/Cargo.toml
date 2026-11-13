@@ -26,8 +26,8 @@ axum = "0.8"
 bytes = "1"
 compact_str = "0.10"
 # criterion 0.8 depends on `alloca` on unix and windows, whose build script
-# compiles one C file for the target. check.sh points that build at clang on a
-# host that is not x86_64 Linux; see the comment there.
+# compiles one C file for the target. Cross-host checks need target C and C++
+# compilers; checks/Dockerfile supplies them.
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 crossbeam-queue = "0.3"
 dhat = "0.3"
@@ -37,7 +37,7 @@ hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["full"] }
 # 7.0.2 drops bitmaps and moves to imbl-sized-chunks 0.2 (RUSTSEC-2026-0292).
 imbl = "7.0.2"
-# rust-cxx examples: the #[cxx::bridge] macro type-checks with no C++ compiler.
+# rust-cxx examples: cxx dependencies run C++ build scripts even under cargo check.
 cxx = "1"
 jni = "0.22"
 # The jni skill also documents the 0.21 API. A prelude brings it into scope for one

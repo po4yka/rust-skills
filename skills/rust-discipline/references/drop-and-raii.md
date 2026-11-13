@@ -12,7 +12,7 @@ Contents:
 - The four escape hatches
 - Drop order
 - The design rule: one guard field, never the aggregate
-- A destructor must not fail or block
+- Keep blocking and fallible cleanup explicit
 - Leaking is safe, so a guard is never a soundness argument
 
 This file owns the `Drop` design rule, the escape hatches, and drop order. The
@@ -105,8 +105,32 @@ fn main() {
 | --- | --- | --- |
 | a type with a user `Drop` | body first, then fields in **declaration** order | `drop Outer body`, `f1`, `f2`, `f3` |
 | locals in a scope | **reverse** declaration order | `l3`, `l2`, `l1` |
-| tuple, array, `Vec<T>` | front to back | `t1`, `t2`, `t3` |
+| tuple, array | front to back | `t1`, `t2`, `t3` |
+| `Vec<T>` | unspecified by the API | front to back on the measured toolchain only |
 | a partially moved struct | the moved field drops where it moved to; the rest drop at end of scope | `eaten inside fn`, `drop px`, `after eat`, `drop py` |
+
+The [Vec contract](https://doc.rust-lang.org/1.100.0/std/vec/struct.Vec.html#guarantees)
+does not guarantee element drop order. When order matters, consume the elements explicitly:
+
+```rust,run
+use std::cell::RefCell;
+use std::rc::Rc;
+
+struct Record(u8, Rc<RefCell<Vec<u8>>>);
+impl Drop for Record {
+    fn drop(&mut self) { self.1.borrow_mut().push(self.0); }
+}
+
+fn main() {
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let values: Vec<_> = (0..3).map(|id| Record(id, Rc::clone(&log))).collect();
+    for value in values { drop(value); }
+    assert_eq!(*log.borrow(), [0, 1, 2]);
+}
+```
+
+This probe checks explicit front-to-back cleanup on normal completion. If an element's
+cleanup panics, it does not prove the cleanup order of the remaining elements.
 
 The field you declare **last** stays alive longest inside a struct. This is the opposite of C++,
 where members are destroyed in reverse declaration order. When one field must outlive another
@@ -194,51 +218,84 @@ emptied value.
 
 ---
 
-## A destructor must not fail or block
+## Keep blocking and fallible cleanup explicit
 
-`Drop::drop` returns `()`, so a cleanup error has nowhere to go, and a panic in `drop` during
-unwinding aborts the process. `drop` also runs at every scope exit, on every error path, and on an
-async executor thread. Rust API Guidelines C-DTOR-FAIL and C-DTOR-BLOCK follow from that:
+`Drop::drop` returns `()`, so a cleanup error has no return path. A panic in `drop` during
+unwinding aborts the process. Put fallible or blocking cleanup (a flush, a final write, a
+network goodbye, a `join`) in a consuming `close(self) -> Result<T, E>` method.
 
-- Put fallible or blocking cleanup (a flush, a final write, a network goodbye, a `join`) in a
-  consuming `close(self) -> Result<T, E>` method, and document that callers who need the error
-  call it.
-- Keep `drop` as the best-effort fallback for a caller that did not call `close`: ignore or log
-  the error, never panic, and never wait on I/O or on another thread's lock.
+Inspect the complete fallback path, including field destructors. An arbitrary `W: Write`
+can block or panic in `flush()`, even when its returned `Result` is ignored. Its own destructor
+can also block or panic. `BufWriter` tries to write its buffer during drop and ignores errors;
+that is not a nonblocking or panic-free contract. Document that limitation when using it.
+For an async owner, complete blocking cleanup off the executor thread before dropping it.
 
-`std::io::BufWriter` follows this shape: its `drop` flushes and ignores the error, and
-`into_inner` returns it.
+This wrapper flushes only through explicit `close`. It adds no drop-time flush or retry.
+The probe checks success, an I/O error, and a panic, plus ordinary drop and outer unwinding.
+Its test writer has a nonblocking, nonpanicking destructor; a generic writer needs a separate audit.
 
-```rust
+```rust,run
+use std::cell::Cell;
 use std::io::{self, Write};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::rc::Rc;
 
-pub struct Log<W: Write> {
-    // `Option` because `close` consumes the writer.
-    out: Option<W>,
-}
-
+pub struct Log<W: Write> { out: W }
 impl<W: Write> Log<W> {
     /// Flushes and returns the writer.
     ///
     /// # Errors
+    /// Returns the writer's flush error.
     ///
-    /// Returns the flush error that `drop` would ignore.
+    /// # Panics
+    /// Propagates a panic from the writer's flush implementation.
     pub fn close(mut self) -> io::Result<W> {
-        let mut out = self.out.take().expect("writer present until close");
-        out.flush()?;
-        Ok(out)
+        self.out.flush()?;
+        Ok(self.out)
     }
 }
 
-impl<W: Write> Drop for Log<W> {
-    fn drop(&mut self) {
-        // Best effort: `drop` cannot report the error, so `close` exists.
-        if let Some(out) = self.out.as_mut() {
-            let _ = out.flush();
+struct Probe {
+    counts: Rc<(Cell<usize>, Cell<usize>)>,
+    outcome: u8,
+}
+impl Write for Probe {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { Ok(bytes.len()) }
+    fn flush(&mut self) -> io::Result<()> {
+        self.counts.0.set(self.counts.0.get() + 1);
+        match self.outcome {
+            0 => Ok(()),
+            1 => Err(io::Error::other("flush failed")),
+            _ => panic!("flush panicked"),
         }
     }
 }
+impl Drop for Probe {
+    fn drop(&mut self) { self.counts.1.set(self.counts.1.get() + 1); }
+}
+
+fn main() {
+    for outcome in 0..5 {
+        let counts = Rc::new((Cell::new(0), Cell::new(0)));
+        let log = Log { out: Probe { counts: Rc::clone(&counts), outcome } };
+        match outcome {
+            0 => drop(log.close().ok().expect("flush succeeds")),
+            1 => assert!(log.close().is_err()),
+            2 => assert!(catch_unwind(AssertUnwindSafe(|| { let _ = log.close(); })).is_err()),
+            3 => drop(log),
+            _ => assert!(catch_unwind(AssertUnwindSafe(|| {
+                let _log = log;
+                panic!("outer failure");
+            })).is_err()),
+        }
+        assert_eq!(counts.0.get(), usize::from(outcome < 3));
+        assert_eq!(counts.1.get(), 1);
+    }
+}
 ```
+
+Run the probe with unwinding enabled. It checks wrapper behavior, not the behavior of every
+`Write` implementation. Under `panic = "abort"`, a panic skips these cleanup assertions.
 
 ---
 

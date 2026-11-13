@@ -83,8 +83,9 @@ If the answer to any question is yes, revise the change before you merge it.
     on poison detection?
 26. Any unchecked arithmetic on a value derived from untrusted input?
 27. Any `Arc<T>` that points back to its parent container?
-28. Any function that takes `&'a T` and also writes references into a storage parameter that
-    shares the same `'a`? Split the lifetimes, or store owned data.
+28. Any cache that stores input references past the source owner's lifetime? Keep the owner
+    alive, shorten the cache's scope, or store owned data. Splitting lifetime names does not
+    extend the source's life.
 29. Any `impl<T: ...> PubTrait for T` on a public trait that is not sealed? Seal the trait, or
     write explicit per-type impls. The same blanket impl also makes every pointer-forwarding
     impl `E0119`, and blocks every later concrete impl on the same `Self` type.

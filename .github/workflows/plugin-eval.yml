@@ -121,8 +121,7 @@ jobs:
 
       # A measurement, not a gate: no --threshold. --scaffold runs the case scripts from this
       # checkout, and --allow-tools lets the agent run cargo and edit its workspace.
-      # A failed grader is a result to record, not a broken job. Summarize still reports a run
-      # that wrote no result file.
+      # A failed grader is a result to record. Summarize fails when no valid result exists.
       - name: Run the outcome suite
         if: inputs.suite == 'outcome'
         continue-on-error: true
@@ -154,20 +153,28 @@ jobs:
           set -euo pipefail
           cat eval-results.json 2>/dev/null || true
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json, os, subprocess
+          import json, math, os, subprocess
           commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
           print(f"Suite `{os.environ['SUITE']}`, catalog `{commit}`, CLI `{os.environ.get('CLAUDE_CODE_VERSION', 'not installed')}`, agent `{os.environ['MODEL']}`, judge `{os.environ['JUDGE_MODEL']}`\n")
           try:
               data = json.load(open("eval-results.json"))
           except (OSError, ValueError):
               print("No result file: the run failed before it wrote one.")
-              raise SystemExit(0)
+              raise SystemExit(1)
+          cases = data.get("cases", [])
+          scores = [run.get("score") for case in cases
+                    for arm in ("with", "without")
+                    for run in case.get("arms", {}).get(arm, [])]
+          if not scores or any(type(score) not in (int, float) or not math.isfinite(score)
+                               for score in scores):
+              print("No valid measurements: expected numeric scores in with/without arms.")
+              raise SystemExit(1)
           plugins = [p.get("name", "?") for p in data.get("suite", {}).get("plugins", [])]
           print(f"Cost: ${data.get('costUsd', 0):.2f}. Partial: {data.get('partial')}. "
                 f"Plugin: {', '.join(plugins) or 'none'}. Ablation: {data.get('suite', {}).get('ablation')}.\n")
           print("| Case | With plugin | Without plugin |")
           print("| --- | ---: | ---: |")
-          for case in data.get("cases", []):
+          for case in cases:
               def mean(arm):
                   runs = case.get("arms", {}).get(arm, [])
                   return f"{sum(r.get('score', 0) for r in runs) / len(runs):.2f}" if runs else "-"

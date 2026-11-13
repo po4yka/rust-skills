@@ -211,10 +211,47 @@ different cache. `Vec::swap_remove` moves the last element into the removed inde
 two slots change meaning and the old last index goes out of bounds. Two repairs, in order of
 preference:
 
-- Never remove. Replace the slot content with a tombstone and reuse the slot.
+- Keep indices stable with tombstones. Reuse a slot only after every old handle and queued
+  event for it is gone; otherwise an old index names the replacement object.
 - Store a generational key: `struct Key { slot: u32, generation: u32 }`, and bump the slot's
   generation on every reuse. A `handle` that finds a generation mismatch returns without
-  writing. Do not name the field `gen`: it is a reserved keyword in edition 2024.
+  writing. Retire the slot if the generation counter would wrap. Do not name the field `gen`:
+  it is a reserved keyword in edition 2024.
+
+This probe rejects an event for a deleted object after the slot holds its replacement:
+
+```rust,run
+#[derive(Clone, Copy)]
+struct Key { slot: usize, generation: u32 }
+struct Slot { generation: u32, value: Option<u32> }
+
+fn resolve(slots: &mut [Slot], key: Key) -> Option<&mut u32> {
+    let slot = slots.get_mut(key.slot)?;
+    if slot.generation != key.generation { return None; }
+    slot.value.as_mut()
+}
+
+fn main() {
+    let mut slots = [Slot { generation: 0, value: Some(10) }];
+    let old = Key { slot: 0, generation: 0 };
+    slots[0].value = None;
+    assert!(resolve(&mut slots, old).is_none());
+    // Retire this slot instead of reusing it when checked_add returns None.
+    slots[0].generation = slots[0].generation.checked_add(1).unwrap();
+    slots[0].value = Some(20);
+    assert!(resolve(&mut slots, old).is_none());
+    assert_eq!(slots[0].value, Some(20));
+    let current = Key { slot: 0, generation: 1 };
+    *resolve(&mut slots, current).unwrap() += 1;
+    assert_eq!(slots[0].value, Some(21));
+    assert!(resolve(&mut slots, Key { slot: 1, generation: 1 }).is_none());
+    assert!(u32::MAX.checked_add(1).is_none());
+}
+```
+
+Run the probe with the standard library. It checks missing, stale, current, and out-of-range
+keys. It does not prove concurrent slot reuse safe; synchronize lookup and replacement when
+several threads own the pool.
 
 ## State is a trait parameter, not an associated type
 

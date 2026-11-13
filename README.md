@@ -2,7 +2,7 @@
 
 # rust-skills
 
-**Forty-six agent skills for production Rust:**
+**Fifty-one agent skills for production Rust:**
 ownership semantics · unsafe review · async · mobile delivery · FFI · native linking · releases · supply chain
 
 [![CI](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/po4yka/rust-skills/actions/workflows/ci.yml)
@@ -143,9 +143,11 @@ Codex copies the whole repository (about 7 MB) into its cache for each plugin, w
 `--ref`.
 
 **Keep the plugins up to date.** A marketplace added at a tag never changes. To receive each
-change that lands on `main`, add the marketplace with no ref, and let the client refresh it. Every
-commit on `main` passed the required CI gates; the evaluations run only before a tag
-([docs/releasing.md](docs/releasing.md)).
+change that lands on `main`, add the marketplace with no ref, and let the client refresh it.
+CI runs on pull requests and pushes to `main`. Check the result for the installed commit;
+required checks are not enforced in the repository settings as of 2026-11-13.
+Evaluations run before a tag. See [docs/releasing.md](docs/releasing.md) and the
+[pending settings changes](docs/github-settings-approval.md).
 
 - **Claude Code.** Add the marketplace with no `#` suffix and install a bundle. Then run
   `/plugin`, open **Marketplaces**, select `rust-skills`, and select **Enable auto-update**:

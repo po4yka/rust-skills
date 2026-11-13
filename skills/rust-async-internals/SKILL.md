@@ -11,7 +11,8 @@ license: BSD-3-Clause
 | You must | Use | Do not use |
 |---|---|---|
 | Run N futures and keep only the first result | `tokio::select!` | `join!` |
-| Run N futures to completion | `tokio::join!` or `try_join!` | `select!` |
+| Wait for all results | `tokio::join!` | `try_join!`, `select!` |
+| Fail on the first error | `tokio::try_join!`; cancel-safe branches | `join!` |
 | Own a set of spawned tasks and collect their results | `JoinSet` + `join_next` | a bare `Vec<JoinHandle>` |
 | Track a long-lived, unbounded task set (an accept loop) for shutdown | `tokio_util::task::TaskTracker` + `close()` + `wait()` | a `JoinSet` that nobody drains; it keeps every result |
 | Abort a task when its owner drops the handle | `tokio_util::task::AbortOnDropHandle` | a bare `JoinHandle`; its drop detaches the task |
@@ -61,13 +62,13 @@ version floor.
 
 ## Completion criteria
 
-Before you call async work done or approve a merge, walk the checklist in
+Use
 [references/cancellation-and-shutdown.md](references/cancellation-and-shutdown.md#completion-checklist).
 
 ## Cancellation
 
-A winning `select!` branch drops the other futures and their unfinished work. `join!`
-waits for all branches. Futures in `select!`, `timeout`, or `FuturesUnordered` must
+`select!` drops losing futures; `try_join!` drops unfinished futures on the first `Err`.
+Futures in `select!`, `try_join!`, `timeout`, or `FuturesUnordered` must
 be cancel safe. Disabled branches still evaluate their async expression; put side
 effects inside the async body. Read [cancellation and shutdown](references/cancellation-and-shutdown.md)
 when selecting cancel-safe methods or protecting a sequence of `.await`s.

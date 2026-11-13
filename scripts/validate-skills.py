@@ -398,7 +398,7 @@ def check_skill(skill_dir: Path) -> None:
     bodies[name] = frontmatter_body(text)
 
     license_value = fields.get("license")
-    if license_value and license_value != "BSD-3-Clause":
+    if license_value != "BSD-3-Clause":
         fail(where, f"license is {license_value!r}, this repository publishes BSD-3-Clause")
 
     check_skill_files(skill_dir)

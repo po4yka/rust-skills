@@ -352,20 +352,23 @@ def main() -> int:
     path = next((a for a in args if not a.startswith("--")), "check.json")
     errors, seen, finished = parse(path)
     require_cargo_ran(path, finished, seen)
+    passes = [(path, seen)]
     if "--test-pass" in args:
         test_path = args[args.index("--test-pass") + 1]
         test_errors, test_seen, test_finished = parse(test_path)
         require_cargo_ran(test_path, test_finished, test_seen)
+        passes.append((test_path, test_seen))
         merge_test_pass(manifest, errors, test_errors)
 
-    missing = unbuilt(manifest, seen)
-    if missing:
-        print(f"FAIL: {len(missing)} generated example(s) never reached the compiler:\n")
-        for name in missing[:20]:
-            info = manifest[name]
-            print(f"  {info.get('file', '?')}:{info.get('line', 0)}")
-        print("\nCoverage dropped without a fence tag saying so. Do not accept this run.")
-        return 1
+    for pass_path, pass_seen in passes:
+        missing = unbuilt(manifest, pass_seen)
+        if missing:
+            print(f"FAIL: {len(missing)} generated example(s) never reached the compiler in {pass_path}:\n")
+            for name in missing[:20]:
+                info = manifest[name]
+                print(f"  {info.get('file', '?')}:{info.get('line', 0)}")
+            print("\nCoverage dropped without a fence tag saying so. Do not accept this run.")
+            return 1
 
     broken = compile_fail_failures(manifest, errors)
     if broken:

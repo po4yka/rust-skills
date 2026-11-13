@@ -69,13 +69,13 @@ are not interchangeable, and the receiver decides where the builder can live:
 | Setter receiver | Chains | Survives a loop | Terminal builder method |
 | --- | --- | --- | --- |
 | `fn set(&mut self)` returning `()` | no | yes | `fn build(self) -> T` |
-| `fn set(mut self) -> Self` | yes | no | `fn build(self) -> T` |
+| `fn set(mut self) -> Self` | yes | yes, with reassignment | `fn build(self) -> T` |
 | `fn set(&mut self) -> &mut Self` | yes | yes | `fn build(self) -> T` from a bound builder |
 
-An owned `self -> Self` setter moves the builder on every call. The second iteration of a loop
-then fails with `error[E0382]: use of moved value` and the note `'b' moved due to this method
-call, in previous iteration of loop`. A `&mut self -> &mut Self` setter chains and loops, and it
-keeps `fn build(self) -> T`. Only the start of the chain constrains the terminal method. Bind the
+An owned `self -> Self` setter moves the builder on every call. Keep its returned value with
+`builder = builder.set(value)` in a loop or conditional branch. Discarding that value causes
+E0382 at the next use. A `&mut self -> &mut Self` setter needs no reassignment and keeps
+`fn build(self) -> T`. Only the start of the chain constrains the terminal method. Bind the
 builder to a variable and the owned build compiles. Start the chain from a temporary, as in
 `CfgBuilder::default().name("a").build()`, and it fails with `error[E0507]: cannot move out of a
 mutable reference`, with the note `'CfgBuilder::build' takes ownership of the receiver 'self',
@@ -123,14 +123,33 @@ fn main() {
 }
 ```
 
-Rule: choose the receiver from the call sites, not from the doc example. Conditional or
-loop-driven configuration needs `&mut self -> &mut Self`, and keeps `fn build(self) -> T`. Reach
+An owned setter also supports loop-driven configuration:
+
+```rust,run
+#[derive(Default)]
+struct Builder { retries: u32 }
+impl Builder {
+    fn with_retries(mut self, retries: u32) -> Self {
+        self.retries = retries;
+        self
+    }
+    fn build(self) -> u32 { self.retries }
+}
+fn main() {
+    let mut builder = Builder::default();
+    for retry in 1..=3 { builder = builder.with_retries(retry); }
+    assert_eq!(builder.build(), 3);
+}
+```
+
+Rule: choose the receiver from the call sites. Both forms support loops and conditions;
+owned setters require reassignment. Reach
 for `fn build(&mut self) -> T` with `std::mem::take` only when the chain must stay one expression
 that starts from a temporary. That form costs two things. A second `build()` succeeds and returns
 the default: measured on rustc 1.97.0, one `name("real")` setter then two builds prints
 `first : Cfg { name: "real", retries: 0 }` and `second: Cfg { name: "", retries: 0 }`. It also
-forces `Default` on the built type. Keep the owned `self -> Self` setter when a double build must
-be impossible, and accept that it cannot be looped over.
+forces `Default` on the built type. Keep `build(self)` when a second build from the same
+builder must be impossible; either setter form can use that consuming terminal method.
 
 ---
 

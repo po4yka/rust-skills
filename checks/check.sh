@@ -20,9 +20,9 @@
 # The exceptions are the three gates that run a consumer's CLI through npx: the
 # skills-CLI discovery and the Claude Code and Codex plugin installs. This
 # script says so out loud when it has to skip them, and CI always runs them.
-# `cargo check` type-checks without linking, so the Linux target works on any
-# host with no cross-linker installed. The one C build script in the harness
-# (alloca, from criterion) needs clang on a non-Linux host; see below.
+# The harness has C/C++ build scripts and PyO3. Cross-host checks need target
+# compilers and Python configuration. checks/Dockerfile supplies these on Linux;
+# checks/README.md gives the container command for macOS and other hosts.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -99,6 +99,7 @@ python3 "$ROOT/checks/platform-workflows/test_sample_pgo.py" 2>&1 | tail -3
 python3 test_plugin_install.py 2>&1 | tail -3
 python3 test_gen.py 2>&1 | tail -3
 python3 test_analyze.py 2>&1 | tail -3
+python3 test_eval_summary.py 2>&1 | tail -3
 python3 "$ROOT/scripts/test_agent_hook.py" 2>&1 | tail -3
 
 RUN_DIR="$(mktemp -d)"
@@ -118,20 +119,17 @@ python3 gen.py
 # identical to one that worked.
 echo "==> toolchain: $(rustc --version), $(cargo --version)"
 
-# criterion 0.8 depends on alloca, whose build script compiles alloca.c for the
-# target even under `cargo check`. alloca.c includes only <stddef.h> and
-# <stdint.h>, which clang ships itself, so clang builds it for the Linux target
-# with no Linux sysroot, and `cargo check` never links the object. On a host
-# that is not x86_64 Linux, cc would otherwise look for x86_64-linux-gnu-gcc,
-# which a macOS host does not have. A CC_x86_64_unknown_linux_gnu that the
-# caller set wins.
+# Require an explicit cross environment. A clang-only fallback cannot provide
+# the C++ sysroot or the target Python configuration used by build scripts.
 HOST="$(rustc -vV | sed -n 's/^host: //p')"
-if [ "$HOST" != "$TARGET" ] && [ -z "${CC_x86_64_unknown_linux_gnu:-}" ] &&
-    command -v clang > /dev/null 2>&1; then
-    export CC_x86_64_unknown_linux_gnu=clang
-    export CFLAGS_x86_64_unknown_linux_gnu="-ffreestanding"
-    export AR_x86_64_unknown_linux_gnu="$(command -v llvm-ar || command -v ar)"
-    echo "==> host $HOST: building target C sources with clang --target=$TARGET"
+if [ "$HOST" != "$TARGET" ]; then
+    if [ -z "${CC_x86_64_unknown_linux_gnu:-}" ] ||
+        [ -z "${CXX_x86_64_unknown_linux_gnu:-}" ] ||
+        [ -z "${PYO3_CROSS_PYTHON_VERSION:-}" ]; then
+        echo "FAIL: $HOST -> $TARGET needs target CC, CXX, and PYO3_CROSS_PYTHON_VERSION." >&2
+        echo "Use the Linux container in checks/README.md, or configure a complete cross toolchain." >&2
+        exit 1
+    fi
 fi
 
 echo "==> compile-checking examples (target: $TARGET)"

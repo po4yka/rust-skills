@@ -29,26 +29,3 @@ impl CoreError {
     pub fn cancelled() -> Self { todo!() }
 }
 '''
-
-[[block]]
-file = "ffi-error-progress-cancel/references/platform-bridges.md"
-section = "Partial output cleanup"
-block = 1
-items = '''
-use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-#[derive(Debug)]
-pub struct CoreError;
-impl CoreError {
-    pub fn io(_e: std::io::Error) -> Self { todo!() }
-}
-pub trait ProgressListener: Send + Sync {}
-fn render_into(
-    _tmp: &Path,
-    _flag: &AtomicBool,
-    _listener: Arc<dyn ProgressListener>,
-) -> Result<(), CoreError> {
-    todo!()
-}
-'''

@@ -10,7 +10,13 @@ excused, everything else is a suspect.
 Run:
     python3 checks/test_analyze.py
 """
+import contextlib
+import io
+import json
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 import analyze
 
@@ -219,6 +225,48 @@ class TestCoverage(unittest.TestCase):
     def test_run_example_must_reach_the_compiler(self):
         manifest = {"x": entry("run")}
         self.assertEqual(analyze.unbuilt(manifest, set()), ["x"])
+
+    def run_passes(self, missing_in_test=False, missing_in_normal=False):
+        """Exercise main with Cargo streams, including an expected compiler error."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = {"a": entry("compile"), "b": entry("run"),
+                        "bad": entry("compile_fail", codes=["E0499"])}
+            (root / "manifest.json").write_text(json.dumps(manifest))
+            for filename, missing in [("normal.json", missing_in_normal),
+                                      ("test.json", missing_in_test)]:
+                records = [{"reason": "compiler-artifact", "target": {"name": "a"}}]
+                if not missing:
+                    records.append({"reason": "compiler-artifact", "target": {"name": "b"}})
+                else:
+                    records.append({"reason": "compiler-message", "target": {"name": "dependency"},
+                                    "message": error("E0308", "dependency failed")})
+                records += [
+                    {"reason": "compiler-message", "target": {"name": "bad"},
+                     "message": error("E0499", "cannot borrow")},
+                    {"reason": "build-finished", "success": False},
+                ]
+                (root / filename).write_text("\n".join(map(json.dumps, records)))
+            output = io.StringIO()
+            argv = ["analyze.py", str(root / "normal.json"), "--test-pass", str(root / "test.json")]
+            with patch.object(analyze, "HERE", root), patch("sys.argv", argv), contextlib.redirect_stdout(output):
+                result = analyze.main()
+            return result, output.getvalue()
+
+    def test_incomplete_test_pass_fails_even_after_complete_normal_pass(self):
+        result, output = self.run_passes(missing_in_test=True)
+        self.assertEqual(result, 1)
+        self.assertIn("test.json", output)
+        self.assertIn("never reached the compiler", output)
+
+    def test_complete_test_pass_does_not_mask_incomplete_normal_pass(self):
+        result, output = self.run_passes(missing_in_normal=True)
+        self.assertEqual(result, 1)
+        self.assertIn("normal.json", output)
+
+    def test_complete_passes_allow_expected_compile_fail_diagnostics(self):
+        result, output = self.run_passes()
+        self.assertEqual(result, 0, output)
 
 
 class TestRun(unittest.TestCase):

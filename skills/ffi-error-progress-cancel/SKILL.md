@@ -155,8 +155,8 @@ trait with
 `fn on_progress(&self, event: ProgressEvent) -> Result<(), ProgressCallbackError>`
 (the `uniffi-boundary` skill holds the full declaration). On a listener failure,
 convert `ProgressCallbackError` to `EngineError::Unexpected`, stop the job with
-`?`, and let the worker delete the partial output: the output is then absent,
-never different. This skill owns the event contract:
+`?`, and let the worker remove its temporary output. Keep any existing final
+output unchanged. This skill owns the event contract:
 
 ```rust
 #[derive(uniffi::Enum, Clone, Copy, PartialEq, Eq)]

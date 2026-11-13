@@ -22,7 +22,26 @@ bash checks/check.sh --no-clients   # skips npx: no skills CLI discovery or plug
 ```
 
 The first form is the whole contract. CI runs the same gates in two jobs: `--fast` in one
-and `--no-clients` in the other. The steps, if you need one of them alone:
+and `--no-clients` in the other. Native x86_64 Linux needs Python 3.11+, C/C++
+compilers, Git, Rustup, and Node/npm for the client gates.
+
+On macOS, run the complete suite in the Linux container. Run from the repository
+root with Docker available:
+
+```bash
+docker build -f checks/Dockerfile -t rust-skills-checks .
+docker run --rm -v "$PWD:/work" rust-skills-checks
+```
+
+The image supplies Python, C/C++ compilers, Node 26, and both Rust toolchains.
+On ARM64 it supplies the x86_64 Linux cross compilers and PyO3 target version too.
+The bind mount includes uncommitted edits. Generated files stay under ignored
+paths in `checks/`; build caches stay inside the disposable container. The run
+downloads pinned tools and packages, so it needs network access. Run only one
+check process against this checkout at a time, including host and container runs.
+Use `bash checks/check.sh --fast` directly on macOS for the edit loop.
+
+The steps, if you need one of them alone:
 
 Install the previous compiler for the transition fixtures once:
 `rustup toolchain install 1.99.1 --profile minimal`. The catalog itself stays on
@@ -47,6 +66,7 @@ python3 checks/plugin_install.py --codex "npx -y @openai/codex@<version>"
                                               # Codex shows every routing phrase of each bundle
 python3 checks/test_gen.py                     # executable-fence rules
 python3 checks/test_analyze.py                # the failure classifier itself
+python3 checks/test_eval_summary.py           # missing evaluation output fails the workflow
 python3 checks/test_lint_gate.py              # the lint gate's parsers
 python3 checks/lint_gate.py                   # every lint the rust-lints templates name fires
 python3 checks/release_regressions.py         # old/new compiler, Cargo integration, and isolated loom
@@ -121,7 +141,9 @@ prelude, or tagged.
 which sets `cfg(test)` and builds each example as a test harness. The first run
 never type-checks a `#[test]` function, a `#[cfg(test)]` module, or a
 `#[tokio::test]` body. `--test-pass` joins the second run's errors to the first
-for every `compile` and `run` block, and every gate below sees the union. No run
+for every `compile` and `run` block, and every gate below sees the union. Each pass
+must report every generated target; a complete first pass cannot cover a missing
+target in the test pass. No run
 sets `cfg(miri)`, `cfg(loom)`, or a non-x86_64 `target_arch`, so code under those
 stays unchecked by these two passes. The separate release regression gate runs
 its own isolated loom fixture; it does not cover every gated catalog block.

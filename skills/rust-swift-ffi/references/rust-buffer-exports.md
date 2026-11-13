@@ -1,9 +1,16 @@
 # Rust buffer exports for Swift
 
+Contents:
+
+- Scoped input and owned output
+- Safety and verification
+
 The Rust side of the `rs_buffer_t` contract from `SKILL.md`, with borrowed
-Swift input. CI compiles and runs this block on the pinned toolchain. Miri
-(nightly 2026-05-15, Stacked Borrows and Tree Borrows) reports no undefined
-behavior and no leak for it.
+Swift input. CI compiles and runs this block on the pinned toolchain. It
+checks owned results and buffer release. It does not prove that a foreign
+pointer satisfies the safety contract.
+
+## Scoped input and owned output
 
 ```rust,run
 use std::ptr;
@@ -42,16 +49,23 @@ pub extern "C" fn rs_buffer_release(buffer: RsBuffer) {
 }
 
 /// # Safety
-/// A non-null `ptr` points to `len` initialized bytes that stay valid and
-/// unchanged until the call returns.
-unsafe fn borrowed<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
+/// For a non-empty accepted input, `ptr` points to `len` initialized bytes
+/// in one allocation. They stay valid and unchanged until this call returns,
+/// including while `use_bytes` runs. The address range must not wrap.
+unsafe fn with_borrowed<R>(
+    ptr: *const u8,
+    len: usize,
+    use_bytes: impl for<'a> FnOnce(&'a [u8]) -> R,
+) -> Option<R> {
     if len == 0 {
-        return Some(&[]); // an empty Swift buffer can have a nil baseAddress
+        return Some(use_bytes(&[])); // an empty Swift buffer can have a nil baseAddress
     }
     if ptr.is_null() || len > isize::MAX as usize {
         return None;
     }
-    Some(unsafe { std::slice::from_raw_parts(ptr, len) })
+    // SAFETY: the caller keeps this allocation valid and unchanged throughout
+    // the callback. Its higher-ranked bound prevents a slice reference escaping.
+    Some(use_bytes(unsafe { std::slice::from_raw_parts(ptr, len) }))
 }
 
 fn main() {
@@ -59,17 +73,20 @@ fn main() {
     bytes.extend_from_slice(b"ok");
     let out = RsBuffer::from_vec(bytes);
     assert_eq!(out.capacity, 64); // release needs the real capacity, not len
-    assert_eq!(unsafe { borrowed(out.ptr, out.len) }, Some(&b"ok"[..]));
+    // SAFETY: `out` keeps the allocation alive, and the callback only reads it.
+    let owned = unsafe { with_borrowed(out.ptr, out.len, |bytes| bytes.to_vec()) };
     rs_buffer_release(out);
+    assert_eq!(owned, Some(b"ok".to_vec())); // the owned result survives release
     rs_buffer_release(RsBuffer::from_vec(Vec::with_capacity(16)));
     let changed_by_c = RsBuffer { ptr: ptr::NonNull::dangling().as_ptr(), len: 2, capacity: 1 };
     rs_buffer_release(changed_by_c); // returns early; never reaches `from_raw_parts`
-    assert_eq!(unsafe { borrowed(ptr::null(), 0) }, Some(&[][..]));
-    assert_eq!(unsafe { borrowed(ptr::null(), 4) }, None);
+    // SAFETY: these cases return an empty slice or reject the pointer before a read.
+    assert_eq!(unsafe { with_borrowed(ptr::null(), 0, |bytes| bytes.len()) }, Some(0));
+    assert_eq!(unsafe { with_borrowed(ptr::null(), 4, |bytes| bytes.len()) }, None);
 }
 ```
 
-What each part shows:
+## Safety and verification
 
 - `from_vec` returns the canonical empty value for an empty `Vec`. A
   `Vec::new()` has a dangling non-null pointer, and Swift zero-initializes
@@ -81,17 +98,22 @@ What each part shows:
 - `rs_buffer_release` returns early for the null form and for
   `len > capacity`, which `Vec::from_raw_parts` forbids. It never rebuilds a
   `Vec` from either.
-- `borrowed` maps every zero-length input to `&[]`, including a null pointer,
+- `with_borrowed` maps every zero-length input to `&[]`, including a null pointer,
   and rejects a null pointer with a non-zero length. It never passes null to
   `slice::from_raw_parts`, which requires a non-null pointer even for length
   zero.
-- The `# Safety` section states what code cannot check: a non-null pointer
-  points to one live allocation with `len` initialized bytes. Keep that
-  precondition on every export that takes a borrowed Swift pointer.
+- The callback receives a slice only while the foreign memory stays valid.
+  `for<'a>` prevents its slice reference from escaping in `R`. Return owned
+  data when the result must survive the callback. Do not retain a raw pointer
+  for later use or call foreign code that mutates or frees the input.
+- The `# Safety` section requires one live allocation for the whole callback.
+  Keep that contract on every export that takes a borrowed Swift pointer.
+  A helper that returns `&'a [u8]` instead must require validity and no mutation
+  for the whole returned `'a`, not just until the helper returns.
 - `Vec::into_raw_parts` is stable since Rust 1.93. On an older MSRV, use
   `let mut v = ManuallyDrop::new(vec);` and read `v.as_mut_ptr()`, `v.len()`,
   and `v.capacity()`.
 
-Add the operation's own size limit to `borrowed` before you build the slice.
+Add the operation's own size limit to `with_borrowed` before you build the slice.
 Wrap each export body in `catch_unwind` and return a reserved panic status; the
 `rust-panic-safety` skill, when it is installed, owns that guard.

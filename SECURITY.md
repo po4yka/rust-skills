@@ -43,9 +43,17 @@ install section says which install paths pin and which track `main`.
 
 ## Reporting
 
-Use GitHub private vulnerability reporting: the **Report a vulnerability** button on this
-repository's **Security** tab. Do not open a public issue for a report in scope. Include the
-skill, the file and line, the command or text, and what an agent does when it follows it.
+As of 2026-11-13, private vulnerability reporting is disabled. Enabling it is
+[pending separate approval](docs/github-settings-approval.md). There is no
+verified private reporting channel in this repository yet.
 
-Expect an acknowledgement within 7 days. A confirmed problem is fixed on `main`, released in a
+If the **Report a vulnerability** button is available on the **Security** tab,
+use it. Include the skill, file and line, command or text, and the effect on an
+agent. If the button is absent, open a public issue that asks only for a private
+reporting channel. Do not include vulnerability details, affected examples, or
+reproduction steps in that issue. Send the details only after the owner supplies
+a private channel.
+
+After a private report is received, expect an acknowledgement within 7 days.
+A confirmed problem is fixed on `main`, released in a
 new tag, and recorded in `CHANGELOG.md` with credit unless you ask otherwise.

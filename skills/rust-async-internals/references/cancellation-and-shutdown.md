@@ -18,6 +18,12 @@ Reference material for `SKILL.md`. Read the section that matches the code you wr
 
 ## Cancel safety is an untyped invariant
 
+Use `tokio::join!` when every branch must return a result, including an error. Inspect the
+results after the join. [`try_join!`](https://docs.rs/tokio/1.54.1/tokio/macro.try_join.html)
+returns on the first `Err` and drops unfinished branch futures. Check cancellation safety
+before using that behavior. If a branch owns a `JoinHandle`, dropping it detaches the spawned
+task; an owner still needs an explicit abort/join policy to stop that task.
+
 A future is **cancel safe** if and only if dropping it between any two `.await` points leaves
 observable state consistent. No signature expresses the property. `async fn f(...)` looks the
 same whether `f` is safe to cancel between its internal `.await`s or not. The borrow checker and

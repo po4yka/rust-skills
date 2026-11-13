@@ -97,5 +97,5 @@ impl Order {
 | C-SEALED, C-STRUCT-PRIVATE, C-NEWTYPE, C-NEWTYPE-HIDE | `type-level-api.md` in this skill |
 | C-STABLE (a stable crate's public dependencies are stable) and the SemVer evolution of a published API | `rust-crate-release`; `cargo semver-checks` is the check |
 | C-SEND-SYNC (public types are `Send` and `Sync` where possible) | `rust-send-sync`; a compile-time `fn assert_send<T: Send>() {}` call is the check |
-| C-DTOR-FAIL, C-DTOR-BLOCK (a destructor never fails or blocks) | `drop-and-raii.md` in this skill, "A destructor must not fail or block" |
+| C-DTOR-FAIL, C-DTOR-BLOCK (a destructor never fails or blocks) | `drop-and-raii.md` in this skill, "Keep blocking and fallible cleanup explicit" |
 | C-SERDE (serde behind a feature named `serde`) | `rust-serde`; gate each impl with `#[cfg_attr(feature = "serde", derive(serde::Serialize))]` |

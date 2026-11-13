@@ -462,8 +462,26 @@ You cannot recover the relaxation on stable. Do not add a `Drop` impl you do not
 
 ## Restrict `union` to C interop
 
-A `union` has no tag, so the compiler cannot check which variant is live. Reading a field that
-was never written is undefined behavior.
+A Rust `union` has no active field. A read interprets the shared storage as the selected
+field's type. Prove that the storage meets that type's initialization and validity
+requirements, including pointer provenance, lifetime, and aliasing. Writing one
+field and reading another is permitted when that proof holds. `#[repr(C)]` puts each field
+at offset zero; the default representation does not guarantee that layout.
+
+```rust,run
+#[repr(C)]
+union Bits { integer: u32, float: f32 }
+
+fn main() {
+    let bits = Bits { integer: 0x3f80_0000 };
+    // SAFETY: repr(C) overlays both four-byte fields. All bytes are initialized,
+    // and every u32 bit pattern represents a valid f32.
+    assert_eq!(unsafe { bits.float }, 1.0);
+}
+```
+
+This probe checks a valid numeric reinterpretation. It does not prove a pointer or reference
+reinterpretation sound. Source: [Rust Reference, union reads](https://doc.rust-lang.org/reference/items/unions.html#reading-and-writing-union-fields).
 
 - Use a `union` only to match a C type that is itself a union.
 - Do not put a reference, `NonNull`, `Box`, or other type with a validity invariant beside an
